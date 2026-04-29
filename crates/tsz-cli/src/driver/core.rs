@@ -831,6 +831,51 @@ const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
         || matches!(code, 2458 | 2754)
 }
 
+fn collect_parse_only_no_check_diagnostics(
+    parse_results: &[parallel::ParseResult],
+    options: &ResolvedCompilerOptions,
+) -> Vec<Diagnostic> {
+    let program_has_real_syntax_errors = parse_results
+        .iter()
+        .flat_map(|result| result.parse_diagnostics.iter())
+        .any(|diag| check_utils::is_real_syntax_error(diag.code));
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        parse_results
+            .par_iter()
+            .flat_map(|result| {
+                check_utils::collect_no_check_parse_diagnostics_for_file(
+                    &result.file_name,
+                    &result.arena,
+                    result.source_file,
+                    &result.parse_diagnostics,
+                    options,
+                    program_has_real_syntax_errors,
+                )
+            })
+            .collect()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        parse_results
+            .iter()
+            .flat_map(|result| {
+                check_utils::collect_no_check_parse_diagnostics_for_file(
+                    &result.file_name,
+                    &result.arena,
+                    result.source_file,
+                    &result.parse_diagnostics,
+                    options,
+                    program_has_real_syntax_errors,
+                )
+            })
+            .collect()
+    }
+}
+
 fn compile_inner(
     args: &CliArgs,
     cwd: &Path,
@@ -1294,6 +1339,76 @@ fn compile_inner(
 
     // Build file info with inclusion reasons
     let file_infos = build_file_infos(&sources, &file_paths, args, config.as_ref(), &base_dir);
+
+    if resolved.no_check && resolved.no_emit && !resolved.emit_declarations {
+        let parse_start = Instant::now();
+        let compile_inputs: Vec<(String, String)> = sources
+            .into_iter()
+            .map(|source| {
+                let text = source.text.unwrap_or_default();
+                (source.path.to_string_lossy().into_owned(), text)
+            })
+            .collect();
+        let parse_results = parallel::parse_files_parallel(compile_inputs);
+        let parse_bind_duration = parse_start.elapsed();
+        perf_log_phase("parse_no_check", parse_start);
+
+        let mut diagnostics = collect_parse_only_no_check_diagnostics(&parse_results, &resolved);
+
+        if !binary_file_names_to_suppress.is_empty() {
+            diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
+        }
+
+        if has_deprecation_diagnostics {
+            let has_grammar_errors = diagnostics
+                .iter()
+                .any(|d| is_grammar_error_for_deprecation_priority(d.code));
+
+            if has_grammar_errors {
+                config_diagnostics.retain(|d| {
+                    d.code
+                    != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+                    && d.code
+                        != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+                });
+            } else {
+                diagnostics.retain(|d| {
+                    (d.code == 2318 && d.file.is_empty() && d.start == 0) || d.code == 2792
+                });
+            }
+        }
+
+        diagnostics.extend(config_diagnostics);
+        diagnostics.extend(binary_file_diagnostics);
+        diagnostics.extend(type_file_diagnostics);
+        diagnostics.sort_by(|left, right| {
+            left.file
+                .cmp(&right.file)
+                .then(left.start.cmp(&right.start))
+                .then(left.code.cmp(&right.code))
+        });
+
+        return Ok(CompilationResult {
+            diagnostics,
+            emitted_files: Vec::new(),
+            files_read: user_files_read,
+            file_infos,
+            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+            interned_types_count: 0,
+            interner_estimated_bytes: 0,
+            query_cache_stats: None,
+            def_store_stats: None,
+            phase_timings: PhaseTimings {
+                io_read_ms: io_read_duration.as_secs_f64() * 1000.0,
+                parse_bind_ms: parse_bind_duration.as_secs_f64() * 1000.0,
+                total_ms: compile_start.elapsed().as_secs_f64() * 1000.0,
+                ..PhaseTimings::default()
+            },
+            residency_stats: None,
+            module_dep_stats: None,
+            invalidation_summaries: Vec::new(),
+        });
+    }
 
     let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
     resolved.checker.no_types_and_symbols =

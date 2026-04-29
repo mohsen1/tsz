@@ -350,83 +350,6 @@ pub(super) fn collect_diagnostics(
         }
     }
 
-    // Pre-compute merged augmentations once for all binder reconstruction paths.
-    let merged_augmentations = MergedAugmentations::from_program(program);
-    let affected_lib_interfaces = affected_lib_interface_names(program, checker_libs);
-    let affected_lib_extension_interfaces =
-        affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces);
-
-    // Pre-create all binders for cross-file resolution
-    let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
-        use rayon::prelude::*;
-        let _span =
-            tracing::info_span!("build_cross_file_binders", files = program.files.len()).entered();
-        program
-            .files
-            .par_iter()
-            .enumerate()
-            .map(|(file_idx, file)| {
-                Arc::new(create_cross_file_lookup_binder_with_augmentations(
-                    file,
-                    program,
-                    file_idx,
-                    &merged_augmentations,
-                ))
-            })
-            .collect()
-    });
-
-    // Extract is_external_module from BoundFile to preserve state across file bindings
-    // This fixes TS2664 which requires accurate per-file is_external_module values
-    let is_external_module_by_file: Arc<rustc_hash::FxHashMap<String, bool>> = Arc::new(
-        program
-            .files
-            .iter()
-            .map(|file| (file.file_name.clone(), file.is_external_module))
-            .collect(),
-    );
-
-    // Collect all arenas for cross-file resolution
-    let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new({
-        let _span = tracing::info_span!("collect_all_arenas").entered();
-        program
-            .files
-            .iter()
-            .map(|file| Arc::clone(&file.arena))
-            .collect()
-    });
-    // Build symbol → file_idx mapping in O(symbols + files) instead of
-    // O(symbols × files). Previously each symbol scanned `all_arenas` linearly
-    // looking for the matching `Arc<NodeArena>` via `ptr_eq` — on a large
-    // project (~100K-500K symbols × 6000+ files) that exploded into
-    // billion-scale pointer comparisons just to populate the map.
-    //
-    // `Arc::ptr_eq` compares the inner allocation address, so the raw pointer
-    // value uniquely identifies an arena. A small one-shot pointer→idx
-    // hashmap drops the per-symbol cost from O(N_files) to O(1).
-    let symbol_file_targets: Arc<Vec<(tsz::binder::SymbolId, usize)>> = Arc::new({
-        let _span = tracing::info_span!(
-            "build_symbol_file_targets",
-            symbols = program.symbol_arenas.len(),
-            files = all_arenas.len()
-        )
-        .entered();
-        let arena_ptr_to_idx: FxHashMap<*const tsz::parser::NodeArena, usize> = all_arenas
-            .iter()
-            .enumerate()
-            .map(|(idx, arena)| (Arc::as_ptr(arena), idx))
-            .collect();
-        program
-            .symbol_arenas
-            .iter()
-            .filter_map(|(sym_id, arena)| {
-                arena_ptr_to_idx
-                    .get(&Arc::as_ptr(arena))
-                    .map(|&file_idx| (*sym_id, file_idx))
-            })
-            .collect()
-    });
-
     // Create ModuleResolver instance for proper error reporting (TS2834, TS2835, TS2792, etc.)
     let mut module_resolver = ModuleResolver::new(options);
 
@@ -747,6 +670,137 @@ pub(super) fn collect_diagnostics(
             FxHashMap::default()
         }
     });
+
+    if options.no_check {
+        use rayon::prelude::*;
+
+        let mut diagnostics: Vec<Diagnostic> = program
+            .files
+            .par_iter()
+            .map(|file| {
+                collect_no_check_file_diagnostics(file, options, program_has_real_syntax_errors)
+            })
+            .flatten()
+            .collect();
+
+        for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
+            diagnostics.extend(file_diags.iter().cloned());
+            if let Some(file) = program.files.get(file_idx) {
+                used_paths.insert(PathBuf::from(&file.file_name));
+            }
+        }
+
+        if let Some(c) = cache {
+            c.type_caches.retain(|path, _| used_paths.contains(path));
+            c.diagnostics.retain(|path, _| used_paths.contains(path));
+            c.export_hashes.retain(|path, _| used_paths.contains(path));
+        }
+
+        diagnostics.extend(detect_missing_tslib_helper_diagnostics(
+            program,
+            options,
+            base_dir,
+            &file_is_esm_map,
+        ));
+
+        let module_dep_stats = if collect_compile_stats {
+            Some(compute_module_dependency_stats(
+                program.files.len(),
+                resolved_module_paths.as_ref(),
+            ))
+        } else {
+            None
+        };
+
+        return CollectDiagnosticsResult {
+            diagnostics,
+            request_cache_counters,
+            query_cache_stats: Some(tsz_solver::QueryCacheStatistics::default()),
+            def_store_stats: None,
+            module_dep_stats,
+        };
+    }
+
+    // Pre-compute merged augmentations once for all binder reconstruction paths.
+    let merged_augmentations = MergedAugmentations::from_program(program);
+    let affected_lib_interfaces = affected_lib_interface_names(program, checker_libs);
+    let affected_lib_extension_interfaces =
+        affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces);
+
+    // Pre-create all binders for cross-file resolution.
+    let all_binders: Arc<Vec<Arc<BinderState>>> = {
+        use rayon::prelude::*;
+        let _span =
+            tracing::info_span!("build_cross_file_binders", files = program.files.len()).entered();
+        Arc::new(
+            program
+                .files
+                .par_iter()
+                .enumerate()
+                .map(|(file_idx, file)| {
+                    Arc::new(create_cross_file_lookup_binder_with_augmentations(
+                        file,
+                        program,
+                        file_idx,
+                        &merged_augmentations,
+                    ))
+                })
+                .collect(),
+        )
+    };
+
+    // Extract is_external_module from BoundFile to preserve state across file bindings.
+    // This fixes TS2664 which requires accurate per-file is_external_module values.
+    let is_external_module_by_file: Arc<rustc_hash::FxHashMap<String, bool>> = Arc::new(
+        program
+            .files
+            .iter()
+            .map(|file| (file.file_name.clone(), file.is_external_module))
+            .collect(),
+    );
+
+    // Collect all arenas for cross-file resolution.
+    let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new({
+        let _span = tracing::info_span!("collect_all_arenas").entered();
+        program
+            .files
+            .iter()
+            .map(|file| Arc::clone(&file.arena))
+            .collect()
+    });
+    // Build symbol → file_idx mapping in O(symbols + files) instead of
+    // O(symbols × files). Previously each symbol scanned `all_arenas` linearly
+    // looking for the matching `Arc<NodeArena>` via `ptr_eq` — on a large
+    // project (~100K-500K symbols × 6000+ files) that exploded into
+    // billion-scale pointer comparisons just to populate the map.
+    //
+    // `Arc::ptr_eq` compares the inner allocation address, so the raw pointer
+    // value uniquely identifies an arena. A small one-shot pointer→idx
+    // hashmap drops the per-symbol cost from O(N_files) to O(1).
+    let symbol_file_targets: Arc<Vec<(tsz::binder::SymbolId, usize)>> = {
+        let _span = tracing::info_span!(
+            "build_symbol_file_targets",
+            symbols = program.symbol_arenas.len(),
+            files = all_arenas.len()
+        )
+        .entered();
+        let arena_ptr_to_idx: FxHashMap<*const tsz::parser::NodeArena, usize> = all_arenas
+            .iter()
+            .enumerate()
+            .map(|(idx, arena)| (Arc::as_ptr(arena), idx))
+            .collect();
+        Arc::new(
+            program
+                .symbol_arenas
+                .iter()
+                .filter_map(|(sym_id, arena)| {
+                    arena_ptr_to_idx
+                        .get(&Arc::as_ptr(arena))
+                        .map(|&file_idx| (*sym_id, file_idx))
+                })
+                .collect(),
+        )
+    };
 
     // Propagate noUncheckedIndexedAccess to the TypeInterner before creating the
     // QueryCache.  The `with_options` constructor intentionally skips this (to avoid
@@ -1644,26 +1698,10 @@ pub(super) fn collect_diagnostics(
     // tarjan_scc + adjacency dedup is O(V+E) and adj allocates a Vec<Vec<usize>>
     // of file_count.
     let module_dep_stats = if collect_compile_stats {
-        let file_count = program.files.len();
-        // Build a deduplicated adjacency list from resolved_module_paths.
-        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); file_count];
-        let mut edge_count: usize = 0;
-        for ((src, _specifier), &tgt) in resolved_module_paths.iter() {
-            if *src < file_count && tgt < file_count && !adj[*src].contains(&tgt) {
-                adj[*src].push(tgt);
-                edge_count += 1;
-            }
-        }
-        let sccs = tarjan_scc(file_count, &adj);
-        let cycles: Vec<&Vec<usize>> = sccs.iter().filter(|scc| scc.len() > 1).collect();
-        let import_cycles = cycles.len();
-        let largest_cycle_size = cycles.iter().map(|c| c.len()).max().unwrap_or(0);
-        Some(super::ModuleDependencyStats {
-            file_count,
-            dependency_edges: edge_count,
-            import_cycles,
-            largest_cycle_size,
-        })
+        Some(compute_module_dependency_stats(
+            program.files.len(),
+            resolved_module_paths.as_ref(),
+        ))
     } else {
         None
     };
@@ -1674,6 +1712,31 @@ pub(super) fn collect_diagnostics(
         query_cache_stats,
         def_store_stats: aggregated_ds_stats,
         module_dep_stats,
+    }
+}
+
+fn compute_module_dependency_stats(
+    file_count: usize,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+) -> super::ModuleDependencyStats {
+    // Build a deduplicated adjacency list from resolved_module_paths.
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); file_count];
+    let mut edge_count: usize = 0;
+    for ((src, _specifier), &tgt) in resolved_module_paths {
+        if *src < file_count && tgt < file_count && !adj[*src].contains(&tgt) {
+            adj[*src].push(tgt);
+            edge_count += 1;
+        }
+    }
+    let sccs = tarjan_scc(file_count, &adj);
+    let cycles: Vec<&Vec<usize>> = sccs.iter().filter(|scc| scc.len() > 1).collect();
+    let import_cycles = cycles.len();
+    let largest_cycle_size = cycles.iter().map(|c| c.len()).max().unwrap_or(0);
+    super::ModuleDependencyStats {
+        file_count,
+        dependency_edges: edge_count,
+        import_cycles,
+        largest_cycle_size,
     }
 }
 
@@ -1933,6 +1996,21 @@ pub(super) struct CheckFileForParallelContext<'a> {
     /// throughout the whole check (observed at ~10 GB RSS peak on a
     /// 6000-file repo). Set this `false` in that case.
     extract_type_cache: bool,
+}
+
+fn collect_no_check_file_diagnostics(
+    file: &tsz::parallel::BoundFile,
+    options: &ResolvedCompilerOptions,
+    program_has_real_syntax_errors: bool,
+) -> Vec<Diagnostic> {
+    collect_no_check_parse_diagnostics_for_file(
+        &file.file_name,
+        &file.arena,
+        file.source_file,
+        &file.parse_diagnostics,
+        options,
+        program_has_real_syntax_errors,
+    )
 }
 
 /// Result of checking a single file for the parallel checking path: diagnostics,
@@ -3020,6 +3098,30 @@ mod tests {
             resolved.checker.module = ModuleKind::ES2015;
         }
         resolved
+    }
+
+    #[test]
+    fn no_check_collect_diagnostics_keeps_parse_errors_and_skips_type_errors() {
+        let options = ResolvedCompilerOptions {
+            no_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("file.ts", "const value: string = 1;\nconst broken = ;\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            codes.contains(&1109),
+            "expected --noCheck diagnostics to keep TS1109 parse error, got: {diagnostics:?}"
+        );
+        assert!(
+            !codes.contains(&2322),
+            "expected --noCheck diagnostics to skip TS2322 type error, got: {diagnostics:?}"
+        );
     }
 
     fn collect_es2015_default_lib_diagnostics(source: &str) -> Vec<Diagnostic> {
