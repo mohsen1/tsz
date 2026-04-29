@@ -30,3 +30,14 @@ instantiation / fuel behavior.
 - `cargo nextest run --package tsz-solver --lib`
 - `./scripts/conformance/conformance.sh run --filter "excessPropertyCheckIntersectionWithRecursiveType" --verbose`
 - `./scripts/conformance/conformance.sh run --max 200`
+
+## Investigation Notes
+
+- `cargo nextest run --package tsz-checker --test conditional_infer_tests test_build_tree_no_false_ts2741 --run-ignored only` still fails with TS2741.
+- A narrower local repro showed `PickDepth<User, 2, [any, any]>` still requires
+  `children`, so the remaining bug is not the recursive `BuildTree` expansion
+  or `Prepend` tuple-length inference itself. The indexed-access target
+  `{ 1: T; 0: T & { children: ... } }[Length<I> extends N ? 1 : 0]` is still
+  behaving as if the instantiated key selects `0` when `I` has length `2`.
+- Raising evaluation depth/fuel limits did not change the failure, which makes a
+  plain recursion-limit fix unlikely.
