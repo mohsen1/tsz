@@ -368,6 +368,66 @@ const checked_ = checkType_<{x: number, y: string}>()({
 }
 
 #[test]
+fn reverse_mapped_const_generic_ts2353_omits_outer_readonly_in_target_display() {
+    // `const` type-parameter inference records readonly flags on the captured
+    // object literal, but tsc's TS2353 target display omits those flags at the
+    // outer excess-property target while preserving nested readonly literals.
+    let code = r#"
+interface ProvidedActor {
+  src: string;
+  logic: () => Promise<unknown>;
+}
+type DistributeActors<TActor> = TActor extends { src: infer TSrc } ? { src: TSrc } : never;
+interface MachineConfig<TActor extends ProvidedActor> {
+  invoke: DistributeActors<TActor>;
+}
+declare function createXMachine<
+  const TConfig extends MachineConfig<TActor>,
+  TActor extends ProvidedActor = ProvidedActor,
+>(config: {[K in keyof MachineConfig<any> & keyof TConfig]: TConfig[K] }): TConfig;
+
+createXMachine({
+  invoke: {
+    src: "whatever",
+  },
+  extra: 10
+});
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = TypeInterner::new();
+    let mut checker = crate::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+    checker.check_source_file(root);
+
+    let ts2353 = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .find(|diag| diag.code == 2353)
+        .expect("expected TS2353 for excess property");
+    let msg = ts2353.message_text.as_str();
+    assert!(
+        msg.contains("{ invoke: { readonly src: \"whatever\"; }; }"),
+        "expected outer target display to omit readonly while preserving nested readonly; got: {msg}"
+    );
+    assert!(
+        !msg.contains("{ readonly invoke:"),
+        "outer excess-property target must not print readonly; got: {msg}"
+    );
+}
+
+#[test]
 fn reverse_mapped_finite_recursive_alias_drills_to_leaf() {
     // Regression test for reverseMappedTypeDeepDeclarationEmit.ts.
     //

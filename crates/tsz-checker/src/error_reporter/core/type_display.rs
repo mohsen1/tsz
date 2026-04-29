@@ -482,7 +482,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn normalize_excess_display_type(&self, ty: TypeId) -> TypeId {
+    pub(in crate::error_reporter::core) fn normalize_excess_display_type(
+        &self,
+        ty: TypeId,
+    ) -> TypeId {
         let ty = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
         if let Some(app) = query::type_application(self.ctx.types, ty) {
             let args: Vec<_> = app
@@ -537,6 +540,8 @@ impl<'a> CheckerState<'a> {
                     .map(|&member| self.normalize_excess_display_type(member))
                     .collect(),
             )
+        } else if let Some(normalized) = self.normalize_excess_display_object_type(ty) {
+            normalized
         } else {
             ty
         }
@@ -1376,6 +1381,7 @@ impl<'a> CheckerState<'a> {
         let display_ty = self
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
+        let display_ty = self.strip_top_level_readonly_for_excess_display(display_ty);
         self.format_type_diagnostic_widened(display_ty)
     }
 
