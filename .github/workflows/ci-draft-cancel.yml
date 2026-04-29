@@ -2,7 +2,7 @@ name: CI Draft Cancellation
 
 on:
   pull_request:
-    types: [converted_to_draft, closed]
+    types: [converted_to_draft]
 
 permissions:
   contents: read
@@ -19,4 +19,4 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          echo "Cancelling in-progress CI for draft/closed PR #${PR_NUMBER} via concurrency group."
+          echo "Cancelling in-progress CI for draft PR #${PR_NUMBER} via concurrency group."
