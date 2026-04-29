@@ -17,6 +17,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return inferred;
         }
 
+        let concrete_lower_bounds: Vec<TypeId> = lower_bounds
+            .iter()
+            .copied()
+            .filter(|ty| !ty.is_any_unknown_or_error())
+            .collect();
+
         if let Some(preferred_tuple_candidate) =
             self.preferred_specific_tuple_inference_candidate(lower_bounds)
         {
@@ -44,7 +50,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // (e.g., "" and 3 → string vs number), fall back to the first candidate.
             // tsc keeps the first candidate in those cases so later argument checks
             // can report a proper TS2345 mismatch.
-            if !self.has_conflicting_literal_bases(lower_bounds) {
+            let has_concrete_literal_conflict =
+                self.has_conflicting_literal_bases(&concrete_lower_bounds);
+            if !has_concrete_literal_conflict {
                 // If direct inference collapsed to a single non-union candidate while
                 // we also have contravariant evidence, preserve the combined direct
                 // argument information. This prevents over-narrowing from first-wins in
@@ -77,6 +85,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .iter()
             .any(|ty| matches!(*ty, TypeId::ANY | TypeId::ERROR))
         {
+            // Context-sensitive callbacks can contribute an uninformative `any`
+            // candidate after direct arguments have already produced conflicting
+            // concrete primitive candidates. Do not let that `any` erase the
+            // first-wins direct-argument mismatch that tsc reports.
+            if self.has_conflicting_literal_bases(&concrete_lower_bounds)
+                && let Some(first_concrete) = concrete_lower_bounds.first().copied()
+            {
+                return first_concrete;
+            }
             return TypeId::ANY;
         }
 

@@ -138,6 +138,19 @@ bar(1, "");
     );
 }
 
+#[test]
+fn direct_generic_argument_mismatch_survives_context_sensitive_callback() {
+    let source = r#"
+declare function g<T>(a: T, b: T, c: (t: T) => T): T;
+g("", 3, a => a);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2345),
+        "Expected TS2345 for conflicting direct candidates before callback inference. Diagnostics: {diags:#?}"
+    );
+}
+
 // TODO: higher-order generic inference for compose/map/filter chains doesn't
 // correctly propagate type parameters to emit TS2339 for the invalid pipeline.
 #[test]
