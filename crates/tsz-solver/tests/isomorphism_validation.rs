@@ -297,7 +297,7 @@ fn test_boolean_expansion_in_template() {
 
 #[test]
 fn test_any_widening_in_template() {
-    // any in template should widen to string
+    // Prefixed any remains a pattern so fixed text is preserved.
     let interner = create_test_interner();
 
     let spans = vec![
@@ -307,7 +307,13 @@ fn test_any_widening_in_template() {
     ];
     let template = interner.template_literal(spans);
 
-    assert_eq!(template, TypeId::STRING, "Any widening in template failed");
+    assert!(
+        matches!(
+            interner.lookup(template),
+            Some(TypeData::TemplateLiteral(_))
+        ),
+        "Prefixed any template should preserve its fixed text"
+    );
 }
 
 #[test]

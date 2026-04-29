@@ -380,6 +380,52 @@ fn test_template_to_template_string_not_subtype_of_number() {
     assert!(!checker.is_subtype_of(source, target));
 }
 
+#[test]
+fn test_template_literal_with_prefixed_any_keeps_fixed_text() {
+    // `a${any}` remains a pattern with an `a` prefix; only bare `${any}`
+    // collapses to `string`.
+    let interner = TypeInterner::new();
+
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("a")),
+        TemplateSpan::Type(TypeId::ANY),
+    ]);
+
+    assert!(
+        matches!(interner.lookup(pattern), Some(TypeData::TemplateLiteral(_))),
+        "prefixed any template should remain a template literal pattern"
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(interner.literal_string("aok"), pattern));
+    assert!(!checker.is_subtype_of(interner.literal_string("bno"), pattern));
+}
+
+#[test]
+fn test_template_literal_hole_accepts_intersection_pattern_prefix() {
+    // In `` `${`a${string}` & `${string}a`}Test` ``, the interpolation can
+    // consume "aba" because it satisfies both intersected template patterns.
+    let interner = TypeInterner::new();
+
+    let starts_with_a = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("a")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let ends_with_a = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("a")),
+    ]);
+    let intersection = interner.intersection(vec![starts_with_a, ends_with_a]);
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(intersection),
+        TemplateSpan::Text(interner.intern_string("Test")),
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(interner.literal_string("abaTest"), pattern));
+    assert!(!checker.is_subtype_of(interner.literal_string("abcTest"), pattern));
+}
+
 // ==========================================================================
 // Hex/Octal/Binary literal matching for ${bigint} and ${number} patterns
 // ==========================================================================
