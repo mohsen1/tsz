@@ -112,9 +112,19 @@ pub fn compute_type_param_variances_with_resolver(
     computer.compute_def_variances(def_id)
 }
 
+pub fn compute_actual_type_param_variances_with_resolver(
+    db: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
+    def_id: DefId,
+) -> Option<Arc<[Variance]>> {
+    let mut computer = VarianceComputer::new_actual(db, resolver);
+    computer.compute_def_variances(def_id)
+}
+
 struct VarianceComputer<'a> {
     db: &'a dyn TypeDatabase,
     resolver: &'a dyn TypeResolver,
+    use_declared_variance: bool,
     active_defs: FxHashSet<DefId>,
     cached_def_variances: FxHashMap<DefId, Option<Arc<[Variance]>>>,
 }
@@ -124,6 +134,17 @@ impl<'a> VarianceComputer<'a> {
         Self {
             db,
             resolver,
+            use_declared_variance: true,
+            active_defs: FxHashSet::default(),
+            cached_def_variances: FxHashMap::default(),
+        }
+    }
+
+    fn new_actual(db: &'a dyn TypeDatabase, resolver: &'a dyn TypeResolver) -> Self {
+        Self {
+            db,
+            resolver,
+            use_declared_variance: false,
             active_defs: FxHashSet::default(),
             cached_def_variances: FxHashMap::default(),
         }
@@ -135,6 +156,12 @@ impl<'a> VarianceComputer<'a> {
     }
 
     fn compute_def_variances(&mut self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        if self.use_declared_variance
+            && let Some(declared) = self.resolver.get_type_param_variance(def_id)
+        {
+            return Some(declared);
+        }
+
         if let Some(cached) = self.cached_def_variances.get(&def_id) {
             return cached.clone();
         }
@@ -384,18 +411,13 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         let shape = self.computer.db.function_shape(FunctionShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
 
-        // For methods (unless suppressed by indexed access context), visit
-        // parameters under method_bivariant_depth so that any target param
-        // occurrences are recorded as COVARIANT (matching tsc's bivariant →
-        // covariant-first behavior). For non-methods, visit normally with
-        // contravariant polarity (strict function types).
-        if shape.is_method && !self.suppress_method_bivariance {
-            self.method_bivariant_depth += 1;
-            for param in &shape.params {
-                self.visit_with_polarity(param.type_id, !current_polarity);
-            }
-            self.method_bivariant_depth -= 1;
-        } else if !shape.is_method {
+        // Method parameters are bivariant in TypeScript compatibility mode.
+        // For generic variance probing, a method-only parameter occurrence
+        // must not make the container covariant or contravariant: both
+        // `Comparer<Animal> = Comparer<Dog>` and the reverse are accepted when
+        // `Comparer<T>` only uses `T` in method parameters. Function-valued
+        // properties still visit parameters contravariantly below.
+        if !shape.is_method {
             for param in &shape.params {
                 self.visit_with_polarity(param.type_id, !current_polarity);
             }
@@ -424,21 +446,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // Call signatures
         for sig in &callable.call_signatures {
             // For methods (see visit_function for full rationale).
-            if sig.is_method && !self.suppress_method_bivariance {
-                self.method_bivariant_depth += 1;
-                for param in &sig.params {
-                    self.visit_with_polarity(param.type_id, !current_polarity);
-                }
-                self.method_bivariant_depth -= 1;
-            } else if !sig.is_method {
+            if !sig.is_method {
                 for param in &sig.params {
                     self.visit_with_polarity(param.type_id, !current_polarity);
                 }
             }
-            // When suppress_method_bivariance && is_method: skip params entirely.
-            // Inside indexed access (bivarianceHack pattern), method params
-            // should not contribute to variance since the indexed access
-            // extracts the method as a plain function type.
             // Return type is covariant
             self.visit_with_polarity(sig.return_type, current_polarity);
             if let Some(this_ty) = sig.this_type {

@@ -1095,12 +1095,13 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     // used method (emit_error_at) is now an inherent method on CheckerState.
     // The TS2322 gateway contract is enforced by the assignability module guards below.
 
-    let call_checker_src = fs::read_to_string("src/checkers/call_checker/mod.rs")
-        .expect("failed to read src/checkers/call_checker/mod.rs");
+    let call_checker_applicability_src =
+        fs::read_to_string("src/checkers/call_checker/applicability.rs")
+            .expect("failed to read src/checkers/call_checker/applicability.rs");
     assert!(
-        call_checker_src.contains("ensure_relation_input_ready(")
-            && call_checker_src.contains("ensure_relation_inputs_ready("),
-        "call_checker should route relation precondition setup through centralized ensure_relation_input(s)_ready helpers"
+        call_checker_applicability_src.contains("ensure_relation_input_ready(")
+            && call_checker_applicability_src.contains("ensure_relation_inputs_ready("),
+        "call_checker/applicability should route relation precondition setup through centralized ensure_relation_input(s)_ready helpers"
     );
 
     let call_boundary_src = fs::read_to_string("src/query_boundaries/checkers/call.rs")
@@ -1613,7 +1614,8 @@ fn checker_files_stay_under_loc_limit() {
         ("state/type_analysis/computed_commonjs.rs", 2787),
         ("checkers/jsx/props/resolution.rs", 1600),
         ("checkers/jsx/orchestration", 2397),
-        ("checkers/call_checker.rs", 2201),
+        ("checkers/call_checker/overload_resolution.rs", 1400),
+        ("checkers/call_checker/candidate_collection.rs", 1100),
         ("types/property_access_helpers.rs", 2104),
         // Bumped from 2500 to 2501 for TS2532/TS18048 attribution fix in
         // `this: undefined` property access (module top-level arrow). The
@@ -2455,6 +2457,10 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "checkers/parameter_checker.rs",
         "types/utilities/return_type.rs",
         "checkers/call_checker/mod.rs",
+        "checkers/call_checker/applicability.rs",
+        "checkers/call_checker/candidate_collection.rs",
+        "checkers/call_checker/diagnostics.rs",
+        "checkers/call_checker/overload_resolution.rs",
         "types/computation/call_inference.rs",
         "dispatch.rs",
         "checkers/jsx/orchestration",
@@ -2535,6 +2541,10 @@ fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
         "state/state_checking/class.rs",
         // Wave 3: call_checker and call_inference migrated skip_flow via TypingRequest
         "checkers/call_checker/mod.rs",
+        "checkers/call_checker/applicability.rs",
+        "checkers/call_checker/candidate_collection.rs",
+        "checkers/call_checker/diagnostics.rs",
+        "checkers/call_checker/overload_resolution.rs",
         "types/computation/call_inference.rs",
         "types/computation/tagged_template.rs",
         "types/class_type/constructor.rs",
@@ -2935,6 +2945,10 @@ fn semantic_diagnostic_reporters_must_route_primary_anchor_selection_through_fin
 fn no_ambient_current_callable_type() {
     let migrated_files = [
         "src/checkers/call_checker/mod.rs",
+        "src/checkers/call_checker/applicability.rs",
+        "src/checkers/call_checker/candidate_collection.rs",
+        "src/checkers/call_checker/diagnostics.rs",
+        "src/checkers/call_checker/overload_resolution.rs",
         "src/types/computation/call.rs",
         "src/types/computation/call_inference.rs",
         "src/types/computation/call_display.rs",

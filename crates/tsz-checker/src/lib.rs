@@ -210,6 +210,9 @@ mod ts2304_tests;
 #[path = "../tests/ts2320_tests.rs"]
 mod ts2320_tests;
 #[cfg(test)]
+#[path = "../tests/ts2322_destructuring_obj_literal_tests.rs"]
+mod ts2322_destructuring_obj_literal_tests;
+#[cfg(test)]
 #[path = "../tests/ts2322_mode_routing_matrix.rs"]
 mod ts2322_mode_routing_matrix;
 #[cfg(test)]
@@ -224,6 +227,9 @@ mod ts2347_tests;
 #[cfg(test)]
 #[path = "../tests/ts2353_tests.rs"]
 mod ts2353_tests;
+#[cfg(test)]
+#[path = "../tests/ts2375_exact_optional_property_display_tests.rs"]
+mod ts2375_exact_optional_property_display_tests;
 #[cfg(test)]
 #[path = "../tests/ts2385_overload_modifier_tests.rs"]
 mod ts2385_overload_modifier_tests;
@@ -385,6 +391,9 @@ mod jsdoc_type_expression_tests;
 #[path = "../tests/jsdoc_type_tag_tests.rs"]
 mod jsdoc_type_tag_tests;
 #[cfg(test)]
+#[path = "tests/jsx_excess_attr_with_spread_display_tests.rs"]
+mod jsx_excess_attr_with_spread_display_tests;
+#[cfg(test)]
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
 #[cfg(test)]
@@ -409,6 +418,9 @@ mod new_typeof_property_tests;
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
+#[path = "tests/property_alias_display_tests.rs"]
+mod property_alias_display_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]
@@ -417,6 +429,9 @@ mod reverse_mapped_inference_tests;
 #[cfg(test)]
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
+#[cfg(test)]
+#[path = "tests/union_call_resolution_tests.rs"]
+mod union_call_resolution_tests;
 #[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;

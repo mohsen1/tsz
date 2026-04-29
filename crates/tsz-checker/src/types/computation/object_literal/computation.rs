@@ -13,7 +13,19 @@ use crate::symbols_domain::name_text::{
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TypeId, Visibility};
+use tsz_solver::{PropertyInfo, TypeId, Visibility};
+
+const SPREAD_DISPLAY_ORDER_OFFSET: u32 = 1_000_000;
+const SPREAD_DISPLAY_ORDER_STRIDE: u32 = 10_000;
+
+fn rebase_spread_display_property_order(props: &[PropertyInfo], base: u32) -> Vec<PropertyInfo> {
+    let mut props = props.to_vec();
+    props.sort_by_key(|prop| prop.declaration_order);
+    for (index, prop) in props.iter_mut().enumerate() {
+        prop.declaration_order = base.saturating_add(index as u32);
+    }
+    props
+}
 
 /// Whether a contextual type is "literal-permissive" — i.e., does not
 /// constrain literal property types and therefore should not suppress
@@ -175,6 +187,7 @@ impl<'a> CheckerState<'a> {
         // `({ x, y: y1, "y": y1 } = obj)` is valid - same property extracted twice.
         let skip_duplicate_check = self.ctx.in_destructuring_target;
         let mut prop_order: u32 = 1;
+        let mut spread_display_order_base = SPREAD_DISPLAY_ORDER_OFFSET;
 
         // Check for ThisType<T> marker in contextual type (Vue 2 / Options API pattern)
         // We need to extract this BEFORE the for loop so it's available for the pop at the end
@@ -2333,7 +2346,14 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
+                        let spread_order_base = spread_display_order_base;
+                        spread_display_order_base =
+                            spread_display_order_base.saturating_sub(SPREAD_DISPLAY_ORDER_STRIDE);
                         for member_props in all_member_props {
+                            let member_props = rebase_spread_display_property_order(
+                                &member_props,
+                                spread_order_base,
+                            );
                             if union_spread_branches.is_empty() {
                                 // First union spread: fork from the main properties
                                 let mut branch = properties.clone();
@@ -2447,13 +2467,19 @@ impl<'a> CheckerState<'a> {
                             named_property_nodes.remove(&prop.name);
                         }
 
-                        for prop in &spread_props {
+                        let spread_props_for_display = rebase_spread_display_property_order(
+                            &spread_props,
+                            spread_display_order_base,
+                        );
+                        spread_display_order_base =
+                            spread_display_order_base.saturating_sub(SPREAD_DISPLAY_ORDER_STRIDE);
+                        for prop in &spread_props_for_display {
                             properties.insert(prop.name, prop.clone());
                         }
 
                         // Also apply non-union spread to any existing union branches
                         for branch in &mut union_spread_branches {
-                            for prop in &spread_props {
+                            for prop in &spread_props_for_display {
                                 branch.insert(prop.name, prop.clone());
                             }
                         }

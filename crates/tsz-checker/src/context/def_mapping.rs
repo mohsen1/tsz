@@ -520,8 +520,12 @@ impl<'a> CheckerContext<'a> {
         body: TypeId,
         params: Vec<tsz_solver::TypeParamInfo>,
     ) {
+        let declared_variances = tsz_solver::TypeResolver::get_type_param_variance(self, def_id);
         self.with_envs_for_register("insert_def_with_params", |env| {
             env.insert_def_with_params(def_id, body, params.clone());
+            if let Some(variances) = declared_variances.clone() {
+                env.insert_declared_variances(def_id, variances);
+            }
         });
     }
 
@@ -905,6 +909,7 @@ impl<'a> CheckerContext<'a> {
         self.create_type_formatter()
             .with_diagnostic_mode()
             .with_strict_null_checks(self.compiler_options.strict_null_checks)
+            .with_exact_optional_property_types(self.compiler_options.exact_optional_property_types)
     }
 
     /// Register a resolved type in the `TypeEnvironment` for both `SymbolRef` and `DefId`.

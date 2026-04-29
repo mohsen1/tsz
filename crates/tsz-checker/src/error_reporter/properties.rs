@@ -344,7 +344,6 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
             && let Some(annotation) = self.declared_type_annotation_text_for_expression(receiver)
-            && annotation.contains('<')
             && annotation
                 .chars()
                 .next()
@@ -352,6 +351,13 @@ impl<'a> CheckerState<'a> {
             && (crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
                 || self.ctx.types.get_display_alias(type_id).is_some())
         {
+            // Use the source-text annotation for both generic instantiations
+            // (`bar: Bar<Foo>` → `Bar<Foo>`) and simple-alias instantiations
+            // (`bar: Bar` where `type Bar = Omit<Foo, "c">` → `Bar`). tsc
+            // preserves the alias name in TS2339 even for non-generic aliases;
+            // tsz's `display_alias` only tracks one level back to the
+            // Application, so without this annotation-bridge we expand to
+            // `Omit<Foo, "c">` instead.
             return self.format_annotation_like_type(&annotation);
         }
         // When the receiver is a type alias whose body resolves to an Enum

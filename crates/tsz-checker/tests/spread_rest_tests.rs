@@ -135,6 +135,38 @@ const merged = { ...obj1, ...obj2 };  // Should be { a: number, b: number, c: nu
 }
 
 #[test]
+fn nested_object_spread_destructuring_ts2339_preserves_tsc_display_order() {
+    let source = r"
+const { c, d, e, f, g } = {
+  ...{
+    ...{
+      ...{
+        c: 0,
+      },
+      d: 0
+    },
+    e: 0
+  },
+  f: 0
+};
+";
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2339 = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2339)
+        .unwrap_or_else(|| panic!("Expected TS2339 for missing g, got {diagnostics:#?}"));
+
+    assert!(
+        ts2339.message_text.contains(
+            "Property 'g' does not exist on type '{ f: number; e: number; d: number; c: number; }'."
+        ),
+        "Expected nested spread receiver display to match tsc order, got: {}",
+        ts2339.message_text
+    );
+}
+
+#[test]
 fn test_rest_parameter() {
     let source = r"
 function sum(...nums: number[]) {

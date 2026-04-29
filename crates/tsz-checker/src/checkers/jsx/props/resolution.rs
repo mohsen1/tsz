@@ -2,6 +2,7 @@
 //! validation, and children excess property diagnostics.
 
 use crate::context::TypingRequest;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::{diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -1022,8 +1023,8 @@ impl<'a> CheckerState<'a> {
                             expected_context_type
                         };
                     // Set contextual type to preserve narrow literal types.
-                    let diag_snap =
-                        function_param_diagnostic_span.map(|_| self.ctx.snapshot_diagnostics());
+                    let spec_snap = function_param_diagnostic_span
+                        .map(|_| DiagnosticSpeculationSnapshot::new(&self.ctx));
                     let actual_type = self.compute_type_of_node_with_request(
                         value_node_idx,
                         &request
@@ -1031,10 +1032,10 @@ impl<'a> CheckerState<'a> {
                             .normal_origin()
                             .contextual(contextual_expected_type),
                     );
-                    if let (Some((start, end)), Some(diag_snap)) =
-                        (function_param_diagnostic_span, diag_snap)
+                    if let (Some((start, end)), Some(snap)) =
+                        (function_param_diagnostic_span, spec_snap)
                     {
-                        self.ctx.rollback_diagnostics_filtered(&diag_snap, |diag| {
+                        snap.rollback_filtered(&mut self.ctx, |diag| {
                             !(matches!(diag.code, 7006 | 7019 | 7031 | 7051)
                                 && diag.start >= start
                                 && diag.start < end)

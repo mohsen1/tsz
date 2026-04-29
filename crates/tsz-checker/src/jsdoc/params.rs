@@ -2201,6 +2201,17 @@ impl<'a> CheckerState<'a> {
                     saw_const = true;
                     continue;
                 }
+                // Skip variance modifier keywords (e.g., `@template in T`,
+                // `@template out T`, `@template in out T`). tsc treats `in`
+                // and `out` as type-parameter modifiers, not names. Without
+                // this skip, downstream consumers see an extra unbound name
+                // like `in` and emit cascading TS2314/TS7006 false positives.
+                // (TS1274 — `'in' modifier can only appear on a type
+                // parameter of a class, interface or type alias` — is
+                // emitted by a separate validator and is not in scope here.)
+                if name == "in" || name == "out" {
+                    continue;
+                }
                 if name
                     .chars()
                     .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())

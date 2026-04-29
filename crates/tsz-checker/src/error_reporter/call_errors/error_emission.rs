@@ -81,6 +81,9 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        if self.try_elaborate_callback_body_diagnostics(idx, param_type) {
+            return;
+        }
         // Run failure analysis to produce elaboration as related information,
         // matching tsc's behavior of emitting TS2741/TS2739/TS2740 etc. as
         // related diagnostics under the primary TS2345.

@@ -335,9 +335,34 @@ impl ParserState {
         can_follow
     }
 
+    /// Speculate past any modifier-like tokens at the current position to test
+    /// whether the parameter name slot is `this`. Used to suppress TS1090 on
+    /// invalid modifiers when tsc instead emits only TS1433 at the parameter
+    /// (e.g. `function f(async this: C)` produces only TS1433 in tsc, not
+    /// TS1090 on `async` followed by TS1433 — but our `parse_error_at`
+    /// position-dedup would swallow the TS1433 if both fire at the same start).
+    pub(crate) fn lookahead_param_name_is_this(&mut self) -> bool {
+        let saved_state = self.scanner.save_state();
+        let saved_token = self.current_token;
+        while self.is_parameter_modifier() {
+            self.next_token();
+        }
+        let result = self.is_token(SyntaxKind::ThisKeyword);
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
+    }
+
     /// Parse parameter modifiers (public, private, protected, readonly, override,
     /// and invalid ones like static/export/declare/async which get TS1090).
-    pub(crate) fn parse_parameter_modifiers(&mut self) -> Option<NodeList> {
+    ///
+    /// `suppress_invalid_modifier_diagnostics` skips TS1090 emission. Caller sets
+    /// it when the parameter name is `this`, since tsc routes that case through
+    /// TS1433 only — and TS1090 would otherwise dedup the TS1433.
+    pub(crate) fn parse_parameter_modifiers(
+        &mut self,
+        suppress_invalid_modifier_diagnostics: bool,
+    ) -> Option<NodeList> {
         let mut modifiers = Vec::new();
         let mut seen_readonly = false;
         let mut seen_accessibility = false;
@@ -351,7 +376,7 @@ impl ParserState {
             // Emit TS1090 for modifiers that cannot appear on parameters.
             // tsc does this in the checker via checkGrammarModifiers, but we
             // emit it here during parsing so we don't need checker support yet.
-            if !self.is_valid_parameter_modifier() {
+            if !self.is_valid_parameter_modifier() && !suppress_invalid_modifier_diagnostics {
                 use tsz_common::diagnostics::diagnostic_codes;
                 let modifier_name = match mod_kind {
                     SyntaxKind::StaticKeyword => "static",
@@ -442,7 +467,12 @@ impl ParserState {
         // Parse parameter decorators and parameter modifiers (public/private/readonly).
         // We store decorators in the same `modifiers` list used elsewhere in the Thin AST.
         let decorators = self.parse_decorators();
-        let param_modifiers = self.parse_parameter_modifiers();
+        // Look ahead once: if the parameter name is `this`, suppress TS1090 inside
+        // modifier parsing so the TS1433 emitted below is not eaten by
+        // `parse_error_at`'s same-start-position dedup. This matches tsc, which
+        // routes `async this:` / `static this:` etc. through TS1433 only.
+        let param_name_is_this = self.lookahead_param_name_is_this();
+        let param_modifiers = self.parse_parameter_modifiers(param_name_is_this);
         let modifiers = match (decorators, param_modifiers) {
             (None, None) => None,
             (Some(list), None) | (None, Some(list)) => Some(list),

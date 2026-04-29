@@ -961,24 +961,42 @@ impl<'a> CheckerState<'a> {
                                 declared_type,
                                 var_decl.initializer,
                             ) {
-                                let skip_generic_outer_error = checker
-                                    .ctx
-                                    .arena
-                                    .get(var_decl.name)
-                                    .and_then(|pattern_node| {
-                                        checker.ctx.arena.get_binding_pattern(pattern_node)
-                                    })
-                                    .is_some_and(|pattern| {
-                                        pattern.elements.nodes.is_empty()
-                                            && var_decl.type_annotation.is_some()
-                                    });
-                                if !skip_generic_outer_error {
-                                    let _ = checker.check_assignable_or_report_generic_at(
-                                        checked_init_type,
-                                        declared_type,
+                                // For object-literal initializers, try per-property elaboration
+                                // before the generic fallback. tsc reports TS2322 per mismatching
+                                // property (e.g. `var {a}: {a: number} = {a: true}` → error at
+                                // `a` in the RHS literal), not a single error at the binding
+                                // pattern. Mirror the same guard used in the non-destructuring
+                                // path (lines below).
+                                let elaborated_obj = checker
+                                    .initializer_reaches_object_literal_through_wrappers(
                                         var_decl.initializer,
-                                        decl_idx,
-                                    );
+                                    )
+                                    && !checker.is_assignable_to(checked_init_type, declared_type)
+                                    && checker
+                                        .try_elaborate_object_literal_properties_for_var_init(
+                                            var_decl.initializer,
+                                            declared_type,
+                                        );
+                                if !elaborated_obj {
+                                    let skip_generic_outer_error = checker
+                                        .ctx
+                                        .arena
+                                        .get(var_decl.name)
+                                        .and_then(|pattern_node| {
+                                            checker.ctx.arena.get_binding_pattern(pattern_node)
+                                        })
+                                        .is_some_and(|pattern| {
+                                            pattern.elements.nodes.is_empty()
+                                                && var_decl.type_annotation.is_some()
+                                        });
+                                    if !skip_generic_outer_error {
+                                        let _ = checker.check_assignable_or_report_generic_at(
+                                            checked_init_type,
+                                            declared_type,
+                                            var_decl.initializer,
+                                            decl_idx,
+                                        );
+                                    }
                                 }
                             }
                         } else {

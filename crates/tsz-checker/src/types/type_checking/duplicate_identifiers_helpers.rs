@@ -823,12 +823,34 @@ impl<'a> CheckerState<'a> {
         let Some(node) = arena.get(resolved_decl_idx) else {
             return flags;
         };
-        if node.kind != syntax_kind_ext::EXPORT_SPECIFIER {
+        if node.kind != syntax_kind_ext::EXPORT_SPECIFIER
+            && node.kind != syntax_kind_ext::IMPORT_SPECIFIER
+        {
             return flags;
         }
 
-        // Duplicate checking for module-augmentation export surfaces should compare against
-        // the underlying exported declaration kind, not the alias wrapper node.
+        // Export-surface checks should compare against the underlying declaration
+        // kind, not the alias wrapper node. This matters for `export { A }`
+        // where local `A` merges an imported type alias with a local value.
+        if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+            && let Some(symbol) = binder.get_symbol(sym_id)
+            && let (Some(module_name), Some(export_name), Some(source_file_idx)) = (
+                symbol.import_module.as_deref(),
+                symbol.import_name.as_deref(),
+                self.ctx.get_file_idx_for_arena(arena),
+            )
+            && let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
+                module_name,
+                export_name,
+                Some(source_file_idx),
+            )
+        {
+            return self
+                .get_cross_file_symbol(target_sym_id)
+                .or_else(|| binder.get_symbol(target_sym_id))
+                .map_or(flags, |sym| sym.flags);
+        }
+
         let resolved_sym_id = self
             .resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
             .unwrap_or(sym_id);

@@ -646,6 +646,14 @@ impl<'a> CheckerState<'a> {
                     let tracked_type_params: FxHashSet<tsz_common::Atom> =
                         type_param_names.iter().copied().collect();
 
+                    let direct_literal_conflict_type_params = self
+                        .direct_round1_literal_conflict_type_params(
+                            &shape,
+                            args,
+                            &round1_arg_types,
+                            &sensitive_args,
+                        );
+
                     // Seed inference from non-sensitive object-literal properties.
                     let mut extracted_round1_partials = vec![false; args.len()];
                     for (i, &arg_idx) in args.iter().enumerate() {
@@ -1224,6 +1232,10 @@ impl<'a> CheckerState<'a> {
                             }
                             let mut contextual_substitution = self
                                 .widen_round2_contextual_substitution(&shape, &round2_substitution);
+                            self.restore_conflicting_direct_literal_substitutions(
+                                &mut contextual_substitution,
+                                &direct_literal_conflict_type_params,
+                            );
                             if !round2_return_context_names.is_empty()
                                 && let Some(param_type) =
                                     shape.params.get(i).map(|p| p.type_id).or_else(|| {
@@ -1494,8 +1506,12 @@ impl<'a> CheckerState<'a> {
 
                         round2_arg_types
                     } else {
-                        let contextual_substitution =
+                        let mut contextual_substitution =
                             self.widen_round2_contextual_substitution(&shape, &round2_substitution);
+                        self.restore_conflicting_direct_literal_substitutions(
+                            &mut contextual_substitution,
+                            &direct_literal_conflict_type_params,
+                        );
                         let round2_contextual_types = self.compute_round2_contextual_types(
                             &shape,
                             round1_instantiated_params.as_deref(),
