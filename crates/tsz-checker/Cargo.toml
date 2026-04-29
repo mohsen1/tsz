@@ -144,6 +144,10 @@ name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 
 [[test]]
+name = "cjs_direct_object_export_no_typeof_import_display_tests"
+path = "tests/cjs_direct_object_export_no_typeof_import_display_tests.rs"
+
+[[test]]
 name = "ts2303_tests"
 path = "tests/ts2303_tests.rs"
 

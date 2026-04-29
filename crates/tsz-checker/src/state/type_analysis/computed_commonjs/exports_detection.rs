@@ -425,6 +425,7 @@ impl<'a> CheckerState<'a> {
             named_exports: props,
             prototype_members: surface.prototype_members,
             has_commonjs_exports: surface.has_commonjs_exports || has_named_props,
+            has_augmented_named_exports: surface.has_augmented_named_exports || has_named_props,
         }
         .to_type_id_with_display_name(
             self,
