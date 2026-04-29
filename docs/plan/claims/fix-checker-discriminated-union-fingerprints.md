@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-discriminated-union-fingerprints`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1797
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance)
 
 ## Intent
@@ -17,15 +17,16 @@ type 'never'` diagnostic in the unreachable `foo1` branch.
 
 ## Files Touched
 
-- `crates/tsz-checker/src/**` or `crates/tsz-solver/src/**` (exact owner to be determined from root-cause investigation)
-- `crates/tsz-checker/tests/**` or `crates/tsz-solver/tests/**` (unit regression test for the owning invariant)
+- `crates/tsz-solver/src/narrowing/discriminants.rs`
+  — keep generic discriminant property members as possible matches because
+  a type parameter can instantiate to the compared literal.
+- `crates/tsz-checker/src/types/property_access_type/resolve.rs`
+  — suppress property-on-`never` diagnostics in unreachable branches when the
+  receiver's declared/no-flow type still has the property.
 
 ## Verification
 
+- `cargo fmt --check`
 - `cargo check --package tsz-checker`
 - `cargo check --package tsz-solver`
-- `cargo build --profile dist-fast --bin tsz`
-- `cargo nextest run --package tsz-checker --lib` or `cargo nextest run --package tsz-solver --lib` depending on touched crates
-- `./scripts/conformance/conformance.sh run --filter "discriminatedUnionTypes2" --verbose`
-- `./scripts/conformance/conformance.sh run --max 200`
-- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep FINAL`
+- `./scripts/conformance/conformance.sh run --test-dir /Users/mohsen/code/tsz/TypeScript/tests/cases --filter discriminatedUnionTypes2 --verbose`

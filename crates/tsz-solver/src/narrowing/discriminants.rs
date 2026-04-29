@@ -453,6 +453,8 @@ impl<'a> NarrowingContext<'a> {
                 .unwrap_or(raw_prop_type);
             let should_keep = if prop_type == literal_value {
                 keep_matching
+            } else if crate::type_queries::contains_generic_type_parameters_db(self.db, prop_type) {
+                keep_matching
             } else if keep_matching {
                 // true branch: keep members where literal <: property_type
                 self.literal_subtype_fast(literal_value, prop_type)
@@ -899,6 +901,12 @@ impl<'a> NarrowingContext<'a> {
                 // Property types like `E.A` may be stored as Lazy(DefId) references
                 // that need to be resolved to their actual enum literal types.
                 let resolved_prop_type = self.resolve_type(prop_type);
+                if crate::type_queries::contains_generic_type_parameters_db(
+                    self.db,
+                    resolved_prop_type,
+                ) {
+                    return Some(true);
+                }
 
                 // CRITICAL: Use is_subtype_of(literal_value, property_type)
                 // NOT the reverse! This was the bug in the reverted commit.
@@ -942,12 +950,26 @@ impl<'a> NarrowingContext<'a> {
                     if prop_types.len() == 1 {
                         let normalized_prop_type =
                             normalize_constructor_property_type(prop_types[0]);
-                        is_subtype_of(self.db, literal_value, normalized_prop_type)
+                        if crate::type_queries::contains_generic_type_parameters_db(
+                            self.db,
+                            normalized_prop_type,
+                        ) {
+                            true
+                        } else {
+                            is_subtype_of(self.db, literal_value, normalized_prop_type)
+                        }
                     } else {
                         let effective_type = self.db.intersection(prop_types);
                         let normalized_effective_type =
                             normalize_constructor_property_type(effective_type);
-                        is_subtype_of(self.db, literal_value, normalized_effective_type)
+                        if crate::type_queries::contains_generic_type_parameters_db(
+                            self.db,
+                            normalized_effective_type,
+                        ) {
+                            true
+                        } else {
+                            is_subtype_of(self.db, literal_value, normalized_effective_type)
+                        }
                     }
                 }
             } else {
