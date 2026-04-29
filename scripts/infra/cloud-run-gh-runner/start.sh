@@ -36,6 +36,7 @@ echo "Registering GitHub runner ${RUNNER_NAME} for ${GITHUB_REPO_URL} labels=${R
   --runnergroup "${RUNNER_GROUP}" \
   --labels "${RUNNER_LABELS}" \
   --work /home/runner/_work \
+  --disableupdate \
   --ephemeral
 
 ./run.sh &
