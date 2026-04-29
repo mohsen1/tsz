@@ -704,3 +704,110 @@ type Cps = MyParams<typeof C>;
         "Expected TS2344 for MyParams<typeof C> (class has no call signatures), got {ts2344_count}. Diagnostics: {diags:?}"
     );
 }
+
+#[test]
+fn test_bigint_unsigned_shift_reports_pair_error() {
+    let source = r"
+let bigInt = 1n;
+1 + 2n;
+1n + 2;
+bigInt >>>= 1n;
+bigInt = bigInt >>> 1n;
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        diags.iter().any(|d| d.code == 2365
+            && d.message_text
+                .contains("Operator '+' cannot be applied to types '1' and '2n'.")),
+        "Expected TS2365 to preserve number/bigint literal display, got diagnostics: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2365
+            && d.message_text
+                .contains("Operator '+' cannot be applied to types '1n' and '2'.")),
+        "Expected TS2365 to preserve bigint/number literal display, got diagnostics: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2365
+            && d.message_text
+                .contains("Operator '>>>=' cannot be applied to types 'bigint' and '1n'.")),
+        "Expected TS2365 for bigint >>>= 1n, got diagnostics: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2365
+            && d.message_text
+                .contains("Operator '>>>' cannot be applied to types 'bigint' and '1n'.")),
+        "Expected TS2365 for bigint >>> 1n, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_invalid_non_bigint_bitwise_result_stays_number() {
+    let source = r#"
+let num: number;
+num = "3" & 5;
+"3" & 5n;
+2n ** false;
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "Invalid non-bigint bitwise expressions should still have number result type, got diagnostics: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2365
+            && d.message_text
+                .contains("Operator '&' cannot be applied to types 'string' and 'bigint'.")),
+        "Expected TS2365 for string & bigint, got diagnostics: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2365
+            && d.message_text
+                .contains("Operator '**' cannot be applied to types 'bigint' and 'boolean'.")),
+        "Expected TS2365 for bigint ** boolean, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_number_bigint_union_operator_display_expands_alias_but_preserves_type_parameter() {
+    let source = r"
+type NumberOrBigint = number | bigint;
+declare let value: NumberOrBigint;
+value + value;
+value << value;
+function getKey<S extends NumberOrBigint>(key: S) {
+    +key;
+    0 + key;
+}
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        diags.iter().any(|d| d.code == 2365
+            && d.message_text.contains(
+                "Operator '+' cannot be applied to types 'number | bigint' and 'number | bigint'."
+            )),
+        "Expected expanded union display for alias + alias, got diagnostics: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2365
+            && d.message_text.contains(
+                "Operator '<<' cannot be applied to types 'number | bigint' and 'number | bigint'."
+            )),
+        "Expected expanded union display for alias << alias, got diagnostics: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2736
+            && d.message_text
+                .contains("Operator '+' cannot be applied to type 'S'.")),
+        "Expected unary + on constrained type parameter to preserve S, got diagnostics: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2365
+            && d.message_text
+                .contains("Operator '+' cannot be applied to types 'number' and 'S'.")),
+        "Expected binary + on constrained type parameter to preserve S, got diagnostics: {diags:?}"
+    );
+}

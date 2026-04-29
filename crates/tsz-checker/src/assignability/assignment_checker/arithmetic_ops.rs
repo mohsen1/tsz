@@ -120,6 +120,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_compound_assignment_type_compatibility(
         &mut self,
         expr_idx: NodeIndex,
+        right_idx: NodeIndex,
         operator: u16,
         left_read_type: TypeId,
         right_type: TypeId,
@@ -158,9 +159,21 @@ impl<'a> CheckerState<'a> {
                         left_read_type,
                     ),
                 );
-                let right_diag = self.widen_enum_member_type(
-                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, right_type),
-                );
+                let right_diag = if operator
+                    == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                    && self.operator_operand_may_include_bigint(right_type)
+                {
+                    self.literal_type_from_initializer(right_idx)
+                        .filter(|&literal| self.operator_operand_may_include_bigint(literal))
+                        .unwrap_or(right_type)
+                } else {
+                    self.widen_enum_member_type(
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            right_type,
+                        ),
+                    )
+                };
                 let left_str = self.format_type(left_diag);
                 let right_str = self.format_type(right_diag);
                 let message = format!(

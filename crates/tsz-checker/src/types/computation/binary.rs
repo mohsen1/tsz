@@ -1489,6 +1489,12 @@ impl<'a> CheckerState<'a> {
                             }
                             if is_comparison_op {
                                 TypeId::BOOLEAN
+                            } else if matches!(op_str, "&" | "|" | "^" | "<<" | ">>" | ">>>") {
+                                self.operator_error_result_type(
+                                    left_type,
+                                    right_type,
+                                    TypeId::NUMBER,
+                                )
                             } else {
                                 TypeId::UNKNOWN
                             }
@@ -1847,7 +1853,7 @@ impl<'a> CheckerState<'a> {
                         //   see `any` rather than a misleading concrete type.
                         // - Arithmetic without error (comparable) → number
                         if !is_comparable && is_arithmetic_op {
-                            TypeId::ANY
+                            self.operator_error_result_type(left_type, right_type, TypeId::NUMBER)
                         } else if is_arithmetic_op {
                             TypeId::NUMBER
                         } else {
