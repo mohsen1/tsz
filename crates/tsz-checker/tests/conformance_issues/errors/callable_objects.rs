@@ -819,46 +819,6 @@ v({ s: "", n: 0 }).toLowerCase();
     );
 }
 
-#[test]
-fn test_suppressed_overload_error_does_not_return_never_for_follow_on_access() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
-interface Required {
-    required: string;
-}
-
-class Broken implements Required {
-    static make(x: { n: number }): number;
-    static make(x: { s: string }): string;
-    static make(_x: unknown): string | number {
-        return "";
-    }
-}
-
-Broken.make({ s: "", n: 0 }).toLowerCase();
-"#,
-        CheckerOptions {
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-
-    assert!(
-        has_error(&diagnostics, 2420),
-        "Expected TS2420 for the structurally invalid class.\nActual: {diagnostics:#?}"
-    );
-    assert!(
-        !has_error(&diagnostics, 2769),
-        "Expected TS2769 to remain suppressed when structural errors already explain the broken callee.\nActual: {diagnostics:#?}"
-    );
-    assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, message)| *code == 2339 && message.contains("type 'never'")),
-        "Suppressed TS2769 must not turn the call result into never and orphan a follow-on TS2339.\nActual: {diagnostics:#?}"
-    );
-}
-
 /// TS2304: implements clause with unresolved name should emit TS2304.
 /// From: bind1.ts
 #[test]

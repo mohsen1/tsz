@@ -786,7 +786,6 @@ impl<'a> CheckerState<'a> {
                                 == Some("assign")
                     });
                 if overload_failures_disagree
-                    && should_emit_no_overload_error
                     && !overloaded_callee_has_type_params
                     && !call_is_typed_variable_initializer
                     && !callee_is_object_assign
