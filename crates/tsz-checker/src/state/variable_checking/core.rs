@@ -1502,6 +1502,21 @@ impl<'a> CheckerState<'a> {
                 // shape, ensuring `var e = E; var e: typeof E;` is compatible.
                 self.annotation_ts2403_type(var_decl.type_annotation, final_type)
             };
+            let annotation_names_global_augmentation = var_decl.initializer.is_none()
+                && var_decl.type_annotation.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(var_decl.type_annotation)
+                    .and_then(|node| self.ctx.arena.get_type_ref(node))
+                    .and_then(|type_ref| self.ctx.arena.get(type_ref.type_name))
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_some_and(|ident| {
+                        self.ctx
+                            .binder
+                            .global_augmentations
+                            .contains_key(ident.escaped_text.as_str())
+                    });
             // Variables without an initializer/annotation can still get a contextual type in some
             // constructs (notably `for-in` / `for-of` initializers). In those cases, the symbol
             // type may already be cached from the contextual typing logic; prefer that over the
@@ -2015,6 +2030,7 @@ impl<'a> CheckerState<'a> {
                                                 && !is_js_require_binding
                                                 && !is_bare_declaration
                                                 && !is_non_checked_js
+                                                && !annotation_names_global_augmentation
                                                 && !self.are_var_decl_types_compatible(
                                                     lib_type,
                                                     raw_declared_type,
