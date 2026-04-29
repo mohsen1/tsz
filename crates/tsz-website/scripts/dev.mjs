@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
+const repoRoot = path.resolve(root, "..", "..");
 
 function spawnChild(command, args) {
   return spawn(command, args, {
@@ -37,6 +38,10 @@ function shutdown(code) {
 
 process.on("SIGINT", () => shutdown(130));
 process.on("SIGTERM", () => shutdown(143));
+
+if (process.env.TSZ_WEBSITE_SKIP_BENCH_PREPARE !== "1") {
+  await runOnce("bash", [path.join(repoRoot, "scripts", "start-website.sh"), "--prepare-only"]);
+}
 
 await runOnce(process.execPath, [path.join(root, "scripts", "sync-docs.mjs")]);
 

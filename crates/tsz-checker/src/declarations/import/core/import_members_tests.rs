@@ -1,10 +1,11 @@
-use super::*;
 use crate::context::{CheckerOptions, ScriptTarget};
 use crate::module_resolution::build_module_resolution_maps;
+use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
 
 #[test]
 fn check_imported_members_emits_ts18042_for_default_interface_import_in_js() {
@@ -48,7 +49,7 @@ import TruffleContract from "./dep";
 
     let all_arenas = Arc::new(arenas);
     let all_binders = Arc::new(binders);
-    let types = tsz_solver::TypeInterner::new();
+    let types = TypeInterner::new();
     let mut checker = CheckerState::new(
         all_arenas[entry_idx].as_ref(),
         all_binders[entry_idx].as_ref(),

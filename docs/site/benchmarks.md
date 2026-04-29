@@ -7,8 +7,6 @@ permalink: /benchmarks/index.html
 
 # Benchmarks
 
-<p class="subtitle">A practical snapshot of tsz vs tsgo, with focus on speed for large TypeScript projects.</p>
-
 ## Summary
 
 This page is a quick progress signal for relative performance across benchmark categories. It compares tsz against tsgo, and lower time is faster.

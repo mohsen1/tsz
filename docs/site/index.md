@@ -1,11 +1,13 @@
 ---
 title: tsz
+browser_title: Home
 layout: layouts/base.njk
 page_class: home
 permalink: /index.html
+extra_scripts: '<script src="/home.js" defer></script>'
 ---
 
-# `tsz`
+<h1 class="home-logo-title"><span class="tsz-logo tsz-logo-hero" role="img" aria-label="tsz"></span></h1>
 
 <p class="subtitle"><code>tsz</code> is a TypeScript checker and language service written in Rust. It is designed to outperform <code>tsgo</code>, and beyond speed, <code>tsz</code> also targets a <a href="/sound-mode">Sound Mode</a> for stricter type-checking.</p>
 
@@ -17,10 +19,6 @@ permalink: /index.html
 ## Performance
 
 {{ benchmark_mean_chart | safe }}
-
-<div class="benchmark-links-block">
-  <p class="bench-category-title"><a href="/benchmarks/">Explore all benchmarks</a></p>
-</div>
 
 ## Progress
 
@@ -53,5 +51,3 @@ Currently targeting **TypeScript `{{ metrics.ts_version }}`**
 </div>
 
 <p class="loc-stat">{{ metrics.total_loc }} lines of Rust across {{ metrics.num_crates }} crates</p>
-
-Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match `tsc` in error code, file, line, column, and message.
