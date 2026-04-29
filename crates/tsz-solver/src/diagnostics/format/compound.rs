@@ -571,6 +571,7 @@ impl<'a> TypeFormatter<'a> {
             .map(|&m| self.format_union_member(m))
             .collect();
         let (ordered, formatted) = Self::remove_redundant_intersection_displays(ordered, formatted);
+        let (ordered, formatted) = Self::order_boolean_literal_union_displays(ordered, formatted);
         // Disambiguate duplicate display names by adding namespace qualification.
         // tsc shows `Foo.Yep | Bar.Yep` instead of `Yep | Yep` when two different
         // types share the same name in different namespaces.
@@ -610,6 +611,46 @@ impl<'a> TypeFormatter<'a> {
             }
         }
         (kept_ordered, kept_formatted)
+    }
+
+    fn order_boolean_literal_union_displays(
+        ordered: Vec<TypeId>,
+        formatted: Vec<String>,
+    ) -> (Vec<TypeId>, Vec<String>) {
+        if formatted.len() < 2 {
+            return (ordered, formatted);
+        }
+
+        let ranks: Vec<_> = formatted
+            .iter()
+            .map(|display| {
+                let has_false = display.contains("false");
+                let has_true = display.contains("true");
+                match (has_false, has_true) {
+                    (true, false) => Some(0u8),
+                    (false, true) => Some(1u8),
+                    _ => None,
+                }
+            })
+            .collect();
+        if !ranks.iter().any(Option::is_some) {
+            return (ordered, formatted);
+        }
+
+        let mut indexed: Vec<_> = ordered
+            .into_iter()
+            .zip(formatted)
+            .zip(ranks)
+            .enumerate()
+            .map(|(idx, ((type_id, display), rank))| (idx, rank.unwrap_or(2), type_id, display))
+            .collect();
+        indexed.sort_by_key(|&(idx, rank, _, _)| (rank, idx));
+        let ordered = indexed.iter().map(|(_, _, type_id, _)| *type_id).collect();
+        let formatted = indexed
+            .into_iter()
+            .map(|(_, _, _, display)| display)
+            .collect();
+        (ordered, formatted)
     }
 
     fn collapse_same_enum_members_for_display(&mut self, members: &[TypeId]) -> Option<String> {

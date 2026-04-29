@@ -1,9 +1,9 @@
-# [WIP] fix(solver): avoid false TS2741 in recursive conditional BuildTree
+# fix(solver): avoid false TS2741 in recursive conditional BuildTree
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/recursive-conditional-buildtree-ts2741`
 - **PR**: #1709
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: Conformance (Workstream 1)
 
 ## Intent
@@ -17,19 +17,20 @@ instantiation / fuel behavior.
 
 ## Files Touched
 
-- `crates/tsz-solver/src/**` (expected; exact files after diagnosis)
-- `crates/tsz-checker/tests/**` or `crates/tsz-solver/tests/**` (unit
-  regression test)
+- `crates/tsz-solver/src/instantiation/instantiate.rs`
+- `crates/tsz-solver/src/diagnostics/format/compound.rs`
+- `crates/tsz-checker/src/error_reporter/core/diagnostic_source.rs`
+- `crates/tsz-checker/tests/conditional_infer_tests.rs`
 
 ## Verification
 
-- `cargo check --package tsz-checker`
 - `cargo check --package tsz-solver`
-- `cargo build --profile dist-fast --bin tsz`
-- `cargo nextest run --package tsz-checker --lib`
-- `cargo nextest run --package tsz-solver --lib`
-- `./scripts/conformance/conformance.sh run --filter "excessPropertyCheckIntersectionWithRecursiveType" --verbose`
-- `./scripts/conformance/conformance.sh run --max 200`
+- `cargo nextest run --package tsz-checker --test conditional_infer_tests test_generic_object_index_with_instantiated_conditional_key test_conditional_key_selects_depth_terminal_branch test_build_tree_no_false_ts2741 --run-ignored all`
+- `cargo fmt --check`
+- `cargo check --package tsz-checker`
+- `cargo nextest run --package tsz-checker --test conditional_infer_tests`
+- `CARGO_INCREMENTAL=0 cargo build --target-dir .target --profile dist-fast -p tsz-cli -p tsz-conformance`
+- `.target/dist-fast/tsz-conformance --test-dir /Users/mohsen/code/tsz/TypeScript/tests/cases --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary .target/dist-fast/tsz --workers 16 --print-test --verbose --print-fingerprints --filter excessPropertyCheckIntersectionWithRecursiveType` (1/1 pass)
 
 ## Investigation Notes
 
@@ -41,3 +42,12 @@ instantiation / fuel behavior.
   behaving as if the instantiated key selects `0` when `I` has length `2`.
 - Raising evaluation depth/fuel limits did not change the failure, which makes a
   plain recursion-limit fix unlikely.
+
+## Resolution
+
+The instantiator was eagerly reducing indexed-access types with a `NoopResolver`.
+For a key such as `Length<I> extends N ? 1 : 0`, that can happen after `I` and
+`N` are substituted but before the `Length` alias application is resolvable,
+causing the conditional key to take the false branch. Resolver-dependent
+indexed accesses are now deferred to the outer evaluator, which has the real
+resolver and can expand `Length<I>` correctly.
