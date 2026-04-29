@@ -855,7 +855,6 @@ impl<'a> CheckerState<'a> {
                     &message,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
-                return;
             }
         }
 
