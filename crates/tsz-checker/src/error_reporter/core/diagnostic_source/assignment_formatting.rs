@@ -476,6 +476,34 @@ impl<'a> CheckerState<'a> {
         if display_target == target
             && let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
         {
+            if crate::query_boundaries::common::is_index_access_type(self.ctx.types, display_target)
+                && Self::should_evaluate_indexed_access_annotation_for_assignment(&display)
+            {
+                let evaluated = self.evaluate_type_for_assignability(display_target);
+                if evaluated != display_target && evaluated != TypeId::ERROR {
+                    if let Some(members) =
+                        crate::query_boundaries::common::union_members(self.ctx.types, evaluated)
+                    {
+                        let mut formatter = self
+                            .ctx
+                            .create_diagnostic_type_formatter()
+                            .with_display_properties()
+                            .with_preserve_optional_parameter_surface_syntax(true);
+                        return members
+                            .iter()
+                            .map(|&member| formatter.format(member).into_owned())
+                            .collect::<Vec<_>>()
+                            .join(" | ");
+                    }
+                    let mut formatter = self
+                        .ctx
+                        .create_diagnostic_type_formatter()
+                        .with_display_properties()
+                        .with_skip_application_alias_names()
+                        .with_preserve_optional_parameter_surface_syntax(true);
+                    return formatter.format(evaluated).into_owned();
+                }
+            }
             let preserve_literal_surface = self.target_preserves_literal_surface(source);
             let fallback = if preserve_literal_surface {
                 self.format_type_diagnostic(target)
@@ -603,6 +631,10 @@ impl<'a> CheckerState<'a> {
                 fallback
             }
         }
+    }
+
+    fn should_evaluate_indexed_access_annotation_for_assignment(display: &str) -> bool {
+        display.contains("[keyof ")
     }
 
     pub(in crate::error_reporter) fn format_nested_assignment_source_type_for_diagnostic(

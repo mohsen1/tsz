@@ -1119,6 +1119,7 @@ impl<'a> CheckerState<'a> {
         let lazy_evaluated_param_type = self.evaluate_contextual_type(lazy_resolved_param_type);
         let assignability_param_type = self.evaluate_type_for_assignability(effective_param_type);
         let lazy_member_param_type = self.resolve_lazy_members_in_union(assignability_param_type);
+        let mut narrowed_by_discriminant = false;
         for candidate in [
             effective_param_type,
             contextual_param_type,
@@ -1135,6 +1136,7 @@ impl<'a> CheckerState<'a> {
             );
             if narrowed != candidate {
                 effective_param_type = narrowed;
+                narrowed_by_discriminant = true;
                 break;
             }
         }
@@ -1173,6 +1175,9 @@ impl<'a> CheckerState<'a> {
             });
         if had_excess_property {
             return true;
+        }
+        if narrowed_by_discriminant && self.target_has_indexed_access_surface(param_type) {
+            return false;
         }
 
         let mut elaborated = false;
@@ -1850,6 +1855,26 @@ impl<'a> CheckerState<'a> {
         }
 
         elaborated
+    }
+
+    fn target_has_indexed_access_surface(&self, target_type: TypeId) -> bool {
+        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, target_type) {
+            return true;
+        }
+
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, target_type)
+            && let Some(def_id) = crate::query_boundaries::common::get_application_lazy_def_id(
+                self.ctx.types,
+                target_type,
+            )
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::TypeAlias
+            && let Some(body) = def.body
+        {
+            return crate::query_boundaries::common::is_index_access_type(self.ctx.types, body);
+        }
+
+        false
     }
 
     /// Check whether the target type has required properties that are not present
