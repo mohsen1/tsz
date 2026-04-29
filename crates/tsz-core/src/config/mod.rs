@@ -2896,12 +2896,20 @@ fn load_tsconfig_inner_with_diagnostics(
 
         // TS5102: When verbatimModuleSyntax is set in the child config and base configs
         // contain removed options that it replaces, TSC emits TS5102 at the child's
-        // verbatimModuleSyntax key position for each replaced option.
+        // `compilerOptions` key position for each replaced option (matching tsc's
+        // anchor on the property whose presence introduces the removed-option
+        // surface, not on `verbatimModuleSyntax` itself).
         let stripped = strip_jsonc(&source);
         let child_has_vms = stripped.contains("\"verbatimModuleSyntax\"");
         if child_has_vms && !base_removed_options.is_empty() {
-            let start = find_key_offset_in_source(&stripped, "verbatimModuleSyntax");
-            let key_len = "verbatimModuleSyntax".len() as u32 + 2;
+            // Anchor at the child's `compilerOptions` key, matching tsc's
+            // `/tsconfig.json(L,C): error TS5102 …` baseline output.
+            let key = "compilerOptions";
+            let start = stripped
+                .find(&format!("\"{key}\""))
+                .map(|p| p as u32)
+                .unwrap_or(0);
+            let key_len = key.len() as u32 + 2;
             for opt_name in &base_removed_options {
                 let msg = format_message(
                     diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
@@ -4826,6 +4834,60 @@ mod tests {
             assert!(
                 codes.contains(&5102),
                 "Should emit TS5102 for removed option '{opt}' even with ignoreDeprecations '6.0', got: {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ts5102_inherited_from_extends_anchors_at_child_compiler_options_key() {
+        // Repro from `verbatimModuleSyntaxCompat3.ts`. When the extending
+        // tsconfig.json uses `verbatimModuleSyntax` and the base tsconfig
+        // contains removed options (`preserveValueImports`,
+        // `importsNotUsedAsValues`), tsc anchors TS5102 at the *child's*
+        // `"compilerOptions"` key — not at `"verbatimModuleSyntax"` which
+        // tsz used to incorrectly anchor on. Reproducing requires real
+        // tempfiles because the inheritance resolution reads from disk.
+        use tempfile::tempdir;
+        let temp = tempdir().expect("create temp dir");
+        let base_path = temp.path().join("tsconfig.base.json");
+        let child_path = temp.path().join("tsconfig.json");
+        std::fs::write(
+            &base_path,
+            r#"{
+    "compilerOptions": {
+        "isolatedModules": true,
+        "preserveValueImports": true,
+        "importsNotUsedAsValues": "error"
+    }
+}"#,
+        )
+        .expect("write base");
+        let child_source = r#"{
+    "extends": "./tsconfig.base.json",
+    "compilerOptions": {
+        "verbatimModuleSyntax": true
+    }
+}"#;
+        std::fs::write(&child_path, child_source).expect("write child");
+
+        let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load");
+        let ts5102: Vec<&Diagnostic> = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 5102)
+            .collect();
+        assert!(
+            ts5102.len() >= 2,
+            "Expected at least 2 TS5102 (preserveValueImports + importsNotUsedAsValues), got: {ts5102:?}"
+        );
+        // Each TS5102 must anchor at the child's `"compilerOptions"` key.
+        let expected_start = child_source
+            .find("\"compilerOptions\"")
+            .expect("compilerOptions in child source") as u32;
+        for diag in &ts5102 {
+            assert_eq!(
+                diag.start, expected_start,
+                "Inherited TS5102 must anchor at child's `\"compilerOptions\"` key (start={expected_start}), got: {diag:?}"
             );
         }
     }
