@@ -945,7 +945,14 @@ fn is_nested_same_wrapper_assignability_message(message: &str) -> bool {
     let Some((_, source_args)) = source.split_once('<') else {
         return false;
     };
-    source_args
-        .trim_start()
-        .starts_with(&format!("{source_head}<"))
+    let prefix = format!("{source_head}<");
+    // Source must be Wrapper<Wrapper<...>> (source arg starts with the same head)
+    if !source_args.trim_start().starts_with(&prefix) {
+        return false;
+    }
+    // Only suppress when the target arg does NOT also start with the same wrapper.
+    // e.g., PromiseLike<PromiseLike<T>> vs PromiseLike<T> → suppress (target arg = T)
+    // but Box<Box<number>> vs Box<Box<string>> → keep (target arg starts with Box<)
+    let target_args = target.split_once('<').map(|(_, rest)| rest).unwrap_or("");
+    !target_args.trim_start().starts_with(&prefix)
 }
