@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/recursive-conditional-buildtree-ts2741`
-- **PR**: TBD
+- **PR**: #1709
 - **Status**: claim
 - **Workstream**: Conformance (Workstream 1)
 
