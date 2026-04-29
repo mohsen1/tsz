@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-paren-alias-symbol-display-parity`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1738
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance and Fingerprints)
 
 ## Intent
