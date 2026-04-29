@@ -2067,7 +2067,10 @@ impl ParserState {
                         let rescanned = self.scanner.re_scan_hash_token();
                         self.current_token = rescanned;
                     }
-                    let name = if self.is_token(SyntaxKind::PrivateIdentifier) {
+                    let is_private_identifier = self.is_token(SyntaxKind::PrivateIdentifier);
+                    let is_optional_chain_continuation =
+                        is_private_identifier && self.is_optional_chain_expression(expr);
+                    let name = if is_private_identifier {
                         self.parse_private_identifier()
                     } else if self.is_token(SyntaxKind::HashToken) {
                         // Bare `#` after `.` — emit TS1127 like tsc's scanner does.
@@ -2114,6 +2117,15 @@ impl ParserState {
                         );
                         NodeIndex::NONE
                     };
+                    if is_optional_chain_continuation && let Some(name_node) = self.arena.get(name)
+                    {
+                        self.parse_error_at(
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                            tsz_common::diagnostics::diagnostic_messages::AN_OPTIONAL_CHAIN_CANNOT_CONTAIN_PRIVATE_IDENTIFIERS,
+                            tsz_common::diagnostics::diagnostic_codes::AN_OPTIONAL_CHAIN_CANNOT_CONTAIN_PRIVATE_IDENTIFIERS,
+                        );
+                    }
                     let end_pos = self.token_end();
 
                     expr = self.arena.add_access_expr(
@@ -2490,6 +2502,31 @@ impl ParserState {
         }
 
         expr
+    }
+
+    fn is_optional_chain_expression(&self, expr: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(expr) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.arena
+                    .get_access_expr(node)
+                    .is_some_and(|access| access.question_dot_token)
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if node.is_optional_chain() {
+                    return true;
+                }
+                self.arena
+                    .get_call_expr(node)
+                    .is_some_and(|call| self.is_optional_chain_expression(call.expression))
+            }
+            _ => false,
+        }
     }
 
     // Parse argument list
