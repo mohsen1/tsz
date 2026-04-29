@@ -65,11 +65,14 @@ pub struct SkeletonSymbol {
     pub is_import_alias: bool,
     /// Import module specifier, if this is an import alias.
     pub import_module: Option<String>,
-    /// Heritage clause names (`extends` / `implements`) from the declaration.
+    /// Fingerprint of heritage clause names (`extends` / `implements`).
     ///
-    /// Only populated for class and interface symbols. Changes to heritage
-    /// references affect cross-file type resolution and must trigger re-merge.
-    pub heritage_names: Vec<String>,
+    /// The skeleton only needs heritage data to detect topology changes. Store
+    /// a compact hash instead of cloning every heritage name into the retained
+    /// skeleton index.
+    pub heritage_fingerprint: u64,
+    /// Number of heritage names represented by `heritage_fingerprint`.
+    pub heritage_count: u32,
 }
 
 /// Per-declaration augmentation entry recorded inside `SkeletonAugmentation`.
@@ -268,10 +271,8 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
             continue;
         }
         if let Some(sym) = result.symbols.get(sym_id) {
-            let heritage_names = result
-                .semantic_defs
-                .get(&sym_id)
-                .map_or_else(Vec::new, |def| def.heritage_names());
+            let (heritage_fingerprint, heritage_count) =
+                semantic_def_heritage_fingerprint(result.semantic_defs.get(&sym_id));
             symbols.push(SkeletonSymbol {
                 name: name.clone(),
                 flags: sym.flags,
@@ -282,7 +283,8 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
                 is_lib_origin: result.lib_symbol_ids.contains(&sym_id),
                 is_import_alias: (sym.flags & crate::binder::symbol_flags::ALIAS) != 0,
                 import_module: sym.import_module.clone(),
-                heritage_names,
+                heritage_fingerprint,
+                heritage_count,
             });
         }
     }
@@ -296,10 +298,8 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
             }
             if let Some(sym) = result.symbols.get(sym_id) {
                 seen_names.insert(name.clone());
-                let heritage_names = result
-                    .semantic_defs
-                    .get(&sym_id)
-                    .map_or_else(Vec::new, |def| def.heritage_names());
+                let (heritage_fingerprint, heritage_count) =
+                    semantic_def_heritage_fingerprint(result.semantic_defs.get(&sym_id));
                 symbols.push(SkeletonSymbol {
                     name: name.clone(),
                     flags: sym.flags,
@@ -310,7 +310,8 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
                     is_lib_origin: result.lib_symbol_ids.contains(&sym_id),
                     is_import_alias: (sym.flags & crate::binder::symbol_flags::ALIAS) != 0,
                     import_module: sym.import_module.clone(),
-                    heritage_names,
+                    heritage_fingerprint,
+                    heritage_count,
                 });
             }
         }
@@ -508,6 +509,24 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
     };
     skeleton.fingerprint = skeleton.compute_fingerprint();
     skeleton
+}
+
+fn semantic_def_heritage_fingerprint(
+    entry: Option<&crate::binder::SemanticDefEntry>,
+) -> (u64, u32) {
+    let Some(entry) = entry else {
+        return (0, 0);
+    };
+    if entry.extends_names.is_empty() && entry.implements_names.is_empty() {
+        return (0, 0);
+    }
+
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    entry.extends_names.hash(&mut hasher);
+    entry.implements_names.hash(&mut hasher);
+    let count = entry.extends_names.len() + entry.implements_names.len();
+    (hasher.finish(), count as u32)
 }
 
 /// A merge candidate discovered during skeleton reduction.
@@ -1733,9 +1752,6 @@ impl FileSkeleton {
             if let Some(ref m) = sym.import_module {
                 size += m.capacity();
             }
-            for h in &sym.heritage_names {
-                size += h.capacity();
-            }
         }
         for aug in &self.global_augmentations {
             size += std::mem::size_of::<SkeletonAugmentation>();
@@ -1980,8 +1996,8 @@ mod tests {
     }
 
     #[test]
-    fn heritage_names_affect_skeleton_fingerprint() {
-        // Two skeletons identical except for heritage_names on a symbol
+    fn heritage_fingerprint_affects_skeleton_fingerprint() {
+        // Two skeletons identical except for heritage fingerprint on a symbol
         // should produce different fingerprints.
         let sym_no_heritage = SkeletonSymbol {
             name: "Foo".to_string(),
@@ -1993,10 +2009,12 @@ mod tests {
             is_lib_origin: false,
             is_import_alias: false,
             import_module: None,
-            heritage_names: vec![],
+            heritage_fingerprint: 0,
+            heritage_count: 0,
         };
         let sym_with_heritage = SkeletonSymbol {
-            heritage_names: vec!["Bar".to_string()],
+            heritage_fingerprint: 42,
+            heritage_count: 1,
             ..sym_no_heritage.clone()
         };
 
@@ -2042,12 +2060,12 @@ mod tests {
 
         assert_ne!(
             skel1.fingerprint, skel2.fingerprint,
-            "Heritage names should change the skeleton fingerprint"
+            "Heritage fingerprint should change the skeleton fingerprint"
         );
     }
 
     #[test]
-    fn heritage_names_included_in_skeleton_symbol_hash() {
+    fn heritage_fingerprint_included_in_skeleton_symbol_hash() {
         use std::hash::{Hash, Hasher};
 
         let sym1 = SkeletonSymbol {
@@ -2060,10 +2078,12 @@ mod tests {
             is_lib_origin: false,
             is_import_alias: false,
             import_module: None,
-            heritage_names: vec![],
+            heritage_fingerprint: 0,
+            heritage_count: 0,
         };
         let sym2 = SkeletonSymbol {
-            heritage_names: vec!["Base".to_string(), "Iface".to_string()],
+            heritage_fingerprint: 99,
+            heritage_count: 2,
             ..sym1.clone()
         };
 
@@ -2076,7 +2096,7 @@ mod tests {
         assert_ne!(
             hash_of(&sym1),
             hash_of(&sym2),
-            "Different heritage_names should produce different hashes"
+            "Different heritage fingerprints should produce different hashes"
         );
     }
 
@@ -2093,10 +2113,12 @@ mod tests {
             is_lib_origin: false,
             is_import_alias: false,
             import_module: None,
-            heritage_names: vec!["OldBase".to_string()],
+            heritage_fingerprint: 10,
+            heritage_count: 1,
         };
         let sym2 = SkeletonSymbol {
-            heritage_names: vec!["NewBase".to_string()],
+            heritage_fingerprint: 20,
+            heritage_count: 1,
             ..sym1.clone()
         };
 

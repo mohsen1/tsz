@@ -2114,14 +2114,17 @@ pub fn create_definition_store_from_binder(
 /// `MergedProgram` with unified symbol space
 pub fn merge_bind_results(results: Vec<BindResult>) -> MergedProgram {
     let refs: Vec<&BindResult> = results.iter().collect();
-    merge_bind_results_ref(&refs)
+    let program = merge_bind_results_ref(&refs);
+    drop(refs);
+    drop(results);
+    program
 }
 
 pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // Extract file skeletons from pre-merge bind results and reduce them into a
     // global index. This runs before the legacy merge so we capture the original
     // per-file symbol/augmentation/re-export data without any remapping.
-    let skeletons: Vec<FileSkeleton> = results.iter().map(|r| extract_skeleton(r)).collect();
+    let skeletons = extract_skeletons_for_merge(results);
     let skeleton_index = reduce_skeletons(&skeletons);
     let dep_graph = DepGraph::build_simple(&skeletons);
 
@@ -3567,6 +3570,27 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         dep_graph: Some(dep_graph),
         pre_merge_bind_total_bytes,
     }
+}
+
+fn extract_skeletons_for_merge(results: &[&BindResult]) -> Vec<FileSkeleton> {
+    const PARALLEL_SKELETON_FILE_THRESHOLD: usize = 128;
+
+    if results.len() < PARALLEL_SKELETON_FILE_THRESHOLD {
+        return results.iter().map(|r| extract_skeleton(r)).collect();
+    }
+
+    extract_skeletons_for_merge_large(results)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn extract_skeletons_for_merge_large(results: &[&BindResult]) -> Vec<FileSkeleton> {
+    ensure_rayon_global_pool();
+    results.par_iter().map(|r| extract_skeleton(r)).collect()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn extract_skeletons_for_merge_large(results: &[&BindResult]) -> Vec<FileSkeleton> {
+    results.iter().map(|r| extract_skeleton(r)).collect()
 }
 
 /// Full pipeline: Parse → Bind (parallel) → Merge (sequential)
