@@ -156,8 +156,14 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|p| self.ctx.types.resolve_atom(p.name))
                 .collect();
+            // props_shape.properties is sorted by atom for canonical interning;
+            // walk in declaration order so the missing list matches tsc, which
+            // lists missing properties in source declaration order.
+            let mut props_by_decl: Vec<&tsz_solver::PropertyInfo> =
+                props_shape.properties.iter().collect();
+            props_by_decl.sort_by_key(|p| p.declaration_order);
             let mut missing_props: Vec<String> = Vec::new();
-            for req_prop in &props_shape.properties {
+            for req_prop in props_by_decl {
                 if req_prop.optional {
                     continue;
                 }
