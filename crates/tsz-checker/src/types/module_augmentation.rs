@@ -165,6 +165,53 @@ impl<'a> CheckerState<'a> {
         names
     }
 
+    /// Check whether any module augmentation for `module_spec` provides type
+    /// parameters for `interface_name`. This handles the case where a non-generic
+    /// symbol is imported from a module, and a `declare module '...'` augmentation
+    /// adds a generic type alias or interface with type parameters.
+    ///
+    /// This is consulted by `validate_type_reference_type_arguments` to suppress
+    /// false-positive TS2315 ("Type 'X' is not generic") when the base symbol has
+    /// no type parameters but a module augmentation adds them.
+    pub(crate) fn module_augmentation_has_type_params(
+        &self,
+        module_spec: &str,
+        interface_name: &str,
+    ) -> bool {
+        let augs = self.get_module_augmentation_declarations(module_spec, interface_name);
+        for aug in &augs {
+            if let Some(arena) = &aug.arena
+                && let Some(node) = arena.get(aug.node)
+            {
+                if let Some(ta) = arena.get_type_alias(node)
+                    && ta
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|tp| !tp.nodes.is_empty())
+                {
+                    return true;
+                }
+                if let Some(iface) = arena.get_interface(node)
+                    && iface
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|tp| !tp.nodes.is_empty())
+                {
+                    return true;
+                }
+                if let Some(class) = arena.get_class(node)
+                    && class
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|tp| !tp.nodes.is_empty())
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Get module augmentation declarations for a given module specifier and interface name.
     ///
     /// This function looks up interface/type declarations inside `declare module 'x'` blocks
@@ -1137,5 +1184,117 @@ impl<'a> CheckerState<'a> {
                 env.insert_def(aug_def_id, merged_type);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::state::CheckerState;
+    use std::sync::Arc;
+    use tsz_binder::{BinderState, ModuleAugmentation};
+    use tsz_parser::parser::{NodeArena, ParserState};
+
+    #[test]
+    fn module_augmentation_has_type_params_detects_type_alias_with_params() {
+        // Set up a binder with a module augmentation that has a generic type alias.
+        let mut binder = BinderState::new();
+        let aug_name = "Row2".to_string();
+
+        // Parse a type alias `type Row2<T> = {}` to get a node with type params.
+        let source = "type Row2<T> = {}";
+        let mut parser = ParserState::new("test.d.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        let arena = Arc::new(parser.into_arena());
+
+        // Find the type alias declaration node
+        let sf = arena.source_files.first().expect("source file");
+        let type_alias_node = sf
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find(|&idx| {
+                arena
+                    .get(idx)
+                    .and_then(|n| arena.get_type_alias(n))
+                    .is_some()
+            })
+            .expect("type alias node");
+
+        // Register a module augmentation with the arena
+        let aug = ModuleAugmentation::with_arena(aug_name, type_alias_node, Arc::clone(&arena));
+        Arc::get_mut(&mut binder.module_augmentations)
+            .expect("fresh Arc")
+            .insert(".".to_string(), vec![aug]);
+
+        // Set up CheckerState with the binder
+        let types = tsz_solver::TypeInterner::new();
+        let main_arena = Arc::new(NodeArena::new());
+        let checker = CheckerState::new(
+            &main_arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            Default::default(),
+        );
+
+        assert!(
+            checker.module_augmentation_has_type_params(".", "Row2"),
+            "Should detect type params in module augmentation for '.' Row2"
+        );
+        assert!(
+            !checker.module_augmentation_has_type_params(".", "Nonexistent"),
+            "Should not detect type params for non-existent name"
+        );
+        assert!(
+            !checker.module_augmentation_has_type_params("./other", "Row2"),
+            "Should not detect type params for non-matching module specifier"
+        );
+    }
+
+    #[test]
+    fn module_augmentation_has_type_params_rejects_non_generic_interface() {
+        let mut binder = BinderState::new();
+        let aug_name = "Foo".to_string();
+
+        let source = "interface Foo {}";
+        let mut parser = ParserState::new("test.d.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        let arena = Arc::new(parser.into_arena());
+
+        let sf = arena.source_files.first().expect("source file");
+        let iface_node = sf
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find(|&idx| {
+                arena
+                    .get(idx)
+                    .and_then(|n| arena.get_interface(n))
+                    .is_some()
+            })
+            .expect("interface node");
+
+        let aug = ModuleAugmentation::with_arena(aug_name, iface_node, Arc::clone(&arena));
+        Arc::get_mut(&mut binder.module_augmentations)
+            .expect("fresh Arc")
+            .insert(".".to_string(), vec![aug]);
+
+        let types = tsz_solver::TypeInterner::new();
+        let main_arena = Arc::new(NodeArena::new());
+        let checker = CheckerState::new(
+            &main_arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            Default::default(),
+        );
+
+        assert!(
+            !checker.module_augmentation_has_type_params(".", "Foo"),
+            "Should NOT detect type params for non-generic interface"
+        );
     }
 }
