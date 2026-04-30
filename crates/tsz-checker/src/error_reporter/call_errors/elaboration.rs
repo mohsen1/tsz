@@ -2036,9 +2036,25 @@ impl<'a> CheckerState<'a> {
         let tuple_target_elements =
             crate::query_boundaries::common::tuple_elements(self.ctx.types, effective_param_type);
 
+        // For variadic-rest tuples with trailing fixed elements (e.g., [number, ...string[], number]),
+        // element positions can only be reliably matched against the leading fixed section.
+        // Trailing fixed elements cannot be mapped without knowing the total source length, and
+        // variadic-section positions are ambiguous when trailing elements shift the mapping.
+        // Limit elaboration to the leading fixed count; tsc emits element-level only for leading
+        // fixed failures and falls back to a tuple-level error for variadic/trailing mismatches.
+        let max_elaborate_index: Option<usize> =
+            tuple_target_elements.as_deref().and_then(|elements| {
+                crate::query_boundaries::common::tuple_leading_fixed_count_before_trailing(elements)
+            });
+
         let mut elaborated = false;
 
         for (index, &elem_idx) in arr.elements.nodes.iter().enumerate() {
+            if let Some(max_idx) = max_elaborate_index
+                && index >= max_idx
+            {
+                break;
+            }
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
             };

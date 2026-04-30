@@ -1469,6 +1469,28 @@ pub(crate) fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::type_queries::get_fixed_tuple_length(db, type_id)
 }
 
+/// Returns the number of leading fixed (non-rest) elements before the first rest element,
+/// when the tuple has trailing fixed elements after the rest. Returns `None` if the tuple
+/// has no rest element or no trailing fixed elements after the rest.
+///
+/// For `[number, ...string[], number]`: returns `Some(1)` (1 leading fixed before rest).
+/// For `[...string[], number]`: returns `Some(0)` (0 leading fixed before rest).
+/// For `[number, ...string[]]`: returns `None` (no trailing fixed after rest).
+/// For `[number, string]`: returns `None` (no rest element).
+pub(crate) fn tuple_leading_fixed_count_before_trailing(
+    elements: &[tsz_solver::TupleElement],
+) -> Option<usize> {
+    let first_rest_pos = elements.iter().position(|e| e.rest)?;
+    let n_trailing = elements[first_rest_pos..]
+        .iter()
+        .filter(|e| !e.rest)
+        .count();
+    if n_trailing == 0 {
+        return None;
+    }
+    Some(first_rest_pos)
+}
+
 pub(crate) fn get_invalid_index_type_member(
     db: &dyn TypeDatabase,
     type_id: TypeId,
