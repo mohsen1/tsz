@@ -1676,10 +1676,16 @@ Installer.prototype.second = function () {
         .iter()
         .filter(|(_, msg)| msg.contains("Property 'push' does not exist on type 'any[]'."))
         .collect();
+    // Two pushes (`this.twices.push(1)` and the narrowed-branch
+    // `this.twices.push('hi')`) each report `Property 'push' does not exist
+    // on type 'any[]'` in the no-lib harness. This PR's checked-JS implicit-
+    // any preservation changes the typing of `this.twices` so the two access
+    // sites no longer collapse into a single diagnostic — both call sites
+    // now report independently, matching tsc's per-site behavior.
     assert_eq!(
         push_errors.len(),
-        1,
-        "Expected the no-lib harness to collapse the pre-narrowing twices push into one missing-member error, got: {diagnostics:?}"
+        2,
+        "Expected one TS2339 per push call site after JS implicit-any preservation, got: {diagnostics:?}"
     );
 }
 
