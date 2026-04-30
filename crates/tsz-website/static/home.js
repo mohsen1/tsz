@@ -1,8 +1,11 @@
 (function () {
+  const START_DELAY_MS = 1000;
   const bars = Array.from(document.querySelectorAll(".benchmark-mean-card .bench-bar"));
   if (!bars.length) return;
 
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  const ANIMATION_MAX_DURATION_MS = 10000;
+  const ANIMATION_MIN_DURATION_MS = 700;
 
   function formatDuration(ms, precision) {
     if (!Number.isFinite(ms)) return "";
@@ -17,11 +20,12 @@
     const targetWidth = Number(bar.dataset.targetWidth);
     const targetMs = Number(bar.dataset.targetMs);
     const precision = Number(bar.dataset.durationPrecision || 0);
-    const durationMs = Math.max(1, targetMs);
-    return { bar, value, targetWidth, targetMs, precision, durationMs };
+    return { bar, value, targetWidth, targetMs, precision };
   }).filter(({ value, targetWidth, targetMs }) => value && Number.isFinite(targetWidth) && Number.isFinite(targetMs));
 
   if (!animations.length) return;
+
+  const maxTargetMs = Math.max(1, Math.max(...animations.map((item) => item.targetMs)));
 
   if (reduceMotion) {
     for (const item of animations) {
@@ -35,9 +39,13 @@
     item.bar.style.width = "0px";
     item.bar.style.minWidth = "0px";
     item.value.textContent = formatDuration(0, item.precision);
+    item.durationMs = Math.max(
+      ANIMATION_MIN_DURATION_MS,
+      Math.min(ANIMATION_MAX_DURATION_MS, (item.targetMs / maxTargetMs) * ANIMATION_MAX_DURATION_MS),
+    );
   }
 
-  const startedAt = performance.now();
+  let startedAt = 0;
 
   function tick(now) {
     const elapsed = now - startedAt;
@@ -62,5 +70,23 @@
     }
   }
 
-  requestAnimationFrame(tick);
+  function start() {
+    if (reduceMotion) return;
+
+    startedAt = performance.now();
+    requestAnimationFrame(tick);
+  }
+
+  function scheduleStart() {
+    if (document.readyState === "complete") {
+      window.setTimeout(start, START_DELAY_MS);
+      return;
+    }
+
+    window.addEventListener("load", () => {
+      window.setTimeout(start, START_DELAY_MS);
+    }, { once: true });
+  }
+
+  scheduleStart();
 })();

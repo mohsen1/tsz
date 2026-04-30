@@ -79,6 +79,10 @@ function formatSpeedupLabel(tszMs, tsgoMs) {
   return "";
 }
 
+function aggregate(msValues) {
+  return msValues.reduce((sum, value) => sum + value, 0);
+}
+
 function renderMeanChart(results) {
   if (!results.length) {
     return "";
@@ -89,26 +93,26 @@ function renderMeanChart(results) {
     return "";
   }
 
-  const tszMean = valid.reduce((sum, r) => sum + r.tsz_ms, 0) / valid.length;
-  const tsgoMean = valid.reduce((sum, r) => sum + r.tsgo_ms, 0) / valid.length;
-  const maxMs = Math.max(tszMean, tsgoMean);
-  const tszWidth = Math.max(0.5, (tszMean / maxMs) * 100);
-  const tsgoWidth = Math.max(0.5, (tsgoMean / maxMs) * 100);
-  const speedupLabel = formatSpeedupLabel(tszMean, tsgoMean);
+  const tszTotal = aggregate(valid.map((r) => r.tsz_ms));
+  const tsgoTotal = aggregate(valid.map((r) => r.tsgo_ms));
+  const maxMs = Math.max(tszTotal, tsgoTotal);
+  const tszWidth = Math.max(0.5, (tszTotal / maxMs) * 100);
+  const tsgoWidth = Math.max(0.5, (tsgoTotal / maxMs) * 100);
+  const speedupLabel = formatSpeedupLabel(tszTotal, tsgoTotal);
 
   return `<section class="benchmark-mean-card">
-  <p class="bench-category-desc">Arithmetic mean across ${format(valid.length)} <a href="/benchmarks/">benchmark cases</a>.</p>
+  <p class="bench-category-desc">Sum across ${format(valid.length)} <a href="/benchmarks/">benchmark cases</a>.</p>
   <div class="bench-bars">
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsz</span>
-      <div class="bench-bar tsz" style="--bench-bar-width: ${tszWidth}%" data-target-width="${tszWidth}" data-target-ms="${tszMean}" data-duration-precision="${formatDurationPrecision(tszMean)}">
-        <span class="bench-bar-value">${formatDurationMs(tszMean)}</span>
+      <div class="bench-bar tsz" style="--bench-bar-width: ${tszWidth}%" data-target-width="${tszWidth}" data-target-ms="${tszTotal}" data-duration-precision="${formatDurationPrecision(tszTotal)}">
+        <span class="bench-bar-value">${formatDurationMs(tszTotal)}</span>
       </div>
     </div>
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsgo</span>
-      <div class="bench-bar tsgo" style="--bench-bar-width: ${tsgoWidth}%" data-target-width="${tsgoWidth}" data-target-ms="${tsgoMean}" data-duration-precision="${formatDurationPrecision(tsgoMean)}">
-        <span class="bench-bar-value">${formatDurationMs(tsgoMean)}</span>
+      <div class="bench-bar tsgo" style="--bench-bar-width: ${tsgoWidth}%" data-target-width="${tsgoWidth}" data-target-ms="${tsgoTotal}" data-duration-precision="${formatDurationPrecision(tsgoTotal)}">
+        <span class="bench-bar-value">${formatDurationMs(tsgoTotal)}</span>
       </div>
     </div>
     ${speedupLabel ? `<div class="bench-winner">${speedupLabel}</div>` : ""}
