@@ -1403,12 +1403,26 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
 }
 
 /// Non-generic construct signature source is NOT assignable to a generic
-/// construct signature target. `new() => MyClass` is not <: `new<T>() => T`
-/// because T is universally quantified — the generic constructor returns *any*
-/// With `erase_generics=true`, target type params are erased to their constraints
-/// (tsc's `getErasedSignature` behavior), so `new() => MyClass` IS assignable to
-/// `new<T extends { value: number }>() => T` when `MyClass` matches the constraint.
-/// See 7131d1b165 which restored erase-to-constraints for `erase_generics=true`.
+/// construct signature target — even with `erase_generics=true`.
+///
+/// `new() => MyClass` is not <: `new<T extends { value: number }>() => T`
+/// because target's `T` is universally quantified: the generic constructor
+/// returns *any* T satisfying the constraint, and a fixed `MyClass` cannot
+/// guarantee that. tsc rejects this with TS2322:
+///
+///   error TS2322: Type 'new () => MyClass' is not assignable to type
+///   'new <T extends MyInterface>() => T'.
+///   Type 'MyClass' is not assignable to type 'T'.
+///     'MyClass' is assignable to the constraint of type 'T', but 'T'
+///     could be instantiated with a different subtype of constraint
+///     'MyInterface'.
+///
+/// Earlier versions of this test asserted the OPPOSITE because the
+/// `erase_generics=true` path replaced `T` with its constraint, masking
+/// the unsound assignment (covered by the regression test
+/// `test_nongeneric_into_generic_nested_contravariant_param_rejects`).
+/// The fix in `check_function_subtype_impl` keeps target type params
+/// opaque so the subtype core can reject `MyClass <: T`.
 #[test]
 fn test_nongeneric_construct_sig_assignable_to_generic_target() {
     let interner = TypeInterner::new();
@@ -1466,12 +1480,142 @@ fn test_nongeneric_construct_sig_assignable_to_generic_target() {
         ..Default::default()
     });
 
-    // With erase_generics=true, T is erased to { value: number }.
-    // source `new() => MyClass` is assignable to erased `new() => { value: number }`.
+    // T stays opaque; source's concrete `MyClass` cannot satisfy `<: T`.
     let mut checker = SubtypeChecker::new(&interner);
     checker.strict_function_types = false;
     checker.erase_generics = true;
-    assert!(checker.check_subtype(source, target).is_true());
+    assert!(!checker.check_subtype(source, target).is_true());
+}
+
+/// Regression test for assignmentCompatWithConstructSignatures4.ts (TS2322).
+///
+/// A non-generic construct signature whose parameter is itself a function
+/// must not be assignable to a generic construct signature whose parameter
+/// is a function with a constrained type parameter — even when erasing
+/// the target's type parameter to its constraint would make the signatures
+/// structurally identical.
+///
+/// ```ts
+/// class Base { foo: string = ''; }
+/// class Derived extends Base { bar: string = ''; }
+/// declare var a: new (x: (arg: Base) => Derived) => Derived;
+/// declare var b: new <T extends Base>(x: (arg: T) => Derived) => Derived;
+/// b = a; // tsc: TS2322 (Base not assignable to T)
+/// ```
+///
+/// The structural shape after `T -> Base` substitution matches `a`
+/// exactly, but tsc rejects because target's `T` is opaque: `arg`
+/// position is doubly-contravariant, so the inner check becomes
+/// `Base <: T`, which fails because T could be a different subtype of
+/// Base (`getRestrictiveTypeParameter` semantics).
+#[test]
+fn test_nongeneric_into_generic_nested_contravariant_param_rejects() {
+    let interner = TypeInterner::new();
+
+    // Concrete classes: Base { foo: string }, Derived extends Base { bar: string }.
+    let base = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("foo"),
+        TypeId::STRING,
+    )]);
+    let derived = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("foo"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("bar"), TypeId::STRING),
+    ]);
+
+    // Source inner function: `(arg: Base) => Derived`.
+    let source_inner = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: base,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: derived,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Source: `new (x: (arg: Base) => Derived) => Derived` (non-generic).
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: source_inner,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: derived,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // Target type parameter `T extends Base`.
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(base),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    // Target inner function: `(arg: T) => Derived`.
+    let target_inner = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: derived,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Target: `new <T extends Base>(x: (arg: T) => Derived) => Derived`.
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![t_param],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: target_inner,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: derived,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // tsc rejects this assignment with TS2322 (`Base` not assignable to
+    // opaque `T`). The solver must keep T opaque rather than substituting
+    // T -> Base. Use strict function types (tsc's default for assignment
+    // contexts when strictFunctionTypes is enabled, which the conformance
+    // test runs with).
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = true;
+    checker.erase_generics = true;
+    assert!(!checker.check_subtype(source, target).is_true());
 }
 
 /// Regression test for genericFunctionCallSignatureReturnTypeMismatch.ts (TS2322)

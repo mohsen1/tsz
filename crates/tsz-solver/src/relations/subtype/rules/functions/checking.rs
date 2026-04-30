@@ -509,15 +509,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // This ensures TS2416 is correctly emitted for incompatible overrides.
                 target_instantiated.type_params.clear();
             } else {
-                // erase_generics=true path: erase target type params to their
-                // constraints so a concrete source signature can match the target's
-                // structural shape through constraint-erasure (tsc's
-                // `getErasedSignature` behavior). This is what single-signature
-                // assignability uses for base-type structural compatibility checks.
-                let target_canonical =
-                    erase_type_params_to_constraints(&target_instantiated.type_params);
-                target_instantiated =
-                    self.instantiate_function_shape(&target_instantiated, &target_canonical);
+                // erase_generics=true path: keep target type params opaque (clear
+                // the list but do NOT substitute them with their constraints).
+                //
+                // tsc's `getRestrictiveTypeParameter` behavior assigns target type
+                // params a fresh identity while preserving their constraint, so
+                // concrete source values cannot satisfy `concrete <: T` even when
+                // they satisfy the constraint. Substituting `T -> constraint`
+                // erases that opacity and lets structurally-identical-after-
+                // erasure signatures pass when tsc rightly rejects them, e.g.:
+                //
+                //   source: new (x: (arg: Base) => Derived) => (r: Base) => Derived2
+                //   target: new <T extends Base, U extends Derived, V extends Derived2>
+                //              (x: (arg: T) => U) => (r: T) => V
+                //
+                // After T->Base/U->Derived/V->Derived2 substitution, source and
+                // target are syntactically identical. tsc emits TS2322 because
+                // the inner contravariant `Base <: T` check fails — `T could be
+                // instantiated with a different subtype of constraint Base`.
+                //
+                // Clearing without substitution lets the subtype core's
+                // concrete-vs-type-parameter rule (relations/subtype/core.rs:1147)
+                // reject these unsound cases naturally.
+                target_instantiated.type_params.clear();
             }
         }
 
