@@ -408,9 +408,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // at signature build time, because lib signatures are built without
             // strictNullChecks and would otherwise miss it.
             if (*arg_type == TypeId::UNDEFINED || *arg_type == TypeId::VOID)
-                && self.param_is_optional_for_arg_index(params, i) {
-                    continue;
-                }
+                && self.param_is_optional_for_arg_index(params, i)
+            {
+                continue;
+            }
 
             // When the parameter is optional (`?`), its effective type includes `undefined`.
             // The fast-path above handles the exact `undefined` case; here we strip
