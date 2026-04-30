@@ -591,5 +591,9 @@ path = "tests/optional_tuple_element_undefined_assignability_tests.rs"
 name = "variance_skip_type_param_default_tests"
 path = "tests/variance_skip_type_param_default_tests.rs"
 
+[[test]]
+name = "reserved_keyword_param_function_type_tests"
+path = "tests/reserved_keyword_param_function_type_tests.rs"
+
 [lints]
 workspace = true
