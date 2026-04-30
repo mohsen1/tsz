@@ -193,10 +193,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 }
 
-                // A required source element can satisfy an optional target slot
-                // when its type already includes `undefined` (e.g. `[string | undefined]`
-                // assignable to `[string?]`).
-                let target_elem_type = if t_elem.optional && !s_elem.optional {
+                // An optional target slot accepts `undefined` in addition to its
+                // declared type (`[string?]` is structurally `[(string |
+                // undefined)?]`). This applies whether the source slot is
+                // optional or required — `[string, undefined?]` must remain
+                // assignable to `[string, number?]` because both source values
+                // (undefined or slot-absent) fit the target's optional slot.
+                let target_elem_type = if t_elem.optional {
                     self.interner.union2(t_elem.type_id, TypeId::UNDEFINED)
                 } else {
                     t_elem.type_id

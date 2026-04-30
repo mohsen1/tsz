@@ -930,17 +930,24 @@ impl<'a> InferenceContext<'a> {
                         "Collected source params into tuple"
                     );
 
-                    // Infer the tuple type against the type parameter
+                    // Infer the tuple type against the type parameter even
+                    // when the source has zero fixed params. Skipping the
+                    // inference for empty source params leaves the target
+                    // type parameter unbound, which causes it to default to
+                    // its constraint (e.g. `unknown[]`) — that hides arity
+                    // mismatches in trailing rest args of the same generic
+                    // tuple, like `f<U extends unknown[]>(cb: (...args: U) =>
+                    // T, ...args: U)` called as `f(() => 0, "extra")` where
+                    // U should resolve to `[]` and the extra trailing arg
+                    // should be rejected.
                     // Note: Parameters are contravariant, so target comes first
-                    if !tuple_elements.is_empty() {
-                        let tuple_type = self.interner.tuple(tuple_elements);
-                        tracing::trace!(
-                            tuple_type = ?tuple_type,
-                            target_param = ?target_param.type_id,
-                            "Inferring tuple against type parameter"
-                        );
-                        self.infer_from_types(target_param.type_id, tuple_type, priority)?;
-                    }
+                    let tuple_type = self.interner.tuple(tuple_elements);
+                    tracing::trace!(
+                        tuple_type = ?tuple_type,
+                        target_param = ?target_param.type_id,
+                        "Inferring tuple against type parameter"
+                    );
+                    self.infer_from_types(target_param.type_id, tuple_type, priority)?;
                 } else {
                     // Target rest param is not a type parameter (e.g., number[] or Array<string>)
                     // Infer each source param individually against the rest element type
