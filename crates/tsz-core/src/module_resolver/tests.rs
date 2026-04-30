@@ -49,6 +49,26 @@ fn test_match_export_pattern_wildcard() {
 }
 
 #[test]
+fn test_match_export_pattern_directory() {
+    // "./" pattern matches any subpath starting with "./"
+    assert_eq!(
+        match_export_pattern("./", "./index.js"),
+        Some("index.js".to_string())
+    );
+    assert_eq!(
+        match_export_pattern("./", "./other"),
+        Some("other".to_string())
+    );
+    // Exact match still works
+    assert_eq!(
+        match_export_pattern("./", "./"),
+        Some(String::new())
+    );
+    // Non-matching subpaths
+    assert_eq!(match_export_pattern("./lib/", "./src/utils"), None);
+}
+
+#[test]
 fn test_module_extension_from_path() {
     assert_eq!(
         ModuleExtension::from_path(Path::new("foo.ts")),
@@ -295,6 +315,31 @@ fn test_substitute_wildcard_in_exports_no_wildcard() {
     let value = PackageExports::String("./index.js".to_string());
     let result = substitute_wildcard_in_exports(&value, "anything");
     assert!(matches!(result, PackageExports::String(s) if s == "./index.js"));
+}
+
+#[test]
+fn test_substitute_wildcard_in_exports_directory_target() {
+    // "./": "./" with subpath "./index.js" → target should be "./index.js"
+    let value = PackageExports::String("./".to_string());
+    let result = substitute_wildcard_in_exports(&value, "index.js");
+    assert!(matches!(result, PackageExports::String(s) if s == "./index.js"));
+}
+
+#[test]
+fn test_substitute_wildcard_in_exports_directory_empty_wildcard() {
+    // "./": "./" with subpath "./" → target should be "./" (empty wildcard)
+    let value = PackageExports::String("./".to_string());
+    let result = substitute_wildcard_in_exports(&value, "");
+    assert!(matches!(result, PackageExports::String(s) if s == "./"));
+}
+
+#[test]
+fn test_apply_wildcard_substitution_directory_target() {
+    // Directory target appends wildcard
+    assert_eq!(
+        apply_wildcard_substitution("./lib/", "utils"),
+        "./lib/utils"
+    );
 }
 
 #[test]

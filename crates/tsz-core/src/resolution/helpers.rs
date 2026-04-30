@@ -46,7 +46,18 @@ pub(crate) fn types_package_name(package_name: &str) -> String {
 /// Match an export pattern against a subpath
 pub(crate) fn match_export_pattern(pattern: &str, subpath: &str) -> Option<String> {
     if !pattern.contains('*') {
-        return (pattern == subpath).then(String::new);
+        // Exact match for non-wildcard patterns.
+        if pattern == subpath {
+            return Some(String::new());
+        }
+        // Directory export: a pattern ending with `/` (e.g. `"./"`) acts as a
+        // prefix and matches any subpath starting with that prefix (e.g.
+        // `./other`, `./index.js`). The matched portion is the subpath after
+        // the prefix.
+        if pattern.ends_with('/') && subpath.starts_with(pattern) {
+            return Some(subpath[pattern.len()..].to_string());
+        }
+        return None;
     }
 
     let parts: Vec<&str> = pattern.split('*').collect();
@@ -344,6 +355,8 @@ pub(crate) fn parse_semver(value: &str) -> Option<SemVer> {
 pub(crate) fn apply_wildcard_substitution(target: &str, wildcard: &str) -> String {
     if target.contains('*') {
         target.replace('*', wildcard)
+    } else if target.ends_with('/') {
+        format!("{}{}", target, wildcard)
     } else {
         target.to_string()
     }
@@ -357,7 +370,15 @@ pub(crate) fn substitute_wildcard_in_exports(
     wildcard: &str,
 ) -> PackageExports {
     match value {
-        PackageExports::String(s) => PackageExports::String(s.replace('*', wildcard)),
+        PackageExports::String(s) => {
+            if s.contains('*') {
+                PackageExports::String(s.replace('*', wildcard))
+            } else if s.ends_with('/') {
+                PackageExports::String(format!("{}{}", s, wildcard))
+            } else {
+                PackageExports::String(s.clone())
+            }
+        }
         PackageExports::Conditional(entries) => PackageExports::Conditional(
             entries
                 .iter()
