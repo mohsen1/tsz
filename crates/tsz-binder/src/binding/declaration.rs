@@ -121,6 +121,10 @@ impl BinderState {
                         }
                     }
                 }
+                // Walk binding element initializers so that nested functions
+                // (e.g. arrow functions used as default values in destructuring)
+                // get their scopes and parameter symbols created.
+                self.bind_binding_element_initializers(arena, decl.name);
             }
 
             if decl.initializer.is_some() {
