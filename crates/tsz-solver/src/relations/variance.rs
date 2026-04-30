@@ -619,14 +619,19 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                 self.visit_with_polarity(constraint, current_polarity);
             }
 
-            // Default type (at current polarity). When inside method params
-            // (method_bivariant_depth > 0), add_occurrence forces COVARIANT,
-            // so defaults like `TResult1 = T` in `then<TResult1 = T>` won't
-            // spuriously add contravariant occurrences.
-            if let Some(default) = info.default {
-                let current_polarity = self.get_current_polarity();
-                self.visit_with_polarity(default, current_polarity);
-            }
+            // Type parameter defaults are NOT visited for variance: a default
+            // like `<TResult1 = T>` is only used when the caller omits the
+            // type argument, and even then it expresses an *instantiation
+            // rule*, not an occurrence of T in the generic body. Counting it
+            // as an occurrence over-constrains variance — for example,
+            // `Promise<T>.then<TResult1 = T>(cb: (v: T) => TResult1):
+            // Promise<TResult1>` would record T as both contravariant (via
+            // the cb return's default) and covariant (via the Promise<TR1>
+            // return's default), making T invariant and rejecting valid
+            // `Promise<never>` → `Promise<X>` assignments.
+            //
+            // Constraints (`<U extends T>`) ARE visited — those genuinely
+            // constrain U's structural shape and propagate T's variance.
         }
     }
 
