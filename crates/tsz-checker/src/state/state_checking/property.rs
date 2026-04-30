@@ -133,8 +133,11 @@ impl<'a> CheckerState<'a> {
 
         let evaluated_target = self.evaluate_type_with_env(target);
 
-        let emitted_named_property_value_error =
-            self.check_object_literal_named_property_values_against_target(idx, target);
+        // Run named-property value checks for the side effect of emitting
+        // diagnostics on mapped/string-index targets. The returned flag is
+        // unused after the dead-conditional cleanup below; keeping the call
+        // (vs. let `_ = …`) makes the side-effect intent explicit.
+        let _ = self.check_object_literal_named_property_values_against_target(idx, target);
 
         // Excess property checks do not apply to type parameters (even with constraints).
         if query::is_type_parameter_like(self.ctx.types, target) {
@@ -150,10 +153,13 @@ impl<'a> CheckerState<'a> {
         };
         // Non-fresh object literals should be exempt from excess-property checks
         // unless they use spread, in which case we still check explicit properties.
+        // (The previous `if emitted_named_property_value_error { return; }` inner
+        //  guard was dead code — both branches returned — so collapse to a single
+        //  unconditional return here. If a future change wants non-fresh sources
+        //  with no spread to fall through, drop the surrounding return entirely
+        //  rather than gating on the named-property-error flag, which is unset by
+        //  the time we arrive here.)
         if !is_fresh_source && explicit_property_names.is_none() {
-            if emitted_named_property_value_error {
-                return;
-            }
             return;
         }
 
