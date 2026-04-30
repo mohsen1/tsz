@@ -1325,11 +1325,16 @@ impl<'a> FlowAnalyzer<'a> {
             return flow_boundary::narrow_optional_chain(self.interner.as_type_database(), type_id);
         }
 
-        // Discriminant and literal comparisons apply for both strict (===) and loose (==)
-        // equality. The null/undefined loose equality cases are handled by nullish_comparison
-        // above, so by this point any == comparison involves string/number literals where
-        // loose and strict equality narrow identically.
-        if is_strict || is_equals {
+        // Discriminant and literal comparisons apply to all four equality operators
+        // (`===`, `!==`, `==`, `!=`). The null/undefined loose equality cases are
+        // handled by nullish_comparison above, so by this point any loose comparison
+        // involves string/number literals where loose and strict (in)equality narrow
+        // identically. Earlier we returned for non-equality operators, so reaching
+        // this point means we're guaranteed to have an equality comparison; the
+        // `is_strict || is_equals` gate previously here only excluded `!=` due to an
+        // asymmetric truth table (false || false), so let every equality operator
+        // through.
+        {
             if let Some((property_path, literal_type, is_optional, base)) =
                 self.discriminant_comparison(bin.left, bin.right, target)
             {
