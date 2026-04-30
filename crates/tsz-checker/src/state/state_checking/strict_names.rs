@@ -275,6 +275,17 @@ impl<'a> CheckerState<'a> {
             .enclosing_class
             .as_ref()
             .is_some_and(|class| !class.is_declared);
+        // tsc does not surface this strict-mode binding error in JS files
+        // (allowJs / checkJs) when the only reason we are in strict mode is
+        // class auto-strict — class bodies in JS are runtime-strict, but
+        // tsc's bind-time check defers to the JS engine instead of emitting
+        // here. Explicit `"use strict"` directives and module-strict scopes
+        // still flow through (handled below). Without this skip we emit a
+        // spurious TS1210 / TS1100 in `class c { a(eval) {} }` patterns
+        // (regression: `jsFileCompilationBindStrictModeErrors.ts`).
+        if in_class && self.ctx.is_js_file() {
+            return;
+        }
         let (message, code) = if in_class {
             (
                 format_message(
