@@ -1305,8 +1305,52 @@ impl<'a> CheckerState<'a> {
                     // that as a duplicate blocks the real semantic check and produces
                     // TS2451 where tsc reports a constructor-side assignability error
                     // (for example salsa/jsContainerMergeTsDeclaration3.ts).
-                    let checked_js_value_merges_remote_class = self.is_js_file()
-                        && self.ctx.compiler_options.check_js
+                    //
+                    // The merge applies symmetrically: when the JS file's `const A = {}`
+                    // and the .d.ts file's `declare class A {}` share a name, neither
+                    // side should report TS2451. Checking only `is_js_file()` (the
+                    // current file) misses the .d.ts side of the pair, so we also
+                    // probe `declaration_arenas` for a remote arena whose source file
+                    // is a JS file. (`arena_for_declaration_or` returns only the
+                    // *first* arena recorded for a decl_idx, so it can't distinguish
+                    // the local-vs-remote arena when both files share the index.)
+                    // Two lookup strategies: first the precise per-decl mapping
+                    // in `declaration_arenas`, then a fallback that scans the
+                    // project's arenas for any non-current JS file. The fallback
+                    // matters when cross-file declarations are surfaced via
+                    // `top_level_script_declarations_in_arena` rather than via
+                    // a merged-symbol entry — those tuples carry the remote
+                    // decl_idx but not its arena.
+                    let remote_decl_in_js = |idx: NodeIndex, this_is_local: bool| -> bool {
+                        if this_is_local {
+                            return false;
+                        }
+                        if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, idx))
+                            && arenas
+                                .iter()
+                                .filter(|a| !std::ptr::eq(&***a, self.ctx.arena))
+                                .any(|a| {
+                                    a.source_files.first().is_some_and(|sf| {
+                                        crate::context::is_js_file_name(&sf.file_name)
+                                    })
+                                })
+                        {
+                            return true;
+                        }
+                        self.ctx.all_arenas.as_ref().is_some_and(|arenas| {
+                            arenas.iter().any(|a| {
+                                !std::ptr::eq(a.as_ref(), self.ctx.arena)
+                                    && a.source_files.first().is_some_and(|sf| {
+                                        crate::context::is_js_file_name(&sf.file_name)
+                                    })
+                            })
+                        })
+                    };
+                    let any_side_is_checked_js = self.ctx.compiler_options.check_js
+                        && (crate::context::is_js_file_name(&self.ctx.file_name)
+                            || remote_decl_in_js(decl_idx, decl_is_local)
+                            || remote_decl_in_js(other_idx, other_is_local));
+                    let checked_js_value_merges_remote_class = any_side_is_checked_js
                         && (decl_is_local != other_is_local)
                         && (((decl_flags & symbol_flags::VARIABLE) != 0
                             && (other_flags & symbol_flags::CLASS) != 0)
