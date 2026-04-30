@@ -343,7 +343,9 @@ impl ParserState {
                 }
                 // In async context (including parameter defaults), 'await' cannot start an arrow function
                 // Example: async (a = await => x) => {} - 'await' triggers TS1109, not treated as arrow param
-                if self.in_async_context() && self.is_token(SyntaxKind::AwaitKeyword) {
+                if (self.in_async_context() || self.in_static_block_context())
+                    && self.is_token(SyntaxKind::AwaitKeyword)
+                {
                     return false;
                 }
                 self.is_identifier_or_keyword() && self.look_ahead_is_simple_arrow_function()
@@ -574,6 +576,16 @@ impl ParserState {
             let token = self.token();
             let at_top_level =
                 depth == 1 && brace_depth == 0 && bracket_depth == 0 && angle_bracket_depth == 0;
+
+            if self.in_static_block_context()
+                && at_top_level
+                && at_param_start
+                && token == SyntaxKind::AwaitKeyword
+            {
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                return false;
+            }
 
             // `(x = y ==== z) { ... }` should not be treated as a missing-arrow
             // head. Once the initializer enters an equality chain, a second `=`
