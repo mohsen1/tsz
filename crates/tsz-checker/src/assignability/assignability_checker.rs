@@ -1909,6 +1909,34 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Pre-evaluation IndexAccess key-identity rejection: when both source and
+        // target are `O[K]` types with the same object type O but different generic
+        // type-parameter keys, reject before evaluation. Eager evaluation of `O[T_s]`
+        // and `O[T_t]` resolves both to the same value-union derived from the
+        // shared constraint, which loses the per-call-site type-param identity that
+        // tsc preserves when reporting TS2322 ("`T_t` could be instantiated with a
+        // different subtype of constraint `keyof O`"). Without this guard, the
+        // assignability check trivially succeeds via `source_eval == target_eval`.
+        if let Some((s_obj, s_idx)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                source,
+            )
+            && let Some((t_obj, t_idx)) =
+                crate::query_boundaries::checkers::generic::index_access_components(
+                    self.ctx.types,
+                    target,
+                )
+            && s_obj == t_obj
+            && let Some(s_key_param) =
+                crate::query_boundaries::common::type_param_info(self.ctx.types, s_idx)
+            && let Some(t_key_param) =
+                crate::query_boundaries::common::type_param_info(self.ctx.types, t_idx)
+            && s_key_param.name != t_key_param.name
+        {
+            return false;
+        }
+
         let source_eval = self.evaluate_type_for_assignability(source);
         let target_eval = self.evaluate_type_for_assignability(target);
 
