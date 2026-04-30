@@ -97,6 +97,37 @@ f2([], [0], (a1, a2) => a1 - a2);
     );
 }
 
+/// Repeated naked type-parameter parameters use first-wins semantics for
+/// incompatible direct argument candidates (e.g. `f<T>(a: T, b: T)` called
+/// with `(1, "")` keeps `T = number` and rejects `""`). The first-wins skip
+/// must NOT fire when the later argument's type is a union containing
+/// `null`/`undefined` — tsc still seeds inference from the non-nullable
+/// members and adds the nullable back via `getNullableType` after BCT
+/// reduction. Without this nullable-union exception the second argument's
+/// candidate is dropped entirely, `T` resolves to the first argument's type
+/// alone, and the second argument is rechecked against that narrowed `T`,
+/// surfacing as `Argument of type 'never' is not assignable to parameter of
+/// type '"a"'.` Conformance test
+/// `compiler/inferenceOfNullableObjectTypesWithCommonBase.ts` exercises
+/// this on lines 29 (`equal(v as 'a', v as 'b' | undefined)`) and 34
+/// (`equal(v as string, v as string & { tag: 'foo' } | undefined)`).
+#[test]
+fn nullable_union_second_arg_does_not_skip_inference() {
+    let source = r#"
+function equal<T>(a: T, b: T) { }
+let v = null!;
+equal(v as 'a', v as 'b' | undefined);
+equal(v as string, v as string & { tag: 'foo' } | undefined);
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "equal<T>(a: T, b: T) with a literal first arg and a nullable-union second arg \
+         should still infer T from both args. Got: {diagnostics:#?}"
+    );
+}
+
 /// When T has no constraint and only covariant candidates are `never`,
 /// and there are no contra-candidates, T should resolve to `never` (not unknown).
 #[test]

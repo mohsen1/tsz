@@ -863,7 +863,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // argument. A context-sensitive callback in a later parameter can otherwise
             // add enough inference evidence to merge `""` and `3` into a union,
             // incorrectly accepting `g<T>(a: T, b: T, c: (t: T) => T)`.
-            if let Some(&var) = var_map.get(&contextual_target_type)
+            //
+            // Important exception: when the later argument's type is *nullable* (a
+            // union containing `null` or `undefined`), tsc still seeds inference from
+            // the non-nullable members. Skipping the whole argument here would drop
+            // those candidates and produce an over-narrow `T` (e.g.
+            // `equal<T>(a: T, b: T)` called with `("a", "b" | undefined)` would lose
+            // the `"b"` candidate and resolve `T = "a" | undefined`, then reject the
+            // second argument as `never` — see
+            // `compiler/inferenceOfNullableObjectTypesWithCommonBase.ts`).
+            // tsc's `getCommonSupertype` strips nullable before tournament reduction
+            // and adds it back afterwards, so a nullable literal-union later argument
+            // doesn't trigger first-wins skipping there.
+            let arg_is_nullable_union = if let Some(TypeData::Union(list_id)) =
+                self.interner.lookup(source_for_inference)
+            {
+                self.interner
+                    .type_list(list_id)
+                    .iter()
+                    .any(|m| m.is_nullable())
+            } else {
+                false
+            };
+            if !arg_is_nullable_union
+                && let Some(&var) = var_map.get(&contextual_target_type)
                 && !is_rest_param_arg
                 && direct_param_vars.contains(&var)
                 && !matches!(
