@@ -190,7 +190,11 @@ const fooConst54374: Foo54374 = {
     // tsc anchors at `b: 3`. We anchor at the `b` property element. Both
     // sit *inside* the object literal, well past the variable binding.
     let var_binding_offset = src.find("fooConst54374").unwrap() as u32;
-    let object_literal_start = src.find('{').unwrap() as u32;
+    // The first `{` in `src` is the interface body's open brace, which sits
+    // *before* the variable binding and would make the positional assertion
+    // below vacuously true. Anchor on the object literal's `=` so the offset
+    // is past the binding.
+    let object_literal_start = src.find("= {").unwrap() as u32 + 2;
     let b_property_offset = src.rfind("b: 3").unwrap() as u32;
 
     let ts2322: Vec<_> = diags.iter().filter(|(code, ..)| *code == 2322).collect();
