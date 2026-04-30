@@ -1087,6 +1087,16 @@ impl<'a> CheckerState<'a> {
                     {
                         return true;
                     }
+                    // Identifier `globalThis` with no local symbol resolves to
+                    // the built-in global at runtime — there's no
+                    // owner-file-local declaration, so the symbol-based
+                    // file-mismatch check above can't trigger. Treat the
+                    // unbound identifier as the global (matches tsc's
+                    // emit-time TS4025 trigger for `export const x =
+                    // globalThis`).
+                    if !init_sym_id.is_some() {
+                        return true;
+                    }
                 }
 
                 if let Some(next_sym_id) = self.value_symbol_in_arena(arena, initializer)
