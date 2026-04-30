@@ -575,5 +575,9 @@ path = "tests/ambient_default_namespace_export_dup_tests.rs"
 name = "global_this_const_property_tests"
 path = "tests/global_this_const_property_tests.rs"
 
+[[test]]
+name = "deferred_keyof_index_access_assignability_tests"
+path = "tests/deferred_keyof_index_access_assignability_tests.rs"
+
 [lints]
 workspace = true
