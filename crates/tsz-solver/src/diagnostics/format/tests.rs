@@ -1853,6 +1853,55 @@ fn format_nested_no_infer_keeps_inner() {
     assert_eq!(fmt.format(outer_no_infer), "NoInfer<string>");
 }
 
+#[test]
+fn format_no_infer_in_union_with_function_member() {
+    // Regression for noInferUnionExcessPropertyCheck1.ts: tsc preserves
+    // `NoInfer<>` on every union member (none of them is the outermost
+    // type), even when a sibling member is a function whose return type
+    // is also `NoInfer<>`. Order matters here: the union is sorted
+    // structurally and the formatter must not strip the wrapper for
+    // either arm.
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let x_atom = db.intern_string("x");
+    let obj = db.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: crate::types::Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+    }]);
+    let no_infer_obj = db.no_infer(obj);
+    let return_no_infer = db.no_infer(obj);
+    let func = db.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: return_no_infer,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let union_id = db.union_preserve_members(vec![no_infer_obj, func]);
+    let result = fmt.format(union_id);
+    assert!(
+        result.contains("NoInfer<{ x: string; }>"),
+        "expected NoInfer<{{ x: string; }}> preserved on union member, got: {result}"
+    );
+    // Function-return NoInfer must also survive.
+    assert!(
+        result.contains("=> NoInfer<{ x: string; }>"),
+        "expected NoInfer<> in function return, got: {result}"
+    );
+}
+
 // =================================================================
 // Generic application formatting
 // =================================================================

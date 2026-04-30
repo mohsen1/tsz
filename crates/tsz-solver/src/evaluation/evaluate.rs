@@ -1297,7 +1297,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let mut evaluated_members = Vec::with_capacity(members.len());
         for &member in members.iter() {
-            evaluated_members.push(self.evaluate(member));
+            evaluated_members.push(self.evaluate_compound_member(member));
         }
 
         self.suppress_this_binding = prev_suppress;
@@ -1339,13 +1339,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut evaluated_members = Vec::with_capacity(members.len());
 
         for &member in members.iter() {
-            evaluated_members.push(self.evaluate(member));
+            evaluated_members.push(self.evaluate_compound_member(member));
         }
 
         // Deep structural simplification using SubtypeChecker
         self.simplify_union_members(&mut evaluated_members);
 
         self.interner.union(evaluated_members)
+    }
+
+    /// Evaluate a member of a compound type (union/intersection) while
+    /// preserving an outer `NoInfer<>` wrapper.
+    ///
+    /// `evaluate(NoInfer<T>)` strips the marker because tsc treats `NoInfer<>`
+    /// as transparent at the *outermost* layer of the displayed type. When
+    /// `NoInfer<T>` appears as a union or intersection member, the union (or
+    /// intersection) is the outermost layer, not the wrapper — tsc keeps the
+    /// `NoInfer<>` visible in messages like
+    /// `NoInfer<{ x: string; }> | (() => NoInfer<{ x: string; }>)`. Stripping
+    /// the wrapper here would silently rewrite the displayed type.
+    fn evaluate_compound_member(&mut self, member: TypeId) -> TypeId {
+        if let Some(&TypeData::NoInfer(inner)) = self.interner.lookup(member).as_ref() {
+            let evaluated_inner = self.evaluate(inner);
+            if evaluated_inner == inner {
+                member
+            } else {
+                self.interner.no_infer(evaluated_inner)
+            }
+        } else {
+            self.evaluate(member)
+        }
     }
 
     /// Simplify union members by removing redundant types using deep subtype checks.
