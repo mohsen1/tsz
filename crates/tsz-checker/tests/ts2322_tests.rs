@@ -4379,3 +4379,52 @@ logFirstLength([42]);
         "Expected TS2322 message mentioning 'number' and 'string' for the array element, got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn no_infer_wrapped_weak_type_in_intersection_target_emits_ts2559() {
+    // `NoInfer<T>` is a transparent wrapper for shape extraction. An
+    // intersection like `NoInfer<W> & { prop?: unknown }` where `W` is a
+    // weak type must still trigger TS2559 when the source has no
+    // overlapping properties.
+    let source = r#"
+        type W = { alpha?: unknown; beta?: unknown };
+        declare const weakObj: W;
+        declare const someObj: { x: string };
+        declare function callee<T>(a: T, b: NoInfer<T> & { prop?: unknown }): void;
+        callee(weakObj, someObj);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for {{ x: string }} against NoInfer<T> & {{ prop?: unknown }} target. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn no_infer_intersection_of_two_no_infers_emits_ts2559() {
+    // `NoInfer<U> & NoInfer<V>` is weak when both inner types are weak.
+    // Use distinct generic parameter names to confirm the rule is
+    // structural, not name-based.
+    let source = r#"
+        type WA = { alpha?: unknown; beta?: unknown };
+        type WB = { gamma?: unknown; delta?: unknown };
+        declare const weakA: WA;
+        declare const weakB: WB;
+        declare const someObj: { x: string };
+        declare function callee<U, V>(
+            a: U,
+            b: V,
+            c: NoInfer<U> & NoInfer<V>,
+        ): void;
+        callee(weakA, weakB, someObj);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for {{ x: string }} against NoInfer<U> & NoInfer<V> target. Got: {diagnostics:?}"
+    );
+}
