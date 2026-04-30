@@ -728,13 +728,19 @@ impl<'a> CheckerState<'a> {
         // evaluate_application_type correctly produces a union of the mapped members, but
         // resolve_type_for_property_access_inner strips ReadonlyType wrappers, causing both
         // union members to deduplicate to a single tuple — losing the readonly variant.
-        self.ctx
+        //
+        // Return the *cache entry* (i.e. whichever value won the entry/or_insert race),
+        // not the local `result`. Otherwise the first caller would see the stripped
+        // tuple while every subsequent caller sees the correct cached union, which
+        // makes type-checking results depend on call order. The fix keeps both caller
+        // paths in sync with whatever evaluate_application_type pre-populated.
+        *self
+            .ctx
             .narrowing_cache
             .resolve_cache
             .borrow_mut()
             .entry(type_id)
-            .or_insert(result);
-        result
+            .or_insert(result)
     }
 
     pub(crate) fn resolve_type_for_property_access_inner(
