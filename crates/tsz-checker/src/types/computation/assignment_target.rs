@@ -51,6 +51,16 @@ impl<'a> CheckerState<'a> {
         if var_decl.initializer.is_none() {
             return true;
         }
+        // The null/undefined-initializer carve-out is a JS implicit-any
+        // pattern: `var u = null;` in a `.js` file (or in a `.ts` file
+        // without `strictNullChecks`) gives `u` an implicit-any control-flow
+        // type, so reassignments must not trip TS2322. Under strict TS, the
+        // same `var u = null;` declares `u: null` and `u = 1` is a real
+        // TS2322 — we must NOT swallow that. Gate the initializer-based
+        // branch on JS context or non-strict null checks.
+        if !self.is_js_file() && self.ctx.strict_null_checks() {
+            return false;
+        }
         let initializer = self.ctx.arena.skip_parenthesized(var_decl.initializer);
         self.ctx.arena.get(initializer).is_some_and(|node| {
             node.kind == tsz_scanner::SyntaxKind::NullKeyword as u16
