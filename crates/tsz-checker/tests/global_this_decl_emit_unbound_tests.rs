@@ -49,7 +49,7 @@ fn diagnostics(source: &str, file_name: &str) -> Vec<u32> {
 /// built-in global. tsc emits TS4025 here; tsz used to silently emit nothing
 /// because the binder lookup of `globalThis` returned `SymbolId::NONE`.
 #[test]
-fn export_const_globalThis_assignment_emits_ts4025_for_self_named_export() {
+fn export_const_global_this_assignment_emits_ts4025_for_self_named_export() {
     let codes = diagnostics("export const globalThis = globalThis;\n", "index.ts");
     assert!(
         codes.contains(&4025),
