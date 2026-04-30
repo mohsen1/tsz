@@ -62,22 +62,24 @@ impl<'a> CheckerState<'a> {
         let user_syms: FxHashSet<tsz_binder::SymbolId> =
             self.ctx.binder.node_symbols.values().copied().collect();
         let mut symbol_ids: FxHashSet<tsz_binder::SymbolId> = FxHashSet::default();
-        if !self.ctx.binder.scopes.is_empty() {
-            for scope in self.ctx.binder.scopes.iter() {
-                if scope.kind == tsz_binder::ContainerKind::Class {
-                    continue;
-                }
-                for (_, &id) in scope.table.iter() {
-                    if user_syms.contains(&id) {
-                        symbol_ids.insert(id);
-                    }
-                }
+        // Walk both scope tables and `file_locals`: top-level interface
+        // augmentations (e.g. `interface String { ... }`) live in
+        // `file_locals` even when the file also declares any other scoped
+        // container (namespace, function, class), and a scopes-only path
+        // would silently miss them.
+        for scope in self.ctx.binder.scopes.iter() {
+            if scope.kind == tsz_binder::ContainerKind::Class {
+                continue;
             }
-        } else {
-            for (_, &id) in self.ctx.binder.file_locals.iter() {
+            for (_, &id) in scope.table.iter() {
                 if user_syms.contains(&id) {
                     symbol_ids.insert(id);
                 }
+            }
+        }
+        for (_, &id) in self.ctx.binder.file_locals.iter() {
+            if user_syms.contains(&id) {
+                symbol_ids.insert(id);
             }
         }
 

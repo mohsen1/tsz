@@ -168,6 +168,34 @@ fn lib_merged_array_interface_duplicate_number_index_emits_at_lib() {
     );
 }
 
+/// Coverage gap surfaced by review of the original scope-only branch:
+/// when the file contains both a scoped container (e.g. a `namespace`) and
+/// a top-level interface augmenting a lib type, the top-level interface
+/// lives in `file_locals` rather than any nested scope's table. The
+/// lib-merge helper must walk both `scopes` and `file_locals` to flag the
+/// lib-side TS2374 in this configuration.
+#[test]
+fn lib_merged_string_interface_with_sibling_namespace_still_emits_at_lib() {
+    let user_ts = "namespace Helpers { export const x = 1; }\n\
+                   interface String {\n    [x: number]: string;\n    [x: number]: string;\n}\n";
+    let diags = check_with_es5_lib(user_ts, "merge_string_with_ns.ts");
+    if diags.is_empty() {
+        return;
+    }
+
+    let number_dups = ts2374_for_kind(&diags, "number");
+    let on_lib: Vec<&Diagnostic> = number_dups
+        .iter()
+        .copied()
+        .filter(|d| d.file.ends_with("lib.es5.d.ts") || d.file.ends_with("es5.d.ts"))
+        .collect();
+    assert!(
+        !on_lib.is_empty(),
+        "expected the lib's String index signature to be flagged even with a \
+         sibling namespace in the same file; got: {number_dups:?}"
+    );
+}
+
 /// Negative case: `interface Number` has no number-index signature in the lib,
 /// so a single user-body duplicate yields the two user-side errors but **no**
 /// lib-side error — the lib-merge helper must not over-fire when the lib has
