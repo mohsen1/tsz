@@ -512,6 +512,10 @@ name = "jsdoc_constructor_typeof_source_display_tests"
 path = "tests/jsdoc_constructor_typeof_source_display_tests.rs"
 
 [[test]]
+name = "global_this_decl_emit_unbound_tests"
+path = "tests/global_this_decl_emit_unbound_tests.rs"
+
+[[test]]
 name = "jsx_excess_attr_with_spread_source_display_tests"
 path = "tests/jsx_excess_attr_with_spread_source_display_tests.rs"
 
