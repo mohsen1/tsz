@@ -1256,6 +1256,7 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|shape| !shape.construct_signatures.is_empty());
 
         if self.is_literal_sensitive_assignment_target(target)
+            || self.target_preserves_literal_surface(target)
             || (source_display.contains("=>") && !target_is_constructor_like)
             || !Self::display_has_member_literals_assignability(&source_display)
         {
