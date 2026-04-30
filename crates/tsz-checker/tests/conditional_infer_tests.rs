@@ -152,6 +152,68 @@ const l1: L1 = 2; // Must not error
     );
 }
 
+#[test]
+fn test_build_tree_depth_two_selects_terminal_branch() {
+    let source = r#"
+type Length<T extends any[]> = T["length"];
+type Prepend<V, T extends any[]> = ((head: V, ...args: T) => void) extends (
+  ...args: infer R
+) => void
+  ? R
+  : any;
+
+type PickDepth<T, N extends number, I extends any[]> = {
+  1: T;
+  0: T & { children: PickDepth<T, N, Prepend<any, I>>[] };
+}[Length<I> extends N ? 1 : 0];
+
+interface User {
+  name: string;
+}
+
+type DepthTwo = PickDepth<User, 2, [any, any]>;
+const user: DepthTwo = { name: "Grandson" };
+"#;
+    let codes = tsz_checker::test_utils::check_source_codes(source);
+    assert!(
+        !codes.contains(&2741),
+        "Depth-two BuildTree index should select terminal branch, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_tuple_length_conditional_key_resolves_to_true_literal() {
+    let source = r#"
+type Length<T extends any[]> = T["length"];
+type Key<I extends any[], N extends number> = Length<I> extends N ? 1 : 0;
+const key: Key<[any, any], 2> = 1;
+const bad: Key<[any, any], 2> = 0;
+"#;
+    let codes = tsz_checker::test_utils::check_source_codes(source);
+    assert!(
+        codes == vec![2322],
+        "Tuple length conditional key should resolve to literal 1, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_object_indexed_by_tuple_length_conditional_key() {
+    let source = r#"
+type Length<T extends any[]> = T["length"];
+type Select<I extends any[], N extends number> = {
+  1: { name: string };
+  0: { name: string; children: unknown[] };
+}[Length<I> extends N ? 1 : 0];
+
+const user: Select<[any, any], 2> = { name: "Grandson" };
+"#;
+    let codes = tsz_checker::test_utils::check_source_codes(source);
+    assert!(
+        !codes.contains(&2741),
+        "Object indexed by tuple-length conditional key should select branch 1, got: {codes:?}"
+    );
+}
+
 /// Downstream check: `BuildTree` recursive conditional type should terminate
 /// at depth N now that `Prepend<V, T>` infers correctly for mixed
 /// fixed+rest params.

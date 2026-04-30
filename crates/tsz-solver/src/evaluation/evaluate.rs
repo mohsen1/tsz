@@ -1056,7 +1056,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Extract type parameter infos from a type by scanning for `TypeParameter` types.
-    fn extract_type_params_from_type(&self, type_id: TypeId) -> Vec<TypeParamInfo> {
+    pub(crate) fn extract_type_params_from_type(&self, type_id: TypeId) -> Vec<TypeParamInfo> {
         let mut seen = FxHashSet::default();
         let mut params = Vec::new();
         self.collect_type_params(type_id, &mut seen, &mut params);
