@@ -407,11 +407,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // site) rather than baking `| undefined` into the parameter type
             // at signature build time, because lib signatures are built without
             // strictNullChecks and would otherwise miss it.
-            if *arg_type == TypeId::UNDEFINED || *arg_type == TypeId::VOID {
-                let param_info = self.param_info_for_arg_index(params, i);
-                if param_info.is_some_and(|p| p.optional) {
-                    continue;
-                }
+            if (*arg_type == TypeId::UNDEFINED || *arg_type == TypeId::VOID)
+                && self.param_is_optional_for_arg_index(params, i)
+            {
+                continue;
             }
 
             // When the parameter is optional (`?`), its effective type includes `undefined`.
@@ -692,6 +691,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             Some(&params[arg_index])
         } else {
             None
+        }
+    }
+
+    /// Returns true when the parameter slot for `arg_index` is optional —
+    /// covering both fixed `?`-marked params and optional elements inside a
+    /// tuple-typed rest parameter (e.g. `...args: [string, number?]`). The
+    /// `param_info_for_arg_index` helper only returns the fixed-position
+    /// `ParamInfo` and reports `None` past the rest start, so a separate
+    /// inspector is needed for trailing-arg optionality.
+    fn param_is_optional_for_arg_index(&mut self, params: &[ParamInfo], arg_index: usize) -> bool {
+        let rest_start = if params.last().is_some_and(|p| p.rest) {
+            params.len().saturating_sub(1)
+        } else {
+            params.len()
+        };
+        if arg_index < rest_start {
+            return params[arg_index].optional;
+        }
+        let Some(rest_param) = params.last().filter(|p| p.rest) else {
+            return false;
+        };
+        let rest_type = self.unwrap_readonly(rest_param.type_id);
+        let rest_type = self.evaluate_rest_param_type(rest_type);
+        let offset = arg_index - rest_start;
+        match self.interner.lookup(rest_type) {
+            Some(TypeData::Tuple(elements)) => {
+                let elements = self.interner.tuple_list(elements);
+                elements.get(offset).is_some_and(|e| e.optional && !e.rest)
+            }
+            // Plain array `T[]` rest param: every position is implicitly optional
+            // for length purposes, but `undefined` is only acceptable when `T`
+            // already includes it. Defer that to the assignability check.
+            _ => false,
         }
     }
 

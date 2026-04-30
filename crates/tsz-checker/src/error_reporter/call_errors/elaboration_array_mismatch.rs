@@ -18,6 +18,14 @@ impl<'a> CheckerState<'a> {
                 )
                 .or(Some(element.type_id));
             }
+            // Optional tuple slots accept `undefined` in addition to the declared
+            // type — `[string, number?]` is structurally `[string, (number |
+            // undefined)?]` for assignability purposes. Without this widening,
+            // elaboration would emit TS2322 on `let x: [string, number?] =
+            // ["foo", undefined]` even though tsc accepts it.
+            if element.optional {
+                return Some(self.ctx.types.union2(element.type_id, TypeId::UNDEFINED));
+            }
             return Some(element.type_id);
         }
 
