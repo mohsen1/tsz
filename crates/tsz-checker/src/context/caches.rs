@@ -62,6 +62,17 @@ impl NodeTypeCache {
 
     #[inline]
     pub fn or_insert(&mut self, key: u32, value: TypeId) -> TypeId {
+        // Preserve the cache invariant maintained by `insert` above: NONE is
+        // *never* stored as a real entry. If the caller asks to insert NONE,
+        // return either the existing real value or NONE without touching the
+        // map. Without this guard, `or_insert(key, NONE)` followed by `get(key)`
+        // would return `Some(&NONE)` (a stale "cached" sentinel) instead of
+        // `None`, and downstream callers (e.g. `type_node_resolution.rs:226`)
+        // that check `if let Some(&cached) = ...get(&idx.0)` would return the
+        // sentinel as if it were a real type.
+        if value == TypeId::NONE {
+            return self.data.get(&key).copied().unwrap_or(TypeId::NONE);
+        }
         *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
     }
 
@@ -215,6 +226,13 @@ impl SymbolTypeCache {
 
     #[inline]
     pub fn entry_or_insert(&mut self, key: SymbolId, value: TypeId) -> TypeId {
+        // Same NONE-storage guard as `NodeTypeCache::or_insert` — `insert`
+        // explicitly removes NONE entries to maintain the cache invariant
+        // that `get`/`contains_key` only see real types. `entry().or_insert()`
+        // with `value == NONE` would silently break that.
+        if value == TypeId::NONE {
+            return self.data.get(&key).copied().unwrap_or(TypeId::NONE);
+        }
         *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
     }
 

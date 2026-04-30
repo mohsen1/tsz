@@ -2,6 +2,7 @@
 
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
+use tsz_common::perf_counters::DirectCrossFileInterfaceLoweringOutcome;
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -147,29 +148,46 @@ impl<'a> CheckerState<'a> {
         symbol_arena: &NodeArena,
         allow_complex_declarations: bool,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        let record = |outcome: DirectCrossFileInterfaceLoweringOutcome| {
+            tsz_common::perf_counters::record_direct_cross_file_interface_lowering_outcome(outcome);
+        };
+
         // Source and local test-fixture interfaces need exact binder-local symbol
         // resolution for diagnostics. Built-in libs depend on merged declarations
         // across many lib files and special canonical DefId handling. Keep both
         // on the mature checker path.
         if !is_direct_lowering_declaration_arena(symbol_arena) {
+            record(DirectCrossFileInterfaceLoweringOutcome::RejectedNonDirectArena);
             return None;
         }
 
-        let symbol = delegate_binder.get_symbol(sym_id)?;
+        let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
+            record(DirectCrossFileInterfaceLoweringOutcome::MissingSymbol);
+            return None;
+        };
         let disallowed_merge_flags = symbol_flags::CLASS
             | symbol_flags::TYPE_ALIAS
             | symbol_flags::VALUE_MODULE
             | symbol_flags::NAMESPACE_MODULE;
-        if symbol.flags & symbol_flags::INTERFACE == 0 || symbol.flags & disallowed_merge_flags != 0
-        {
+        if symbol.flags & symbol_flags::INTERFACE == 0 {
+            record(DirectCrossFileInterfaceLoweringOutcome::NotInterface);
+            return None;
+        }
+        if symbol.flags & disallowed_merge_flags != 0 {
+            record(DirectCrossFileInterfaceLoweringOutcome::DisallowedMergeFlags);
             return None;
         }
 
-        let declarations =
-            self.cross_file_interface_declarations(sym_id, delegate_binder, symbol_arena)?;
+        let Some(declarations) =
+            self.cross_file_interface_declarations(sym_id, delegate_binder, symbol_arena)
+        else {
+            record(DirectCrossFileInterfaceLoweringOutcome::MissingDeclarations);
+            return None;
+        };
         if !allow_complex_declarations
             && Self::interface_declarations_have_heritage_or_computed_names(&declarations)
         {
+            record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
             return None;
         }
 
@@ -198,8 +216,10 @@ impl<'a> CheckerState<'a> {
         let (interface_type, params) =
             lowering.lower_merged_interface_declarations_with_symbol(&declarations, Some(sym_id));
         if interface_type == TypeId::UNKNOWN || interface_type == TypeId::ERROR {
+            record(DirectCrossFileInterfaceLoweringOutcome::UnknownOrError);
             return None;
         }
+        record(DirectCrossFileInterfaceLoweringOutcome::Success);
 
         if !params.is_empty() {
             self.ctx.insert_def_type_params(def_id, params.clone());
