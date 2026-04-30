@@ -1018,6 +1018,15 @@ impl<'a> CheckerState<'a> {
                             ),
                             crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
                         );
+                        // Out-of-bounds tuple access yields `undefined` at
+                        // runtime. Returning UNDEFINED here lets nested
+                        // destructuring's iterability check fire TS2488 on
+                        // inner array binding patterns — matching tsc's
+                        // emission of both TS2493 and TS2488 for cases like
+                        // `var [[a0]] = []`. ANY would short-circuit the
+                        // check_destructuring_iterability ANY/ERROR fast path
+                        // and silently swallow the inner error.
+                        return TypeId::UNDEFINED;
                     }
                     TypeId::ANY
                 }
