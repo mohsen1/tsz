@@ -209,6 +209,40 @@ pub fn get_conditional_type_id(
     }
 }
 
+/// Returns true if `type_id` is an `IndexAccess(_, _)` type.
+pub fn is_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(db.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
+}
+
+/// If `type_id` is an `IndexAccess(obj, KeyOf(obj))` (the same operand on both
+/// sides — the canonical `Foo[keyof Foo]` shape used by lib types like
+/// `type WeakKey = WeakKeyTypes[keyof WeakKeyTypes]`), return `Some(obj)`.
+///
+/// This is intentionally narrow: it does not match `T[keyof T]` where `T` is
+/// a generic type parameter, nor `T[U]` where the operands differ. The narrow
+/// match keeps display-only resolution from kicking in on legitimately-deferred
+/// indexed-access aliases (which, when prematurely evaluated, can blow up
+/// recursion fuel and emit spurious TS2589s).
+pub fn indexed_access_self_keyof(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    let TypeData::IndexAccess(obj, idx) = db.lookup(type_id)? else {
+        return None;
+    };
+    let TypeData::KeyOf(idx_inner) = db.lookup(idx)? else {
+        return None;
+    };
+    if idx_inner == obj { Some(obj) } else { None }
+}
+
+/// Returns true if `type_id` is still a deferred form (`Lazy` or `IndexAccess`)
+/// that the solver could not reduce. Useful when deciding whether to keep an
+/// alias display or substitute the resolved form.
+pub fn is_deferred_lazy_or_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::IndexAccess(_, _) | TypeData::Lazy(_))
+    )
+}
+
 /// Get the keyof inner type if the type is a `KeyOf` type.
 pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
