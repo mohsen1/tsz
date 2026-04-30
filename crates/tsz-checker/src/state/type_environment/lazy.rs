@@ -722,11 +722,18 @@ impl<'a> CheckerState<'a> {
 
         let mut visited = FxHashSet::default();
         let result = self.resolve_type_for_property_access_inner(type_id, &mut visited);
+        // Use entry().or_insert() to avoid overwriting a value that evaluate_application_type
+        // may have stored in this cache during the inner call above. For homomorphic mapped
+        // types over union constraints (e.g. `T extends [number] | readonly [string]`),
+        // evaluate_application_type correctly produces a union of the mapped members, but
+        // resolve_type_for_property_access_inner strips ReadonlyType wrappers, causing both
+        // union members to deduplicate to a single tuple — losing the readonly variant.
         self.ctx
             .narrowing_cache
             .resolve_cache
             .borrow_mut()
-            .insert(type_id, result);
+            .entry(type_id)
+            .or_insert(result);
         result
     }
 

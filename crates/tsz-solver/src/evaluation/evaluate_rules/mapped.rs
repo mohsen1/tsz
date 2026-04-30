@@ -722,6 +722,41 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Resolve the constraint to check if it's array/tuple-like
         let resolved = self.evaluate(constraint);
+
+        // When the constraint is a union (e.g. `T extends [number] | readonly [string]`),
+        // evaluate each union member as an array/tuple mapped type and return their union.
+        // This mirrors tsc's distributeObjectOver behavior for homomorphic mapped types.
+        if let Some(TypeData::Union(list_id)) = self.interner().lookup(resolved) {
+            let members: Vec<TypeId> = self.interner().type_list(list_id).to_vec();
+            let mut results = Vec::with_capacity(members.len());
+            for &member in &members {
+                let resolved_member = self.evaluate(member);
+                let member_result =
+                    self.try_evaluate_mapped_over_array_like(mapped, resolved_member);
+                match member_result {
+                    Some(r) => results.push(r),
+                    None => return None,
+                }
+            }
+            if !results.is_empty() {
+                let union_id = self.interner().union(results);
+                tracing::trace!(
+                    "evaluate_mapped: union-constrained type parameter → producing union of mapped arrays/tuples"
+                );
+                return Some(union_id);
+            }
+        }
+
+        self.try_evaluate_mapped_over_array_like(mapped, resolved)
+    }
+
+    /// Try to evaluate a mapped type over a single array/tuple-like type.
+    /// Returns None if the type is not array/tuple-like.
+    fn try_evaluate_mapped_over_array_like(
+        &mut self,
+        mapped: &MappedType,
+        resolved: TypeId,
+    ) -> Option<TypeId> {
         match self.interner().lookup(resolved) {
             Some(TypeData::Array(element_type)) => {
                 tracing::trace!(
@@ -736,7 +771,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 );
                 Some(self.evaluate_mapped_tuple(mapped, tuple_id))
             }
-            // ReadonlyType wrapping Array or Tuple: `readonly T[]` or `readonly [a, b]`
+            // `readonly [a, b]` or `ReadonlyArray<T>` — preserve readonly wrapper
+            Some(TypeData::ReadonlyType(inner)) => match self.interner().lookup(inner) {
+                Some(TypeData::Tuple(tuple_id)) => {
+                    tracing::trace!(
+                        "evaluate_mapped: readonly-tuple-constrained type parameter → producing readonly tuple"
+                    );
+                    let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id);
+                    let final_readonly =
+                        !matches!(mapped.readonly_modifier, Some(MappedModifier::Remove));
+                    if final_readonly {
+                        Some(self.interner().readonly_type(mapped_tuple))
+                    } else {
+                        Some(mapped_tuple)
+                    }
+                }
+                Some(TypeData::Array(element_type)) => {
+                    tracing::trace!(
+                        "evaluate_mapped: readonly-array-constrained type parameter → producing readonly array"
+                    );
+                    Some(self.evaluate_mapped_array_with_readonly(mapped, element_type, true))
+                }
+                _ => None,
+            },
+            // ObjectWithIndex with readonly numeric index: ReadonlyArray shape from lib
             Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
                 let has_readonly_index = shape
