@@ -29,6 +29,20 @@ function runOnce(command, args) {
 
 const children = [];
 
+const eleventyArgs = ["eleventy", "--serve", "--watch"];
+const cliArgs = process.argv.slice(2);
+for (let i = 0; i < cliArgs.length; i += 1) {
+  const arg = cliArgs[i];
+  if (arg === "--port" && cliArgs[i + 1]) {
+    eleventyArgs.push(arg, cliArgs[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg.startsWith("--port=")) {
+    eleventyArgs.push(arg);
+  }
+}
+
 function shutdown(code) {
   for (const child of children) {
     child.kill("SIGTERM");
@@ -46,7 +60,12 @@ if (process.env.TSZ_WEBSITE_SKIP_BENCH_PREPARE !== "1") {
 await runOnce(process.execPath, [path.join(root, "scripts", "sync-docs.mjs")]);
 
 children.push(spawnChild(process.execPath, [path.join(root, "scripts", "build-playground.mjs"), "--watch"]));
-children.push(spawnChild(process.platform === "win32" ? "npx.cmd" : "npx", ["eleventy", "--serve", "--watch"]));
+children.push(
+  spawnChild(
+    process.platform === "win32" ? "npx.cmd" : "npx",
+    eleventyArgs
+  )
+);
 
 await Promise.race(
   children.map(

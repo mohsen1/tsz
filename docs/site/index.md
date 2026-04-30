@@ -11,14 +11,14 @@ extra_scripts: '<script src="/home.js" defer></script>'
 
 <p class="subtitle"><code>tsz</code> is a TypeScript checker and language service written in Rust. It is designed to outperform <code>tsgo</code>, and beyond speed, <code>tsz</code> also targets a <a href="/sound-mode">Sound Mode</a> for stricter type-checking.</p>
 
-<blockquote class="wip-warning">
-<h3>Project Status</h3>
-<p><strong>Nearly complete.</strong> TypeScript support is in its final compiler stages, with remaining work focused on performance tuning and LSP support in WebAssembly.</p>
-</blockquote>
-
 ## Performance
 
 {{ benchmark_mean_chart | safe }}
+
+<blockquote class="wip-warning">
+  <h3>Project Status</h3>
+  <p><strong>Nearly complete.</strong> TypeScript support is in its final compiler stages, with remaining work focused on performance tuning and LSP support in WebAssembly.</p>
+</blockquote>
 
 ## Progress
 
