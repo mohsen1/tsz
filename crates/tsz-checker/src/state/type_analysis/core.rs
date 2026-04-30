@@ -44,6 +44,15 @@ impl<'a> CheckerState<'a> {
             symbol.decl_file_idx,
             type_id,
         );
+        self.ctx.definition_store.cache_resolved_cross_file_query(
+            super::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
+            symbol.decl_file_idx,
+            sym_id.0,
+            0,
+            0,
+            type_id,
+            Vec::new(),
+        );
     }
 
     fn can_register_evaluated_alias_form(

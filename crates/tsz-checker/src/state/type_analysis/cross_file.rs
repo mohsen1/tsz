@@ -15,7 +15,7 @@ use tsz_solver::TypeId;
 const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
 const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
 const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
-const CROSS_FILE_QUERY_SYMBOL_TYPE: u8 = 4;
+pub(crate) const CROSS_FILE_QUERY_SYMBOL_TYPE: u8 = 4;
 
 fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
@@ -353,6 +353,15 @@ impl<'a> CheckerState<'a> {
                 sym_id.0,
                 alias_cache_file_idx as u32,
                 result,
+            );
+            self.ctx.definition_store.cache_resolved_cross_file_query(
+                CROSS_FILE_QUERY_SYMBOL_TYPE,
+                alias_cache_file_idx as u32,
+                sym_id.0,
+                0,
+                0,
+                result,
+                Vec::new(),
             );
         }
         tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(AliasOutcome::Success);

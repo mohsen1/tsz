@@ -396,19 +396,41 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             && let Some(file_idx) = definition_file_idx
             && file_idx != self.current_file_idx
             && self.share_owner_symbol_type_results
-            && let Some(resolved) = self
+        {
+            // Prefer the canonical cross-file query cache (SYMBOL_TYPE bucket).
+            if let Some((resolved, _params)) = self.definition_store.get_resolved_cross_file_query(
+                crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
+                file_idx as u32,
+                sym_id.0,
+                0,
+                0,
+            ) && resolved != tsz_solver::TypeId::ERROR
+            {
+                tracing::trace!(
+                    def_id = def_id.0,
+                    sym_id = sym_id.0,
+                    file_idx = file_idx,
+                    type_id = resolved.0,
+                    "resolve_lazy: found in shared SYMBOL_TYPE bucket"
+                );
+                return Some(resolved);
+            }
+            // Backward-compat fallback for callers that haven't migrated to the
+            // new bucket yet.
+            if let Some(resolved) = self
                 .definition_store
                 .get_resolved_symbol_type(sym_id.0, file_idx as u32)
-            && resolved != tsz_solver::TypeId::ERROR
-        {
-            tracing::trace!(
-                def_id = def_id.0,
-                sym_id = sym_id.0,
-                file_idx = file_idx,
-                type_id = resolved.0,
-                "resolve_lazy: found in shared resolved_symbol_types cache"
-            );
-            return Some(resolved);
+                && resolved != tsz_solver::TypeId::ERROR
+            {
+                tracing::trace!(
+                    def_id = def_id.0,
+                    sym_id = sym_id.0,
+                    file_idx = file_idx,
+                    type_id = resolved.0,
+                    "resolve_lazy: found in legacy resolved_symbol_types cache"
+                );
+                return Some(resolved);
+            }
         }
 
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");
