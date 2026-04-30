@@ -19,6 +19,13 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn compile_and_get_diagnostic_codes(source: &str) -> Vec<u32> {
+    compile_and_get_diagnostic_codes_with_options(source, CheckerOptions::default())
+}
+
+fn compile_and_get_diagnostic_codes_with_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<u32> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -31,7 +38,7 @@ fn compile_and_get_diagnostic_codes(source: &str) -> Vec<u32> {
         &binder,
         &types,
         "test.ts".to_string(),
-        CheckerOptions::default(),
+        options,
     );
 
     checker.check_source_file(root);
@@ -96,5 +103,107 @@ type Probe<T extends Record<string, unknown>> = { [K in keyof T]: Want<K> };
     assert!(
         !diagnostics.contains(&2344),
         "expected no TS2344, got: {diagnostics:?}"
+    );
+}
+
+/// A mapped type that preserves a callable numeric index signature remains
+/// callable when indexed by the same extracted numeric key space. This mirrors
+/// the `coAndContraVariantInferences3.ts` pattern:
+/// `Parameters<{ [P in Extract<keyof T, number>]: T[P] }[Extract<keyof T, number>]>`.
+#[test]
+fn test_mapped_numeric_key_index_preserves_callable_constraint_for_parameters() {
+    let diagnostics = compile_and_get_diagnostic_codes(
+        r#"
+type Parameters<T extends (...args: any[]) => any> =
+    T extends (...args: infer P) => any ? P : never;
+type Extract<T, U> = T extends U ? T : never;
+
+type OverloadDefinitions = { readonly [P in number]: (...args: any[]) => any; };
+type OverloadKeys<T extends OverloadDefinitions> = Extract<keyof T, number>;
+type OverloadParameters<T extends OverloadDefinitions> =
+    Parameters<{ [P in OverloadKeys<T>]: T[P]; }[OverloadKeys<T>]>;
+"#,
+    );
+    assert!(
+        !diagnostics.contains(&2344),
+        "mapped numeric-key callable indexed access should satisfy Parameters constraint, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_mapped_numeric_key_callback_property_contextually_types_destructuring_param() {
+    let diagnostics = compile_and_get_diagnostic_codes_with_options(
+        r#"
+type Parameters<T extends (...args: any[]) => any> =
+    T extends (...args: infer P) => any ? P : never;
+type Extract<T, U> = T extends U ? T : never;
+
+type OverloadDefinitions = { readonly [P in number]: (...args: any[]) => any; };
+type OverloadKeys<T extends OverloadDefinitions> = Extract<keyof T, number>;
+type OverloadParameters<T extends OverloadDefinitions> =
+    Parameters<{ [P in OverloadKeys<T>]: T[P]; }[OverloadKeys<T>]>;
+type OverloadBinders<T extends OverloadDefinitions> =
+    { [P in OverloadKeys<T>]: (args: OverloadParameters<T>) => boolean | undefined; };
+
+declare function bind<T extends OverloadDefinitions>(
+    overloads: T,
+    binder: OverloadBinders<T>,
+): void;
+
+bind({
+    0(node: string, count: number): string { return node; },
+}, {
+    0: ([node, count]) => node.length > count,
+});
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !diagnostics.contains(&7031),
+        "mapped numeric-key callback property should contextually type destructuring parameters, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_fluent_mapped_numeric_key_callback_property_suppresses_provisional_ts7031() {
+    let diagnostics = compile_and_get_diagnostic_codes_with_options(
+        r#"
+type Parameters<T extends (...args: any[]) => any> =
+    T extends (...args: infer P) => any ? P : never;
+type Extract<T, U> = T extends U ? T : never;
+
+type OverloadDefinitions = { readonly [P in number]: (...args: any[]) => any; };
+type OverloadKeys<T extends OverloadDefinitions> = Extract<keyof T, number>;
+type OverloadParameters<T extends OverloadDefinitions> =
+    Parameters<{ [P in OverloadKeys<T>]: T[P]; }[OverloadKeys<T>]>;
+type OverloadBinders<T extends OverloadDefinitions> =
+    { [P in OverloadKeys<T>]: (args: OverloadParameters<T>) => boolean | undefined; };
+
+interface Builder {
+    overload<T extends OverloadDefinitions>(overloads: T): {
+        bind(binder: OverloadBinders<T>): void;
+    };
+}
+declare function build(): Builder;
+
+build().overload({
+    0(node: string, count: number): string { return node; },
+}).bind({
+    0: ([node, count]) => node.length > count,
+});
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !diagnostics.contains(&7031),
+        "fluent generic mapped callback context should not leak provisional TS7031, got: {diagnostics:?}"
     );
 }
