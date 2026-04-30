@@ -1175,12 +1175,53 @@ impl<'a> CheckerState<'a> {
     /// tsc anchors the resulting TS2322 at the variable binding with the
     /// outer assignment types instead of drilling into the wrapped
     /// expression's inner structure.
+    ///
+    /// Excludes `as const` — const assertions don't change the structural
+    /// shape of the inner expression (they only freeze literals and add
+    /// readonly), so any mismatch with the declared type is a per-property
+    /// issue inside the literal. tsc drills into the property in that case.
     pub(crate) fn initializer_is_type_assertion(&self, init_idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         self.ctx.arena.get(init_idx).is_some_and(|n| {
-            n.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            (n.kind == syntax_kind_ext::SATISFIES_EXPRESSION
                 || n.kind == syntax_kind_ext::AS_EXPRESSION
-                || n.kind == syntax_kind_ext::TYPE_ASSERTION
+                || n.kind == syntax_kind_ext::TYPE_ASSERTION)
+                && !self.is_const_assertion_node(init_idx)
         })
+    }
+
+    /// Detect `expr as const` / `<const>expr` const assertions structurally:
+    /// either the type-node is the bare `const` keyword (newer parser), or it
+    /// is a `TypeReference` to an identifier named `const` with no type args
+    /// (legacy form). Mirrors the detection in `dispatch.rs` that toggles
+    /// `in_const_assertion`.
+    fn is_const_assertion_node(&self, node_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(n) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if n.kind != syntax_kind_ext::AS_EXPRESSION && n.kind != syntax_kind_ext::TYPE_ASSERTION {
+            return false;
+        }
+        let Some(assertion) = self.ctx.arena.get_type_assertion(n) else {
+            return false;
+        };
+        let Some(type_node) = self.ctx.arena.get(assertion.type_node) else {
+            return false;
+        };
+        if type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16 {
+            return true;
+        }
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+        {
+            return type_ref.type_arguments.is_none()
+                && self
+                    .ctx
+                    .arena
+                    .get_identifier_text(type_ref.type_name)
+                    .is_some_and(|name| name == "const");
+        }
+        false
     }
 }
