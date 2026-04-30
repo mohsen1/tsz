@@ -283,3 +283,64 @@ class A {
          Got diagnostics: {diagnostics:#?}"
     );
 }
+
+// Regression: arrow function used as a default value in a variable destructuring binding
+// element must get its own scope, so its parameter resolves correctly and the contextual
+// type (from the property type) is used to type-check the body.
+#[test]
+fn test_arrow_default_in_variable_destructuring_gets_scope() {
+    let source = r#"
+interface StringIdentity {
+    stringIdentity(s: string): string;
+}
+// arg.length is number, not assignable to string — must produce TS2322
+let { stringIdentity: id = arg => arg.length }: StringIdentity = { stringIdentity: x => x };
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 for `arg.length` (number not assignable to string) in destructuring default. \
+         Got diagnostics: {diagnostics:#?}"
+    );
+    let non_2322: Vec<&(u32, String)> = diagnostics.iter().filter(|(c, _)| *c != 2322).collect();
+    assert!(
+        non_2322.is_empty(),
+        "Expected only TS2322, no other diagnostics. Got: {non_2322:#?}"
+    );
+}
+
+// The same pattern in a function parameter destructuring must also work (existing behavior).
+#[test]
+fn test_arrow_default_in_parameter_destructuring_gets_scope() {
+    let source = r#"
+interface Show {
+    show: (x: number) => string;
+}
+// v => v: number -> number, not assignable to (x: number) => string — must produce TS2322
+function f({ show: showRename = v => v }: Show) {}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 for `v => v` (number not assignable to string) in parameter destructuring default. \
+         Got diagnostics: {diagnostics:#?}"
+    );
+}
