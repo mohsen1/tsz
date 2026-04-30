@@ -477,12 +477,14 @@ impl<'a> CheckerState<'a> {
         // maintain individual element types for reverse mapped type inference to work.
         // Without this, array literals become Array(union) which loses element-level detail.
         let force_tuple_for_mapped = tuple_context.is_none()
-            && resolved_contextual_type.is_some_and(|resolved| {
+            && (resolved_contextual_type.is_some_and(|resolved| {
                 crate::query_boundaries::common::is_homomorphic_mapped_type_context(
                     self.ctx.types,
                     resolved,
                 )
-            });
+            }) || original_contextual_type.is_some_and(|original| {
+                self.original_context_is_homomorphic_mapped_application(original)
+            }));
 
         let force_tuple_for_union_context = tuple_context.is_none()
             && !force_tuple_for_mapped
@@ -992,6 +994,26 @@ impl<'a> CheckerState<'a> {
         }
 
         factory.array(element_type)
+    }
+
+    /// When the contextual type is a generic application like `Definition<Schema>`, the
+    /// resolved type (after `evaluate_contextual_type`) is an Object, not a Mapped type,
+    /// so `is_homomorphic_mapped_type_context` on the resolved type returns false. This
+    /// helper inspects the Application's generic definition body directly: if the body is
+    /// `{ [K in keyof T]: ... }` the application IS a homomorphic mapped context.
+    fn original_context_is_homomorphic_mapped_application(
+        &mut self,
+        type_id: tsz_solver::TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common as query;
+        let Some((base, _args)) = query::application_info(self.ctx.types, type_id) else {
+            return false;
+        };
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+            return false;
+        };
+        let (body_type, _type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        query::is_homomorphic_mapped_type_context(self.ctx.types, body_type)
     }
 
     /// Resolve array element type from union members by checking number index signatures.
