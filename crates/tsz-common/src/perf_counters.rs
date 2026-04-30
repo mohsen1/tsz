@@ -353,7 +353,10 @@ pub fn record_overlay_copy(reason: CheckerCreationReason, entries: u64) {
         inc(&c.copy_symbol_file_targets_len_ge_1m);
     }
     inc(&c.overlay_copy_calls_by_reason[reason.as_index()]);
-    add(&c.overlay_copy_entries_by_reason[reason.as_index()], entries);
+    add(
+        &c.overlay_copy_entries_by_reason[reason.as_index()],
+        entries,
+    );
     record_max(
         &c.overlay_copy_max_entries_by_reason[reason.as_index()],
         entries,
