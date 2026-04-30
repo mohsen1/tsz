@@ -3321,6 +3321,72 @@ fn store_union_origin_overrides_canonical_anon_object_sort() {
     assert_eq!(rendered, "{} | { a: number; }", "got: {rendered}");
 }
 
+// Locks the structural rule that the source-written order of an all-number-
+// literal union survives the canonical sort, even when no flattening occurs
+// and there are no anonymous object members. The canonical comparator only
+// pins `0` first and falls back to allocation order for other number
+// literals, so without origin storage the printer can render
+// `0 | 1 | 2` as `0 | 2 | 1` (or any other alloc-order permutation) when
+// the literals were interned in a different order earlier in the run.
+//
+// This regression mirrors `inDoesNotOperateOnPrimitiveTypes.ts` line 64,
+// where tsc renders `T & (0 | 1 | 2)` but tsz had been rendering
+// `T & (0 | 2 | 1)`.
+#[test]
+fn store_union_origin_preserves_source_order_for_number_literal_union() {
+    let db = TypeInterner::new();
+
+    // Force a non-source allocation order: intern `2` before `1` so the
+    // canonical sort's alloc-order fallback puts `2` ahead of `1`.
+    let two = db.literal_number(2.0);
+    let one = db.literal_number(1.0);
+    let zero = db.literal_number(0.0);
+
+    // Build the union in source-written order: `0 | 1 | 2`.
+    let origin = vec![zero, one, two];
+    let union_id = db.union(origin.clone());
+
+    // Pre-condition: without an origin, the canonical sort produces
+    // `0 | 2 | 1` because alloc_order(2) < alloc_order(1).
+    {
+        let mut fmt = TypeFormatter::new(&db);
+        assert_eq!(fmt.format(union_id), "0 | 2 | 1");
+    }
+
+    // Store the origin. Length is unchanged (3 in / 3 out) and there are no
+    // anonymous object members, so the existing anon-object guard would
+    // reject this. The number-literal guard must accept it.
+    db.store_union_origin(union_id, origin);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(union_id), "0 | 1 | 2");
+}
+
+// Negative case: a number-literal-only union whose canonical order already
+// matches the source order should NOT trigger origin storage. Storing it
+// would waste memory and pin the order even if a later inferred-union
+// caller passes a different (also-canonical) origin first.
+#[test]
+fn store_union_origin_skipped_when_number_literal_order_matches() {
+    let db = TypeInterner::new();
+
+    // Intern in order matching the canonical sort: 0 special-cased first,
+    // then 1, then 2 by alloc order.
+    let zero = db.literal_number(0.0);
+    let one = db.literal_number(1.0);
+    let two = db.literal_number(2.0);
+
+    let union_id = db.union(vec![zero, one, two]);
+
+    // Origin matches canonical — no need to override.
+    db.store_union_origin(union_id, vec![zero, one, two]);
+
+    assert!(
+        db.get_union_origin(union_id).is_none(),
+        "Origin must not be stored when canonical order already matches source"
+    );
+}
+
 // Negative case: when the union members are non-anonymous (e.g., a literal
 // and a Lazy alias), tsc and our interner agree on canonical sort. Storing
 // the as-written origin in this case would override tsc's sort and regress
