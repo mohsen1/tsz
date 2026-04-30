@@ -23066,6 +23066,85 @@ fn test_noinfer_with_union_type() {
 }
 
 #[test]
+fn test_noinfer_member_of_union_is_preserved() {
+    // Regression for noInferUnionExcessPropertyCheck1.ts.
+    //
+    // `evaluate(NoInfer<T> | U)` must NOT strip the `NoInfer<>` wrapper from
+    // the union member. tsc treats `NoInfer<>` as transparent only at the
+    // *outermost* layer of the displayed type — when it appears as a union
+    // (or intersection) member, the union is the outermost layer, not the
+    // wrapper, and the wrapper stays visible in messages such as
+    // `NoInfer<{ x: string; }> | (() => NoInfer<{ x: string; }>)`.
+    use crate::evaluation::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+    let noinfer_string = interner.intern(TypeData::NoInfer(TypeId::STRING));
+    let union = interner.union(vec![noinfer_string, TypeId::NUMBER]);
+
+    let evaluated = evaluate_type(&interner, union);
+    let Some(TypeData::Union(list_id)) = interner.lookup(evaluated) else {
+        panic!(
+            "expected union after evaluation, got {:?}",
+            interner.lookup(evaluated)
+        );
+    };
+    let members = interner.type_list(list_id);
+    let has_noinfer_member = members.iter().any(|m| {
+        matches!(
+            interner.lookup(*m),
+            Some(TypeData::NoInfer(inner)) if inner == TypeId::STRING
+        )
+    });
+    assert!(
+        has_noinfer_member,
+        "expected NoInfer<string> to survive union evaluation, got members: {:?}",
+        members
+            .iter()
+            .map(|m| interner.lookup(*m))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_noinfer_member_of_intersection_is_preserved() {
+    // Symmetric guard for `evaluate_intersection`: the NoInfer wrapper on a
+    // member must survive the recursive evaluation step that also runs for
+    // intersections.
+    use crate::evaluation::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+    let foo = interner.intern_string("foo");
+    let bar = interner.intern_string("bar");
+    let obj_a = interner.object(vec![PropertyInfo::new(foo, TypeId::STRING)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(bar, TypeId::NUMBER)]);
+    let noinfer_a = interner.intern(TypeData::NoInfer(obj_a));
+    let intersection = interner.intersection(vec![noinfer_a, obj_b]);
+
+    let evaluated = evaluate_type(&interner, intersection);
+    let Some(TypeData::Intersection(list_id)) = interner.lookup(evaluated) else {
+        panic!(
+            "expected intersection after evaluation, got {:?}",
+            interner.lookup(evaluated)
+        );
+    };
+    let members = interner.type_list(list_id);
+    let has_noinfer_member = members.iter().any(|m| {
+        matches!(
+            interner.lookup(*m),
+            Some(TypeData::NoInfer(inner)) if inner == obj_a
+        )
+    });
+    assert!(
+        has_noinfer_member,
+        "expected NoInfer<{{ foo: string; }}> to survive intersection evaluation, got members: {:?}",
+        members
+            .iter()
+            .map(|m| interner.lookup(*m))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_noinfer_in_function_param_position() {
     // function foo<T>(a: T, b: NoInfer<T>): T
     // When called as foo("hello", value), inference comes only from 'a'
