@@ -18,7 +18,6 @@
 //!    without the fix, tsz collapsed the intersection to its first member
 //!    in the diagnostic message.
 
-
 fn count(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> usize {
     diags.iter().filter(|d| d.code == code).count()
 }
