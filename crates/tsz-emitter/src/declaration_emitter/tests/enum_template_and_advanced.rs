@@ -1039,3 +1039,125 @@ fn check_call_expression_return_type_portability_skip_when_disabled() {
         "no diagnostics when portability check is disabled"
     );
 }
+
+// ── TS2883 portability check: symlinked-monorepo nested package ─────
+
+/// Build an empty `DeclarationEmitter` whose only purpose is exercising the
+/// path-shape helpers (`strip_ts_extensions`, `calculate_relative_path`).
+fn make_path_only_emitter<'a>(parser: &'a ParserState) -> DeclarationEmitter<'a> {
+    DeclarationEmitter::new(&parser.arena)
+}
+
+#[test]
+fn symlinked_nested_package_reference_fires_when_outer_package_is_not_consumer_ancestor() {
+    // Structural shape: type's source path is `<X>/node_modules/<P>/<sub>` and
+    // `<X>` is a sibling of (not an ancestor of) the consumer's directory. The
+    // package was reached only through a nested / symlinked `node_modules` chain
+    // outside the consumer's normal Node.js resolution scope, so writing `<P>`
+    // as a bare specifier from the consumer would not resolve to the same file.
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+    let emitter = make_path_only_emitter(&parser);
+
+    let result = emitter.symlinked_nested_package_reference(
+        "Folder/monorepo/package-a/node_modules/styled-components/typings/styled-components.d.ts",
+        "InterpolationValue",
+        "Folder/monorepo/core/index.ts",
+    );
+
+    assert_eq!(
+        result,
+        Some((
+            "../package-a/node_modules/styled-components/typings/styled-components".to_string(),
+            "InterpolationValue".to_string(),
+        )),
+        "expected TS2883 reference for symlinked-monorepo nested package"
+    );
+}
+
+#[test]
+fn symlinked_nested_package_reference_independent_of_user_chosen_names() {
+    // The fix must be structural: changing user-chosen package and type names
+    // (the bound identifiers in this scenario) must not affect whether the
+    // helper fires. Mirrors the failing test's shape with different names.
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+    let emitter = make_path_only_emitter(&parser);
+
+    let result = emitter.symlinked_nested_package_reference(
+        "repo/workspace/leaf-pkg/node_modules/dep-x/dist/types.d.ts",
+        "Widget",
+        "repo/workspace/consumer/main.ts",
+    );
+
+    assert_eq!(
+        result,
+        Some((
+            "../leaf-pkg/node_modules/dep-x/dist/types".to_string(),
+            "Widget".to_string(),
+        )),
+        "rule should be name-agnostic"
+    );
+}
+
+#[test]
+fn symlinked_nested_package_reference_skips_normal_node_modules_resolution() {
+    // Normal resolution: the package's `<X>` is an ancestor of the consumer.
+    // The helper must return None so the existing logic decides portability.
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+    let emitter = make_path_only_emitter(&parser);
+
+    let result = emitter.symlinked_nested_package_reference(
+        "project/node_modules/lib/index.d.ts",
+        "Lib",
+        "project/src/main.ts",
+    );
+
+    assert!(
+        result.is_none(),
+        "ancestor `<X>` should be left to the standard rules; got {result:?}"
+    );
+}
+
+#[test]
+fn symlinked_nested_package_reference_skips_paths_without_node_modules() {
+    // Source paths without any `node_modules` segment (e.g. workspace siblings
+    // resolved via symlinked package roots) are handled by other rules; this
+    // helper must only consider node_modules-bearing source paths.
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+    let emitter = make_path_only_emitter(&parser);
+
+    let result = emitter.symlinked_nested_package_reference(
+        "workspace/packageA/index.d.ts",
+        "Foo",
+        "workspace/packageC/index.ts",
+    );
+
+    assert!(
+        result.is_none(),
+        "no node_modules in source path should yield None; got {result:?}"
+    );
+}
+
+#[test]
+fn symlinked_nested_package_reference_skips_multiple_node_modules() {
+    // Source paths with two or more `node_modules` segments are already handled
+    // by the existing nested-rules in `check_symbol_portability` (Cases 1 and 2).
+    // The helper must defer to them by returning None.
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+    let emitter = make_path_only_emitter(&parser);
+
+    let result = emitter.symlinked_nested_package_reference(
+        "r/node_modules/foo/node_modules/nested/index.d.ts",
+        "NestedProps",
+        "r/entry.ts",
+    );
+
+    assert!(
+        result.is_none(),
+        "multi-node_modules paths must defer to existing rules; got {result:?}"
+    );
+}

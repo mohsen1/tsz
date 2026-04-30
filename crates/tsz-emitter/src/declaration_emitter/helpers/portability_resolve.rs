@@ -1512,6 +1512,19 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
+        // Symlinked-monorepo / nested-package case: when the source path is
+        // `<X>/node_modules/<P>/<sub>` but `<X>` is not an ancestor of the
+        // consumer's directory, the package was reached only by traversing
+        // a symlinked / nested `node_modules` outside the consumer's normal
+        // Node.js resolution scope. Writing `<P>` as a bare specifier from
+        // the consumer would not resolve to the same file. tsc emits TS2883
+        // with the resolved relative path; tsz must do the same.
+        if let Some(reference) =
+            self.symlinked_nested_package_reference(&source_path, &type_name, current_file_path)
+        {
+            return Some(reference);
+        }
+
         // Parse node_modules segments from the source path
         let components: Vec<_> = Path::new(&source_path).components().collect();
         let nm_positions: Vec<usize> = components
@@ -1767,6 +1780,60 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    /// Detect the "symlinked monorepo / nested-package" portability case.
+    ///
+    /// When a type's source path is `<X>/node_modules/<P>/<sub>` and `<X>` is
+    /// NOT an ancestor of the consumer file's directory, the type was reached
+    /// through a symlinked or otherwise nested `node_modules` chain that is
+    /// outside the consumer's normal resolution scope (the standard "walk up
+    /// looking for `node_modules`" Node.js algorithm starting at the consumer
+    /// would not land on this file). Writing `<P>` as a bare specifier from
+    /// the consumer would therefore fail at runtime, so tsc emits TS2883 with
+    /// the resolved relative path. This helper returns that diagnostic data.
+    ///
+    /// Restricted to source paths with exactly one `node_modules` segment so
+    /// it does not double-fire alongside the existing nested-`node_modules`
+    /// rules in `check_symbol_portability` (Cases 1 and 2 there cover the
+    /// `>= 2` segment case).
+    pub(in crate::declaration_emitter) fn symlinked_nested_package_reference(
+        &self,
+        source_path: &str,
+        type_name: &str,
+        current_file_path: &str,
+    ) -> Option<(String, String)> {
+        use std::path::{Component, Path};
+
+        let path = Path::new(source_path);
+        let nm_indices: Vec<usize> = path
+            .components()
+            .enumerate()
+            .filter_map(|(idx, component)| match component {
+                Component::Normal(part) if part.to_str() == Some("node_modules") => Some(idx),
+                _ => None,
+            })
+            .collect();
+
+        if nm_indices.len() != 1 {
+            return None;
+        }
+
+        let nm_idx = nm_indices[0];
+        let nm_parent: std::path::PathBuf = path.components().take(nm_idx).collect();
+        let consumer_dir = Path::new(current_file_path).parent()?;
+
+        if consumer_dir.starts_with(&nm_parent) {
+            return None;
+        }
+
+        let mut from_path =
+            self.strip_ts_extensions(&self.calculate_relative_path(current_file_path, source_path));
+        if from_path.ends_with("/index") {
+            from_path.truncate(from_path.len() - "/index".len());
+        }
+
+        Some((from_path, type_name.to_string()))
     }
 
     pub(in crate::declaration_emitter) fn transitive_import_module_reference_path(
