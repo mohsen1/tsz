@@ -1352,9 +1352,12 @@ const o1 = {
 }
 
 /// Regression test: recursive method-only generic interface variance must stay
-/// order-independent while preserving TypeScript's method bivariance.
+/// order-independent. tsc treats T as COVARIANT here because the callback
+/// parameter `cb: (x: T) => ...` (a non-method function) pins T outside method
+/// bivariance, so `b = a` (`MyPromise<Foo>` to `MyPromise<Bar>`) is rejected
+/// while `a = b` (`MyPromise<Bar>` to `MyPromise<Foo>`) is accepted.
 #[test]
-fn test_generic_variance_order_independent_method_bivariance() {
+fn test_generic_variance_order_independent_rejection() {
     let source = r#"
 interface MyPromise<T> {
     then<U>(cb: (x: T) => MyPromise<U>): MyPromise<U>;
@@ -1378,8 +1381,8 @@ b = a;
     );
 
     assert!(
-        !has_error(&diagnostics, 2322),
-        "Did not expect TS2322 for method-only MyPromise assignments. Diagnostics: {diagnostics:#?}"
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for 'b = a' (MyPromise<Foo> not assignable to MyPromise<Bar>). Diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -1445,10 +1448,11 @@ b = a;
     );
 }
 
-/// Sanity check: method-only generic interface variance accepts a single
-/// bivariant assignment.
+/// Sanity check: a single covariant rejection. The callback param `cb: (x: T) => ...`
+/// is a non-method function, so its T occurrence pins `MyPromise`<T> as COVARIANT
+/// (outside method bivariance) and `b = a` is rejected.
 #[test]
-fn test_generic_variance_simple_method_bivariance() {
+fn test_generic_variance_simple_rejection() {
     let source = r#"
 interface MyPromise<T> {
     then<U>(cb: (x: T) => MyPromise<U>): MyPromise<U>;
@@ -1471,8 +1475,8 @@ b = a;
     );
 
     assert!(
-        !has_error(&diagnostics, 2322),
-        "Did not expect TS2322 for method-only MyPromise assignment. Diagnostics: {diagnostics:#?}"
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for 'b = a' alone. Diagnostics: {diagnostics:#?}"
     );
 }
 
