@@ -467,35 +467,30 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                 }
                 self.method_bivariant_depth = saved_method_depth;
             }
+            // Method return type stays at the outer (saved) depth — strict
+            // covariant position (matches tsc, where `interface C<T> { m():
+            // T }` is COVARIANT).
+            self.visit_with_polarity(shape.return_type, current_polarity);
+            if let Some(this_ty) = shape.this_type {
+                self.visit_with_polarity(this_ty, current_polarity);
+            }
         } else {
-            // Nested non-method function: T occurrences inside its parameters
-            // are NOT method-bivariant, even if this function value is itself
-            // a parameter of a surrounding method. Reset
-            // `method_bivariant_depth` for the parameter visit so that leaf
-            // occurrences record their actual variance polarity (e.g.
-            // `Promise<T>.then(cb: (x: T) => ...)` is COVARIANT, not bivariant).
+            // Nested non-method function: T occurrences inside its
+            // parameters, return type, and `this` are NOT method-bivariant,
+            // even if this function value is itself a parameter of a
+            // surrounding method. Reset `method_bivariant_depth` for ALL
+            // child visits so leaf occurrences record their actual variance
+            // polarity (e.g. `Promise<T>.then(cb: (x: T) => T)` records the
+            // return-position T as COVARIANT, not bivariant).
             self.method_bivariant_depth = 0;
             for param in &shape.params {
                 self.visit_with_polarity(param.type_id, !current_polarity);
             }
+            self.visit_with_polarity(shape.return_type, current_polarity);
+            if let Some(this_ty) = shape.this_type {
+                self.visit_with_polarity(this_ty, !current_polarity);
+            }
             self.method_bivariant_depth = saved_method_depth;
-        }
-
-        // Return type is COVARIANT: preserve polarity. Visit at the outer
-        // (already-restored) `method_bivariant_depth` so a method's return
-        // type is treated as a strict covariant position (matches tsc, where
-        // `interface C<T> { m(): T }` is COVARIANT).
-        self.visit_with_polarity(shape.return_type, current_polarity);
-
-        // `this` parameter behaves like a parameter for plain functions.
-        // For methods, keep bivariance behavior and avoid forcing contravariant variance.
-        if let Some(this_ty) = shape.this_type {
-            let polarity = if shape.is_method {
-                current_polarity
-            } else {
-                !current_polarity
-            };
-            self.visit_with_polarity(this_ty, polarity);
         }
     }
 
@@ -516,25 +511,24 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                     }
                     self.method_bivariant_depth = saved_method_depth;
                 }
+                // Method return type stays at the outer (saved) depth.
+                self.visit_with_polarity(sig.return_type, current_polarity);
+                if let Some(this_ty) = sig.this_type {
+                    self.visit_with_polarity(this_ty, current_polarity);
+                }
             } else {
                 // Non-method call signature: reset method bivariance for the
-                // duration of the parameter visit (matches `visit_function`
-                // for non-method shapes — see comment there).
+                // entire signature — parameters, return type, and `this` —
+                // matching `visit_function` for non-method shapes.
                 self.method_bivariant_depth = 0;
                 for param in &sig.params {
                     self.visit_with_polarity(param.type_id, !current_polarity);
                 }
+                self.visit_with_polarity(sig.return_type, current_polarity);
+                if let Some(this_ty) = sig.this_type {
+                    self.visit_with_polarity(this_ty, !current_polarity);
+                }
                 self.method_bivariant_depth = saved_method_depth;
-            }
-            // Return type is covariant — visit at outer depth.
-            self.visit_with_polarity(sig.return_type, current_polarity);
-            if let Some(this_ty) = sig.this_type {
-                let polarity = if sig.is_method {
-                    current_polarity
-                } else {
-                    !current_polarity
-                };
-                self.visit_with_polarity(this_ty, polarity);
             }
         }
 
