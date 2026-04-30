@@ -505,7 +505,6 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
-        let module_key = module_name.to_string();
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
             // Keep dynamic import diagnostics aligned with the centralized
             // module-not-found upgrader so Node built-ins (e.g. node:path)
@@ -522,20 +521,14 @@ impl<'a> CheckerState<'a> {
                 self.error_program_level(error_message, error_code);
                 return;
             }
-            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                self.error_at_node(arg_idx, &error_message, error_code);
-            }
+            // tsc reports TS2307 per call-site for dynamic imports; no cross-site dedup.
+            self.error_at_node(arg_idx, &error_message, error_code);
             return;
         }
 
-        // Fallback: Module not found - emit TS2307 or TS2792 (Classic resolution)
-        // Check if we've already emitted for this module (prevents duplicate emissions)
-        let module_key = module_name.to_string();
-        if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-            self.ctx.modules_with_ts2307_emitted.insert(module_key);
-            let (message, code) = self.module_not_found_diagnostic(module_name);
-            self.error_at_node(arg_idx, &message, code);
-        }
+        // Fallback: Module not found - emit TS2307 or TS2792 (Classic resolution).
+        // tsc reports per call-site for dynamic import(); no cross-site dedup.
+        let (message, code) = self.module_not_found_diagnostic(module_name);
+        self.error_at_node(arg_idx, &message, code);
     }
 }
