@@ -363,14 +363,42 @@ impl TypeInterner {
         {
             let raw_list = self.intern_type_list_from_slice(&original_objects);
             let raw_intersection = self.intern(TypeData::Intersection(raw_list));
-            if raw_intersection != merged_id {
+            // Only alias when the merged result is a genuinely new type (not one of
+            // the original members).  If merged_id equals an original member it means
+            // the objects were structurally identical; aliasing would make that type
+            // display as `{ x: string; } & { x: string; }` everywhere.
+            if raw_intersection != merged_id && !original_objects.contains(&merged_id) {
                 self.store_display_alias(merged_id, raw_intersection);
             }
         }
 
+        // Capture original callable members before merging so we can store a
+        // display alias that preserves the `((a: T) => R1) & ((b: U) => R2)` form
+        // tsc uses in error messages.
+        let original_callables: SmallVec<[TypeId; 4]> = remaining_after_objects
+            .iter()
+            .filter(|&&id| crate::type_queries::is_callable_type(self, id))
+            .copied()
+            .collect();
+
         // Step 2: Extract and merge callables from remaining members
         let (merged_callable, remaining_after_callables) =
             self.extract_and_merge_callables(&remaining_after_objects);
+
+        // When 2+ callables are merged into one, store a display alias from the
+        // merged callable back to the raw intersection of the original members.
+        // This lets the formatter show `((a: T) => R1) & ((b: U) => R2)` instead
+        // of the merged callable object notation, matching tsc behavior.
+        if let Some(merged_id) = merged_callable
+            && original_callables.len() >= 2
+            && !original_callables.contains(&merged_id)
+        {
+            let raw_list = self.intern_type_list_from_slice(&original_callables);
+            let raw_intersection = self.intern(TypeData::Intersection(raw_list));
+            if raw_intersection != merged_id {
+                self.store_display_alias(merged_id, raw_intersection);
+            }
+        }
 
         // Step 3: Rebuild flat with merged results, preserving declaration order.
         // tsc preserves the original order of intersection members.

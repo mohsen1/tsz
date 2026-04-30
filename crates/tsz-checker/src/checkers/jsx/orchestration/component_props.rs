@@ -845,7 +845,11 @@ impl<'a> CheckerState<'a> {
             match ty {
                 Some(ty) => {
                     if name != &children_prop_name {
-                        concrete_attrs.push((name.clone(), *ty));
+                        // Widen literal types before Round 1 inference to match tsc's
+                        // getInferredType behavior: e.g. `{ x: "y" }` → `{ x: string }`.
+                        let widened =
+                            crate::query_boundaries::common::widen_type(self.ctx.types, *ty);
+                        concrete_attrs.push((name.clone(), widened));
                     }
                 }
                 None => {
@@ -899,6 +903,7 @@ impl<'a> CheckerState<'a> {
         } else {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&concrete_attrs);
             let env = self.ctx.type_env.borrow();
+
             crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
                 self.ctx.types,
                 &self.ctx,

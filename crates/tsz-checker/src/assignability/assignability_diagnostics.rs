@@ -418,6 +418,40 @@ impl<'a> CheckerState<'a> {
         self.check_assignable_or_report_at_with_options(source, target, source_idx, diag_idx, true)
     }
 
+    /// For JSX callback props: checks `source` against `target`, anchors the error at
+    /// `diag_idx` without source elaboration, and uses `source & target` as the
+    /// display target type.
+    ///
+    /// tsc shows both the inferred callback type (source) and the expected prop type
+    /// in an intersection when a JSX function-valued attribute fails the assignability
+    /// check. Skipping source elaboration keeps the diagnostic at the attribute name
+    /// instead of drilling into the lambda body.
+    pub(crate) fn check_assignable_or_report_jsx_callback_prop_at(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return true;
+        }
+        if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
+            return true;
+        }
+        if self.is_assignable_to(source, target) {
+            return true;
+        }
+        let display_target = self.ctx.types.intersect_types_raw2(source, target);
+        self.error_type_not_assignable_at_with_display_types_widened(
+            source,
+            display_target,
+            diag_idx,
+        );
+        false
+    }
+
     /// Like `check_assignable_or_report_at_without_source_elaboration`, but allows
     /// specifying separate types for display purposes. This is used when checking
     /// assignability of return types but displaying the full function types in error
