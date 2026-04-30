@@ -3349,3 +3349,84 @@ fn store_union_origin_skips_canonical_sort_for_non_anon_members() {
         "Origin must be rejected when no anonymous object members are present"
     );
 }
+
+// Locks the structural rule that namespace and class-constructor definitions
+// render as `typeof <Name>`, while interfaces and class-instance types render
+// as bare `<Name>`. The picked conformance failure
+// `jsElementAccessNoContextualTypeCrash` diverges from tsc by printing
+// `Common` instead of `typeof Common`; the underlying invariant tested here
+// is the correct branch in the formatter — fixing that test additionally
+// requires the binder/checker to classify the `var Common = {}; Common.x =
+// ...` JS-expando pattern as `DefKind::Namespace`.
+#[test]
+fn typeof_prefix_for_namespace_and_class_constructor_defs() {
+    fn make_def(
+        db: &TypeInterner,
+        kind: crate::def::DefKind,
+        name: &str,
+    ) -> crate::def::DefinitionInfo {
+        crate::def::DefinitionInfo {
+            kind,
+            name: db.intern_string(name),
+            type_params: Vec::new(),
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            span: None,
+            file_id: None,
+            symbol_id: None,
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
+            is_global_augmentation: false,
+            is_declare: false,
+        }
+    }
+
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    // Each backing type gets one distinct property so its TypeId is not
+    // interned to the universally-shared empty object `{}` (which the
+    // formatter intentionally never repaints with an alias name).
+    let ns_obj = db.object(vec![PropertyInfo::new(
+        db.intern_string("ns_marker"),
+        TypeId::STRING,
+    )]);
+    let class_ctor_obj = db.object(vec![PropertyInfo::new(
+        db.intern_string("class_ctor_marker"),
+        TypeId::STRING,
+    )]);
+    let iface_obj = db.object(vec![PropertyInfo::new(
+        db.intern_string("iface_marker"),
+        TypeId::STRING,
+    )]);
+    let class_instance_obj = db.object(vec![PropertyInfo::new(
+        db.intern_string("class_instance_marker"),
+        TypeId::STRING,
+    )]);
+
+    let ns_def_id = def_store.register(make_def(&db, crate::def::DefKind::Namespace, "Common"));
+    def_store.register_type_to_def(ns_obj, ns_def_id);
+
+    let class_ctor_def_id =
+        def_store.register(make_def(&db, crate::def::DefKind::ClassConstructor, "Foo"));
+    def_store.register_type_to_def(class_ctor_obj, class_ctor_def_id);
+
+    let iface_def_id = def_store.register(make_def(&db, crate::def::DefKind::Interface, "IFoo"));
+    def_store.register_type_to_def(iface_obj, iface_def_id);
+
+    let class_def_id = def_store.register(make_def(&db, crate::def::DefKind::Class, "Bar"));
+    def_store.register_type_to_def(class_instance_obj, class_def_id);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(ns_obj), "typeof Common");
+    assert_eq!(fmt.format(class_ctor_obj), "typeof Foo");
+    assert_eq!(fmt.format(iface_obj), "IFoo");
+    assert_eq!(fmt.format(class_instance_obj), "Bar");
+}
