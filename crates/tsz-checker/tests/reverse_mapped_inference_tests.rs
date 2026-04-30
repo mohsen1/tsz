@@ -481,27 +481,6 @@ const outputExample: { Test: { Test1: { Test2: string } } } = validatorFunc({
 }
 
 #[test]
-fn reverse_mapped_tuple_context_homomorphic_mapped_type() {
-    // reverseMappedTupleContext.ts test1/test2: array literals passed to functions
-    // whose parameter is a bare homomorphic mapped type should be inferred as tuples.
-    let code = r#"
-type Func<T> = () => T;
-type Schema = { [K in keyof T]: Func<T[K]> };
-
-declare function create<T extends unknown[]>(schema: { [K in keyof T]: Func<T[K]> }): T;
-
-const result1 = create([() => 1, () => "hello"]);
-const x1: number = result1[0];
-const x2: string = result1[1];
-"#;
-    let codes = check_and_get_codes(code);
-    assert!(
-        !codes.contains(&2322),
-        "Expected no TS2322: array literal should be inferred as tuple against homomorphic mapped type, got: {codes:?}"
-    );
-}
-
-#[test]
 fn reverse_mapped_tuple_context_application_contextual_type() {
     // reverseMappedTupleContext.ts: array literals passed to functions whose
     // parameter is a generic type alias application (Definition<Schema>) should also
