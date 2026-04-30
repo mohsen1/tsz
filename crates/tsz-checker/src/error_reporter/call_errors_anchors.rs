@@ -7,10 +7,45 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn first_call_argument_anchor(&self, idx: NodeIndex) -> Option<NodeIndex> {
+    /// Logical argument list for a call-shaped expression.
+    ///
+    /// Plain `CallExpression`s expose their argument nodes directly. For
+    /// `TaggedTemplateExpression`s the logical arguments are the template
+    /// literal (corresponding to the `TemplateStringsArray` first parameter)
+    /// followed by each substitution expression — mirroring the shape used by
+    /// the call-result handler. Treating tagged templates uniformly here keeps
+    /// overload/argument anchor logic from collapsing onto the tag callee when
+    /// the offending node is actually a substitution expression.
+    pub(super) fn logical_call_argument_nodes(&self, idx: NodeIndex) -> Option<Vec<NodeIndex>> {
+        use tsz_parser::parser::syntax_kind_ext;
+
         let node = self.ctx.arena.get(idx)?;
-        let call = self.ctx.arena.get_call_expr(node)?;
-        call.arguments.as_ref()?.nodes.first().copied()
+        if let Some(call) = self.ctx.arena.get_call_expr(node) {
+            return call.arguments.as_ref().map(|args| args.nodes.to_vec());
+        }
+        if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
+            let tagged = self.ctx.arena.get_tagged_template(node)?.clone();
+            let mut nodes = Vec::with_capacity(4);
+            nodes.push(tagged.template);
+            if let Some(template_node) = self.ctx.arena.get(tagged.template)
+                && template_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+                && let Some(templ) = self.ctx.arena.get_template_expr(template_node).cloned()
+            {
+                for &span_idx in &templ.template_spans.nodes {
+                    if let Some(span_node) = self.ctx.arena.get(span_idx)
+                        && let Some(span) = self.ctx.arena.get_template_span(span_node)
+                    {
+                        nodes.push(span.expression);
+                    }
+                }
+            }
+            return Some(nodes);
+        }
+        None
+    }
+
+    pub(super) fn first_call_argument_anchor(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        self.logical_call_argument_nodes(idx)?.into_iter().next()
     }
 
     /// If `idx` points to an object literal expression, return its first property element.
@@ -26,17 +61,12 @@ impl<'a> CheckerState<'a> {
         obj.elements.nodes.first().copied()
     }
 
-    /// Returns `true` if the call expression at `idx` has exactly one argument.
+    /// Returns `true` if the call-shaped expression at `idx` has exactly one
+    /// logical argument. Tagged templates are treated as having
+    /// `1 + substitution_count` arguments to match the call-result shape.
     pub(super) fn call_has_single_argument(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-        let Some(call) = self.ctx.arena.get_call_expr(node) else {
-            return false;
-        };
-        call.arguments
-            .as_ref()
-            .is_some_and(|args| args.nodes.len() == 1)
+        self.logical_call_argument_nodes(idx)
+            .is_some_and(|nodes| nodes.len() == 1)
     }
 
     pub(super) fn overload_callee_is_property_like(&self, idx: NodeIndex) -> bool {
@@ -115,9 +145,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<NodeIndex> {
         use crate::diagnostics::diagnostic_codes;
 
-        let node = self.ctx.arena.get(idx)?;
-        let call = self.ctx.arena.get_call_expr(node)?;
-        let args = call.arguments.as_ref()?;
+        let arg_nodes = self.logical_call_argument_nodes(idx)?;
 
         let mut shared = None;
         for failure in failures {
@@ -137,11 +165,30 @@ impl<'a> CheckerState<'a> {
 
             let mut actual_matches = Vec::new();
             let mut expected_mismatch_matches = Vec::new();
-            for &arg_idx in &args.nodes {
+            for &arg_idx in &arg_nodes {
                 let arg_type = self.get_type_of_node(arg_idx);
+                // The failure's `actual_type` may be the widened form of the
+                // expression's literal type — e.g. a `${true}` substitution
+                // carries the `true` literal in `arg_type` while the solver
+                // emits `boolean` as the failure's actual. Compare both raw
+                // and literal-widened forms so the offending argument is still
+                // identified after widening. Note: we deliberately compare
+                // *one* side widened against the unwidened other (lines below)
+                // rather than both-widened. The both-widened comparison was
+                // too broad — for `fn(1, 2)` against overloads expecting
+                // `string`/`boolean` the solver emits `actual_type = 1`, and
+                // a both-widened match would also tag `arg_idx = 2` (since
+                // both widen to `number`), creating a false ambiguity that
+                // collapses the diagnostic anchor back to the callee. The
+                // tagged-template case the comment describes only needs one
+                // side widened to line up with the solver's failure actual.
+                let widened_arg_type = self.widen_literal_type(arg_type);
+                let widened_actual_type = self.widen_literal_type(actual_type);
                 let matches_actual = arg_type == actual_type
                     || self.resolve_lazy_type(arg_type) == actual_type
-                    || self.resolve_lazy_type(actual_type) == arg_type;
+                    || self.resolve_lazy_type(actual_type) == arg_type
+                    || widened_arg_type == actual_type
+                    || arg_type == widened_actual_type;
                 let mismatches_expected = expected_type != TypeId::ERROR
                     && expected_type != TypeId::UNKNOWN
                     && !self.is_assignable_to(arg_type, expected_type);
@@ -180,16 +227,14 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         failures: &[&tsz_solver::PendingDiagnostic],
     ) -> Option<NodeIndex> {
-        let node = self.ctx.arena.get(idx)?;
-        let call = self.ctx.arena.get_call_expr(node)?;
-        let args = call.arguments.as_ref()?;
+        let arg_nodes = self.logical_call_argument_nodes(idx)?;
 
         let mut shared = None;
         for failure in failures {
             let span = failure.span.as_ref()?;
             let mut matching_args = Vec::new();
 
-            for &arg_idx in &args.nodes {
+            for &arg_idx in &arg_nodes {
                 let Some(arg_loc) = self.get_source_location(arg_idx) else {
                     continue;
                 };

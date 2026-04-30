@@ -696,6 +696,34 @@ func(s => ({ a: blah }));
 }
 
 #[test]
+fn ts2769_tagged_template_anchors_offending_substitution() {
+    // tsc anchors TS2769 for failed tagged-template overload resolution at the
+    // offending substitution expression, not at the tag callee. This mirrors
+    // the regular-call behavior of pointing at the failing argument.
+    let source = r#"
+declare function tag(strs: TemplateStringsArray, x: number): string;
+declare function tag(strs: TemplateStringsArray, x: string): number;
+let r = tag`${true}`;
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2769)
+        .expect("expected TS2769");
+
+    let true_start = source.rfind("true").expect("expected 'true' substitution") as u32;
+    assert_eq!(
+        diag.start, true_start,
+        "TS2769 should anchor at the offending tagged-template substitution, got: {diag:?}"
+    );
+    assert_eq!(
+        diag.length, 4,
+        "TS2769 should cover only the substitution token, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2769_bind_call_with_non_undefined_this_arg_anchors_bind_member() {
     let source = r#"
 function bar<T extends unknown[]>(callback: (this: 1, ...args: T) => void) {

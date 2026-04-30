@@ -276,11 +276,21 @@ A conformance task is shipped when:
 1. The targeted test passes (`./scripts/conformance/conformance.sh run --filter <name>` shows `PASS` or `1/1 passed`).
 2. A unit test in the owning crate locks the new behavior.
 3. `cargo nextest run -p tsz-checker -p tsz-solver` is clean.
-4. A PR is open, CI is green, the PR is merged into `main`.
+4. A non-draft PR is open against `main` with the diff and the unit
+   test, branch pushed, CI started.
 
-Until step 4 lands, the task is not done. Research notes, abandoned PRs,
-and "deferred" claim files do **not** count. The only artifact that
-moves the public conformance % is a merge into `main`.
+Once step 4 lands, the task is **shipped from the agent's perspective**.
+Do not babysit CI, do not chase rebase, do not merge — the user handles
+the merge queue. The agent's loop should immediately move on to the
+next conformance task instead of camping on the prior PR's checks.
+
+If CI later goes red on a PR you opened, the user will surface the
+failure and you'll iterate on it then. Until that happens, the open PR
+is "done" for loop purposes.
+
+Research notes, draft/abandoned PRs, and "deferred" claim files do
+**not** count as shipped. A green local build + a single-test
+conformance pass + a non-draft PR pushed to `origin` does.
 
 ### Quick reference
 ```bash
@@ -488,3 +498,114 @@ scripts/safe-run.sh --verbose -- cargo build
 - When in doubt, choose the path that preserves the clean separation of concerns and long-term maintainability, even if it requires more upfront work.
 - Avoid patching symptoms in the checker; instead, invest in the solver and boundary helpers to keep the architecture sound.
 - Use the conformance analysis tools to guide work towards root causes, not just individual test failures.
+- See §25 for forbidden symptom-patching patterns (hardcoded identifier
+  names, regexes over printer output, single-test scoped suppressions).
+
+## 25) ANTI-HARDCODING DIRECTIVE — never patch a single test's symptom
+
+The conformance corpus is hostile to point fixes. Almost every failing
+test is one instance of a class of failures, and tsc's behaviour is
+defined by the underlying type-system rule, not by the spelling that
+happened to appear in *this* test. Fixes that only handle the spelling
+in front of you do not converge — they pass one test, miss its 30
+siblings, and add brittle code that later refactors must work around.
+
+**These patterns are forbidden in checker, solver, and emitter code.**
+If you catch yourself writing one, stop, restate the underlying rule
+in one sentence, then write a fix that expresses *that* rule.
+
+### Forbidden: hardcoded user-chosen names
+
+User-chosen identifiers (type-parameter names, mapped-type iteration
+variable names, property keys, alias names, file names) must never
+appear as string literals or `==` checks in compiler logic.
+
+```rust
+// ❌ WRONG — only matches when the user chose `P` as the iteration var.
+//    `Readonly<T> = { [K in keyof T]: T[K] }` (idiomatic) silently
+//    bypasses the suppression.
+fn looks_like_invalid_optional_mapped_display(display: &str) -> bool {
+    display.starts_with("{ [P in ")
+        && display.contains("]?: ")
+        && display.ends_with(" | undefined; }")
+}
+
+// ❌ WRONG — same anti-pattern, different surface.
+if type_param.name == "T" { /* special-case */ }
+if alias_name == "Promise" { /* special-case */ }
+if file_name.ends_with("/lib.es5.d.ts") { /* special-case */ }
+```
+
+If the rule is genuinely about a *built-in* well-known name (`Promise`,
+`Iterable`, `Symbol.iterator`), resolve it through the binder/global
+table or a builtin-id constant, not by string-matching.
+
+### Forbidden: regexes / `starts_with` / `contains` over printer output
+
+The type printer is the *output* of the type system, not its input.
+Driving compiler decisions from rendered display strings is a sign the
+fix belongs in the solver or in a boundary helper that operates on
+`TypeId` / structural shapes.
+
+```rust
+// ❌ WRONG — interrogating the printed form of a type.
+if self.format_type_diagnostic(target).contains("undefined; }") { ... }
+if display.starts_with("{ [") && display.ends_with(" | undefined; }") { ... }
+
+// ✅ RIGHT — ask the solver about the structural property.
+if self.is_optional_mapped_with_undefined_member(target) { ... }
+```
+
+Add a query helper to `query_boundaries/` (or a structural inspector in
+`tsz_solver`) and call it from the checker. The printer is allowed to
+read types; types are not allowed to read the printer.
+
+### Forbidden: single-test scoped suppressions
+
+```rust
+// ❌ WRONG — a fingerprint of one specific failing test.
+if file_name.contains("contextualTyping33") { return; }
+if source_str == "{ a: 1 }" && target_str == "{ a: true }" { ... }
+```
+
+If a diagnostic should be suppressed, the rule is "for sources/targets
+*shaped like X*", never "for the literal types in this test file".
+Express the shape via solver queries.
+
+### Forbidden: cosmetic widening to silence a fingerprint
+
+Do not widen a literal to its primitive, drop a property, or insert a
+synthesized type, **only** so the rendered message matches tsc. The
+solver's underlying types must remain accurate; the printer's display
+policy is the place to align rendering with tsc.
+
+### Required: state the rule before you write the code
+
+Every checker/solver/emitter change that affects diagnostics must be
+expressible as one sentence of the form:
+
+> "When *<structural condition over types/symbols>*, tsc <does X>; this change makes tsz <do X> too."
+
+If your one-sentence rule contains a specific identifier name, file
+path, or rendered display fragment, the fix is in the wrong place.
+Restate the rule structurally, then fix it where structures live (the
+solver, the binder, or the boundary helpers).
+
+### Review checklist (gate before merging)
+
+Before opening a PR, verify each item:
+
+1. No new string literals naming user-chosen identifiers, aliases, or
+   files in checker/solver/emitter code.
+2. No new `format_type_diagnostic` / printer-output `contains` /
+   `starts_with` / regex calls used to drive a *decision* (vs. building
+   the final user-facing message).
+3. The unit test you added covers at least two name choices for any
+   bound variable in the fix (`T`/`K`, `P`/`X`, etc.) — if changing the
+   name breaks the fix, the fix is hardcoded.
+4. The PR description states the structural rule in one sentence and
+   does not refer to a single test name as the justification.
+
+This directive supersedes any prior pattern in the codebase. Existing
+hardcoded checks discovered during review should be flagged for
+follow-up, not used as precedent for new ones.

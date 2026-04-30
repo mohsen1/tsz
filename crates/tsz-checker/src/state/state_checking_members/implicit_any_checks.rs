@@ -311,15 +311,20 @@ impl<'a> CheckerState<'a> {
         let Some(modifiers) = param.modifiers.as_ref() else {
             return param.name;
         };
+        use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
         for &mod_idx in &modifiers.nodes {
             let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
                 continue;
             };
+            // tsc anchors TS7006 at the first modifier — whether it's an
+            // access modifier keyword or a decorator. Return the first
+            // modifier found so the position matches tsc's output.
             if mod_node.kind == SyntaxKind::PublicKeyword as u16
                 || mod_node.kind == SyntaxKind::PrivateKeyword as u16
                 || mod_node.kind == SyntaxKind::ProtectedKeyword as u16
                 || mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
+                || mod_node.kind == syntax_kind_ext::DECORATOR
             {
                 return mod_idx;
             }

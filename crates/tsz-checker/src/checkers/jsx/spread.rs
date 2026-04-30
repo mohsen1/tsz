@@ -8,6 +8,39 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// Local mirror of `tsz_solver::diagnostics::format::needs_property_name_quotes`.
+/// The solver helper is private to its module, so duplicate the small predicate
+/// here for the JSX spread structural display below. Keeps the rule in lockstep
+/// with the solver's printer: numeric-only names and bracketed computed keys
+/// stay unquoted; identifier-shaped names (alphanumeric / `_` / `$` only) stay
+/// unquoted; everything else (including `data-*` and `aria-*` JSX attributes,
+/// which are common on HTML-attribute prop types) needs quoting so the
+/// rendered type stays syntactically valid TypeScript.
+fn jsx_property_name_needs_quotes(name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    if name.starts_with('[') && name.ends_with(']') {
+        return false;
+    }
+    // Numeric property names (e.g. `0`, `19230`, `3.14`) display unquoted.
+    if name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_digit() || c == '-' || c == '+')
+        && name.parse::<f64>().is_ok()
+    {
+        return false;
+    }
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' || first == '$' => {
+            !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        }
+        _ => true,
+    }
+}
+
 impl<'a> CheckerState<'a> {
     /// Check spread property types against the expected props type.
     ///
@@ -156,8 +189,14 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|p| self.ctx.types.resolve_atom(p.name))
                 .collect();
+            // props_shape.properties is sorted by atom for canonical interning;
+            // walk in declaration order so the missing list matches tsc, which
+            // lists missing properties in source declaration order.
+            let mut props_by_decl: Vec<&tsz_solver::PropertyInfo> =
+                props_shape.properties.iter().collect();
+            props_by_decl.sort_by_key(|p| p.declaration_order);
             let mut missing_props: Vec<String> = Vec::new();
-            for req_prop in &props_shape.properties {
+            for req_prop in props_by_decl {
                 if req_prop.optional {
                     continue;
                 }
@@ -173,7 +212,41 @@ impl<'a> CheckerState<'a> {
             }
 
             if !missing_props.is_empty() {
-                let spread_name = self.format_type(spread_type);
+                // Format as a fresh structural type in declaration order — tsc shows the
+                // object shape, not the type alias name, in JSX spread missing-property
+                // diagnostics.
+                let spread_name = {
+                    let mut props: Vec<_> = spread_shape.properties.to_vec();
+                    crate::query_boundaries::common::normalize_display_property_order(&mut props);
+                    let fields: Vec<String> = props
+                        .iter()
+                        .map(|p| {
+                            let raw_name = self.ctx.types.resolve_atom(p.name);
+                            let type_str = self.format_type(p.type_id);
+                            // Mirror `format_property` in the solver's union/intersection printer
+                            // (`crates/tsz-solver/src/diagnostics/format/compound.rs`) so an
+                            // optional property like `{ a: string; b?: number }` renders with the
+                            // `?` suffix instead of being flattened to a required form. Likewise
+                            // surface `readonly` so the diagnostic doesn't drop the modifier,
+                            // and quote property names that aren't valid JS identifiers (e.g.
+                            // `data-testid`, `aria-label` — common on JSX HTML attribute spreads)
+                            // so the rendered type stays syntactically valid TypeScript.
+                            let readonly = if p.readonly { "readonly " } else { "" };
+                            let optional = if p.optional { "?" } else { "" };
+                            let display_name = if jsx_property_name_needs_quotes(&raw_name) {
+                                format!("\"{raw_name}\"")
+                            } else {
+                                raw_name
+                            };
+                            format!("{readonly}{display_name}{optional}: {type_str}")
+                        })
+                        .collect();
+                    if fields.is_empty() {
+                        "{}".to_string()
+                    } else {
+                        format!("{{ {}; }}", fields.join("; "))
+                    }
+                };
                 if missing_props.len() == 1 {
                     // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
                     let message = format_message(

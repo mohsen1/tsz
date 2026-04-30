@@ -104,7 +104,13 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     spread_type,
                 ) {
-                    for prop in &shape.properties {
+                    // shape.properties is sorted by atom for canonical interning;
+                    // walk in declaration order so the synthesized source-type
+                    // mirrors tsc's display, which preserves source order.
+                    let mut props_by_decl: Vec<&tsz_solver::PropertyInfo> =
+                        shape.properties.iter().collect();
+                    props_by_decl.sort_by_key(|p| p.declaration_order);
+                    for prop in props_by_decl {
                         let name = self.ctx.types.resolve_atom(prop.name).to_string();
                         if name == "key" || name == "ref" {
                             continue;

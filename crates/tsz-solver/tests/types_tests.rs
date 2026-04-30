@@ -304,6 +304,83 @@ fn test_merge_display_properties_for_intersection_keeps_left_to_right_member_seq
     assert_eq!(merged[2].declaration_order, 3);
 }
 
+/// Regression: `interner.object(...)` sorts properties by atom for
+/// canonical interning, but `declaration_order` is captured before that
+/// sort. Sorting the canonical shape's properties by `declaration_order`
+/// must therefore recover source declaration order — the invariant the
+/// JSX synthesized-source-type display in
+/// `crates/tsz-checker/src/checkers/jsx/{spread.rs,props/resolution.rs}`
+/// relies on to mirror tsc's per-attribute ordering.
+///
+/// Atom IDs come from a sharded interner whose shard index is hash-derived,
+/// so insertion order does NOT determine atom order across two strings in
+/// different shards. This test picks the source-declaration order based on
+/// the interner's actual atom layout, then asserts:
+///   1. `shape.properties` is in atom order (canonical interning).
+///   2. Sorting `shape.properties` by `declaration_order` recovers the
+///      source order we asked for.
+#[test]
+fn shape_properties_atom_sorted_yet_recover_source_order_via_declaration_order() {
+    let interner = TypeInterner::new();
+
+    let y_name = interner.intern_string("y");
+    let x_name = interner.intern_string("x");
+
+    // Build the object so the property with the LARGER atom is declared
+    // first. With that setup, `shape.properties` (atom-sorted) lists the
+    // declared-second property first — i.e., the buggy order — and only a
+    // declaration-order sort recovers the source order.
+    let (first_name, second_name) = if x_name.0 > y_name.0 {
+        (x_name, y_name)
+    } else {
+        (y_name, x_name)
+    };
+    let mk = |name, type_id, declaration_order| PropertyInfo {
+        name,
+        type_id,
+        write_type: type_id,
+        declaration_order,
+        ..PropertyInfo::new(name, type_id)
+    };
+    let obj = interner.object(vec![
+        mk(first_name, TypeId::STRING, 1),
+        mk(second_name, TypeId::STRING, 2),
+    ]);
+
+    let shape = match interner.lookup(obj) {
+        Some(TypeData::Object(shape_id)) => interner.object_shape(shape_id),
+        other => panic!("expected object, got {other:?}"),
+    };
+    assert_ne!(
+        first_name.0, second_name.0,
+        "test setup: distinct property names"
+    );
+    let canonical_order: Vec<_> = shape.properties.iter().map(|p| p.name).collect();
+    let expected_canonical = if first_name.0 < second_name.0 {
+        vec![first_name, second_name]
+    } else {
+        vec![second_name, first_name]
+    };
+    assert_eq!(
+        canonical_order, expected_canonical,
+        "shape.properties is atom-sorted (canonical interning)"
+    );
+    assert_ne!(
+        canonical_order,
+        vec![first_name, second_name],
+        "test setup must put the buggy atom-order at variance with source order"
+    );
+
+    let mut by_decl: Vec<&PropertyInfo> = shape.properties.iter().collect();
+    by_decl.sort_by_key(|p| p.declaration_order);
+    let display_order: Vec<_> = by_decl.iter().map(|p| p.name).collect();
+    assert_eq!(
+        display_order,
+        vec![first_name, second_name],
+        "sorting shape.properties by declaration_order recovers source declaration order"
+    );
+}
+
 // ============================================================================
 // Template Literal Tests
 // ============================================================================

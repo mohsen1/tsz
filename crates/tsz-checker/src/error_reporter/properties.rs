@@ -348,6 +348,7 @@ impl<'a> CheckerState<'a> {
                 .chars()
                 .next()
                 .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+            && !annotation.contains('{')
             && (crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
                 || self.ctx.types.get_display_alias(type_id).is_some())
         {
@@ -358,6 +359,10 @@ impl<'a> CheckerState<'a> {
             // tsz's `display_alias` only tracks one level back to the
             // Application, so without this annotation-bridge we expand to
             // `Omit<Foo, "c">` instead.
+            //
+            // Skip annotations that contain inline object literal types
+            // (`Required<{ a?: 1; x: 1 }>`) — those need the proper type
+            // formatter to add `| undefined` for optional properties.
             return self.format_annotation_like_type(&annotation);
         }
         // When the receiver is a type alias whose body resolves to an Enum

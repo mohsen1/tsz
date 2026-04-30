@@ -3,7 +3,9 @@
 //! Handles TypeScript's conditional types: `T extends U ? X : Y`
 //! Including distributive conditional types over union types.
 
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_with_infer};
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_generic, instantiate_type_with_infer,
+};
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
@@ -92,6 +94,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             let mut check_type = self.evaluate(cond.check_type);
             let extends_type = self.evaluate(cond.extends_type);
+            if matches!(
+                self.interner().lookup(check_type),
+                Some(TypeData::Application(_))
+            ) && let Some(expanded_check) =
+                self.try_expand_application_for_conditional_check(check_type)
+            {
+                check_type = expanded_check;
+            }
 
             // When check_type is an unresolvable Application (e.g., Promise<string>
             // where Promise is referenced via TypeQuery with no DefId yet), try to
@@ -365,7 +375,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 });
             }
 
-            // Step 2a: Non-naked compound type parameter deferral.
+            // Step 2a: Identity simplification for any type (not just type params).
+            // If check_type == extends_type, the conditional trivially takes the true branch,
+            // regardless of what the raw check type contains.
+            //
+            // This must run before compound generic deferral: patterns like
+            // `T["length"] extends N ? 1 : 0` can evaluate to concrete literals after
+            // instantiation (`2 extends 2`) even though the raw check type is still an
+            // indexed access containing type parameters.
+            //
+            // However, we must NOT take this shortcut when the *raw* (unevaluated)
+            // extends_type contains `infer` patterns. In that case, the true branch
+            // references infer type variables that must be bound via pattern matching
+            // (Step 3). Taking the shortcut would return unbound infer types.
+            // e.g., `Synthetic<number,number> extends Synthetic<T, infer V> ? V : never`
+            //   Both sides evaluate to the same empty object, but V must be bound to number.
+            if check_type == extends_type && !self.type_contains_infer(cond.extends_type) {
+                return self.evaluate_preserving_intersection_branch_alias(cond.true_type);
+            }
+
+            // Step 2b: Non-naked compound type parameter deferral.
             // When the check_type is a compound type containing type parameters
             // (e.g., `T & U`, `keyof T`, `T[K]`), the conditional must be deferred.
             // Unlike a naked TypeParameter (handled in Step 2), compound types like
@@ -382,7 +411,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().conditional(*cond);
             }
 
-            // Step 2a': Deferred conditional as check_type.
+            // Step 2b': Deferred conditional as check_type.
             //
             // When check_type evaluates to a deferred conditional containing type
             // parameters (e.g., `Extract<T, Foo>` → `T extends Foo ? T : never`),
@@ -414,21 +443,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     false_type,
                     is_distributive: cond.is_distributive,
                 });
-            }
-
-            // Step 2b: Identity simplification for any type (not just type params).
-            // If check_type == extends_type, the conditional trivially takes the true branch,
-            // regardless of what the types contain (type params, keyof, etc.).
-            // e.g., `keyof Params extends keyof Params ? X : Y` → X
-            //
-            // However, we must NOT take this shortcut when the *raw* (unevaluated)
-            // extends_type contains `infer` patterns. In that case, the true branch
-            // references infer type variables that must be bound via pattern matching
-            // (Step 3). Taking the shortcut would return unbound infer types.
-            // e.g., `Synthetic<number,number> extends Synthetic<T, infer V> ? V : never`
-            //   Both sides evaluate to the same empty object, but V must be bound to number.
-            if check_type == extends_type && !self.type_contains_infer(cond.extends_type) {
-                return self.evaluate_preserving_intersection_branch_alias(cond.true_type);
             }
 
             // Step 3: Perform subtype check or infer pattern matching
@@ -790,6 +804,52 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => None,
         }
+    }
+
+    fn try_expand_application_for_conditional_check(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Application(app_id)) = self.interner().lookup(type_id) else {
+            return None;
+        };
+        let app = self.interner().type_application(app_id);
+        let def_id = match self.interner().lookup(app.base)? {
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
+            _ => None,
+        }?;
+        let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+        if app.args.len() == 1
+            && let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(resolved)
+            && let Some(TypeData::TypeParameter(tp)) = self.interner().lookup(obj)
+        {
+            let subst = TypeSubstitution::single(tp.name, app.args[0]);
+            let instantiated_obj =
+                crate::instantiation::instantiate::instantiate_type(self.interner(), obj, &subst);
+            let evaluated_obj = self.evaluate(instantiated_obj);
+            let evaluated_idx = self.evaluate(idx);
+            let direct = self.evaluate_index_access(evaluated_obj, evaluated_idx);
+            if direct != resolved && direct != type_id {
+                return Some(direct);
+            }
+        }
+        let type_params = self
+            .resolver()
+            .get_lazy_type_params(def_id)
+            .filter(|params| params.len() == app.args.len())
+            .unwrap_or_else(|| self.extract_type_params_from_type(resolved));
+        if type_params.len() != app.args.len() {
+            return None;
+        }
+        let instantiated = instantiate_generic(self.interner(), resolved, &type_params, &app.args);
+        if let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(instantiated) {
+            let evaluated_obj = self.evaluate(obj);
+            let evaluated_idx = self.evaluate(idx);
+            let direct = self.evaluate_index_access(evaluated_obj, evaluated_idx);
+            if direct != instantiated && direct != type_id {
+                return Some(direct);
+            }
+        }
+        let evaluated = self.evaluate(instantiated);
+        (evaluated != type_id).then_some(evaluated)
     }
 
     /// Check if this is a primitive type vs Function/callable target.

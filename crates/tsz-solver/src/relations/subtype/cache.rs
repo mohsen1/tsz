@@ -629,15 +629,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // contravariant positions (e.g., function parameter types).
         // =========================================================================
         if !self.bypass_evaluation {
-            let variance_result = if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id) {
-                self.try_variance_fast_path(s_app_id, t_app_id)
-            } else if let Some(s_app_id) = s_app_id {
-                // Source is Application, target might be Union containing an Application.
-                // This handles optional properties where target is App<X> | undefined.
-                self.try_variance_against_union_target(s_app_id, target)
-            } else {
-                None
-            };
+            // When source is the evaluated (non-Application) form of a generic type but
+            // target is still an Application, recover the source's original Application
+            // via display_alias for variance checking. Without this, a source like
+            // ICEP<unknown,unknown> (a Callable evaluated from the Application) would
+            // miss the variance fast path against ICEP<any,any> (still an Application),
+            // causing an unnecessary full structural expansion that fails on self-referential
+            // types.
+            let s_app_id_for_variance = s_app_id.or_else(|| {
+                self.interner
+                    .get_display_alias(source)
+                    .and_then(|alias| application_id(self.interner, alias))
+            });
+            let variance_result =
+                if let (Some(s_app_id), Some(t_app_id)) = (s_app_id_for_variance, t_app_id) {
+                    self.try_variance_fast_path(s_app_id, t_app_id)
+                } else if let Some(s_app_id) = s_app_id {
+                    // Source is Application, target might be Union containing an Application.
+                    // This handles optional properties where target is App<X> | undefined.
+                    self.try_variance_against_union_target(s_app_id, target)
+                } else {
+                    None
+                };
 
             if let Some(result) = variance_result {
                 if let Some(dp) = def_entered {

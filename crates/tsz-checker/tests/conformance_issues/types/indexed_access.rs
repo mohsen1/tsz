@@ -880,3 +880,38 @@ type _DeepReadonlyObject<T> = {
         "ReadonlyArray heritage should not report TS2310 through conditional element aliases. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_homomorphic_mapped_type_union_constraint_with_readonly_member() {
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+type HomomorphicMappedType<T> = { [P in keyof T]: T[P] extends string ? boolean : null }
+
+function test1<T extends [number] | [string]>(args: T) {
+  const arr: any[] = [] as HomomorphicMappedType<T>
+  const arr2: readonly any[] = [] as HomomorphicMappedType<T>
+}
+
+function test2<T extends [number] | readonly [string]>(args: T) {
+  const arr: any[] = [] as HomomorphicMappedType<T>
+  const arr2: readonly any[] = [] as HomomorphicMappedType<T>
+}
+",
+        options,
+    );
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "Expected exactly 1 diagnostic (test2 arr assignment to any[]), got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        diagnostics[0].0, 2322,
+        "Expected TS2322, got: {diagnostics:#?}"
+    );
+}

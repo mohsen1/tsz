@@ -343,6 +343,9 @@ mod cross_file_class_merge_tests;
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
 #[cfg(test)]
+#[path = "../tests/dynamic_import_ts2307_per_callsite_tests.rs"]
+mod dynamic_import_ts2307_per_callsite_tests;
+#[cfg(test)]
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]

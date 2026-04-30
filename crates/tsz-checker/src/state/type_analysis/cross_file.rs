@@ -660,6 +660,56 @@ impl<'a> CheckerState<'a> {
                 return Some((result, Vec::new()));
             }
 
+            let direct_target = if let Some(file_idx) = cross_file_idx {
+                let arena = self.ctx.get_arena_for_file(file_idx as u32);
+                let binder = self
+                    .ctx
+                    .get_binder_for_file(file_idx)
+                    .unwrap_or(self.ctx.binder);
+                Some((arena, binder, Some(file_idx)))
+            } else {
+                delegate_arena.map(|arena| {
+                    let binder = if std::ptr::eq(arena, self.ctx.arena) {
+                        self.ctx.binder
+                    } else {
+                        self.ctx
+                            .get_binder_for_arena(arena)
+                            .unwrap_or(self.ctx.binder)
+                    };
+                    let file_idx = if std::ptr::eq(arena, self.ctx.arena) {
+                        Some(self.ctx.current_file_idx)
+                    } else {
+                        self.ctx.get_file_idx_for_arena(arena)
+                    };
+                    (arena, binder, file_idx)
+                })
+            };
+            if let Some((symbol_arena, delegate_binder, delegate_file_idx)) = direct_target
+                && let Some((direct_type, direct_params)) = self
+                    .direct_cross_file_interface_lowering(
+                        sym_id,
+                        delegate_binder,
+                        symbol_arena,
+                        false,
+                    )
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if needs_cross_file_delegation
+                    && self.ctx.share_owner_symbol_type_results
+                    && let Some(file_idx) = delegate_file_idx
+                {
+                    self.ctx.definition_store.cache_resolved_symbol_type(
+                        sym_id.0,
+                        file_idx as u32,
+                        direct_type,
+                    );
+                }
+                if !needs_cross_file_delegation {
+                    self.ctx.lib_delegation_cache.insert(sym_id, direct_type);
+                }
+                return Some((direct_type, direct_params));
+            }
+
             // Both caches and the alias shortcut missed → about to do real work
             // (boxed child checker construction + recursion).
             tsz_common::perf_counters::inc(&perf.delegate_cross_arena_misses);
@@ -1127,6 +1177,29 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(self.ctx.binder)
         };
 
+        if let Some((direct_type, direct_params)) =
+            self.direct_cross_file_interface_lowering(sym_id, delegate_binder, symbol_arena, false)
+        {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            if !direct_params.is_empty() {
+                self.ctx.insert_def_type_params(def_id, direct_params);
+            }
+            if self.ctx.share_owner_symbol_type_results
+                && let Some(file_idx) = query_file_idx
+            {
+                self.ctx.definition_store.cache_resolved_cross_file_query(
+                    CROSS_FILE_QUERY_INTERFACE_TYPE,
+                    file_idx as u32,
+                    sym_id.0,
+                    0,
+                    0,
+                    direct_type,
+                    Vec::new(),
+                );
+            }
+            return Some(direct_type);
+        }
+
         // Guard against deep cross-arena recursion
         if !Self::enter_cross_arena_delegation() {
             return None;
@@ -1328,6 +1401,36 @@ impl<'a> CheckerState<'a> {
 
         if misses.is_empty() {
             return Some(results);
+        }
+
+        if let Some(direct_results) = self.direct_cross_file_interface_member_simple_types(
+            interface_idx,
+            &misses,
+            interface_arena,
+            delegate_binder,
+            type_args,
+        ) {
+            if type_args.is_none()
+                && self.ctx.share_owner_symbol_type_results
+                && let Some(file_idx) = delegate_file_idx
+            {
+                for (&member_idx, &member_type) in direct_results.iter() {
+                    self.ctx.definition_store.cache_resolved_cross_file_query(
+                        CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+                        file_idx as u32,
+                        interface_idx.0,
+                        member_idx.0,
+                        0,
+                        member_type,
+                        Vec::new(),
+                    );
+                }
+            }
+            results.extend(direct_results);
+            misses.retain(|member_idx| !results.contains_key(member_idx));
+            if misses.is_empty() {
+                return Some(results);
+            }
         }
 
         if !Self::enter_cross_arena_delegation() {
