@@ -484,6 +484,10 @@ name = "ts2451_plain_js_lib_anchor_tests"
 path = "tests/ts2451_plain_js_lib_anchor_tests.rs"
 
 [[test]]
+name = "ts2374_lib_merged_index_signature_tests"
+path = "tests/ts2374_lib_merged_index_signature_tests.rs"
+
+[[test]]
 name = "ts2451_type_only_namespace_merge_tests"
 path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 

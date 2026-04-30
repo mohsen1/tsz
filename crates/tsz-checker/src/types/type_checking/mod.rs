@@ -20,6 +20,7 @@ mod duplicate_identifier_conflict_kinds;
 mod duplicate_identifiers;
 mod duplicate_identifiers_constructor;
 mod duplicate_identifiers_helpers;
+mod duplicate_index_signatures;
 mod global;
 mod indexed_access;
 mod property_init;

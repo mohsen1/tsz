@@ -417,6 +417,7 @@ impl<'a> CheckerState<'a> {
 
         // Check for duplicate identifiers (2300)
         self.check_duplicate_identifiers();
+        self.check_lib_merged_interface_duplicate_index_signatures();
         self.check_commonjs_export_property_redeclarations();
 
         // Check for constructor parameter property vs explicit property conflicts (2300/2687)
