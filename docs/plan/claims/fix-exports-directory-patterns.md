@@ -1,6 +1,6 @@
 # Fix: Directory export patterns in package.json exports field
 
-**Status**: claim
+**Status**: ready
 **Branch**: fix/exports-specifier-generation-directory
 **Diagnostic codes**: TS2307 (was extra; now correct)
 
