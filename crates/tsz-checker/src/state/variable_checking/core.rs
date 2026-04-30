@@ -1085,20 +1085,24 @@ impl<'a> CheckerState<'a> {
                                             // assigned to a concrete callable target.
                                             // (e.g., (cb: (x: string, ...rest: T) => void) => void
                                             //   vs (cb: (...args: never) => void) => void)
-                                            checker.ctx.skip_callable_type_param_suppression.set(true);
-                                            // Match tsc: explicit type assertions (`as`/`<T>`/`satisfies`)
-                                            // on the initializer are opaque for elaboration — anchor at
-                                            // the binding with outer types rather than drilling.
-                                            let _ = if checker.initializer_is_type_assertion(var_decl.initializer) {
-                                                checker.check_assignable_or_report_at_without_source_elaboration(
-                                                    checked_init_type, declared_type, var_decl.initializer, decl_idx,
-                                                )
-                                            } else {
-                                                checker.check_assignable_or_report_at(
-                                                    checked_init_type, declared_type, var_decl.initializer, decl_idx,
-                                                )
-                                            };
-                                            checker.ctx.skip_callable_type_param_suppression.set(false);
+                                            if !checker
+                                                .type_contains_invalid_mapped_key_type(declared_type)
+                                            {
+                                                checker.ctx.skip_callable_type_param_suppression.set(true);
+                                                // Match tsc: explicit type assertions (`as`/`<T>`/`satisfies`)
+                                                // on the initializer are opaque for elaboration — anchor at
+                                                // the binding with outer types rather than drilling.
+                                                let _ = if checker.initializer_is_type_assertion(var_decl.initializer) {
+                                                    checker.check_assignable_or_report_at_without_source_elaboration(
+                                                        checked_init_type, declared_type, var_decl.initializer, decl_idx,
+                                                    )
+                                                } else {
+                                                    checker.check_assignable_or_report_at(
+                                                        checked_init_type, declared_type, var_decl.initializer, decl_idx,
+                                                    )
+                                                };
+                                                checker.ctx.skip_callable_type_param_suppression.set(false);
+                                            }
                                         }
                                     }
                                 }

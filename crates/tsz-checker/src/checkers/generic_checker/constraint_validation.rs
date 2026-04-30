@@ -6,6 +6,7 @@
 
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
+use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -121,6 +122,42 @@ impl<'a> CheckerState<'a> {
                             && base != TypeId::NEVER
                             && base != TypeId::VOID
                     });
+                if type_arg_contains_type_parameters
+                    && base_constraint_type.is_none_or(|base| base == TypeId::UNKNOWN)
+                    && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && let Some(name) = self.type_arg_identifier_name(arg_idx)
+                    && let Some(&scope_type_id) = self.ctx.type_parameter_scope.get(&name)
+                {
+                    let db = self.ctx.types.as_type_database();
+                    let scoped_base = crate::query_boundaries::common::type_parameter_constraint(
+                        db,
+                        scope_type_id,
+                    )
+                    .unwrap_or_else(|| {
+                        crate::query_boundaries::common::get_base_constraint_of_type(
+                            db,
+                            scope_type_id,
+                        )
+                    });
+                    if scoped_base != scope_type_id && scoped_base != TypeId::UNKNOWN {
+                        base_constraint_type = Some(scoped_base);
+                    }
+                }
+                if type_arg_contains_type_parameters
+                    && base_constraint_type.is_none_or(|base| {
+                        base == TypeId::UNKNOWN
+                            || query::contains_free_type_parameters(self.ctx.types, base)
+                    })
+                    && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && let Some(constraint_node) =
+                        self.type_arg_explicit_constraint_node_in_ast(arg_idx)
+                    && constraint_node != NodeIndex::NONE
+                {
+                    let ast_base = self.get_type_from_type_node(constraint_node);
+                    if ast_base != TypeId::UNKNOWN && ast_base != type_arg {
+                        base_constraint_type = Some(ast_base);
+                    }
+                }
                 if type_arg_contains_type_parameters
                     && base_constraint_type
                         .is_none_or(|base| query::contains_type_parameters(self.ctx.types, base))
@@ -767,6 +804,22 @@ impl<'a> CheckerState<'a> {
                         if has_implicit_constraint {
                             continue;
                         }
+                        if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                            && self.type_arg_has_explicit_constraint_in_ast(arg_idx)
+                        {
+                            let constraint_resolved = self.resolve_lazy_type(constraint);
+                            if self
+                                .format_type_diagnostic(constraint_resolved)
+                                .starts_with("keyof ")
+                            {
+                                self.error_type_constraint_not_satisfied(
+                                    type_arg,
+                                    constraint_resolved,
+                                    arg_idx,
+                                );
+                                continue;
+                            }
+                        }
                     }
                     if is_bare_type_param && let Some(base) = base_constraint_type {
                         // Bare type parameter — check its base constraint instead of
@@ -787,7 +840,6 @@ impl<'a> CheckerState<'a> {
                             let has_hidden_constraint =
                                 type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
                                     self.is_inside_mapped_type(arg_idx)
-                                        || self.type_arg_has_explicit_constraint_in_ast(arg_idx)
                                         || self
                                             .has_hidden_conditional_infer_constraint_local(arg_idx)
                                 });
@@ -821,7 +873,8 @@ impl<'a> CheckerState<'a> {
                                     inst_constraint,
                                 );
                             if is_checkable
-                                && !self.is_assignable_to(base, inst_constraint)
+                                && (base == TypeId::UNKNOWN
+                                    || !self.is_assignable_to(base, inst_constraint))
                                 && !self.satisfies_array_like_constraint(base, inst_constraint)
                                 && let Some(&arg_idx) = type_args_list.nodes.get(i)
                                 && !self.type_argument_is_narrowed_by_conditional_true_branch(
@@ -854,7 +907,29 @@ impl<'a> CheckerState<'a> {
                             }
                             // Fall through to perform the constraint check
                         }
-                        if query::contains_free_type_parameters(self.ctx.types, base) {
+                        let base_allows_primitive_key = |this: &Self, candidate: TypeId| {
+                            let display = this.format_type_diagnostic(candidate);
+                            candidate == TypeId::STRING
+                                || candidate == TypeId::NUMBER
+                                || candidate == TypeId::SYMBOL
+                                || display == "string | number"
+                                || display == "string | number | symbol"
+                                || crate::query_boundaries::common::union_members(
+                                    this.ctx.types,
+                                    candidate,
+                                )
+                                .is_some_and(|members| {
+                                    members.into_iter().any(|member| {
+                                        matches!(
+                                            member,
+                                            TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL
+                                        )
+                                    })
+                                })
+                        };
+                        if query::contains_free_type_parameters(self.ctx.types, base)
+                            && !base_allows_primitive_key(self, base)
+                        {
                             // Base constraint itself contains free type parameters
                             // (e.g., from outer generic scope). Defer check.
                             // Uses free-type-param check to avoid false positives
@@ -864,7 +939,13 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         let constraint_resolved = self.resolve_lazy_type(constraint);
-                        if query::contains_type_parameters(self.ctx.types, constraint_resolved) {
+                        if query::contains_type_parameters(self.ctx.types, constraint_resolved)
+                            && query::keyof_operand(
+                                self.ctx.types.as_type_database(),
+                                constraint_resolved,
+                            )
+                            .is_none()
+                        {
                             continue;
                         }
                         // Instantiate the constraint with all provided type arguments
@@ -886,6 +967,7 @@ impl<'a> CheckerState<'a> {
                         if query::contains_type_parameters(self.ctx.types, inst_constraint) {
                             continue;
                         }
+                        let inst_constraint_for_message = inst_constraint;
                         // Evaluate indexed access / keyof types in the constraint
                         // before checking. E.g., `WeakKeyTypes[keyof WeakKeyTypes]`
                         // must be reduced to `object | symbol` for the assignability
@@ -899,6 +981,57 @@ impl<'a> CheckerState<'a> {
                         // to depth guards during nested evaluation.
                         self.ensure_refs_resolved(inst_constraint);
                         let inst_constraint = self.evaluate_type_for_assignability(inst_constraint);
+                        if query::keyof_operand(
+                            self.ctx.types.as_type_database(),
+                            constraint_resolved,
+                        )
+                        .is_some()
+                            && {
+                                // Decide membership *structurally* per primitive_key.
+                                // A display-string match ("string | number" /
+                                // "string | number | symbol") is per-base, not
+                                // per-key, so it would falsely admit SYMBOL
+                                // when base is `string | number` and emit a
+                                // spurious TS2344. Use TypeId equality and
+                                // union_members on both the unevaluated and
+                                // evaluated base — the latter recovers cases
+                                // where keyof/indexed-access bases only
+                                // decompose into a Union after evaluation.
+                                let base_evaluated = self.evaluate_type_for_assignability(base);
+                                let base_members = crate::query_boundaries::common::union_members(
+                                    self.ctx.types,
+                                    base,
+                                );
+                                let base_evaluated_members =
+                                    crate::query_boundaries::common::union_members(
+                                        self.ctx.types,
+                                        base_evaluated,
+                                    );
+                                [TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]
+                                    .into_iter()
+                                    .any(|primitive_key| {
+                                        let in_base = base == primitive_key
+                                            || base_evaluated == primitive_key
+                                            || base_members
+                                                .as_ref()
+                                                .is_some_and(|m| m.contains(&primitive_key))
+                                            || base_evaluated_members
+                                                .as_ref()
+                                                .is_some_and(|m| m.contains(&primitive_key));
+                                        in_base
+                                            && !self
+                                                .is_assignable_to(primitive_key, inst_constraint)
+                                    })
+                            }
+                            && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                        {
+                            self.error_type_constraint_not_satisfied(
+                                type_arg,
+                                inst_constraint_for_message,
+                                arg_idx,
+                            );
+                            continue;
+                        }
                         let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
                             || self.satisfies_array_like_constraint(base, inst_constraint);
                         if !is_satisfied {

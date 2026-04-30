@@ -171,6 +171,12 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
+        let evaluated_target_for_invalid_mapped = self.evaluate_type_for_assignability(target);
+        if self.type_contains_invalid_mapped_key_type(target)
+            || self.type_contains_invalid_mapped_key_type(evaluated_target_for_invalid_mapped)
+        {
+            return true;
+        }
 
         if is_keyof_type(self.ctx.types, target)
             && let Some(str_lit) = get_string_literal_value(self.ctx.types, source)

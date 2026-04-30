@@ -676,6 +676,11 @@ impl<'a> InferenceContext<'a> {
                     .object_with_index_type_from_shape(source_shape);
                 self.add_candidate(var, source_type, InferencePriority::HomomorphicMappedType);
             }
+        } else {
+            // Empty object literals still constrain the mapped key space. For
+            // `Pick<T, K>`, tsc infers `K = never` from `{}` instead of falling
+            // back to K's constraint (`keyof T`) and requiring every property.
+            self.infer_from_types(TypeId::NEVER, mapped.constraint, priority)?;
         }
 
         Ok(())
