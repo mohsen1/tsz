@@ -1738,6 +1738,60 @@ fn test_index_file_sub_to_bases_survives_large_class_body() {
 }
 
 #[test]
+fn test_remove_file_resets_file_owned_sub_to_bases() {
+    // Regression: remove_file used to treat sub_to_bases values as file names.
+    // The map is actually keyed by subclass/interface name (`Sub -> {Base}`),
+    // so removing the file left stale upward heritage edges behind.
+    let source = r#"class Base {} class Sub extends Base {}"#;
+    let (binder, parser) = parse_and_bind("sub.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("sub.ts", &binder, parser.get_arena(), source);
+
+    assert!(!index.get_files_with_heritage("Base").is_empty());
+    assert_eq!(index.get_bases_for_class("Sub"), vec!["Base".to_string()]);
+
+    index.remove_file("sub.ts");
+
+    assert!(
+        index.get_files_with_heritage("Base").is_empty(),
+        "downward heritage lookup should be cleared after remove_file"
+    );
+    assert!(
+        index.get_bases_for_class("Sub").is_empty(),
+        "upward heritage lookup should be cleared after remove_file"
+    );
+}
+
+#[test]
+fn test_remove_file_preserves_other_file_sub_to_bases_for_same_name() {
+    let source_a = r#"class BaseA {} class Sub extends BaseA {}"#;
+    let source_b = r#"class BaseB {} class Sub extends BaseB {}"#;
+    let (binder_a, parser_a) = parse_and_bind("a.ts", source_a);
+    let (binder_b, parser_b) = parse_and_bind("b.ts", source_b);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("a.ts", &binder_a, parser_a.get_arena(), source_a);
+    index.index_file("b.ts", &binder_b, parser_b.get_arena(), source_b);
+
+    let bases = index.get_bases_for_class("Sub");
+    assert!(bases.contains(&"BaseA".to_string()), "got {bases:?}");
+    assert!(bases.contains(&"BaseB".to_string()), "got {bases:?}");
+
+    index.remove_file("a.ts");
+
+    let bases = index.get_bases_for_class("Sub");
+    assert!(
+        !bases.contains(&"BaseA".to_string()),
+        "removed file's heritage edge should be gone, got {bases:?}"
+    );
+    assert!(
+        bases.contains(&"BaseB".to_string()),
+        "remaining file's heritage edge should survive, got {bases:?}"
+    );
+}
+
+#[test]
 fn test_clear_resets_heritage_and_sub_to_bases() {
     // Regression: clear() used to leave heritage_clauses and sub_to_bases
     // populated, so a fully-rebuilt index would see stale class edges.

@@ -106,6 +106,14 @@ pub struct SymbolIndex {
     /// For example, if "class B extends A, implements I",
     /// then `sub_to_bases`["B"] = {"A", "I"}
     sub_to_bases: FxHashMap<String, FxHashSet<String>>,
+
+    /// File-owned reverse heritage edges.
+    ///
+    /// `sub_to_bases` is keyed only by declaration name, so multiple files can
+    /// contribute edges for the same name. Keep per-file ownership so
+    /// `remove_file`/`update_file` can rebuild the aggregate without leaving
+    /// stale edges or deleting another file's contribution.
+    file_sub_to_bases: FxHashMap<String, FxHashMap<String, FxHashSet<String>>>,
 }
 
 impl SymbolIndex {
@@ -242,6 +250,10 @@ impl SymbolIndex {
             }
         }
 
+        if self.file_sub_to_bases.remove(file_name).is_some() {
+            self.rebuild_sub_to_bases();
+        }
+
         // Remove definitions that were in this file
         for defs in self.definitions.values_mut() {
             defs.retain(|loc| loc.file_path != file_name);
@@ -298,10 +310,6 @@ impl SymbolIndex {
         }
         self.heritage_clauses.retain(|_, files| !files.is_empty());
 
-        // Remove sub_to_bases entries for this file
-        for bases in self.sub_to_bases.values_mut() {
-            bases.remove(file_name);
-        }
         self.sub_to_bases.retain(|_, bases| !bases.is_empty());
     }
 
@@ -604,6 +612,12 @@ impl SymbolIndex {
                         self.sub_to_bases
                             .entry(class_name.clone())
                             .or_default()
+                            .insert(base_name.clone());
+                        self.file_sub_to_bases
+                            .entry(file_name_owned.clone())
+                            .or_default()
+                            .entry(class_name.clone())
+                            .or_default()
                             .insert(base_name);
                     }
                 }
@@ -777,6 +791,19 @@ impl SymbolIndex {
         // root change).
         self.heritage_clauses.clear();
         self.sub_to_bases.clear();
+        self.file_sub_to_bases.clear();
+    }
+
+    fn rebuild_sub_to_bases(&mut self) {
+        self.sub_to_bases.clear();
+        for class_edges in self.file_sub_to_bases.values() {
+            for (class_name, bases) in class_edges {
+                self.sub_to_bases
+                    .entry(class_name.clone())
+                    .or_default()
+                    .extend(bases.iter().cloned());
+            }
+        }
     }
 
     /// Get all symbols that start with the given prefix.
