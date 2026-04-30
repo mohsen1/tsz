@@ -388,14 +388,21 @@ impl BinderState {
                         .or_else(|| self.file_locals.get(name))
                         && let Some(sym) = self.symbols.get_mut(sym_id)
                     {
-                        sym.is_exported = true;
-                        // Set EXPORT_VALUE on the local symbol when the declaration
-                        // itself has `export default` (e.g., `export default class Foo`).
-                        // This distinguishes it from `function f() {} export default f;`
-                        // where `f` is a local name re-exported via a separate statement.
-                        if let Some(clause_node) = arena.get(export.export_clause)
-                            && Self::is_declaration(clause_node.kind)
-                        {
+                        // Only mark as exported (and thus eligible for named-export lookup)
+                        // when the clause is itself a declaration — e.g.
+                        // `export default class Foo {}` or `export default function f() {}`.
+                        //
+                        // For bare identifier references (`export default a`), do NOT set
+                        // is_exported.  Setting it would incorrectly add `a` to file_exports
+                        // as a named export, causing `import { a }` to silently resolve
+                        // instead of emitting TS2614.  The referenced identifier is already
+                        // tracked as "used" in referenced_symbols by the checker, so TS6133
+                        // is suppressed without setting is_exported.
+                        let clause_is_declaration = arena
+                            .get(export.export_clause)
+                            .is_some_and(|n| Self::is_declaration(n.kind));
+                        if clause_is_declaration {
+                            sym.is_exported = true;
                             sym.flags |= symbol_flags::EXPORT_VALUE;
                         }
                         // Only escalate is_type_only to true; never downgrade.

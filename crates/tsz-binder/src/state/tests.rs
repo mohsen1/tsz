@@ -3189,6 +3189,81 @@ export default class Foo {}
 }
 
 #[test]
+fn export_default_identifier_does_not_add_to_named_exports() {
+    // Regression test for TS2614 false-negative:
+    // `export default a` (bare identifier) must NOT mark `a` as a named export.
+    // Only `export default class/function` declarations should do so.
+    //
+    // Before the fix, `sym.is_exported = true` was set unconditionally on the
+    // referenced local symbol, causing `a` to appear in module_exports["test.ts"]
+    // under its local name — which suppressed TS2614 for `import { a } from "./mod"`.
+    let (binder, _parser) = parse_and_bind(
+        r"
+var a = 10;
+export default a;
+",
+    );
+
+    assert!(
+        binder.is_external_module,
+        "file with export should be module"
+    );
+
+    // The module's named exports should contain "default" but NOT "a".
+    let exports = binder.module_exports.get("test.ts");
+    assert!(
+        exports.is_some(),
+        "module_exports should have an entry for test.ts"
+    );
+    let exports = exports.unwrap();
+
+    assert!(
+        exports.has("default"),
+        "module_exports should contain 'default' export"
+    );
+    assert!(
+        !exports.has("a"),
+        "module_exports must NOT contain 'a' as a named export (export default a is not a named export)"
+    );
+
+    // Also verify `a` itself is NOT marked is_exported on the symbol.
+    let a_sym_id = binder
+        .file_locals
+        .get("a")
+        .expect("expected symbol 'a' in file_locals");
+    let a_symbol = binder
+        .symbols
+        .get(a_sym_id)
+        .expect("expected symbol data for 'a'");
+    assert!(
+        !a_symbol.is_exported,
+        "symbol 'a' must not have is_exported=true when used as 'export default a'"
+    );
+}
+
+#[test]
+fn export_default_function_decl_is_named_export_eligible() {
+    // Contrast: `export default function foo() {}` IS a declaration, so
+    // the function symbol should be marked is_exported (it's callable by name
+    // and the class/function default-export is in the named-export table under
+    // "foo" in some resolution paths). This test ensures we didn't over-restrict.
+    let (binder, _parser) = parse_and_bind(
+        r"
+export default function foo() {}
+",
+    );
+
+    assert!(
+        binder.is_external_module,
+        "file with export should be module"
+    );
+
+    // `foo` should exist as a symbol (function declaration creates a binding).
+    let foo_sym_id = binder.file_locals.get("foo");
+    assert!(foo_sym_id.is_some(), "expected symbol 'foo' in file_locals");
+}
+
+#[test]
 fn binding_reexport_all() {
     // `export * from './mod'` should track wildcard re-exports.
     let (binder, _parser) = parse_and_bind(
