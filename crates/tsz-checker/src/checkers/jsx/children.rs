@@ -122,8 +122,16 @@ impl<'a> CheckerState<'a> {
                     // and otherwise "absorb" the contextual return type, which
                     // suppresses valid children return-type mismatches. Recheck
                     // their raw (non-contextual) type before accepting.
-                    if let Some(raw_zero_param_child_type) =
-                        self.raw_single_jsx_zero_param_callback_type(attributes_idx)
+                    //
+                    // Skip the recheck when the children callable's expected return
+                    // type is a literal (e.g. `"x"`): in that case the body's literal
+                    // is narrowed against the contextual return type by the regular
+                    // function-expression flow, and the raw widened type (e.g.
+                    // `() => string`) would produce a spurious mismatch even when
+                    // tsc accepts the call.
+                    if !self.children_callable_return_is_literal(children_type)
+                        && let Some(raw_zero_param_child_type) =
+                            self.raw_single_jsx_zero_param_callback_type(attributes_idx)
                         && !matches!(raw_zero_param_child_type, TypeId::ANY | TypeId::ERROR)
                         && !self.is_assignable_to(raw_zero_param_child_type, children_type)
                     {
@@ -387,6 +395,32 @@ impl<'a> CheckerState<'a> {
         }
 
         self.is_assignable_to(actual_child_type, children_type)
+    }
+
+    /// Returns `true` if the children prop's callable signature has a literal
+    /// return type (string/number/boolean literal). For literal returns, the
+    /// regular contextual flow narrows the body literal against the expected
+    /// return type, so the raw zero-param recheck would only ever surface the
+    /// widened literal as a false-positive mismatch.
+    fn children_callable_return_is_literal(&mut self, children_type: TypeId) -> bool {
+        let resolved = self.resolve_type_for_property_access(children_type);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let return_type = if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, resolved)
+        {
+            shape.return_type
+        } else if let Some(sigs) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, resolved)
+        {
+            let Some(first) = sigs.first() else {
+                return false;
+            };
+            first.return_type
+        } else {
+            return false;
+        };
+        let return_type = self.evaluate_type_with_env(return_type);
+        crate::query_boundaries::common::is_literal_type(self.ctx.types, return_type)
     }
 
     fn raw_single_jsx_zero_param_callback_type(

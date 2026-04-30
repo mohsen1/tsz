@@ -1742,3 +1742,55 @@ function test<P extends JSX.IntrinsicAttributes>(wrappedProps: P) {{
         "No TS2322 expected when P extends IntrinsicAttributes, got: {diagnostics:?}"
     );
 }
+
+/// Regression for jsxChildrenGenericContextualTypes.tsx:
+/// a zero-parameter callback nested in JSX body children whose body returns a
+/// string literal must not be flagged when the children prop's expected return
+/// type is the same string literal. The literal narrowing on the contextual
+/// return type matches `tsc`; rechecking the raw widened type would otherwise
+/// surface a spurious `Type '() => string' is not assignable to type
+/// '(x: ...) => "x"'.` mismatch.
+#[test]
+fn jsx_zero_param_child_callback_with_literal_return_no_false_positive() {
+    let source = r#"
+namespace JSX {
+    export interface Element {}
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { [key: string]: Element }
+}
+interface LitProps<T> { prop: T, children: (x: this) => T }
+const ElemLit = <T extends string>(p: LitProps<T>) => <div></div>;
+const jj = <ElemLit prop="x">{() => "x"}</ElemLit>;
+"#;
+    let diagnostics = check_jsx_strict(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "No TS2322 expected for `() => \"x\"` matching contextual return `\"x\"`, got: {diagnostics:?}"
+    );
+}
+
+/// Companion: when the body literal does NOT match the expected literal return,
+/// tsz must still emit TS2322. The tag below corresponds to `mismatched` in
+/// jsxChildrenGenericContextualTypes.tsx.
+#[test]
+fn jsx_zero_param_child_callback_with_mismatched_literal_return_emits_ts2322() {
+    let source = r#"
+namespace JSX {
+    export interface Element {}
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { [key: string]: Element }
+}
+interface LitProps<T> { prop: T, children: (x: this) => T }
+const ElemLit = <T extends string>(p: LitProps<T>) => <div></div>;
+const mismatched = <ElemLit prop="x">{() => 12}</ElemLit>;
+"#;
+    let diagnostics = check_jsx_strict(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for `() => 12` against contextual return `\"x\"`, got: {diagnostics:?}"
+    );
+}
