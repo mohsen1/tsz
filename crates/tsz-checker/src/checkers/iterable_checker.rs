@@ -467,8 +467,24 @@ impl<'a> CheckerState<'a> {
             // then fall back to sync iterator + Promise unwrapping (Iterable<Promise<T>> → T)
             if let Some(info) =
                 tsz_solver::operations::get_iterator_info(self.ctx.types, iterable_type, true)
+                && info.yield_type != TypeId::ANY
             {
                 return info.yield_type;
+            }
+            // Solver-level resolution can return ANY (or None) for Application
+            // receivers — e.g. `AsyncIterable<number>` viewed through a
+            // `Lazy(DefId)` base — because its property-access evaluator does
+            // not always evaluate through the alias body, and because the
+            // naive `IteratorResult.value` read collapses the discriminated
+            // union to `T | TReturn = any`. Fall back to the checker's
+            // property-access chain plus the `done`-partitioning helper, both
+            // of which handle Application receivers and recover the true `T`.
+            if self.is_async_iterable_type(iterable_type) {
+                let async_yield =
+                    self.resolve_async_iterator_element_type_via_property_access(iterable_type);
+                if async_yield != TypeId::ANY {
+                    return async_yield;
+                }
             }
             // Fall back to sync iterator protocol + Promise unwrapping.
             let elem_type = self.for_of_element_type_classified(iterable_type, 0);
@@ -485,6 +501,72 @@ impl<'a> CheckerState<'a> {
             elem_type
         } else {
             self.for_of_element_type_classified(iterable_type, 0)
+        }
+    }
+
+    /// Follow the async-iterator protocol chain via checker property access.
+    ///
+    /// Mirrors `resolve_iterator_element_type_via_property_access` but for
+    /// `[Symbol.asyncIterator]` / `Promise<IteratorResult<T>>`. Used when the
+    /// solver-level `get_iterator_info(async=true)` cannot resolve through an
+    /// `Application(Lazy(DefId), [..])` receiver but the checker's
+    /// `resolve_property_access_with_env` (which evaluates the alias body)
+    /// can.
+    fn resolve_async_iterator_element_type_via_property_access(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        // Step 1: Get [Symbol.asyncIterator] property.
+        let iterator_fn = self.resolve_property_access_with_env(type_id, "[Symbol.asyncIterator]");
+        let iterator_fn_type = match &iterator_fn {
+            PropertyAccessResult::Success { type_id, .. } => *type_id,
+            _ => return TypeId::ANY,
+        };
+
+        // Step 2: Call [Symbol.asyncIterator]() to get the AsyncIterator type.
+        let iterator_type = self.get_call_return_type(iterator_fn_type);
+        let iterator_type = if iterator_type == TypeId::ANY
+            || crate::query_boundaries::common::is_this_type(self.ctx.types, iterator_type)
+        {
+            type_id
+        } else {
+            iterator_type
+        };
+
+        // Step 3: Get next() method on the async iterator.
+        let next_fn = self.resolve_property_access_with_env(iterator_type, "next");
+        let next_fn_type = match next_fn {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            _ => return TypeId::ANY,
+        };
+
+        // Step 4: Call next() to get Promise<IteratorResult<T>>, then await it
+        // to get IteratorResult<T>, then extract the yield value type.
+        let next_return = self.get_call_return_type(next_fn_type);
+        let awaited_next = self
+            .unwrap_promise_type(next_return)
+            .or_else(|| self.get_awaited_type_of_promise_like(next_return))
+            .unwrap_or(next_return);
+
+        // Extract the yield type from the IteratorResult discriminated union by
+        // partitioning on `done` — naive `.value` access would conflate the
+        // yield value (`done:false` branch) with the `TReturn` value
+        // (`done:true` branch) and produce `T | TReturn = any`.
+        let (yield_type, _return_type) =
+            tsz_solver::operations::extract_iterator_result_value_types(
+                self.ctx.types,
+                awaited_next,
+            );
+        if yield_type != TypeId::NEVER && yield_type != TypeId::ERROR {
+            return yield_type;
+        }
+        // Fallback: naive `value` access if partitioning yielded nothing.
+        let value_access = self.resolve_property_access_with_env(awaited_next, "value");
+        match value_access {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            _ => TypeId::ANY,
         }
     }
 
