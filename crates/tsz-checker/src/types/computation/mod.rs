@@ -1,8 +1,9 @@
 //! Type computation for `CheckerState`.
 //!
 //! This module group handles all expression-level type computation:
-//! - `helpers` — foundational helpers, contextual typing, relationship queries
 //! - `array_literal` — array literal type construction and contextual typing
+//! - `assignment_target` — assignment target write-surface helpers
+//! - `helpers` — foundational helpers, contextual typing, relationship queries
 //! - `access` — property/element access type resolution
 //! - `binary` — binary expression operators
 //! - `call` — call expression resolution and overload handling
@@ -22,6 +23,7 @@ pub(crate) mod access_await;
 pub(crate) mod access_helpers;
 pub(crate) mod access_super;
 pub(crate) mod array_literal;
+pub(crate) mod assignment_target;
 pub(crate) mod binary;
 pub(crate) mod call;
 pub(crate) mod call_display;
