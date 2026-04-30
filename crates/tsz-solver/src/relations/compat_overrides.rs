@@ -522,6 +522,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
+        if let (Some(TypeData::Mapped(a_mid)), Some(TypeData::Mapped(b_mid))) =
+            (self.interner.lookup(a), self.interner.lookup(b))
+        {
+            let a_mapped = self.interner.get_mapped(a_mid);
+            let b_mapped = self.interner.get_mapped(b_mid);
+            if a_mapped.readonly_modifier != b_mapped.readonly_modifier {
+                return false;
+            }
+        }
+
         // 4. Enum Nominality Check
         // If one is an enum and the other isn't, or they are different enums,
         // they are not identical for redeclaration, even if structurally compatible.

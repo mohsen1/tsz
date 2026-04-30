@@ -691,6 +691,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             return;
                         }
                     }
+                    if !has_properties
+                        && !has_index_sigs
+                        && !crate::is_primitive_type(self.interner, source)
+                    {
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            TypeId::NEVER,
+                            mapped.constraint,
+                            priority,
+                        );
+                        return;
+                    }
                 }
                 // Handle Tuple sources against mapped types for reverse-mapped inference.
                 // Tuples like [string, number] have numeric keys "0", "1", etc.

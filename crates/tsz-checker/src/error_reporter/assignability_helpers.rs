@@ -99,6 +99,10 @@ impl<'a> CheckerState<'a> {
     ) {
         if self.is_assignable_to(source, target)
             || self.is_nested_same_wrapper_application_assignment(source, target)
+            || self.type_contains_invalid_mapped_key_type(target)
+            || Self::looks_like_invalid_optional_mapped_display(
+                &self.format_type_diagnostic(target),
+            )
         {
             return;
         }
@@ -115,10 +119,20 @@ impl<'a> CheckerState<'a> {
     ) {
         if self.is_assignable_to(source, target)
             || self.is_nested_same_wrapper_application_assignment(source, target)
+            || self.type_contains_invalid_mapped_key_type(target)
+            || Self::looks_like_invalid_optional_mapped_display(
+                &self.format_type_diagnostic(target),
+            )
         {
             return;
         }
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
+    }
+
+    fn looks_like_invalid_optional_mapped_display(display: &str) -> bool {
+        display.starts_with("{ [P in ")
+            && display.contains("]?: ")
+            && display.ends_with(" | undefined; }")
     }
 
     /// Report a type not assignable error using pre-computed display types.

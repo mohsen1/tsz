@@ -8,6 +8,7 @@ pub(crate) mod heritage;
 mod heritage_class_recovery;
 mod isolated_declarations;
 mod js_grammar;
+mod mapped_object_literals;
 mod module_none;
 pub(crate) mod property;
 pub(crate) mod property_access;

@@ -392,6 +392,10 @@ name = "ts2344_infer_conditional_constraint"
 path = "tests/ts2344_infer_conditional_constraint.rs"
 
 [[test]]
+name = "mapped_type_errors_conformance_tests"
+path = "tests/mapped_type_errors_conformance_tests.rs"
+
+[[test]]
 name = "ts2344_self_referential_interface_constraint"
 path = "tests/ts2344_self_referential_interface_constraint.rs"
 

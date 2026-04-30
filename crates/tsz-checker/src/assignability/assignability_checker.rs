@@ -739,6 +739,13 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
+        let evaluated_target_for_invalid_mapped = self.ctx.types.evaluate_type(target);
+        if self.type_contains_invalid_mapped_key_type(target)
+            || self.type_contains_invalid_mapped_key_type(evaluated_target_for_invalid_mapped)
+        {
+            return true;
+        }
+
         // Special case: Do not suppress for union types containing indexed access types.
         // For example, `(S & State<T>)["a"] | undefined` is a union where one member
         // is an indexed access type. We should emit TS2322 for these cases because

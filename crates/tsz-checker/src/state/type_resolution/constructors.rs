@@ -1161,25 +1161,34 @@ impl<'a> CheckerState<'a> {
     /// (e.g., function type parameters that live in the checker's dynamic
     /// `type_parameter_scope` rather than the binder's symbol table).
     pub(crate) fn type_arg_has_explicit_constraint_in_ast(&self, arg_idx: NodeIndex) -> bool {
+        if self
+            .type_arg_explicit_constraint_node_in_ast(arg_idx)
+            .is_some()
+        {
+            return true;
+        }
+        if let Some(name) = self.type_arg_identifier_name(arg_idx)
+            && let Some(&scope_type_id) = self.ctx.type_parameter_scope.get(&name)
+        {
+            let db = self.ctx.types.as_type_database();
+            let base =
+                crate::query_boundaries::common::get_base_constraint_of_type(db, scope_type_id);
+            if base != scope_type_id && base != TypeId::UNKNOWN {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub(crate) fn type_arg_explicit_constraint_node_in_ast(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         // Get the type argument's name to look up in the type_parameter_scope.
         // Function type params (e.g., `<T extends Foo>(x: Bar<T>)`) are stored
         // in the checker's dynamic scope, not the binder's symbol table.
         let arg_name = self.type_arg_identifier_name(arg_idx);
-        if let Some(ref name) = arg_name {
-            // Check the checker's type_parameter_scope. If the type parameter
-            // exists there and has a constraint in the solver's TypeData, it's
-            // constrained (even if base_constraint_of_type returns UNKNOWN due
-            // to a different TypeId being checked).
-            if let Some(&scope_type_id) = self.ctx.type_parameter_scope.get(name) {
-                let db = self.ctx.types.as_type_database();
-                let base =
-                    crate::query_boundaries::common::get_base_constraint_of_type(db, scope_type_id);
-                if base != scope_type_id && base != TypeId::UNKNOWN {
-                    return true;
-                }
-            }
-        }
-
         // Also check binder symbols for interface/class type params
         let sym_id = if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
             let target = if arg_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
@@ -1206,7 +1215,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(tp_data) = self.ctx.arena.get_type_parameter(decl_node)
                     && tp_data.constraint.is_some()
                 {
-                    return true;
+                    return Some(tp_data.constraint);
                 }
             }
         }
@@ -1227,7 +1236,16 @@ impl<'a> CheckerState<'a> {
                 }
                 if let Some(pn) = self.ctx.arena.get(parent) {
                     // Check function types and constructor types
-                    let tp_list = if pn.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_TYPE
+                    let tp_list = if pn.kind
+                        == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
+                        || pn.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+                        || pn.kind == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
+                    {
+                        self.ctx
+                            .arena
+                            .get_function(pn)
+                            .and_then(|func| func.type_parameters.as_ref())
+                    } else if pn.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_TYPE
                         || pn.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR_TYPE
                     {
                         self.ctx
@@ -1258,7 +1276,7 @@ impl<'a> CheckerState<'a> {
                                 && ident.escaped_text == *name
                                 && tp_data.constraint.is_some()
                             {
-                                return true;
+                                return Some(tp_data.constraint);
                             }
                         }
                     }
@@ -1314,7 +1332,7 @@ impl<'a> CheckerState<'a> {
                                             && let Some(other_tp_data) = self.ctx.arena.get_type_parameter(other_tp_node)
                                             && other_tp_data.constraint.is_some()
                                         {
-                                            return true;
+                                            return Some(other_tp_data.constraint);
                                         }
                                     }
                                 }
@@ -1327,11 +1345,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        false
+        None
     }
 
     /// Extract the identifier name from a type argument AST node.
-    fn type_arg_identifier_name(&self, arg_idx: NodeIndex) -> Option<String> {
+    pub(crate) fn type_arg_identifier_name(&self, arg_idx: NodeIndex) -> Option<String> {
         let arg_node = self.ctx.arena.get(arg_idx)?;
         if arg_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
             let tr = self.ctx.arena.get_type_ref(arg_node)?;

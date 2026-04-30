@@ -142,7 +142,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) -> String {
-        let inferred_display = self.format_excess_property_target_type(target);
+        let inferred_display = self
+            .format_pick_over_all_keys_as_keyof(target)
+            .unwrap_or_else(|| self.format_excess_property_target_type(target));
         if let Some(annotation_text) = self.excess_property_target_annotation_text_for_site(idx) {
             let annotation_display = self.format_annotation_like_type(&annotation_text);
             if inferred_display.starts_with('{') && annotation_display.contains("object &") {
@@ -170,7 +172,52 @@ impl<'a> CheckerState<'a> {
                 return annotation_display;
             }
         }
-        inferred_display
+        Self::collapse_pick_literal_union_display(&inferred_display).unwrap_or(inferred_display)
+    }
+
+    fn collapse_pick_literal_union_display(display: &str) -> Option<String> {
+        let inner = display.strip_prefix("Pick<")?.strip_suffix('>')?;
+        let (base, keys) = inner.split_once(", ")?;
+        if !keys.contains("\" | \"") || !keys.split(" | ").all(|part| part.starts_with('"')) {
+            return None;
+        }
+        Some(format!("Pick<{base}, keyof {base}>"))
+    }
+
+    fn format_pick_over_all_keys_as_keyof(&mut self, target: TypeId) -> Option<String> {
+        let (base, args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target)?;
+        if args.len() != 2 || self.format_type_diagnostic(base) != "Pick" {
+            return None;
+        }
+
+        let object_type = args[0];
+        let key_type = args[1];
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)?;
+        let keys = crate::query_boundaries::common::union_members(self.ctx.types, key_type)
+            .unwrap_or_else(|| vec![key_type]);
+        if keys.len() != shape.properties.len() {
+            return None;
+        }
+        let mut key_atoms = keys
+            .iter()
+            .copied()
+            .map(|key| crate::query_boundaries::common::string_literal_value(self.ctx.types, key))
+            .collect::<Option<Vec<_>>>()?;
+        key_atoms.sort_unstable();
+        let mut prop_atoms = shape
+            .properties
+            .iter()
+            .map(|prop| prop.name)
+            .collect::<Vec<_>>();
+        prop_atoms.sort_unstable();
+        if key_atoms != prop_atoms {
+            return None;
+        }
+
+        let object_display = self.format_type_diagnostic(object_type);
+        Some(format!("Pick<{object_display}, keyof {object_display}>"))
     }
 
     pub(crate) fn excess_property_diagnostic_message(

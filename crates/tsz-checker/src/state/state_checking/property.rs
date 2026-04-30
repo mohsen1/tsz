@@ -1,8 +1,3 @@
-//! Object literal excess property checking.
-//!
-//! Property access resolution lives in the sibling `property_access` module.
-//! Readonly assignment checking lives in the sibling `readonly` module.
-
 use crate::context::TypingRequest;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
@@ -99,8 +94,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Track the earliest source-order candidate; pair with
-    /// [`emit_tracked_excess_property`] to emit one TS2353 per literal.
     fn track_earliest_excess(
         &self,
         current: &mut Option<(Atom, NodeIndex, u32)>,
@@ -113,9 +106,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Emit the single TS2353 + implicit-any check for the earliest excess
-    /// property recorded by [`track_earliest_excess`]. No-op when no excess
-    /// was recorded.
     fn emit_tracked_excess_property(
         &mut self,
         tracked: Option<(Atom, NodeIndex, u32)>,
@@ -131,46 +121,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn nested_property_target_type(
-        &mut self,
-        owner_type: TypeId,
-        prop_name: Atom,
-        fallback: TypeId,
-    ) -> TypeId {
-        let prop_name_str = self.ctx.types.resolve_atom(prop_name);
-
-        if let Some(type_id) =
-            self.contextual_object_literal_property_type(owner_type, prop_name_str.as_ref())
-        {
-            return type_id;
-        }
-
-        if let Some(type_id) = self
-            .ctx
-            .types
-            .contextual_property_type(owner_type, prop_name_str.as_ref())
-        {
-            return type_id;
-        }
-
-        let resolved_owner = self.resolve_type_for_property_access(owner_type);
-        if resolved_owner != owner_type
-            && let Some(type_id) = self
-                .ctx
-                .types
-                .contextual_property_type(resolved_owner, prop_name_str.as_ref())
-        {
-            return type_id;
-        }
-
-        match self.resolve_property_access_with_env(owner_type, &prop_name_str) {
-            tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => {
-                type_id
-            }
-            _ => fallback,
-        }
-    }
-
     pub(crate) fn check_object_literal_excess_properties(
         &mut self,
         source: TypeId,
@@ -179,17 +129,12 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::query_boundaries::common as freshness_query;
 
-        // Ensure the target type is fully resolved before excess property
-        // checking. Interface types are represented as Lazy(DefId) and need
-        // their structural body materialized in the type environment for
-        // object_shape queries to succeed.
         self.ensure_relation_input_ready(target);
 
-        // Excess property checking against unresolved inference targets leaks
-        // provisional diagnostics like `__infer_0 | PromiseLike<__infer_0>`.
-        // tsc waits until the contextual target is concrete before deciding
-        // whether a fresh object literal has excess properties.
         let evaluated_target = self.evaluate_type_with_env(target);
+
+        let emitted_named_property_value_error =
+            self.check_object_literal_named_property_values_against_target(idx, target);
 
         // Excess property checks do not apply to type parameters (even with constraints).
         if query::is_type_parameter_like(self.ctx.types, target) {
@@ -206,6 +151,9 @@ impl<'a> CheckerState<'a> {
         // Non-fresh object literals should be exempt from excess-property checks
         // unless they use spread, in which case we still check explicit properties.
         if !is_fresh_source && explicit_property_names.is_none() {
+            if emitted_named_property_value_error {
+                return;
+            }
             return;
         }
 
@@ -216,6 +164,21 @@ impl<'a> CheckerState<'a> {
         let source_props = source_shape.properties.as_slice();
         let effective_target = self.normalized_target_for_excess_properties(target);
         let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
+
+        if [target, effective_target, resolved_target, evaluated_target]
+            .into_iter()
+            .filter_map(|candidate| {
+                crate::query_boundaries::common::mapped_type_info(self.ctx.types, candidate)
+            })
+            .any(|mapped| {
+                !crate::query_boundaries::common::is_valid_mapped_type_key_type(
+                    self.ctx.types,
+                    mapped.constraint,
+                )
+            })
+        {
+            return;
+        }
 
         let mut generic_mapped_excess: Option<(tsz_common::interner::Atom, NodeIndex, u32)> = None;
         for source_prop in source_props {
@@ -628,6 +591,16 @@ impl<'a> CheckerState<'a> {
         }
 
         if crate::query_boundaries::common::is_mapped_type(self.ctx.types, effective_target) {
+            if let Some(mapped) =
+                crate::query_boundaries::common::mapped_type_info(self.ctx.types, effective_target)
+                && !crate::query_boundaries::common::is_valid_mapped_type_key_type(
+                    self.ctx.types,
+                    mapped.constraint,
+                )
+            {
+                return;
+            }
+
             // First excess by source order (see `track_earliest_excess`).
             let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
             for source_prop in source_props {
@@ -645,6 +618,14 @@ impl<'a> CheckerState<'a> {
                         type_id,
                         ..
                     } => {
+                        if self.check_object_literal_named_property_value(
+                            idx,
+                            source_prop.name,
+                            source_prop.type_id,
+                            type_id,
+                        ) {
+                            continue;
+                        }
                         let nested_target = self.nested_property_target_type(
                             effective_target,
                             source_prop.name,
@@ -678,6 +659,9 @@ impl<'a> CheckerState<'a> {
         // anchor diagnostics and recursive nested-literal checking.
         if let Some(target_shape) = query::object_shape(self.ctx.types, resolved_target) {
             let target_props = target_shape.properties.as_slice();
+            let should_check_named_values = [target, effective_target, resolved_target]
+                .into_iter()
+                .any(|candidate| self.target_is_mapped_or_mapped_application(candidate));
 
             // When the target has a string index signature, outer property names are
             // all valid (any string key is accepted). But we still need to check
@@ -708,6 +692,14 @@ impl<'a> CheckerState<'a> {
                     if let Some(target_prop) =
                         target_props.iter().find(|p| p.name == source_prop.name)
                     {
+                        if self.check_object_literal_named_property_value(
+                            idx,
+                            source_prop.name,
+                            source_prop.type_id,
+                            target_prop.type_id,
+                        ) {
+                            continue;
+                        }
                         nested_types.push(target_prop.type_id);
                     }
                     let nested_target =
@@ -810,6 +802,16 @@ impl<'a> CheckerState<'a> {
                         .map(|prop| prop.type_id)
                         .or(dynamic_target_prop_type);
                     if let Some(target_prop_type) = target_prop_type {
+                        if should_check_named_values
+                            && self.check_object_literal_named_property_value(
+                                idx,
+                                source_prop.name,
+                                source_prop.type_id,
+                                target_prop_type,
+                            )
+                        {
+                            continue;
+                        }
                         let nested_target = self.nested_property_target_type(
                             effective_target,
                             source_prop.name,
@@ -1296,7 +1298,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn object_literal_property_name_and_value(
+    pub(super) fn object_literal_property_name_and_value(
         &self,
         obj_literal_idx: NodeIndex,
         prop_name: Atom,
