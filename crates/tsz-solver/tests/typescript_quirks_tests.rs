@@ -693,3 +693,138 @@ fn test_non_strict_with_any() {
         "string function should be subtype of any function (anything is subtype of any)"
     );
 }
+
+// =============================================================================
+// Object.prototype Fallback Tests
+// =============================================================================
+
+/// TypeScript treats all object interface types as implicitly having Object.prototype
+/// methods. When a source type lacks a property that the target requires, but the
+/// global Object interface provides a compatible property, the check should pass.
+///
+/// This reproduces the assignFromNumberInterface2.ts conformance test:
+/// `NotNumber` (has doStuff but not toLocaleString) should be assignable to
+/// augmented `Number` (has doStuff + toLocaleString(locales?, options?)) because
+/// `Object.prototype.toLocaleString()`: string is bivariant-compatible.
+#[test]
+fn test_object_prototype_fallback_for_missing_property() {
+    use crate::types::IntrinsicKind;
+
+    let interner = TypeInterner::new();
+    let to_locale_string_atom = interner.intern_string("toLocaleString");
+    let do_stuff_atom = interner.intern_string("doStuff");
+
+    // Object.toLocaleString(): string (no params)
+    let locale_string_no_params = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // Number.toLocaleString(locales?, options?): string (optional params)
+    let locales_atom = interner.intern_string("locales");
+    let options_atom = interner.intern_string("options");
+    let locale_string_with_params = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![
+            ParamInfo::optional(locales_atom, TypeId::STRING),
+            ParamInfo::optional(options_atom, TypeId::ANY),
+        ],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let do_stuff_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // Object: { toLocaleString(): string }
+    let object_type = interner.object(vec![PropertyInfo {
+        name: to_locale_string_atom,
+        type_id: locale_string_no_params,
+        write_type: locale_string_no_params,
+        optional: false,
+        readonly: false,
+        is_method: true,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+    }]);
+
+    // NotNumber: { doStuff(): string }
+    let not_number_type = interner.object(vec![PropertyInfo {
+        name: do_stuff_atom,
+        type_id: do_stuff_fn,
+        write_type: do_stuff_fn,
+        optional: false,
+        readonly: false,
+        is_method: true,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+    }]);
+
+    // Number (merged): { doStuff(); toLocaleString(locales?, options?) }
+    let number_merged_type = interner.object(vec![
+        PropertyInfo {
+            name: do_stuff_atom,
+            type_id: do_stuff_fn,
+            write_type: do_stuff_fn,
+            optional: false,
+            readonly: false,
+            is_method: true,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        },
+        PropertyInfo {
+            name: to_locale_string_atom,
+            type_id: locale_string_with_params,
+            write_type: locale_string_with_params,
+            optional: false,
+            readonly: false,
+            is_method: true,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+            is_string_named: false,
+        },
+    ]);
+
+    // WITH Object registered: should pass via Object.prototype fallback
+    let mut env = TypeEnvironment::new();
+    env.set_boxed_type(IntrinsicKind::Object, object_type);
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    assert!(
+        checker.is_subtype_of(not_number_type, number_merged_type),
+        "NotNumber should be assignable to Number via Object.prototype.toLocaleString fallback"
+    );
+
+    // WITHOUT Object registered: should fail (no fallback available)
+    let noop = NoopResolver;
+    let mut checker_no_obj = SubtypeChecker::with_resolver(&interner, &noop);
+    assert!(
+        !checker_no_obj.is_subtype_of(not_number_type, number_merged_type),
+        "Without Object prototype fallback, NotNumber should fail to satisfy Number"
+    );
+}
