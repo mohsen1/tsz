@@ -15,6 +15,30 @@ fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
 }
 
 #[test]
+fn generic_intersection_with_literal_only_constraint_preserves_generic_display() {
+    let diagnostics = diagnostics_for(
+        r#"
+function f<T extends number, U extends 0 | 1 | 2>(t: T & U) {
+    const x: object = t;
+}
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+    assert!(
+        diag.message_text.contains("T & U"),
+        "generic intersection diagnostic should preserve the generic intersection, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("0 | 2 | 1") && !diag.message_text.contains("0 | 1 | 2"),
+        "generic intersection diagnostic should not reduce to its literal-only base constraint, got: {diag:?}"
+    );
+}
+
+#[test]
 fn typed_array_cross_assignment_preserves_generic_display() {
     let diagnostics = diagnostics_for(
         r#"

@@ -1719,10 +1719,23 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.as_type_database(),
             source,
         );
-        if reduced == source {
+        if reduced == source || self.is_literal_only_union_for_diagnostic_display(reduced) {
             return None;
         }
         Some(reduced)
+    }
+
+    fn is_literal_only_union_for_diagnostic_display(&self, ty: TypeId) -> bool {
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty)
+        else {
+            return false;
+        };
+        !members.is_empty()
+            && members.iter().all(|&member| {
+                crate::query_boundaries::common::literal_value(self.ctx.types, member).is_some()
+                    || member == TypeId::BOOLEAN_TRUE
+                    || member == TypeId::BOOLEAN_FALSE
+            })
     }
 }
 
