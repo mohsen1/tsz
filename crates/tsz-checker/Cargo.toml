@@ -551,5 +551,9 @@ path = "tests/destructuring_rest_omit_unspreadable_tests.rs"
 name = "super_keyword_speculation_survival_tests"
 path = "tests/super_keyword_speculation_survival_tests.rs"
 
+[[test]]
+name = "ambient_default_namespace_export_dup_tests"
+path = "tests/ambient_default_namespace_export_dup_tests.rs"
+
 [lints]
 workspace = true
