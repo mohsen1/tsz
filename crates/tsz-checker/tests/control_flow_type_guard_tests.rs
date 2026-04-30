@@ -1371,3 +1371,122 @@ function f26(outer: { readonly obj: { kind: 'foo', foo: string } | { kind: 'bar'
          got: {ts2339:#?}"
     );
 }
+
+/// Regression test: switch statement narrowing via destructured discriminant alias.
+///
+/// `const { kind } = obj; switch (kind) { case 'foo': obj.foo; }` should narrow
+/// `obj` to the `{ kind: 'foo', foo: string }` branch — no TS2339 on `obj.foo`.
+///
+/// Fix: `switch_can_affect_reference` now checks `is_aliased_discriminant_switch_expr`
+/// so that switch(alias) where `alias` is `const { kind } = obj` allows entry into
+/// per-clause narrowing.
+#[test]
+fn test_switch_narrowing_via_destructured_discriminant_alias() {
+    let source = r#"
+function f(obj: { kind: 'foo', foo: string } | { kind: 'bar', bar: number }) {
+    const { kind } = obj;
+    switch (kind) {
+        case 'foo': obj.foo; break;
+        case 'bar': obj.bar; break;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    let ts2339: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2339)
+        .collect();
+
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339: switch(kind) should narrow obj via destructured discriminant alias, \
+         got: {ts2339:#?}"
+    );
+}
+
+/// Regression test: aliased condition with loose equality narrows discriminated union.
+///
+/// `const isFoo = kind == 'foo'; if (isFoo && obj.foo) { ... }` should narrow `obj`
+/// to the `{ kind: 'foo', foo?: string }` branch — no TS2339 on `obj.foo`.
+///
+/// Fix: `discriminant_comparison` (and `literal_comparison`) are now also called for
+/// loose equality `==` comparisons, not just strict `===`.
+#[test]
+fn test_aliased_loose_equality_condition_narrows_discriminant() {
+    let source = r#"
+function f(obj: { kind: 'foo', foo?: string } | { kind: 'bar', bar?: number }) {
+    const { kind } = obj;
+    const isFoo = kind == 'foo';
+    if (isFoo && obj.foo) {
+        let t: string = obj.foo;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    let ts2339: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2339)
+        .collect();
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+
+    assert!(
+        ts2339.is_empty() && ts2322.is_empty(),
+        "Expected no errors: aliased loose == condition should narrow discriminated union, \
+         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
