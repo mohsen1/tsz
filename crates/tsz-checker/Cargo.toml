@@ -488,6 +488,10 @@ name = "ts2451_type_only_namespace_merge_tests"
 path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 
 [[test]]
+name = "ts2506_cross_file_cycle_tests"
+path = "tests/ts2506_cross_file_cycle_tests.rs"
+
+[[test]]
 name = "intersection_primitive_member_assignability_tests"
 path = "tests/intersection_primitive_member_assignability_tests.rs"
 
