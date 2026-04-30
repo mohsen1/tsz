@@ -1375,6 +1375,7 @@ fn bind_file_with_libs(
     }
 
     binder.bind_source_file(&arena, source_file);
+    compact_premerged_lib_state(&mut binder);
 
     // Extract lib_binders and lib_arenas from binder before it's moved
     let lib_binders = binder.lib_binders.clone();
@@ -1417,6 +1418,294 @@ fn bind_file_with_libs(
         semantic_defs: binder.semantic_defs,
         file_import_sources: binder.file_import_sources,
     }
+}
+
+fn compact_premerged_lib_state(binder: &mut BinderState) {
+    if binder.lib_symbol_ids.is_empty() {
+        return;
+    }
+
+    let lib_symbol_ids = Arc::clone(&binder.lib_symbol_ids);
+    let mut retained_lib_symbols = FxHashSet::default();
+    for &sym_id in binder.node_symbols.values() {
+        if lib_symbol_ids.contains(&sym_id) {
+            retained_lib_symbols.insert(sym_id);
+        }
+    }
+
+    collect_retained_lib_symbol_refs(binder, &lib_symbol_ids, &mut retained_lib_symbols);
+
+    binder.file_locals =
+        strip_pure_lib_entries(&binder.file_locals, &lib_symbol_ids, &retained_lib_symbols);
+
+    for scope in Arc::make_mut(&mut binder.scopes) {
+        scope.table = strip_pure_lib_entries(&scope.table, &lib_symbol_ids, &retained_lib_symbols);
+    }
+
+    let id_remap = densify_bind_symbols(binder, &lib_symbol_ids, &retained_lib_symbols);
+    remap_compacted_bind_state(binder, &id_remap);
+}
+
+fn strip_pure_lib_entries(
+    table: &SymbolTable,
+    lib_symbol_ids: &FxHashSet<SymbolId>,
+    retained_lib_symbols: &FxHashSet<SymbolId>,
+) -> SymbolTable {
+    let retained = table
+        .iter()
+        .filter(|(_, sym_id)| {
+            !lib_symbol_ids.contains(sym_id) || retained_lib_symbols.contains(sym_id)
+        })
+        .count();
+    let mut stripped = SymbolTable::with_capacity(retained);
+    for (name, &sym_id) in table.iter() {
+        if !lib_symbol_ids.contains(&sym_id) || retained_lib_symbols.contains(&sym_id) {
+            stripped.set(name.clone(), sym_id);
+        }
+    }
+    stripped
+}
+
+fn collect_retained_lib_symbol_refs(
+    binder: &BinderState,
+    lib_symbol_ids: &FxHashSet<SymbolId>,
+    retained: &mut FxHashSet<SymbolId>,
+) {
+    for table in binder.module_exports.values() {
+        collect_lib_ids_from_table(table, lib_symbol_ids, retained);
+    }
+    for (&key, value) in binder.alias_partners.iter() {
+        retain_if_lib(key, lib_symbol_ids, retained);
+        retain_if_lib(*value, lib_symbol_ids, retained);
+    }
+    for &sym_id in binder.augmentation_target_modules.keys() {
+        retain_if_lib(sym_id, lib_symbol_ids, retained);
+    }
+
+    for sym in binder.symbols.iter() {
+        if lib_symbol_ids.contains(&sym.id) {
+            continue;
+        }
+        retain_if_lib(sym.parent, lib_symbol_ids, retained);
+        if let Some(exports) = sym.exports.as_ref() {
+            collect_lib_ids_from_table(exports, lib_symbol_ids, retained);
+        }
+        if let Some(members) = sym.members.as_ref() {
+            collect_lib_ids_from_table(members, lib_symbol_ids, retained);
+        }
+    }
+
+    for scope in binder.scopes.iter() {
+        if scope.kind != crate::binder::ContainerKind::SourceFile {
+            collect_lib_ids_from_table(&scope.table, lib_symbol_ids, retained);
+        }
+    }
+}
+
+fn collect_lib_ids_from_table(
+    table: &SymbolTable,
+    lib_symbol_ids: &FxHashSet<SymbolId>,
+    retained: &mut FxHashSet<SymbolId>,
+) {
+    for (_, &sym_id) in table.iter() {
+        retain_if_lib(sym_id, lib_symbol_ids, retained);
+    }
+}
+
+fn retain_if_lib(
+    sym_id: SymbolId,
+    lib_symbol_ids: &FxHashSet<SymbolId>,
+    retained: &mut FxHashSet<SymbolId>,
+) {
+    if lib_symbol_ids.contains(&sym_id) {
+        retained.insert(sym_id);
+    }
+}
+
+fn densify_bind_symbols(
+    binder: &mut BinderState,
+    lib_symbol_ids: &FxHashSet<SymbolId>,
+    retained_lib_symbols: &FxHashSet<SymbolId>,
+) -> FxHashMap<SymbolId, SymbolId> {
+    let retained_count = binder
+        .symbols
+        .iter()
+        .filter(|sym| !lib_symbol_ids.contains(&sym.id) || retained_lib_symbols.contains(&sym.id))
+        .count();
+    let mut compacted_symbols = SymbolArena::with_capacity(retained_count);
+    let mut id_remap = FxHashMap::with_capacity_and_hasher(retained_count, Default::default());
+
+    for sym in binder.symbols.iter() {
+        if lib_symbol_ids.contains(&sym.id) && !retained_lib_symbols.contains(&sym.id) {
+            continue;
+        }
+        let old_id = sym.id;
+        let new_id = compacted_symbols.alloc_from(sym);
+        id_remap.insert(old_id, new_id);
+    }
+
+    for sym in compacted_symbols.iter_mut() {
+        sym.parent = id_remap.get(&sym.parent).copied().unwrap_or(SymbolId::NONE);
+        if let Some(exports) = sym.exports.as_ref() {
+            sym.exports = remap_symbol_table_option(exports, &id_remap).map(Box::new);
+        }
+        if let Some(members) = sym.members.as_ref() {
+            sym.members = remap_symbol_table_option(members, &id_remap).map(Box::new);
+        }
+    }
+
+    binder.symbols = compacted_symbols;
+    id_remap
+}
+
+fn remap_compacted_bind_state(binder: &mut BinderState, id_remap: &FxHashMap<SymbolId, SymbolId>) {
+    binder.file_locals = remap_symbol_table_required(&binder.file_locals, id_remap);
+
+    for scope in Arc::make_mut(&mut binder.scopes) {
+        scope.table = remap_symbol_table_required(&scope.table, id_remap);
+    }
+
+    binder.node_symbols = Arc::new(
+        binder
+            .node_symbols
+            .iter()
+            .filter_map(|(&node, sym_id)| {
+                id_remap.get(sym_id).copied().map(|new_id| (node, new_id))
+            })
+            .collect(),
+    );
+
+    binder.module_exports = Arc::new(
+        binder
+            .module_exports
+            .iter()
+            .filter_map(|(key, table)| {
+                remap_symbol_table_option(table, id_remap).map(|remapped| (key.clone(), remapped))
+            })
+            .collect(),
+    );
+
+    binder.symbol_arenas = Arc::new(
+        binder
+            .symbol_arenas
+            .iter()
+            .filter_map(|(sym_id, arena)| {
+                id_remap
+                    .get(sym_id)
+                    .copied()
+                    .map(|new_id| (new_id, Arc::clone(arena)))
+            })
+            .collect(),
+    );
+
+    binder.declaration_arenas = Arc::new(
+        binder
+            .declaration_arenas
+            .iter()
+            .filter_map(|(&(sym_id, decl_idx), arenas)| {
+                id_remap
+                    .get(&sym_id)
+                    .copied()
+                    .map(|new_id| ((new_id, decl_idx), arenas.clone()))
+            })
+            .collect(),
+    );
+
+    binder.augmentation_target_modules = Arc::new(
+        binder
+            .augmentation_target_modules
+            .iter()
+            .filter_map(|(sym_id, target)| {
+                id_remap
+                    .get(sym_id)
+                    .copied()
+                    .map(|new_id| (new_id, target.clone()))
+            })
+            .collect(),
+    );
+
+    binder.lib_symbol_ids = Arc::new(
+        binder
+            .lib_symbol_ids
+            .iter()
+            .filter_map(|sym_id| id_remap.get(sym_id).copied())
+            .collect(),
+    );
+    binder.lib_symbol_reverse_remap = Arc::new(
+        binder
+            .lib_symbol_reverse_remap
+            .iter()
+            .filter_map(|(sym_id, target)| {
+                id_remap
+                    .get(sym_id)
+                    .copied()
+                    .map(|new_id| (new_id, *target))
+            })
+            .collect(),
+    );
+
+    binder.alias_partners = Arc::new(
+        binder
+            .alias_partners
+            .iter()
+            .filter_map(|(left, right)| {
+                let new_left = id_remap.get(left).copied()?;
+                let new_right = id_remap.get(right).copied()?;
+                Some((new_left, new_right))
+            })
+            .collect(),
+    );
+
+    binder.semantic_defs = Arc::new(
+        binder
+            .semantic_defs
+            .iter()
+            .filter_map(|(sym_id, entry)| {
+                id_remap
+                    .get(sym_id)
+                    .copied()
+                    .map(|new_id| (new_id, remap_semantic_def_entry(entry, id_remap)))
+            })
+            .collect(),
+    );
+
+    binder.expando_properties = remap_expando_properties(&binder.expando_properties, id_remap);
+}
+
+fn remap_symbol_table_required(
+    table: &SymbolTable,
+    id_remap: &FxHashMap<SymbolId, SymbolId>,
+) -> SymbolTable {
+    let mut remapped = SymbolTable::with_capacity(table.len());
+    for (name, old_id) in table.iter() {
+        if let Some(&new_id) = id_remap.get(old_id) {
+            remapped.set(name.clone(), new_id);
+        }
+    }
+    remapped
+}
+
+fn remap_symbol_table_option(
+    table: &SymbolTable,
+    id_remap: &FxHashMap<SymbolId, SymbolId>,
+) -> Option<SymbolTable> {
+    let remapped = remap_symbol_table_required(table, id_remap);
+    if remapped.is_empty() {
+        None
+    } else {
+        Some(remapped)
+    }
+}
+
+fn remap_semantic_def_entry(
+    entry: &crate::binder::SemanticDefEntry,
+    id_remap: &FxHashMap<SymbolId, SymbolId>,
+) -> crate::binder::SemanticDefEntry {
+    let mut remapped = entry.clone();
+    remapped.parent_namespace = entry
+        .parent_namespace
+        .and_then(|old_parent| id_remap.get(&old_parent).copied());
+    remapped
 }
 
 // =============================================================================
@@ -1984,6 +2273,89 @@ fn remap_expando_properties(
     )
 }
 
+fn patch_script_lib_interface_declaration_arenas_for_result(
+    result: &BindResult,
+    remapped_locals: &SymbolTable,
+    globals: &SymbolTable,
+    global_lib_symbol_ids: &FxHashSet<SymbolId>,
+    declaration_arenas: &mut DeclarationArenaMap,
+) {
+    if result.is_external_module {
+        return;
+    }
+
+    let Some(source_file) = result.arena.get_source_file_at(result.source_file) else {
+        return;
+    };
+
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt_node) = result.arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind != crate::parser::syntax_kind_ext::INTERFACE_DECLARATION {
+            continue;
+        }
+        let Some(iface) = result.arena.get_interface(stmt_node) else {
+            continue;
+        };
+        let Some(name_node) = result.arena.get(iface.name) else {
+            continue;
+        };
+        let Some(ident) = result.arena.get_identifier(name_node) else {
+            continue;
+        };
+
+        let name = ident.escaped_text.as_str();
+        let sym_id = remapped_locals.get(name).or_else(|| globals.get(name));
+        let Some(sym_id) = sym_id else {
+            continue;
+        };
+        if !global_lib_symbol_ids.contains(&sym_id) {
+            continue;
+        }
+        let target = declaration_arenas.entry((sym_id, stmt_idx)).or_default();
+        if !target.iter().any(|arena| Arc::ptr_eq(arena, &result.arena)) {
+            target.push(Arc::clone(&result.arena));
+        }
+    }
+}
+
+fn release_consumed_bind_result(result: &mut BindResult) {
+    result.file_name.clear();
+    result.source_file = NodeIndex::NONE;
+    result.arena = Arc::new(NodeArena::new());
+    result.symbols = SymbolArena::new();
+    result.file_locals = SymbolTable::default();
+    result.declared_modules = Arc::new(FxHashSet::default());
+    result.module_exports = Arc::new(FxHashMap::default());
+    result.node_symbols = Arc::new(FxHashMap::default());
+    result.module_declaration_exports_publicly = Arc::new(FxHashMap::default());
+    result.symbol_arenas = Arc::new(FxHashMap::default());
+    result.declaration_arenas = Arc::new(DeclarationArenaMap::default());
+    result.scopes = Arc::new(Vec::new());
+    result.node_scope_ids = Arc::new(FxHashMap::default());
+    result.parse_diagnostics.clear();
+    result.shorthand_ambient_modules = Arc::new(FxHashSet::default());
+    result.global_augmentations = Arc::new(FxHashMap::default());
+    result.module_augmentations = Arc::new(FxHashMap::default());
+    result.augmentation_target_modules = Arc::new(FxHashMap::default());
+    result.reexports = Arc::new(Reexports::default());
+    result.wildcard_reexports = Arc::new(WildcardReexportsMap::default());
+    result.wildcard_reexports_type_only = Arc::new(WildcardReexportsTypeOnlyMap::default());
+    result.lib_binders = Arc::new(Vec::new());
+    result.lib_arenas.clear();
+    result.lib_symbol_ids = Arc::new(FxHashSet::default());
+    result.lib_symbol_reverse_remap = Arc::new(FxHashMap::default());
+    result.flow_nodes = Arc::new(FlowNodeArena::new());
+    result.node_flow = Arc::new(FxHashMap::default());
+    result.switch_clause_to_switch = Arc::new(FxHashMap::default());
+    result.expando_properties = Arc::new(FxHashMap::default());
+    result.alias_partners = Arc::new(FxHashMap::default());
+    result.file_features = crate::binder::FileFeatures::default();
+    result.semantic_defs = Arc::new(FxHashMap::default());
+    result.file_import_sources.clear();
+}
+
 /// Pre-populate a `DefinitionStore` from the merged `semantic_defs` map.
 ///
 /// This converts each `SemanticDefEntry` into a solver `DefinitionInfo`,
@@ -2112,30 +2484,82 @@ pub fn create_definition_store_from_binder(
 ///
 /// # Returns
 /// `MergedProgram` with unified symbol space
-pub fn merge_bind_results(results: Vec<BindResult>) -> MergedProgram {
-    let refs: Vec<&BindResult> = results.iter().collect();
-    let program = merge_bind_results_ref(&refs);
-    drop(refs);
-    drop(results);
-    program
+pub fn merge_bind_results(mut results: Vec<BindResult>) -> MergedProgram {
+    let mut source = OwnedBindResults {
+        results: &mut results,
+    };
+    merge_bind_results_from_source(&mut source)
 }
 
 pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
+    let mut source = BorrowedBindResults { results };
+    merge_bind_results_from_source(&mut source)
+}
+
+trait BindResultsSource {
+    fn len(&self) -> usize;
+    fn get(&self, index: usize) -> &BindResult;
+
+    fn release(&mut self, _index: usize) {}
+
+    fn refs(&self) -> Vec<&BindResult> {
+        (0..self.len()).map(|index| self.get(index)).collect()
+    }
+}
+
+struct OwnedBindResults<'a> {
+    results: &'a mut [BindResult],
+}
+
+impl BindResultsSource for OwnedBindResults<'_> {
+    fn len(&self) -> usize {
+        self.results.len()
+    }
+
+    fn get(&self, index: usize) -> &BindResult {
+        &self.results[index]
+    }
+
+    fn release(&mut self, index: usize) {
+        release_consumed_bind_result(&mut self.results[index]);
+    }
+}
+
+struct BorrowedBindResults<'a> {
+    results: &'a [&'a BindResult],
+}
+
+impl BindResultsSource for BorrowedBindResults<'_> {
+    fn len(&self) -> usize {
+        self.results.len()
+    }
+
+    fn get(&self, index: usize) -> &BindResult {
+        self.results[index]
+    }
+}
+
+fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> MergedProgram {
+    let refs = results.refs();
     // Extract file skeletons from pre-merge bind results and reduce them into a
     // global index. This runs before the legacy merge so we capture the original
     // per-file symbol/augmentation/re-export data without any remapping.
-    let skeletons = extract_skeletons_for_merge(results);
+    let skeletons = extract_skeletons_for_merge(&refs);
+    drop(refs);
     let skeleton_index = reduce_skeletons(&skeletons);
     let dep_graph = DepGraph::build_simple(&skeletons);
 
     // Capture aggregate pre-merge memory footprint before we start consuming data.
-    let pre_merge_bind_total_bytes: usize = results.iter().map(|r| r.estimated_size_bytes()).sum();
+    let pre_merge_bind_total_bytes: usize = (0..results.len())
+        .map(|index| results.get(index).estimated_size_bytes())
+        .sum();
 
     // Collect lib_binders from all results (deduplicated by address), paired with their arenas
     let mut lib_binders: Vec<Arc<BinderState>> = Vec::new();
     let mut lib_binder_set: FxHashSet<usize> = FxHashSet::default();
     let mut lib_binder_arena_map: FxHashMap<usize, Arc<NodeArena>> = FxHashMap::default();
-    for result in results {
+    for index in 0..results.len() {
+        let result = results.get(index);
         for (lib_binder, lib_arena) in result.lib_binders.iter().zip(result.lib_arenas.iter()) {
             let binder_addr = Arc::as_ptr(lib_binder) as usize;
             if lib_binder_set.insert(binder_addr) {
@@ -2147,7 +2571,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
     // Calculate total symbols needed (including lib symbols)
     let lib_symbol_count: usize = lib_binders.iter().map(|b| b.symbols.len()).sum();
-    let user_symbol_count: usize = results.iter().map(|r| r.symbols.len()).sum();
+    let user_symbol_count: usize = (0..results.len())
+        .map(|index| results.get(index).symbols.len())
+        .sum();
     let total_symbols = lib_symbol_count + user_symbol_count;
 
     // Create global symbol arena with pre-allocated capacity
@@ -2155,7 +2581,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut symbol_arenas = FxHashMap::default();
     let mut declaration_arenas: DeclarationArenaMap = FxHashMap::default();
     let mut cross_file_node_symbols: CrossFileNodeSymbols = FxHashMap::default();
-    let estimated_global_count: usize = results.iter().map(|r| r.file_locals.len()).sum();
+    let estimated_global_count: usize = (0..results.len())
+        .map(|index| results.get(index).file_locals.len())
+        .sum();
     let mut globals = SymbolTable::with_capacity(estimated_global_count);
     let mut files = Vec::with_capacity(results.len());
     let mut file_locals_list = Vec::with_capacity(results.len());
@@ -2528,6 +2956,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // Also remap lib file_locals entries that reference symbols by name
     // (for exported lib symbols like Array, Object, console)
     let mut lib_name_to_global: FxHashMap<Atom, SymbolId> = FxHashMap::default();
+    let mut lib_global_file_locals: Vec<(String, SymbolId)> = Vec::new();
     for lib_binder in &lib_binders {
         let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
         for (name, &local_id) in lib_binder.file_locals.iter() {
@@ -2542,8 +2971,18 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             if let Some(&global_id) = lib_symbol_remap.get(&(lib_binder_ptr, local_id)) {
                 // Only keep the first mapping for each name (lib files are processed in order)
                 let name_atom = name_interner.intern(name);
-                lib_name_to_global.entry(name_atom).or_insert(global_id);
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    lib_name_to_global.entry(name_atom)
+                {
+                    entry.insert(global_id);
+                    lib_global_file_locals.push((name.clone(), global_id));
+                }
             }
+        }
+    }
+    for (name, global_id) in &lib_global_file_locals {
+        if !globals.has(name) {
+            globals.set(name.clone(), *global_id);
         }
     }
 
@@ -2581,161 +3020,173 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             }
         }
     }
+    global_lib_symbol_ids.extend(lib_symbol_remap.values().copied());
 
     // ==========================================================================
     // PHASE 2: Process user files
     // ==========================================================================
 
-    for (file_idx, result) in results.iter().enumerate() {
-        declared_modules.extend(result.declared_modules.iter().cloned());
-        shorthand_ambient_modules.extend(result.shorthand_ambient_modules.iter().cloned());
+    for file_idx in 0..results.len() {
+        {
+            let result = results.get(file_idx);
+            declared_modules.extend(result.declared_modules.iter().cloned());
+            shorthand_ambient_modules.extend(result.shorthand_ambient_modules.iter().cloned());
 
-        // Merge reexports from this file
-        for (file_name, file_reexports) in result.reexports.iter() {
-            let entry = reexports.entry(file_name.clone()).or_default();
-            for (export_name, mapping) in file_reexports {
-                entry.insert(export_name.clone(), mapping.clone());
-            }
-        }
-
-        // Merge wildcard reexports from this file
-        for (file_name, source_modules) in result.wildcard_reexports.iter() {
-            let entry = wildcard_reexports.entry(file_name.clone()).or_default();
-            let type_only_entry = wildcard_reexports_type_only
-                .entry(file_name.clone())
-                .or_default();
-            let source_type_only = result.wildcard_reexports_type_only.get(file_name);
-
-            if entry.len() + source_modules.len() <= 16 {
-                for (i, source_module) in source_modules.iter().enumerate() {
-                    // Use index-based access to get the correct type-only flag
-                    let source_is_type_only = source_type_only
-                        .and_then(|entries| entries.get(i).map(|(_, is_to)| *is_to))
-                        .unwrap_or(false);
-
-                    if let Some(pos) = entry.iter().position(|m| m == source_module) {
-                        // Already have this source — if this path is non-type-only,
-                        // override the existing flag (value re-export takes priority).
-                        if !source_is_type_only {
-                            type_only_entry[pos].1 = false;
-                        }
-                    } else {
-                        entry.push(source_module.clone());
-                        type_only_entry.push((source_module.clone(), source_is_type_only));
-                    }
-                }
-            } else {
-                let mut seen: FxHashMap<String, usize> = entry.iter().cloned().zip(0..).collect();
-                for (i, source_module) in source_modules.iter().enumerate() {
-                    let source_is_type_only = source_type_only
-                        .and_then(|entries| entries.get(i).map(|(_, is_to)| *is_to))
-                        .unwrap_or(false);
-
-                    if let Some(&pos) = seen.get(source_module) {
-                        if !source_is_type_only {
-                            type_only_entry[pos].1 = false;
-                        }
-                    } else {
-                        let pos = entry.len();
-                        seen.insert(source_module.clone(), pos);
-                        entry.push(source_module.clone());
-                        type_only_entry.push((source_module.clone(), source_is_type_only));
-                    }
+            // Merge reexports from this file
+            for (file_name, file_reexports) in result.reexports.iter() {
+                let entry = reexports.entry(file_name.clone()).or_default();
+                for (export_name, mapping) in file_reexports {
+                    entry.insert(export_name.clone(), mapping.clone());
                 }
             }
-        }
-        // Copy symbols from this file to global arena, getting new IDs
-        let mut id_remap: FxHashMap<SymbolId, SymbolId> = FxHashMap::default();
-        for i in 0..result.symbols.len() {
-            let old_id = SymbolId(i as u32);
-            if let Some(sym) = result.symbols.get(old_id) {
-                // For lib-originated symbols, reuse the Phase 1 global IDs rather than
-                // allocating new ones. This prevents duplicate lib symbols and ensures
-                // the Phase 1.5 remapped exports/members are preserved.
-                if result.lib_symbol_ids.contains(&old_id) {
-                    // For lib-originated symbols, use the reverse remap to find the
-                    // original (lib_binder_ptr, local_id), then look up the Phase 1
-                    // global ID via lib_symbol_remap. This ensures all lib symbols
-                    // (both top-level and nested) map to their Phase 1 global IDs,
-                    // preserving the Phase 1.5 export/member remapping.
-                    let mut resolved_global_id = None;
-                    if let Some(&(binder_ptr, original_local_id)) =
-                        result.lib_symbol_reverse_remap.get(&old_id)
-                        && let Some(&global_id) =
-                            lib_symbol_remap.get(&(binder_ptr, original_local_id))
-                    {
-                        resolved_global_id = Some(global_id);
-                    }
-                    // Fallback: look up by name in merged_symbols or lib_name_to_global
-                    if resolved_global_id.is_none() {
-                        let name_atom = name_interner.intern(&sym.escaped_name);
-                        if let Some(&global_id) = merged_symbols.get(&name_atom) {
-                            resolved_global_id = Some(global_id);
+
+            // Merge wildcard reexports from this file
+            for (file_name, source_modules) in result.wildcard_reexports.iter() {
+                let entry = wildcard_reexports.entry(file_name.clone()).or_default();
+                let type_only_entry = wildcard_reexports_type_only
+                    .entry(file_name.clone())
+                    .or_default();
+                let source_type_only = result.wildcard_reexports_type_only.get(file_name);
+
+                if entry.len() + source_modules.len() <= 16 {
+                    for (i, source_module) in source_modules.iter().enumerate() {
+                        // Use index-based access to get the correct type-only flag
+                        let source_is_type_only = source_type_only
+                            .and_then(|entries| entries.get(i).map(|(_, is_to)| *is_to))
+                            .unwrap_or(false);
+
+                        if let Some(pos) = entry.iter().position(|m| m == source_module) {
+                            // Already have this source — if this path is non-type-only,
+                            // override the existing flag (value re-export takes priority).
+                            if !source_is_type_only {
+                                type_only_entry[pos].1 = false;
+                            }
+                        } else {
+                            entry.push(source_module.clone());
+                            type_only_entry.push((source_module.clone(), source_is_type_only));
                         }
-                        if resolved_global_id.is_none()
-                            && let Some(&global_id) = lib_name_to_global.get(&name_atom)
+                    }
+                } else {
+                    let mut seen: FxHashMap<String, usize> =
+                        entry.iter().cloned().zip(0..).collect();
+                    for (i, source_module) in source_modules.iter().enumerate() {
+                        let source_is_type_only = source_type_only
+                            .and_then(|entries| entries.get(i).map(|(_, is_to)| *is_to))
+                            .unwrap_or(false);
+
+                        if let Some(&pos) = seen.get(source_module) {
+                            if !source_is_type_only {
+                                type_only_entry[pos].1 = false;
+                            }
+                        } else {
+                            let pos = entry.len();
+                            seen.insert(source_module.clone(), pos);
+                            entry.push(source_module.clone());
+                            type_only_entry.push((source_module.clone(), source_is_type_only));
+                        }
+                    }
+                }
+            }
+            // Copy symbols from this file to global arena, getting new IDs
+            let mut id_remap: FxHashMap<SymbolId, SymbolId> = FxHashMap::default();
+            for i in 0..result.symbols.len() {
+                let old_id = SymbolId(i as u32);
+                if let Some(sym) = result.symbols.get(old_id) {
+                    // For lib-originated symbols, reuse the Phase 1 global IDs rather than
+                    // allocating new ones. This prevents duplicate lib symbols and ensures
+                    // the Phase 1.5 remapped exports/members are preserved.
+                    if result.lib_symbol_ids.contains(&old_id) {
+                        // For lib-originated symbols, use the reverse remap to find the
+                        // original (lib_binder_ptr, local_id), then look up the Phase 1
+                        // global ID via lib_symbol_remap. This ensures all lib symbols
+                        // (both top-level and nested) map to their Phase 1 global IDs,
+                        // preserving the Phase 1.5 export/member remapping.
+                        let mut resolved_global_id = None;
+                        if let Some(&(binder_ptr, original_local_id)) =
+                            result.lib_symbol_reverse_remap.get(&old_id)
+                            && let Some(&global_id) =
+                                lib_symbol_remap.get(&(binder_ptr, original_local_id))
                         {
                             resolved_global_id = Some(global_id);
                         }
-                    }
-                    if let Some(global_id) = resolved_global_id {
-                        // The user binder may have merged additional flags and declarations
-                        // into this lib symbol (e.g., user `interface Event<T>` augments
-                        // lib's non-generic `Event`, or user `type Proxy<T>` adds TYPE_ALIAS
-                        // to lib's `declare var Proxy`). Always propagate extra flags and
-                        // user-local declarations to the global symbol so that type parameter
-                        // resolution can find them.
-                        if let Some(global_sym) = global_symbols.get_mut(global_id) {
-                            let extra_flags = sym.flags & !global_sym.flags;
-                            if extra_flags != 0 {
-                                global_sym.flags |= extra_flags;
+                        // Fallback: look up by name in merged_symbols or lib_name_to_global
+                        if resolved_global_id.is_none() {
+                            let name_atom = name_interner.intern(&sym.escaped_name);
+                            if let Some(&global_id) = merged_symbols.get(&name_atom) {
+                                resolved_global_id = Some(global_id);
                             }
-                            // Always copy user declarations that were merged into this symbol,
-                            // even when flags are identical. Without this, user declarations
-                            // (e.g., a generic `interface Event<T>`) are lost and
-                            // get_type_params_for_symbol won't find their type parameters.
-                            append_unique_declarations(
-                                &mut global_sym.declarations,
-                                &sym.declarations,
-                            );
+                            if resolved_global_id.is_none()
+                                && let Some(&global_id) = lib_name_to_global.get(&name_atom)
+                            {
+                                resolved_global_id = Some(global_id);
+                            }
                         }
-                        id_remap.insert(old_id, global_id);
+                        if let Some(global_id) = resolved_global_id {
+                            // The user binder may have merged additional flags and declarations
+                            // into this lib symbol (e.g., user `interface Event<T>` augments
+                            // lib's non-generic `Event`, or user `type Proxy<T>` adds TYPE_ALIAS
+                            // to lib's `declare var Proxy`). Always propagate extra flags and
+                            // user-local declarations to the global symbol so that type parameter
+                            // resolution can find them.
+                            if let Some(global_sym) = global_symbols.get_mut(global_id) {
+                                let extra_flags = sym.flags & !global_sym.flags;
+                                if extra_flags != 0 {
+                                    global_sym.flags |= extra_flags;
+                                }
+                                // Always copy user declarations that were merged into this symbol,
+                                // even when flags are identical. Without this, user declarations
+                                // (e.g., a generic `interface Event<T>`) are lost and
+                                // get_type_params_for_symbol won't find their type parameters.
+                                append_unique_declarations(
+                                    &mut global_sym.declarations,
+                                    &sym.declarations,
+                                );
+                            }
+                            id_remap.insert(old_id, global_id);
+                            continue;
+                        }
+                        // Last resort: allocate a new ID (shouldn't happen normally)
+                        let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
+                        symbol_arenas.insert(new_id, Arc::clone(&result.arena));
+                        id_remap.insert(old_id, new_id);
                         continue;
                     }
-                    // Last resort: allocate a new ID (shouldn't happen normally)
-                    let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
-                    symbol_arenas.insert(new_id, Arc::clone(&result.arena));
-                    id_remap.insert(old_id, new_id);
-                    continue;
-                }
 
-                // Check if this symbol is from a nested scope.
-                // We check whether this symbol ID appears in the ROOT scope table
-                // (ScopeId(0) = SourceFile scope). This is more reliable than checking
-                // node_scope_ids because not all declaration types create scopes
-                // (e.g., InterfaceDeclaration does not create a scope, so its node
-                // won't appear in node_scope_ids, causing false negatives).
-                let is_nested_symbol = !result.scopes.first().is_some_and(|root_scope| {
-                    root_scope
-                        .table
-                        .get(&sym.escaped_name)
-                        .is_some_and(|root_sym_id| root_sym_id == old_id)
-                });
+                    // Check if this symbol is from a nested scope.
+                    // We check whether this symbol ID appears in the ROOT scope table
+                    // (ScopeId(0) = SourceFile scope). This is more reliable than checking
+                    // node_scope_ids because not all declaration types create scopes
+                    // (e.g., InterfaceDeclaration does not create a scope, so its node
+                    // won't appear in node_scope_ids, causing false negatives).
+                    let is_nested_symbol = !result.scopes.first().is_some_and(|root_scope| {
+                        root_scope
+                            .table
+                            .get(&sym.escaped_name)
+                            .is_some_and(|root_sym_id| root_sym_id == old_id)
+                    });
 
-                // Check if symbol already exists in globals (cross-file merging)
-                // IMPORTANT: Only merge symbols from ROOT scope (ScopeId(0))
-                // Nested scope symbols should NEVER be merged across scopes
-                let new_id = if !is_nested_symbol && !result.is_external_module {
-                    let name_atom = name_interner.intern(&sym.escaped_name);
-                    if let Some(&existing_id) = merged_symbols.get(&name_atom) {
-                        // Symbol exists - check if we can merge
-                        if let Some(existing_sym) = global_symbols.get(existing_id) {
-                            // Check if symbols can merge (interface+interface, namespace+namespace, etc.)
-                            if can_merge_symbols_cross_file(existing_sym.flags, sym.flags) {
-                                // Merge: reuse existing symbol ID, will merge declarations below
-                                existing_id
+                    // Check if symbol already exists in globals (cross-file merging)
+                    // IMPORTANT: Only merge symbols from ROOT scope (ScopeId(0))
+                    // Nested scope symbols should NEVER be merged across scopes
+                    let new_id = if !is_nested_symbol && !result.is_external_module {
+                        let name_atom = name_interner.intern(&sym.escaped_name);
+                        if let Some(&existing_id) = merged_symbols.get(&name_atom) {
+                            // Symbol exists - check if we can merge
+                            if let Some(existing_sym) = global_symbols.get(existing_id) {
+                                // Check if symbols can merge (interface+interface, namespace+namespace, etc.)
+                                if can_merge_symbols_cross_file(existing_sym.flags, sym.flags) {
+                                    // Merge: reuse existing symbol ID, will merge declarations below
+                                    existing_id
+                                } else {
+                                    // Cannot merge - allocate new symbol (shadowing or duplicate)
+                                    let new_id =
+                                        global_symbols.alloc(sym.flags, sym.escaped_name.clone());
+                                    symbol_arenas.insert(new_id, Arc::clone(&result.arena));
+                                    merged_symbols.insert(name_atom, new_id);
+                                    new_id
+                                }
                             } else {
-                                // Cannot merge - allocate new symbol (shadowing or duplicate)
+                                // Shouldn't happen - allocate new
                                 let new_id =
                                     global_symbols.alloc(sym.flags, sym.escaped_name.clone());
                                 symbol_arenas.insert(new_id, Arc::clone(&result.arena));
@@ -2743,708 +3194,723 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                                 new_id
                             }
                         } else {
-                            // Shouldn't happen - allocate new
+                            // New symbol - allocate
                             let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
                             symbol_arenas.insert(new_id, Arc::clone(&result.arena));
                             merged_symbols.insert(name_atom, new_id);
                             new_id
                         }
                     } else {
-                        // New symbol - allocate
+                        // Nested symbol - always allocate new, never merge or add to merged_symbols
                         let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
                         symbol_arenas.insert(new_id, Arc::clone(&result.arena));
-                        merged_symbols.insert(name_atom, new_id);
+                        // NOTE: Don't add to merged_symbols - nested symbols should never be cross-file merged
                         new_id
-                    }
-                } else {
-                    // Nested symbol - always allocate new, never merge or add to merged_symbols
-                    let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
-                    symbol_arenas.insert(new_id, Arc::clone(&result.arena));
-                    // NOTE: Don't add to merged_symbols - nested symbols should never be cross-file merged
-                    new_id
-                };
-                id_remap.insert(old_id, new_id);
-            }
-        }
-
-        // Track remapped lib symbol IDs for unused-checking exclusion
-        for &old_lib_id in result.lib_symbol_ids.iter() {
-            if let Some(&new_id) = id_remap.get(&old_lib_id) {
-                global_lib_symbol_ids.insert(new_id);
-            }
-        }
-
-        // Copy symbol_arenas entries from user file, remapping IDs
-        // This propagates lib symbol arena mappings that were created during merge_lib_symbols
-        for (&old_sym_id, arena) in result.symbol_arenas.iter() {
-            if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
-                symbol_arenas
-                    .entry(new_sym_id)
-                    .or_insert_with(|| Arc::clone(arena));
-            }
-        }
-
-        // Copy declaration_arenas entries from user file, remapping symbol IDs.
-        // Skip lib-originated symbols: their declaration_arenas were already set up
-        // in Phase 1 from the original lib binder. The per-file binder has duplicate
-        // arenas for the same declarations (from merge_lib_contexts_into_binder),
-        // which would cause interface members to be lowered multiple times.
-        for (&(old_sym_id, decl_idx), arenas) in result.declaration_arenas.iter() {
-            if result.lib_symbol_ids.contains(&old_sym_id) {
-                continue;
-            }
-            if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
-                let target = declaration_arenas
-                    .entry((new_sym_id, decl_idx))
-                    .or_default();
-                for arena in arenas {
-                    target.push(Arc::clone(arena));
+                    };
+                    id_remap.insert(old_id, new_id);
                 }
             }
-        }
 
-        // Collect exported symbols for this file (for module_exports map).
-        //
-        // Note: `export default ...` must be represented under the `"default"` export name
-        // so that `import X from "./mod"` can resolve correctly.
-        //
-        // We intentionally do *not* depend solely on `sym.is_exported` for determining whether
-        // a file is an external module, because default exports may not correspond to a named
-        // export in `file_locals`.
-        let mut exports = SymbolTable::with_capacity(result.file_locals.len().saturating_add(1));
-        let mut export_equals_old: Option<SymbolId> = None;
+            // Track remapped lib symbol IDs for unused-checking exclusion
+            for &old_lib_id in result.lib_symbol_ids.iter() {
+                if let Some(&new_id) = id_remap.get(&old_lib_id) {
+                    global_lib_symbol_ids.insert(new_id);
+                }
+            }
 
-        // 1) Named exports collected from file_locals.
-        for (name, &sym_id) in result.file_locals.iter() {
-            // Skip lib/global symbols (e.g. `escape`, `unescape`) that were merged
-            // into file_locals from lib.d.ts. These are global builtins that should
-            // not appear in a user module's module_exports.
-            if result.lib_symbol_ids.contains(&sym_id) {
-                continue;
+            // Copy symbol_arenas entries from user file, remapping IDs
+            // This propagates lib symbol arena mappings that were created during merge_lib_symbols
+            for (&old_sym_id, arena) in result.symbol_arenas.iter() {
+                if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
+                    symbol_arenas
+                        .entry(new_sym_id)
+                        .or_insert_with(|| Arc::clone(arena));
+                }
             }
-            if name == "export=" {
-                export_equals_old = Some(sym_id);
+
+            // Copy declaration_arenas entries from user file, remapping symbol IDs.
+            // Skip lib-originated symbols: their declaration_arenas were already set up
+            // in Phase 1 from the original lib binder. The per-file binder has duplicate
+            // arenas for the same declarations (from merge_lib_contexts_into_binder),
+            // which would cause interface members to be lowered multiple times.
+            for (&(old_sym_id, decl_idx), arenas) in result.declaration_arenas.iter() {
+                if result.lib_symbol_ids.contains(&old_sym_id) {
+                    continue;
+                }
+                if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
+                    let target = declaration_arenas
+                        .entry((new_sym_id, decl_idx))
+                        .or_default();
+                    for arena in arenas {
+                        target.push(Arc::clone(arena));
+                    }
+                }
             }
-            if let Some(sym) = result.symbols.get(sym_id)
-                && (sym.is_exported || name == "export=")
-                && let Some(&remapped_id) = id_remap.get(&sym_id)
+
+            // Collect exported symbols for this file (for module_exports map).
+            //
+            // Note: `export default ...` must be represented under the `"default"` export name
+            // so that `import X from "./mod"` can resolve correctly.
+            //
+            // We intentionally do *not* depend solely on `sym.is_exported` for determining whether
+            // a file is an external module, because default exports may not correspond to a named
+            // export in `file_locals`.
+            let mut exports =
+                SymbolTable::with_capacity(result.file_locals.len().saturating_add(1));
+            let mut export_equals_old: Option<SymbolId> = None;
+
+            // 1) Named exports collected from file_locals.
+            for (name, &sym_id) in result.file_locals.iter() {
+                // Skip lib/global symbols (e.g. `escape`, `unescape`) that were merged
+                // into file_locals from lib.d.ts. These are global builtins that should
+                // not appear in a user module's module_exports.
+                if result.lib_symbol_ids.contains(&sym_id) {
+                    continue;
+                }
+                if name == "export=" {
+                    export_equals_old = Some(sym_id);
+                }
+                if let Some(sym) = result.symbols.get(sym_id)
+                    && (sym.is_exported || name == "export=")
+                    && let Some(&remapped_id) = id_remap.get(&sym_id)
+                {
+                    exports.set(name.clone(), remapped_id);
+                }
+            }
+
+            // 1b) `export = target` should also expose namespace members from `target`.
+            if let Some(old_export_equals_sym) = export_equals_old
+                && let Some(target_symbol) = result.symbols.get(old_export_equals_sym)
             {
-                exports.set(name.clone(), remapped_id);
+                if let Some(target_exports) = target_symbol.exports.as_ref() {
+                    for (export_name, old_sym_id) in target_exports.iter() {
+                        // Skip "default" — the `export =` target itself IS the default
+                        // export. A static member named `default` (e.g. `static default: "foo"`)
+                        // must not shadow the `export=` symbol in module_exports.
+                        if export_name == "default" {
+                            continue;
+                        }
+                        if let Some(&remapped_id) = id_remap.get(old_sym_id) {
+                            exports.set(export_name.clone(), remapped_id);
+                        }
+                    }
+                }
+                if let Some(target_members) = target_symbol.members.as_ref() {
+                    for (member_name, old_sym_id) in target_members.iter() {
+                        if member_name == "default" {
+                            continue;
+                        }
+                        if let Some(&remapped_id) = id_remap.get(old_sym_id) {
+                            exports.set(member_name.clone(), remapped_id);
+                        }
+                    }
+                }
             }
-        }
 
-        // 1b) `export = target` should also expose namespace members from `target`.
-        if let Some(old_export_equals_sym) = export_equals_old
-            && let Some(target_symbol) = result.symbols.get(old_export_equals_sym)
-        {
-            if let Some(target_exports) = target_symbol.exports.as_ref() {
-                for (export_name, old_sym_id) in target_exports.iter() {
-                    // Skip "default" — the `export =` target itself IS the default
-                    // export. A static member named `default` (e.g. `static default: "foo"`)
-                    // must not shadow the `export=` symbol in module_exports.
-                    if export_name == "default" {
+            // 2) Default export: add `"default"` entry when present.
+            let mut default_export_old: Option<SymbolId> = None;
+            if let Some(root_node) = result.arena.get(result.source_file)
+                && let Some(source) = result.arena.get_source_file(root_node)
+            {
+                for &stmt_idx in &source.statements.nodes {
+                    let Some(stmt_node) = result.arena.get(stmt_idx) else {
+                        continue;
+                    };
+                    if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
                         continue;
                     }
-                    if let Some(&remapped_id) = id_remap.get(old_sym_id) {
-                        exports.set(export_name.clone(), remapped_id);
-                    }
-                }
-            }
-            if let Some(target_members) = target_symbol.members.as_ref() {
-                for (member_name, old_sym_id) in target_members.iter() {
-                    if member_name == "default" {
+                    let Some(export_decl) = result.arena.get_export_decl(stmt_node) else {
+                        continue;
+                    };
+                    if !export_decl.is_default_export {
                         continue;
                     }
-                    if let Some(&remapped_id) = id_remap.get(old_sym_id) {
-                        exports.set(member_name.clone(), remapped_id);
-                    }
-                }
-            }
-        }
 
-        // 2) Default export: add `"default"` entry when present.
-        let mut default_export_old: Option<SymbolId> = None;
-        if let Some(root_node) = result.arena.get(result.source_file)
-            && let Some(source) = result.arena.get_source_file(root_node)
-        {
-            for &stmt_idx in &source.statements.nodes {
-                let Some(stmt_node) = result.arena.get(stmt_idx) else {
-                    continue;
-                };
-                if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                    continue;
-                }
-                let Some(export_decl) = result.arena.get_export_decl(stmt_node) else {
-                    continue;
-                };
-                if !export_decl.is_default_export {
-                    continue;
-                }
+                    // `export default <expr>;`
+                    let Some(clause_node) = result.arena.get(export_decl.export_clause) else {
+                        continue;
+                    };
 
-                // `export default <expr>;`
-                let Some(clause_node) = result.arena.get(export_decl.export_clause) else {
-                    continue;
-                };
-
-                // Best-effort: if the default export is a reference to a named declaration
-                // (identifier/class/function), map `"default"` to that symbol.
-                //
-                // This matches the needs of `import X from "./mod"` and keeps the symbol ID
-                // stable across files without synthesizing a new symbol.
-                if clause_node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
-                    if let Some(ident) = result.arena.get_identifier(clause_node) {
-                        default_export_old = result.file_locals.get(&ident.escaped_text);
-                    }
-                } else if let Some(func) = result.arena.get_function(clause_node) {
-                    if let Some(name_node) = result.arena.get(func.name)
+                    // Best-effort: if the default export is a reference to a named declaration
+                    // (identifier/class/function), map `"default"` to that symbol.
+                    //
+                    // This matches the needs of `import X from "./mod"` and keeps the symbol ID
+                    // stable across files without synthesizing a new symbol.
+                    if clause_node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
+                        if let Some(ident) = result.arena.get_identifier(clause_node) {
+                            default_export_old = result.file_locals.get(&ident.escaped_text);
+                        }
+                    } else if let Some(func) = result.arena.get_function(clause_node) {
+                        if let Some(name_node) = result.arena.get(func.name)
+                            && let Some(ident) = result.arena.get_identifier(name_node)
+                        {
+                            default_export_old = result.file_locals.get(&ident.escaped_text);
+                        }
+                    } else if let Some(class) = result.arena.get_class(clause_node)
+                        && let Some(name_node) = result.arena.get(class.name)
                         && let Some(ident) = result.arena.get_identifier(name_node)
                     {
                         default_export_old = result.file_locals.get(&ident.escaped_text);
                     }
-                } else if let Some(class) = result.arena.get_class(clause_node)
-                    && let Some(name_node) = result.arena.get(class.name)
-                    && let Some(ident) = result.arena.get_identifier(name_node)
-                {
-                    default_export_old = result.file_locals.get(&ident.escaped_text);
+
+                    // Only one default export per module.
+                    break;
                 }
-
-                // Only one default export per module.
-                break;
             }
-        }
 
-        if let Some(old_sym_id) = default_export_old
-            && let Some(&remapped_id) = id_remap.get(&old_sym_id)
-        {
-            exports.set("default".to_string(), remapped_id);
-        }
+            if let Some(old_sym_id) = default_export_old
+                && let Some(&remapped_id) = id_remap.get(&old_sym_id)
+            {
+                exports.set("default".to_string(), remapped_id);
+            }
 
-        let remap_symbol_table =
-            |table: &SymbolTable, id_remap: &FxHashMap<SymbolId, SymbolId>| -> SymbolTable {
-                let mut remapped = SymbolTable::with_capacity(table.len());
-                for (name, old_sym_id) in table.iter() {
-                    if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
-                        remapped.set(name.clone(), new_sym_id);
+            let remap_symbol_table =
+                |table: &SymbolTable, id_remap: &FxHashMap<SymbolId, SymbolId>| -> SymbolTable {
+                    let mut remapped = SymbolTable::with_capacity(table.len());
+                    for (name, old_sym_id) in table.iter() {
+                        if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
+                            remapped.set(name.clone(), new_sym_id);
+                        }
+                    }
+                    remapped
+                };
+
+            let merge_symbol_table = |dst: &mut SymbolTable, src: &SymbolTable| {
+                for (name, sym_id) in src.iter() {
+                    if !dst.has(name) {
+                        dst.set(name.clone(), *sym_id);
                     }
                 }
-                remapped
             };
 
-        let merge_symbol_table = |dst: &mut SymbolTable, src: &SymbolTable| {
-            for (name, sym_id) in src.iter() {
-                if !dst.has(name) {
-                    dst.set(name.clone(), *sym_id);
+            if !exports.is_empty() {
+                module_exports.insert(result.file_name.clone(), exports);
+            }
+
+            for (module_key, exports_table) in result.module_exports.iter() {
+                let remapped = remap_symbol_table(exports_table, &id_remap);
+                if !remapped.is_empty() {
+                    merge_symbol_table(
+                        module_exports.entry(module_key.clone()).or_default(),
+                        &remapped,
+                    );
                 }
             }
-        };
 
-        if !exports.is_empty() {
-            module_exports.insert(result.file_name.clone(), exports);
-        }
-
-        for (module_key, exports_table) in result.module_exports.iter() {
-            let remapped = remap_symbol_table(exports_table, &id_remap);
-            if !remapped.is_empty() {
-                merge_symbol_table(
-                    module_exports.entry(module_key.clone()).or_default(),
-                    &remapped,
-                );
-            }
-        }
-
-        // Remap binder's per-file alias_partners to global SymbolIds
-        for (&type_alias_id, &alias_id) in result.alias_partners.iter() {
-            if let (Some(&new_ta), Some(&new_alias)) =
-                (id_remap.get(&type_alias_id), id_remap.get(&alias_id))
-            {
-                alias_partners.insert(new_ta, new_alias);
-            }
-        }
-
-        // Remap binder's per-file semantic_defs to global SymbolIds (Phase 1 DefId-first).
-        // Skip lib-originated symbols — they were already propagated in Phase 1.6.
-        // Also collect per-file entries for BoundFile.semantic_defs (file-scoped identity).
-        let mut file_semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry> =
-            FxHashMap::default();
-        for (old_sym_id, entry) in result.semantic_defs.iter() {
-            if result.lib_symbol_ids.contains(old_sym_id) {
-                continue;
-            }
-            if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
-                // Update file_id to use the global file index
-                let mut remapped_entry = entry.clone();
-                remapped_entry.file_id = file_idx as u32;
-                // Remap parent_namespace to global SymbolId
-                remapped_entry.parent_namespace = entry
-                    .parent_namespace
-                    .and_then(|old_parent| id_remap.get(&old_parent).copied());
-                // Collect per-file entry (always insert — no cross-file merging here)
-                file_semantic_defs.insert(new_sym_id, remapped_entry.clone());
-                // Insert the first occurrence, or accumulate heritage/metadata from
-                // later files via merge_cross_file (e.g., cross-file interface merging,
-                // class + interface merging).
-                semantic_defs
-                    .entry(new_sym_id)
-                    .and_modify(|existing| existing.merge_cross_file(&remapped_entry))
-                    .or_insert(remapped_entry);
-            }
-        }
-
-        // Collect all nested merge pairs across all symbols in this file,
-        // then process them AFTER all symbols have their data populated.
-        // This is critical because HashMap iteration order is random — if a
-        // parent symbol is processed before its children, the children won't
-        // have their exports populated yet, making recursive merge ineffective.
-        let mut all_nested_merges: Vec<(SymbolId, SymbolId)> = Vec::new();
-
-        // Sort id_remap entries by old_id (ascending) so that symbol processing
-        // order is deterministic regardless of FxHashMap iteration order. This
-        // ensures declaration_arenas entries and nested merge pairs are always
-        // collected in the same order across runs, producing identical merged
-        // output for identical inputs.
-        let mut sorted_remap: Vec<(SymbolId, SymbolId)> =
-            id_remap.iter().map(|(&old, &new)| (old, new)).collect();
-        sorted_remap.sort_unstable_by_key(|(old, _)| old.0);
-
-        for &(old_id, new_id) in &sorted_remap {
-            // Skip lib-originated symbols - they were already set up by Phase 1 + 1.5
-            if result.lib_symbol_ids.contains(&old_id) {
-                continue;
-            }
-            let Some(old_sym) = result.symbols.get(old_id) else {
-                continue;
-            };
-
-            // CRITICAL: Populate declaration_arenas for user symbols
-            for &decl_idx in &old_sym.declarations {
-                declaration_arenas
-                    .entry((new_id, decl_idx))
-                    .or_default()
-                    .push(Arc::clone(&result.arena));
+            // Remap binder's per-file alias_partners to global SymbolIds
+            for (&type_alias_id, &alias_id) in result.alias_partners.iter() {
+                if let (Some(&new_ta), Some(&new_alias)) =
+                    (id_remap.get(&type_alias_id), id_remap.get(&alias_id))
+                {
+                    alias_partners.insert(new_ta, new_alias);
+                }
             }
 
-            let mut nested_merges: Vec<(SymbolId, SymbolId)> = Vec::new();
-            if let Some(new_sym) = global_symbols.get_mut(new_id) {
-                // Check if this is a cross-file merge (same symbol already has data)
-                let is_cross_file_merge = !new_sym.declarations.is_empty();
+            // Remap binder's per-file semantic_defs to global SymbolIds (Phase 1 DefId-first).
+            // Skip lib-originated symbols — they were already propagated in Phase 1.6.
+            // Also collect per-file entries for BoundFile.semantic_defs (file-scoped identity).
+            let mut file_semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry> =
+                FxHashMap::default();
+            for (old_sym_id, entry) in result.semantic_defs.iter() {
+                if result.lib_symbol_ids.contains(old_sym_id) {
+                    continue;
+                }
+                if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
+                    // Update file_id to use the global file index
+                    let mut remapped_entry = entry.clone();
+                    remapped_entry.file_id = file_idx as u32;
+                    // Remap parent_namespace to global SymbolId
+                    remapped_entry.parent_namespace = entry
+                        .parent_namespace
+                        .and_then(|old_parent| id_remap.get(&old_parent).copied());
+                    // Collect per-file entry (always insert — no cross-file merging here)
+                    file_semantic_defs.insert(new_sym_id, remapped_entry.clone());
+                    // Insert the first occurrence, or accumulate heritage/metadata from
+                    // later files via merge_cross_file (e.g., cross-file interface merging,
+                    // class + interface merging).
+                    semantic_defs
+                        .entry(new_sym_id)
+                        .and_modify(|existing| existing.merge_cross_file(&remapped_entry))
+                        .or_insert(remapped_entry);
+                }
+            }
 
-                if is_cross_file_merge {
-                    // Cross-file merge: append declarations and merge flags
-                    new_sym.flags |= old_sym.flags;
-                    // Append new declarations from this file, but skip NodeIndex values
-                    // that already exist from a DIFFERENT arena (cross-file NodeIndex
-                    // collision). When two files produce the same NodeIndex for different
-                    // declarations, adding duplicates causes the checker to look up the
-                    // wrong arena and misidentify declaration kinds (e.g., treating a
-                    // remote interface as a local class, triggering false TS2300).
-                    // The declaration_arenas entry already contains both arenas for the
-                    // colliding NodeIndex, so the checker can iterate all arenas there.
-                    {
-                        let mut filtered_decls: Vec<NodeIndex> = Vec::new();
-                        for &decl_idx in &old_sym.declarations {
-                            if new_sym.declarations.contains(&decl_idx) {
-                                // NodeIndex collision: this index already exists in the
-                                // merged symbol from a previous file. Check if the
-                                // declaration_arenas entry has a different arena (meaning
-                                // it's from a different file, not a true duplicate).
-                                if let Some(arenas) = declaration_arenas.get(&(new_id, decl_idx)) {
-                                    let has_different_arena = arenas.iter().any(|a| {
-                                        !std::ptr::eq(Arc::as_ptr(a), Arc::as_ptr(&result.arena))
-                                    });
-                                    if has_different_arena {
-                                        // Skip: this is a cross-file collision, not a
-                                        // true duplicate declaration within the same file.
-                                        continue;
+            // Collect all nested merge pairs across all symbols in this file,
+            // then process them AFTER all symbols have their data populated.
+            // This is critical because HashMap iteration order is random — if a
+            // parent symbol is processed before its children, the children won't
+            // have their exports populated yet, making recursive merge ineffective.
+            let mut all_nested_merges: Vec<(SymbolId, SymbolId)> = Vec::new();
+
+            // Sort id_remap entries by old_id (ascending) so that symbol processing
+            // order is deterministic regardless of FxHashMap iteration order. This
+            // ensures declaration_arenas entries and nested merge pairs are always
+            // collected in the same order across runs, producing identical merged
+            // output for identical inputs.
+            let mut sorted_remap: Vec<(SymbolId, SymbolId)> =
+                id_remap.iter().map(|(&old, &new)| (old, new)).collect();
+            sorted_remap.sort_unstable_by_key(|(old, _)| old.0);
+
+            for &(old_id, new_id) in &sorted_remap {
+                // Skip lib-originated symbols - they were already set up by Phase 1 + 1.5
+                if result.lib_symbol_ids.contains(&old_id) {
+                    continue;
+                }
+                let Some(old_sym) = result.symbols.get(old_id) else {
+                    continue;
+                };
+
+                // CRITICAL: Populate declaration_arenas for user symbols
+                for &decl_idx in &old_sym.declarations {
+                    declaration_arenas
+                        .entry((new_id, decl_idx))
+                        .or_default()
+                        .push(Arc::clone(&result.arena));
+                }
+
+                let mut nested_merges: Vec<(SymbolId, SymbolId)> = Vec::new();
+                if let Some(new_sym) = global_symbols.get_mut(new_id) {
+                    // Check if this is a cross-file merge (same symbol already has data)
+                    let is_cross_file_merge = !new_sym.declarations.is_empty();
+
+                    if is_cross_file_merge {
+                        // Cross-file merge: append declarations and merge flags
+                        new_sym.flags |= old_sym.flags;
+                        // Append new declarations from this file, but skip NodeIndex values
+                        // that already exist from a DIFFERENT arena (cross-file NodeIndex
+                        // collision). When two files produce the same NodeIndex for different
+                        // declarations, adding duplicates causes the checker to look up the
+                        // wrong arena and misidentify declaration kinds (e.g., treating a
+                        // remote interface as a local class, triggering false TS2300).
+                        // The declaration_arenas entry already contains both arenas for the
+                        // colliding NodeIndex, so the checker can iterate all arenas there.
+                        {
+                            let mut filtered_decls: Vec<NodeIndex> = Vec::new();
+                            for &decl_idx in &old_sym.declarations {
+                                if new_sym.declarations.contains(&decl_idx) {
+                                    // NodeIndex collision: this index already exists in the
+                                    // merged symbol from a previous file. Check if the
+                                    // declaration_arenas entry has a different arena (meaning
+                                    // it's from a different file, not a true duplicate).
+                                    if let Some(arenas) =
+                                        declaration_arenas.get(&(new_id, decl_idx))
+                                    {
+                                        let has_different_arena = arenas.iter().any(|a| {
+                                            !std::ptr::eq(
+                                                Arc::as_ptr(a),
+                                                Arc::as_ptr(&result.arena),
+                                            )
+                                        });
+                                        if has_different_arena {
+                                            // Skip: this is a cross-file collision, not a
+                                            // true duplicate declaration within the same file.
+                                            continue;
+                                        }
+                                    }
+                                }
+                                filtered_decls.push(decl_idx);
+                            }
+                            append_unique_declarations(&mut new_sym.declarations, &filtered_decls);
+                        }
+                        // Update value_declaration if the old one was NONE
+                        if new_sym.value_declaration.is_none()
+                            && old_sym.value_declaration.is_some()
+                        {
+                            new_sym.value_declaration = old_sym.value_declaration;
+                        }
+                        // Merge exports (if both have exports)
+                        // First pass: add missing exports, collect nested merge targets
+                        if let (Some(old_exports), Some(new_exports)) =
+                            (old_sym.exports.as_ref(), new_sym.exports.as_mut())
+                        {
+                            for (name, sym_id) in old_exports.iter() {
+                                if !new_exports.has(name) {
+                                    // Remap the symbol ID and add to exports
+                                    if let Some(&remapped_id) = id_remap.get(sym_id) {
+                                        new_exports.set(name.clone(), remapped_id);
+                                    }
+                                } else if let Some(&remapped_new_id) = id_remap.get(sym_id) {
+                                    // Both files export the same name (e.g., nested namespace Utils).
+                                    // Record for deferred merge outside the get_mut borrow scope.
+                                    let existing_export_id = new_exports.get(name).expect(
+                                        "else branch guarantees name exists in new_exports",
+                                    );
+                                    if existing_export_id != remapped_new_id {
+                                        nested_merges.push((existing_export_id, remapped_new_id));
                                     }
                                 }
                             }
-                            filtered_decls.push(decl_idx);
                         }
-                        append_unique_declarations(&mut new_sym.declarations, &filtered_decls);
-                    }
-                    // Update value_declaration if the old one was NONE
-                    if new_sym.value_declaration.is_none() && old_sym.value_declaration.is_some() {
-                        new_sym.value_declaration = old_sym.value_declaration;
-                    }
-                    // Merge exports (if both have exports)
-                    // First pass: add missing exports, collect nested merge targets
-                    if let (Some(old_exports), Some(new_exports)) =
-                        (old_sym.exports.as_ref(), new_sym.exports.as_mut())
-                    {
-                        for (name, sym_id) in old_exports.iter() {
-                            if !new_exports.has(name) {
-                                // Remap the symbol ID and add to exports
-                                if let Some(&remapped_id) = id_remap.get(sym_id) {
-                                    new_exports.set(name.clone(), remapped_id);
-                                }
-                            } else if let Some(&remapped_new_id) = id_remap.get(sym_id) {
-                                // Both files export the same name (e.g., nested namespace Utils).
-                                // Record for deferred merge outside the get_mut borrow scope.
-                                let existing_export_id = new_exports
-                                    .get(name)
-                                    .expect("else branch guarantees name exists in new_exports");
-                                if existing_export_id != remapped_new_id {
-                                    nested_merges.push((existing_export_id, remapped_new_id));
+                        // Handle case where old symbol has exports but new doesn't yet
+                        if old_sym.exports.is_some() && new_sym.exports.is_none() {
+                            new_sym.exports = old_sym.exports.as_ref().map(|table| {
+                                Box::new(remap_symbol_table(table.as_ref(), &id_remap))
+                            });
+                        }
+                        // Merge members (if both have members)
+                        if let (Some(old_members), Some(new_members)) =
+                            (old_sym.members.as_ref(), new_sym.members.as_mut())
+                        {
+                            for (name, sym_id) in old_members.iter() {
+                                if !new_members.has(name) {
+                                    // Remap the symbol ID and add to members
+                                    if let Some(&remapped_id) = id_remap.get(sym_id) {
+                                        new_members.set(name.clone(), remapped_id);
+                                    }
                                 }
                             }
                         }
-                    }
-                    // Handle case where old symbol has exports but new doesn't yet
-                    if old_sym.exports.is_some() && new_sym.exports.is_none() {
-                        new_sym.exports = old_sym
+                    } else {
+                        // First time seeing this symbol - full update
+                        let mut updated = old_sym.clone();
+                        updated.id = new_id;
+                        updated.parent = id_remap
+                            .get(&old_sym.parent)
+                            .copied()
+                            .unwrap_or(SymbolId::NONE);
+                        updated.value_declaration = old_sym.value_declaration;
+                        updated.declarations = old_sym.declarations.clone();
+                        updated.is_exported = old_sym.is_exported;
+                        updated.is_umd_export = old_sym.is_umd_export;
+                        // Track which file this symbol was declared in for TDZ cross-file detection
+                        updated.decl_file_idx = file_idx as u32;
+                        // Finalize file index on stable declaration locations that
+                        // were recorded by per-file binders with `u32::MAX` (the
+                        // parallel pipeline does not call `BinderState::set_file_idx`
+                        // before binding). This keeps the Phase 1 stable-location
+                        // invariants consistent with `decl_file_idx`.
+                        let stamped = file_idx as u32;
+                        for stable in &mut updated.stable_declarations {
+                            stable.set_file_idx_if_unassigned(stamped);
+                        }
+                        updated
+                            .stable_value_declaration
+                            .set_file_idx_if_unassigned(stamped);
+                        updated.exports = old_sym
                             .exports
                             .as_ref()
                             .map(|table| Box::new(remap_symbol_table(table.as_ref(), &id_remap)));
+                        updated.members = old_sym
+                            .members
+                            .as_ref()
+                            .map(|table| Box::new(remap_symbol_table(table.as_ref(), &id_remap)));
+                        *new_sym = updated;
                     }
-                    // Merge members (if both have members)
-                    if let (Some(old_members), Some(new_members)) =
-                        (old_sym.members.as_ref(), new_sym.members.as_mut())
-                    {
-                        for (name, sym_id) in old_members.iter() {
-                            if !new_members.has(name) {
-                                // Remap the symbol ID and add to members
-                                if let Some(&remapped_id) = id_remap.get(sym_id) {
-                                    new_members.set(name.clone(), remapped_id);
+                }
+
+                // Collect nested merges for processing AFTER all symbols are populated
+                all_nested_merges.extend(nested_merges);
+            }
+
+            // Process all nested merges now that every symbol has its data populated.
+            // Uses a work queue to handle arbitrarily deep nesting (e.g.,
+            // namespace A.B.C.D declared across files needs recursive merge).
+            while let Some((existing_id, source_id)) = all_nested_merges.pop() {
+                // Collect data from source symbol first
+                let merge_data = global_symbols.get(source_id).map(|src| {
+                    (
+                        src.flags,
+                        src.declarations.clone(),
+                        src.value_declaration,
+                        src.exports.as_ref().cloned(),
+                        src.members.as_ref().cloned(),
+                    )
+                });
+                if let Some((src_flags, src_decls, src_val_decl, src_exports, src_members)) =
+                    merge_data
+                    && let Some(dst) = global_symbols.get_mut(existing_id)
+                {
+                    let can_merge = can_merge_symbols_cross_file(dst.flags, src_flags);
+                    if !can_merge {
+                        continue;
+                    }
+                    dst.flags |= src_flags;
+                    // Propagate declaration_arenas from source to destination
+                    // so the checker can find declarations from the merged file
+                    for &decl_idx in &src_decls {
+                        let cloned_arenas: Option<Vec<Arc<NodeArena>>> = declaration_arenas
+                            .get(&(source_id, decl_idx))
+                            .map(|a| a.iter().cloned().collect());
+                        if let Some(arenas) = cloned_arenas {
+                            let target = declaration_arenas
+                                .entry((existing_id, decl_idx))
+                                .or_default();
+                            for arena in arenas {
+                                target.push(arena);
+                            }
+                        }
+                    }
+                    // Also propagate symbol_arenas if source has one
+                    let cloned_arena = symbol_arenas.get(&source_id).cloned();
+                    if let Some(arena) = cloned_arena {
+                        symbol_arenas.entry(existing_id).or_insert(arena);
+                    }
+                    append_unique_declarations(&mut dst.declarations, &src_decls);
+                    if dst.value_declaration.is_none() && src_val_decl.is_some() {
+                        dst.value_declaration = src_val_decl;
+                    }
+                    if let Some(src_exp) = src_exports {
+                        let dst_exp = dst.exports.get_or_insert_with(|| {
+                            Box::new(SymbolTable::with_capacity(src_exp.len()))
+                        });
+                        for (ename, &esym) in src_exp.iter() {
+                            if !dst_exp.has(ename) {
+                                dst_exp.set(ename.clone(), esym);
+                            } else {
+                                // Both sides export the same name — queue recursive merge
+                                let existing_export_id = dst_exp
+                                    .get(ename)
+                                    .expect("else branch guarantees ename exists in dst_exp");
+                                if existing_export_id != esym {
+                                    all_nested_merges.push((existing_export_id, esym));
                                 }
                             }
                         }
                     }
-                } else {
-                    // First time seeing this symbol - full update
-                    let mut updated = old_sym.clone();
-                    updated.id = new_id;
-                    updated.parent = id_remap
-                        .get(&old_sym.parent)
-                        .copied()
-                        .unwrap_or(SymbolId::NONE);
-                    updated.value_declaration = old_sym.value_declaration;
-                    updated.declarations = old_sym.declarations.clone();
-                    updated.is_exported = old_sym.is_exported;
-                    updated.is_umd_export = old_sym.is_umd_export;
-                    // Track which file this symbol was declared in for TDZ cross-file detection
-                    updated.decl_file_idx = file_idx as u32;
-                    // Finalize file index on stable declaration locations that
-                    // were recorded by per-file binders with `u32::MAX` (the
-                    // parallel pipeline does not call `BinderState::set_file_idx`
-                    // before binding). This keeps the Phase 1 stable-location
-                    // invariants consistent with `decl_file_idx`.
-                    let stamped = file_idx as u32;
-                    for stable in &mut updated.stable_declarations {
-                        stable.set_file_idx_if_unassigned(stamped);
-                    }
-                    updated
-                        .stable_value_declaration
-                        .set_file_idx_if_unassigned(stamped);
-                    updated.exports = old_sym
-                        .exports
-                        .as_ref()
-                        .map(|table| Box::new(remap_symbol_table(table.as_ref(), &id_remap)));
-                    updated.members = old_sym
-                        .members
-                        .as_ref()
-                        .map(|table| Box::new(remap_symbol_table(table.as_ref(), &id_remap)));
-                    *new_sym = updated;
-                }
-            }
-
-            // Collect nested merges for processing AFTER all symbols are populated
-            all_nested_merges.extend(nested_merges);
-        }
-
-        // Process all nested merges now that every symbol has its data populated.
-        // Uses a work queue to handle arbitrarily deep nesting (e.g.,
-        // namespace A.B.C.D declared across files needs recursive merge).
-        while let Some((existing_id, source_id)) = all_nested_merges.pop() {
-            // Collect data from source symbol first
-            let merge_data = global_symbols.get(source_id).map(|src| {
-                (
-                    src.flags,
-                    src.declarations.clone(),
-                    src.value_declaration,
-                    src.exports.as_ref().cloned(),
-                    src.members.as_ref().cloned(),
-                )
-            });
-            if let Some((src_flags, src_decls, src_val_decl, src_exports, src_members)) = merge_data
-                && let Some(dst) = global_symbols.get_mut(existing_id)
-            {
-                let can_merge = can_merge_symbols_cross_file(dst.flags, src_flags);
-                if !can_merge {
-                    continue;
-                }
-                dst.flags |= src_flags;
-                // Propagate declaration_arenas from source to destination
-                // so the checker can find declarations from the merged file
-                for &decl_idx in &src_decls {
-                    let cloned_arenas: Option<Vec<Arc<NodeArena>>> = declaration_arenas
-                        .get(&(source_id, decl_idx))
-                        .map(|a| a.iter().cloned().collect());
-                    if let Some(arenas) = cloned_arenas {
-                        let target = declaration_arenas
-                            .entry((existing_id, decl_idx))
-                            .or_default();
-                        for arena in arenas {
-                            target.push(arena);
-                        }
-                    }
-                }
-                // Also propagate symbol_arenas if source has one
-                let cloned_arena = symbol_arenas.get(&source_id).cloned();
-                if let Some(arena) = cloned_arena {
-                    symbol_arenas.entry(existing_id).or_insert(arena);
-                }
-                append_unique_declarations(&mut dst.declarations, &src_decls);
-                if dst.value_declaration.is_none() && src_val_decl.is_some() {
-                    dst.value_declaration = src_val_decl;
-                }
-                if let Some(src_exp) = src_exports {
-                    let dst_exp = dst
-                        .exports
-                        .get_or_insert_with(|| Box::new(SymbolTable::with_capacity(src_exp.len())));
-                    for (ename, &esym) in src_exp.iter() {
-                        if !dst_exp.has(ename) {
-                            dst_exp.set(ename.clone(), esym);
-                        } else {
-                            // Both sides export the same name — queue recursive merge
-                            let existing_export_id = dst_exp
-                                .get(ename)
-                                .expect("else branch guarantees ename exists in dst_exp");
-                            if existing_export_id != esym {
-                                all_nested_merges.push((existing_export_id, esym));
-                            }
-                        }
-                    }
-                }
-                if let Some(src_mem) = src_members {
-                    let dst_mem = dst
-                        .members
-                        .get_or_insert_with(|| Box::new(SymbolTable::with_capacity(src_mem.len())));
-                    for (mname, &msym) in src_mem.iter() {
-                        if !dst_mem.has(mname) {
-                            dst_mem.set(mname.clone(), msym);
-                        } else {
-                            // Both sides have the same member — queue recursive merge
-                            let existing_member_id = dst_mem
-                                .get(mname)
-                                .expect("else branch guarantees mname exists in dst_mem");
-                            if existing_member_id != msym {
-                                all_nested_merges.push((existing_member_id, msym));
+                    if let Some(src_mem) = src_members {
+                        let dst_mem = dst.members.get_or_insert_with(|| {
+                            Box::new(SymbolTable::with_capacity(src_mem.len()))
+                        });
+                        for (mname, &msym) in src_mem.iter() {
+                            if !dst_mem.has(mname) {
+                                dst_mem.set(mname.clone(), msym);
+                            } else {
+                                // Both sides have the same member — queue recursive merge
+                                let existing_member_id = dst_mem
+                                    .get(mname)
+                                    .expect("else branch guarantees mname exists in dst_mem");
+                                if existing_member_id != msym {
+                                    all_nested_merges.push((existing_member_id, msym));
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // Remap node_symbols to use global IDs
-        // Note: node_symbols primarily maps user file nodes to user symbols,
-        // but lib symbols referenced in user code need remapping too
-        let mut remapped_node_symbols = FxHashMap::default();
-        for (node_idx, old_sym_id) in result.node_symbols.iter() {
-            if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
-                remapped_node_symbols.insert(*node_idx, new_sym_id);
-            }
-            // Note: We don't need to check lib_symbol_remap here because
-            // node_symbols are created during binding of user files, and at that point
-            // lib symbols are accessed by name lookup (file_locals), not by node mapping
-        }
-
-        // Remap file_locals to use global IDs
-        // This handles both user symbols (from id_remap) and lib symbols (from lib_name_to_global)
-        let mut remapped_file_locals = SymbolTable::with_capacity(result.file_locals.len());
-        for (name, old_sym_id) in result.file_locals.iter() {
-            if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
-                // User symbol - use remapped ID
-                remapped_file_locals.set(name.clone(), new_sym_id);
-                // Script-file top-levels are globally visible by default. For ordinary
-                // external modules, keep pure type-only top-level declarations file-scoped so
-                // unimported type aliases/interfaces do not leak across files. Value-bearing
-                // exports still stay visible because CommonJS/export-assignment and declaration
-                // emit paths rely on them being reachable cross-file.
-                let sym_info = global_symbols.get(new_sym_id);
-                let is_alias =
-                    sym_info.is_some_and(|s| s.flags & crate::binder::symbol_flags::ALIAS != 0);
-                let is_umd = sym_info.is_some_and(|s| s.is_umd_export);
-                let is_declaration_file = result
-                    .arena
-                    .source_files
-                    .first()
-                    .is_some_and(|sf| sf.is_declaration_file);
-                // Only top-level VALUE declarations that are actually exported
-                // from the module should remain globally visible. Otherwise a
-                // module-private const/let/var/function leaks into other files'
-                // scopes via `program.globals` seeding of `file_locals`,
-                // causing missing TS2304 ("Cannot find name") diagnostics for
-                // references that should be unresolved.
-                let has_value = sym_info.is_some_and(|s| {
-                    s.flags & crate::binder::symbol_flags::VALUE != 0 && s.is_exported
-                });
-                let is_module_decl = sym_info.is_some_and(|s| {
-                    s.flags
-                        & (crate::binder::symbol_flags::VALUE_MODULE
-                            | crate::binder::symbol_flags::NAMESPACE_MODULE)
-                        != 0
-                });
-                let is_global_augmentation = result.global_augmentations.contains_key(name);
-                let is_truly_global = (!is_alias
-                    && (!result.is_external_module
-                        || is_declaration_file
-                        || has_value
-                        || is_module_decl))
-                    || is_umd
-                    || is_global_augmentation;
-                if is_truly_global {
-                    // UMD namespace exports (`export as namespace Foo`) use
-                    // "first in wins" semantics: when multiple modules declare
-                    // the same UMD global name, the first one encountered is
-                    // kept and subsequent ones are ignored. This matches tsc
-                    // behavior. Non-UMD globals can safely overwrite because
-                    // they are already merged to a single SymbolId by the
-                    // merge phase.
-                    if !is_umd || !globals.has(name) {
-                        globals.set(name.clone(), new_sym_id);
-                    }
-                }
-            } else {
-                let name_atom = name_interner.intern(name);
-                if let Some(&global_id) = lib_name_to_global.get(&name_atom) {
-                    // Lib symbol - use the pre-remapped global ID
-                    // Only add to file_locals, NOT to globals (lib symbols are accessed
-                    // through lib_contexts in the checker, not through globals)
-                    remapped_file_locals.set(name.clone(), global_id);
-                }
-            }
-        }
-
-        let mut remapped_scopes = Vec::with_capacity(result.scopes.len());
-        for scope in result.scopes.iter() {
-            let mut table = SymbolTable::with_capacity(scope.table.len());
-            for (name, old_sym_id) in scope.table.iter() {
+            // Remap node_symbols to use global IDs
+            // Note: node_symbols primarily maps user file nodes to user symbols,
+            // but lib symbols referenced in user code need remapping too
+            let mut remapped_node_symbols = FxHashMap::default();
+            for (node_idx, old_sym_id) in result.node_symbols.iter() {
                 if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
-                    // User symbol - include in scope.
-                    table.set(name.clone(), new_sym_id);
+                    remapped_node_symbols.insert(*node_idx, new_sym_id);
+                }
+                // Note: We don't need to check lib_symbol_remap here because
+                // node_symbols are created during binding of user files, and at that point
+                // lib symbols are accessed by name lookup (file_locals), not by node mapping
+            }
+
+            // Remap file_locals to use global IDs
+            // This handles both user symbols (from id_remap) and lib symbols (from lib_name_to_global)
+            let mut remapped_file_locals = SymbolTable::with_capacity(result.file_locals.len());
+            for (name, old_sym_id) in result.file_locals.iter() {
+                if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
+                    // User symbol - use remapped ID
+                    remapped_file_locals.set(name.clone(), new_sym_id);
+                    // Script-file top-levels are globally visible by default. For ordinary
+                    // external modules, keep pure type-only top-level declarations file-scoped so
+                    // unimported type aliases/interfaces do not leak across files. Value-bearing
+                    // exports still stay visible because CommonJS/export-assignment and declaration
+                    // emit paths rely on them being reachable cross-file.
+                    let sym_info = global_symbols.get(new_sym_id);
+                    let is_alias =
+                        sym_info.is_some_and(|s| s.flags & crate::binder::symbol_flags::ALIAS != 0);
+                    let is_umd = sym_info.is_some_and(|s| s.is_umd_export);
+                    let is_declaration_file = result
+                        .arena
+                        .source_files
+                        .first()
+                        .is_some_and(|sf| sf.is_declaration_file);
+                    // Only top-level VALUE declarations that are actually exported
+                    // from the module should remain globally visible. Otherwise a
+                    // module-private const/let/var/function leaks into other files'
+                    // scopes via `program.globals` seeding of `file_locals`,
+                    // causing missing TS2304 ("Cannot find name") diagnostics for
+                    // references that should be unresolved.
+                    let has_value = sym_info.is_some_and(|s| {
+                        s.flags & crate::binder::symbol_flags::VALUE != 0 && s.is_exported
+                    });
+                    let is_module_decl = sym_info.is_some_and(|s| {
+                        s.flags
+                            & (crate::binder::symbol_flags::VALUE_MODULE
+                                | crate::binder::symbol_flags::NAMESPACE_MODULE)
+                            != 0
+                    });
+                    let is_global_augmentation = result.global_augmentations.contains_key(name);
+                    let is_truly_global = (!is_alias
+                        && (!result.is_external_module
+                            || is_declaration_file
+                            || has_value
+                            || is_module_decl))
+                        || is_umd
+                        || is_global_augmentation;
+                    if is_truly_global {
+                        // UMD namespace exports (`export as namespace Foo`) use
+                        // "first in wins" semantics: when multiple modules declare
+                        // the same UMD global name, the first one encountered is
+                        // kept and subsequent ones are ignored. This matches tsc
+                        // behavior. Non-UMD globals can safely overwrite because
+                        // they are already merged to a single SymbolId by the
+                        // merge phase.
+                        if !is_umd || !globals.has(name) {
+                            globals.set(name.clone(), new_sym_id);
+                        }
+                    }
                 } else {
                     let name_atom = name_interner.intern(name);
                     if let Some(&global_id) = lib_name_to_global.get(&name_atom) {
-                        // Preserve lib-backed scope entries exactly when they were present in
-                        // the original binder. Dropping them during merge weakens same-file
-                        // identifier resolution and forces later checker repair.
-                        table.set(name.clone(), global_id);
+                        // Lib symbol - use the pre-remapped global ID
+                        // Only add to file_locals, NOT to globals (lib symbols are accessed
+                        // through lib_contexts in the checker, not through globals)
+                        remapped_file_locals.set(name.clone(), global_id);
                     }
                 }
             }
-            remapped_scopes.push(Scope {
-                parent: scope.parent,
-                table,
-                kind: scope.kind,
-                container_node: scope.container_node,
-            });
-        }
 
-        file_locals_list.push(remapped_file_locals);
-
-        let mut remapped_declaration_arenas: DeclarationArenaMap = FxHashMap::default();
-        for (&(old_sym_id, decl_idx), arenas) in result.declaration_arenas.iter() {
-            if result.lib_symbol_ids.contains(&old_sym_id) {
-                continue;
+            let mut remapped_scopes = Vec::with_capacity(result.scopes.len());
+            for scope in result.scopes.iter() {
+                let mut table = SymbolTable::with_capacity(scope.table.len());
+                for (name, old_sym_id) in scope.table.iter() {
+                    if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
+                        // User symbol - include in scope.
+                        table.set(name.clone(), new_sym_id);
+                    } else {
+                        let name_atom = name_interner.intern(name);
+                        if let Some(&global_id) = lib_name_to_global.get(&name_atom) {
+                            // Preserve lib-backed scope entries exactly when they were present in
+                            // the original binder. Dropping them during merge weakens same-file
+                            // identifier resolution and forces later checker repair.
+                            table.set(name.clone(), global_id);
+                        }
+                    }
+                }
+                remapped_scopes.push(Scope {
+                    parent: scope.parent,
+                    table,
+                    kind: scope.kind,
+                    container_node: scope.container_node,
+                });
             }
-            let has_non_local_arena = arenas
-                .iter()
-                .any(|arena| !Arc::ptr_eq(arena, &result.arena));
-            if !has_non_local_arena {
-                continue;
-            }
-            if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
-                remapped_declaration_arenas.insert((new_sym_id, decl_idx), arenas.clone());
-            }
-        }
 
-        let symbols_with_non_local_declarations: FxHashSet<SymbolId> = remapped_declaration_arenas
-            .keys()
-            .map(|&(sym_id, _)| sym_id)
-            .collect();
+            patch_script_lib_interface_declaration_arenas_for_result(
+                result,
+                &remapped_file_locals,
+                &globals,
+                &global_lib_symbol_ids,
+                &mut declaration_arenas,
+            );
+            file_locals_list.push(remapped_file_locals);
 
-        let mut remapped_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>> = FxHashMap::default();
-        for (&old_sym_id, arena) in result.symbol_arenas.iter() {
-            if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
-                let has_non_local_decl = symbols_with_non_local_declarations.contains(&new_sym_id);
-                if has_non_local_decl || !Arc::ptr_eq(arena, &result.arena) {
-                    remapped_symbol_arenas.insert(new_sym_id, Arc::clone(arena));
+            let mut remapped_declaration_arenas: DeclarationArenaMap = FxHashMap::default();
+            for (&(old_sym_id, decl_idx), arenas) in result.declaration_arenas.iter() {
+                if result.lib_symbol_ids.contains(&old_sym_id) {
+                    continue;
+                }
+                let has_non_local_arena = arenas
+                    .iter()
+                    .any(|arena| !Arc::ptr_eq(arena, &result.arena));
+                if !has_non_local_arena {
+                    continue;
+                }
+                if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
+                    remapped_declaration_arenas.insert((new_sym_id, decl_idx), arenas.clone());
                 }
             }
+
+            let symbols_with_non_local_declarations: FxHashSet<SymbolId> =
+                remapped_declaration_arenas
+                    .keys()
+                    .map(|&(sym_id, _)| sym_id)
+                    .collect();
+
+            let mut remapped_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>> =
+                FxHashMap::default();
+            for (&old_sym_id, arena) in result.symbol_arenas.iter() {
+                if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
+                    let has_non_local_decl =
+                        symbols_with_non_local_declarations.contains(&new_sym_id);
+                    if has_non_local_decl || !Arc::ptr_eq(arena, &result.arena) {
+                        remapped_symbol_arenas.insert(new_sym_id, Arc::clone(arena));
+                    }
+                }
+            }
+
+            // Populate arena context for module augmentations
+            let module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>> =
+                result
+                    .module_augmentations
+                    .iter()
+                    .map(|(spec, augs)| {
+                        let arena = Arc::clone(&result.arena);
+                        (
+                            spec.clone(),
+                            augs.iter()
+                                .map(|aug| {
+                                    crate::binder::ModuleAugmentation::with_arena(
+                                        aug.name.clone(),
+                                        aug.node,
+                                        Arc::clone(&arena),
+                                    )
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect();
+
+            files.push(BoundFile {
+                file_name: result.file_name.clone(),
+                source_file: result.source_file,
+                arena: Arc::clone(&result.arena),
+                // Wrap once here. `cross_file_node_symbols` (built later) takes
+                // an Arc::clone of `file.node_symbols`, so the underlying
+                // `FxHashMap<u32, SymbolId>` is shared via refcount instead of
+                // deep-cloned per consumer.
+                node_symbols: Arc::new(remapped_node_symbols),
+                symbol_arenas: Arc::new(remapped_symbol_arenas),
+                declaration_arenas: Arc::new(remapped_declaration_arenas),
+                module_declaration_exports_publicly: result
+                    .module_declaration_exports_publicly
+                    .clone(),
+                scopes: Arc::new(remapped_scopes),
+                node_scope_ids: result.node_scope_ids.clone(),
+                parse_diagnostics: result.parse_diagnostics.clone(),
+                global_augmentations: Arc::clone(&result.global_augmentations),
+                module_augmentations: Arc::new(module_augmentations),
+                augmentation_target_modules: Arc::new(
+                    result
+                        .augmentation_target_modules
+                        .iter()
+                        .map(|(&old_sym, name)| {
+                            let new_sym = id_remap.get(&old_sym).copied().unwrap_or(old_sym);
+                            (new_sym, name.clone())
+                        })
+                        .collect(),
+                ),
+                flow_nodes: result.flow_nodes.clone(),
+                // Arc::clone is O(1); per-file `BoundFile` shares the same
+                // `node_flow` map as later `cross_file_*` binder constructions.
+                node_flow: Arc::clone(&result.node_flow),
+                switch_clause_to_switch: result.switch_clause_to_switch.clone(),
+                is_external_module: result.is_external_module,
+                expando_properties: remap_expando_properties(&result.expando_properties, &id_remap),
+                file_features: result.file_features,
+                lib_symbol_reverse_remap: Arc::new(
+                    result
+                        .lib_symbol_reverse_remap
+                        .iter()
+                        .filter_map(|(&old_sym, &(lib_idx, lib_local_sym))| {
+                            id_remap
+                                .get(&old_sym)
+                                .copied()
+                                .map(|new_sym| (new_sym, (lib_idx, lib_local_sym)))
+                        })
+                        .collect(),
+                ),
+                semantic_defs: Arc::new(file_semantic_defs),
+            });
         }
-
-        // Populate arena context for module augmentations
-        let module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>> =
-            result
-                .module_augmentations
-                .iter()
-                .map(|(spec, augs)| {
-                    let arena = Arc::clone(&result.arena);
-                    (
-                        spec.clone(),
-                        augs.iter()
-                            .map(|aug| {
-                                crate::binder::ModuleAugmentation::with_arena(
-                                    aug.name.clone(),
-                                    aug.node,
-                                    Arc::clone(&arena),
-                                )
-                            })
-                            .collect(),
-                    )
-                })
-                .collect();
-
-        files.push(BoundFile {
-            file_name: result.file_name.clone(),
-            source_file: result.source_file,
-            arena: Arc::clone(&result.arena),
-            // Wrap once here. `cross_file_node_symbols` (built later) takes
-            // an Arc::clone of `file.node_symbols`, so the underlying
-            // `FxHashMap<u32, SymbolId>` is shared via refcount instead of
-            // deep-cloned per consumer.
-            node_symbols: Arc::new(remapped_node_symbols),
-            symbol_arenas: Arc::new(remapped_symbol_arenas),
-            declaration_arenas: Arc::new(remapped_declaration_arenas),
-            module_declaration_exports_publicly: result.module_declaration_exports_publicly.clone(),
-            scopes: Arc::new(remapped_scopes),
-            node_scope_ids: result.node_scope_ids.clone(),
-            parse_diagnostics: result.parse_diagnostics.clone(),
-            global_augmentations: Arc::clone(&result.global_augmentations),
-            module_augmentations: Arc::new(module_augmentations),
-            augmentation_target_modules: Arc::new(
-                result
-                    .augmentation_target_modules
-                    .iter()
-                    .map(|(&old_sym, name)| {
-                        let new_sym = id_remap.get(&old_sym).copied().unwrap_or(old_sym);
-                        (new_sym, name.clone())
-                    })
-                    .collect(),
-            ),
-            flow_nodes: result.flow_nodes.clone(),
-            // Arc::clone is O(1); per-file `BoundFile` shares the same
-            // `node_flow` map as later `cross_file_*` binder constructions.
-            node_flow: Arc::clone(&result.node_flow),
-            switch_clause_to_switch: result.switch_clause_to_switch.clone(),
-            is_external_module: result.is_external_module,
-            expando_properties: remap_expando_properties(&result.expando_properties, &id_remap),
-            file_features: result.file_features,
-            lib_symbol_reverse_remap: Arc::new(
-                result
-                    .lib_symbol_reverse_remap
-                    .iter()
-                    .filter_map(|(&old_sym, &(lib_idx, lib_local_sym))| {
-                        id_remap
-                            .get(&old_sym)
-                            .copied()
-                            .map(|new_sym| (new_sym, (lib_idx, lib_local_sym)))
-                    })
-                    .collect(),
-            ),
-            semantic_defs: Arc::new(file_semantic_defs),
-        });
+        results.release(file_idx);
     }
 
     // Build cross_file_node_symbols: map each arena pointer to its remapped node_symbols.
@@ -3480,59 +3946,6 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         &semantic_defs,
         &type_interner,
     ));
-
-    // Patch program-wide `declaration_arenas` so user script-file interface
-    // declarations that augment a same-named lib symbol (e.g.
-    // `interface Node { kind: SyntaxKind; }` in a script) carry the user
-    // file's arena. Phase 2 above appends the user declaration's `NodeIndex`
-    // onto the lib symbol's `declarations` list, but the binder's
-    // `add_declaration` does not record an arena mapping for it. Without this
-    // patch, downstream lookups (e.g. lib-interface re-checks for TS2430) try
-    // to read the user `NodeIndex` from the lib's arena and silently miss the
-    // augmented members.
-    {
-        use crate::parser::syntax_kind_ext as sk_ext;
-        for (file_idx, result) in results.iter().enumerate() {
-            if result.is_external_module {
-                continue;
-            }
-            let Some(source_file) = result.arena.get_source_file_at(result.source_file) else {
-                continue;
-            };
-            let Some(remapped_locals) = file_locals_list.get(file_idx) else {
-                continue;
-            };
-            for &stmt_idx in &source_file.statements.nodes {
-                let Some(stmt_node) = result.arena.get(stmt_idx) else {
-                    continue;
-                };
-                if stmt_node.kind != sk_ext::INTERFACE_DECLARATION {
-                    continue;
-                }
-                let Some(iface) = result.arena.get_interface(stmt_node) else {
-                    continue;
-                };
-                let Some(name_node) = result.arena.get(iface.name) else {
-                    continue;
-                };
-                let Some(ident) = result.arena.get_identifier(name_node) else {
-                    continue;
-                };
-                let name = ident.escaped_text.as_str();
-                let sym_id = remapped_locals.get(name).or_else(|| globals.get(name));
-                let Some(sym_id) = sym_id else {
-                    continue;
-                };
-                if !global_lib_symbol_ids.contains(&sym_id) {
-                    continue;
-                }
-                let target = declaration_arenas.entry((sym_id, stmt_idx)).or_default();
-                if !target.iter().any(|arena| Arc::ptr_eq(arena, &result.arena)) {
-                    target.push(Arc::clone(&result.arena));
-                }
-            }
-        }
-    }
 
     // Build the secondary `sym_to_decl_indices` index over the program-wide
     // `declaration_arenas`. Checker paths that previously iterated every entry

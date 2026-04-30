@@ -1745,27 +1745,15 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     file_idx: usize,
     augmentations: &MergedAugmentations,
 ) -> BinderState {
-    // Pre-size to avoid repeated rehashing when merging globals into the
-    // file-local table. The merged map ends up holding (file_locals ∪ globals);
-    // pre-allocating that upper bound eliminates the power-of-two rehashes
-    // during the per-file `set()` calls. Per-file work is small individually
-    // but multiplied across all per-binder constructions on large repos this
-    // is a measurable startup tax.
     let local_count = program
         .file_locals
         .get(file_idx)
         .map(|t| t.len())
         .unwrap_or(0);
-    let mut file_locals = SymbolTable::with_capacity(local_count + program.globals.len());
+    let mut file_locals = SymbolTable::with_capacity(local_count);
 
     if file_idx < program.file_locals.len() {
         for (name, &sym_id) in program.file_locals[file_idx].iter() {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
-
-    for (name, &sym_id) in program.globals.iter() {
-        if !file_locals.has(name) {
             file_locals.set(name.clone(), sym_id);
         }
     }
