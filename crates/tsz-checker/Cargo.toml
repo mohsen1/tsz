@@ -587,5 +587,9 @@ path = "tests/cross_file_js_ts_class_merge_ts2451_suppression_tests.rs"
 name = "optional_tuple_element_undefined_assignability_tests"
 path = "tests/optional_tuple_element_undefined_assignability_tests.rs"
 
+[[test]]
+name = "variance_skip_type_param_default_tests"
+path = "tests/variance_skip_type_param_default_tests.rs"
+
 [lints]
 workspace = true
