@@ -294,8 +294,21 @@ impl ModuleResolver {
             return None;
         }
 
-        if let Some(resolved) = self.try_file(path) {
-            return Some(resolved);
+        // In Node16/NodeNext mode, extensionless export targets (e.g. from
+        // `"./": "./"` directory exports) must NOT probe for extensions.
+        // Node.js resolves exports targets literally — `./other` must exist as a
+        // file with that exact name. tsc mirrors this: it does not add .ts/.d.ts
+        // etc. when the target has no extension. Without this guard,
+        // `import "pkg/other"` would silently resolve to `pkg/other.d.ts`, which
+        // contradicts the ESM requirement for explicit extensions in specifiers.
+        let skip_extension_probing = matches!(
+            self.resolution_kind,
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+        );
+        if !skip_extension_probing {
+            if let Some(resolved) = self.try_file(path) {
+                return Some(resolved);
+            }
         }
         if path.is_dir() {
             let index = path.join("index");
