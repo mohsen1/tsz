@@ -75,3 +75,39 @@ The skip-this-binding handling at `property.rs:232-242` (`bind_object_receiver_t
 ## Why this isn't yet claimed
 
 The substitution leak point is upstream of the property visitor's `skip_this_binding` and is shared with many other paths (any property access through a Lazy interface). A naive fix could regress other tests. Needs the investigator to find the exact substitution site, then verify the broader test suite.
+
+## Follow-up trace (2026-05-01)
+
+Added `eprintln!` at `tsz-solver/src/operations/property_visitor.rs::visit_object_impl` to dump the raw property type read out of the object shape (before `bind_object_receiver_this`). The trace shows two **distinct** `obj_type` ids visited for the same conceptual `Label`:
+
+```
+DEBUG visit_object_impl: prop="extend" raw_type=TypeId(1202) contains_this=true  obj_type=TypeId(1009)   ← first call (label.extend)
+DEBUG visit_object_impl: prop="extend" raw_type=TypeId(1363) contains_this=false obj_type=TypeId(1111)   ← second call (inner.extend)
+```
+
+So the issue is **not** that we re-substitute `this` at lookup time. The issue is that `inner`'s type — `{ id: number } & Label` — is **flattened** (during call-return computation or contextual-type evaluation) into a single new `Object` (TypeId 1111) whose `extend` property already has `this` substituted to a stale receiver. By the time the second property access runs, there is no `this` left to skip-bind.
+
+The flattening probably runs `substitute_this_type(this & T, flattened_object)` once, eagerly. The intersection visitor's `skip_this_binding` (and any `Lazy` hook that respects it) cannot recover.
+
+### Tried and reverted
+
+Adding a `skip_this_binding` check to the **`Lazy` arm** of `resolve_property_access_inner` (`property.rs:944-949`) so it preserves raw `this` when the intersection visitor sets the skip flag:
+
+```rust
+let resolved = if !self.skip_this_binding.get()
+    && crate::contains_this_type(self.interner(), resolved)
+{
+    crate::substitute_this_type(self.interner(), resolved, obj_type)
+} else {
+    resolved
+};
+```
+
+- Builds, all 5806 checker tests + 5567 solver tests pass.
+- Does **not** fix `intersectionThisTypes.ts` (the `Lazy` arm isn't the path being taken — the cached flattened `Object` is).
+- Conformance: net **−1** (`typeFromParamTagForFunction.ts` PASS → FAIL). Reverted; not committed.
+
+### Where the actual fix has to land
+
+- The intersection-flattening path (look in `crates/tsz-solver/src/evaluation/`, especially intersection normalization that converts `A & B` of object members into a single flattened `Object`) needs to **either** keep `A & B` as a structural `Intersection` of two members so the visitor can still use `skip_this_binding`, **or** preserve raw `this` on the flattened result so each call-site substitution can rebind to the actual receiver.
+- The Lazy-arm fix above is still the right behavior for the case it covers, but it must land bundled with the flattening fix to net non-negative on conformance. Not safe to land alone.
