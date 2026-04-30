@@ -580,6 +580,20 @@ impl<'a> CheckerState<'a> {
             if fallback.contains("error") && !display.contains("error") {
                 return self.format_annotation_like_type(&display);
             }
+            // For Application types whose alias body is an IndexedAccess or
+            // Conditional type (e.g. `type Cb<T> = {noAlias: () => T}["noAlias"]`),
+            // tsc does not preserve the alias name in error messages — it shows the
+            // structurally-evaluated form. The assignability_display computed above
+            // already contains the correct expanded form.
+            if assignability_display != fallback {
+                let evaluated_for_display = self.evaluate_type_for_assignability(display_target);
+                if self.should_use_evaluated_assignability_display(
+                    display_target,
+                    evaluated_for_display,
+                ) {
+                    return assignability_display;
+                }
+            }
             return fallback;
         }
 
