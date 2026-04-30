@@ -1057,7 +1057,13 @@ impl<'a> TypeLowering<'a> {
                 .iter()
                 .map(|&idx| self.lower_type(idx))
                 .collect();
-            self.interner.union(members)
+            // Mirror tsc's `UnionType.origin`: record the as-written input
+            // member list so the printer can render `0 | 1 | 2` in source
+            // order even when the canonical sort uses non-deterministic
+            // alloc-order for non-zero number literals.
+            let result = self.interner.union(members.clone());
+            self.interner.store_union_origin(result, members);
+            result
         } else {
             TypeId::ERROR
         }
