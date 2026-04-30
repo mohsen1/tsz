@@ -10,6 +10,29 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn current_arena_value_declaration_belongs_to_symbol(
+        &self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        if self.ctx.binder.get_node_symbol(decl_idx) == Some(sym_id) {
+            return true;
+        }
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
+            && self.ctx.binder.get_node_symbol(var_decl.name) == Some(sym_id)
+        {
+            return true;
+        }
+
+        false
+    }
+
     pub(crate) fn is_fast_path_function_decl(
         &self,
         sym_id: SymbolId,
@@ -624,6 +647,10 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         if decl_idx.is_none() {
             return TypeId::ERROR;
+        }
+
+        if self.current_arena_value_declaration_belongs_to_symbol(sym_id, decl_idx) {
+            return self.type_of_value_declaration_with_mode(decl_idx, apply_module_augmentations);
         }
 
         // Check declaration_arenas FIRST for the precise arena mapping.

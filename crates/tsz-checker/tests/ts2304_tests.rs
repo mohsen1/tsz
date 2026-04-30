@@ -202,6 +202,23 @@ fn check_js_without_lib(source: &str) -> Vec<Diagnostic> {
 }
 
 #[test]
+fn local_ambient_value_shadows_dom_interface_in_value_position() {
+    let diagnostics = check_with_lib(
+        r#"
+export {};
+declare var EventListener: any;
+EventListener("ready");
+"#,
+    );
+
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345.is_empty(),
+        "local ambient value declaration should shadow the DOM EventListener interface in value position, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2304_emitted_for_undefined_name() {
     let diagnostics = check_without_lib(r#"const x = undefinedName;"#);
 
