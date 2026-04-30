@@ -290,7 +290,14 @@ impl<'a> CheckerState<'a> {
                 break;
             }
 
-            if node.is_function_like() && !self.ctx.arena.is_immediately_invoked(current) {
+            // Bail out at non-IIFE function-like boundaries only if we haven't
+            // yet found the decorator. Once a decorator is found, the function-like
+            // node is the decorated method/accessor itself — not a deferring
+            // boundary — so we continue walking up to find the owning class.
+            if node.is_function_like()
+                && !self.ctx.arena.is_immediately_invoked(current)
+                && decorator_idx.is_none()
+            {
                 return None;
             }
 
