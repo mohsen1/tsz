@@ -47,6 +47,60 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether this empty array literal is being used to write into a storage
+    /// slot whose declared type already pins the element shape.
+    ///
+    /// In those contexts (variable initializers with annotations, assignment
+    /// RHS, return statement RHS for an annotated return type, etc.) tsc
+    /// adopts the contextual element type for `[]` rather than the
+    /// evolving-array `never[]` base. Adopting the contextual element here
+    /// avoids `never[]` poisoning subsequent flow narrowing of the storage
+    /// slot — without that, a `prop = []` write under an `if (!prop) { ... }`
+    /// guard injects `never[]` into the narrowed union, and method dispatch
+    /// over `Array<X> | never[]` collapses contravariant parameters to
+    /// `never` (e.g. `prop?.push(x)` reports a false TS2345).
+    ///
+    /// Generic-call argument positions are explicitly excluded because the
+    /// contextual type there is a still-being-inferred type parameter; using
+    /// it would prevent the inference engine from binding the parameter to
+    /// `never`.
+    fn empty_array_in_storage_assignment_context(&self, idx: NodeIndex) -> bool {
+        let Some(parent_idx) = self.ctx.arena.parent_of(idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        match parent_node.kind {
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => self
+                .ctx
+                .arena
+                .get_binary_expr(parent_node)
+                .is_some_and(|binary| {
+                    binary.right == idx
+                        && (binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
+                            || binary.operator_token
+                                == tsz_scanner::SyntaxKind::BarBarEqualsToken as u16
+                            || binary.operator_token
+                                == tsz_scanner::SyntaxKind::QuestionQuestionEqualsToken as u16
+                            || binary.operator_token
+                                == tsz_scanner::SyntaxKind::AmpersandAmpersandEqualsToken as u16)
+                }),
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
+                .ctx
+                .arena
+                .get_variable_declaration(parent_node)
+                .is_some_and(|decl| decl.initializer == idx && decl.type_annotation.is_some()),
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                || k == syntax_kind_ext::PARAMETER
+                || k == syntax_kind_ext::PROPERTY_DECLARATION =>
+            {
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn union_context_for_array_literal_is_ambiguous(&mut self, contextual: TypeId) -> bool {
         let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, contextual)
@@ -241,6 +295,30 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::remove_nullish(self.ctx.types, resolved);
                 if crate::query_boundaries::common::is_tuple_type(self.ctx.types, resolved) {
                     return factory.tuple(vec![]);
+                }
+                // When the contextual type is an array (e.g. assigning `[]` to
+                // `Types[T][]` in `obj.entries[name] = []`), thread the
+                // contextual element type into the literal instead of using
+                // the evolving-array `never[]` base. Using `never[]` here
+                // poisons subsequent flow narrowing of the assigned slot:
+                // a downstream `union_reduce(declared_type | never[])` keeps
+                // `never[]` as the contravariant supertype for callable
+                // members like `push`, collapsing the method signature's
+                // element type to `never` and producing false TS2345 on
+                // `obj.entries[name]?.push(item)`. tsc instead types `[]`
+                // with the contextual element type at the assignment site,
+                // so the narrowed slot stays compatible with the declared
+                // array. Skip when the literal node is the base of a JSDoc
+                // expando initializer or otherwise wants the evolving-array
+                // base — those cases set `empty_array_literal_prefers_never`.
+                if !self.empty_array_literal_prefers_never(idx)
+                    && self.empty_array_in_storage_assignment_context(idx)
+                    && let Some(elem) = crate::query_boundaries::common::array_element_type(
+                        self.ctx.types,
+                        resolved,
+                    )
+                {
+                    return factory.array(elem);
                 }
             }
 
@@ -963,6 +1041,61 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod array_literal_context_tests {
     use crate::test_utils::check_source_codes;
+
+    #[test]
+    fn empty_array_in_storage_assignment_adopts_contextual_element() {
+        // Regression for conformance test mappedTypeGenericIndexedAccess.ts:
+        // `obj.entries[name] = []` under an `if (!obj.entries[name]) { … }`
+        // guard was injecting `never[]` into the narrowed slot, then
+        // `obj.entries[name]?.push(item)` collapsed push's contravariant
+        // parameter to `never` and reported a false TS2345 against the
+        // generic argument type `Types[T]`.
+        //
+        // tsc threads the storage slot's element type into the literal at
+        // the assignment site, so the narrowed slot stays compatible with
+        // the declared array.
+        let source = r#"
+type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] } = {};
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2345),
+            "`this.entries[name]?.push(entry)` under an `if (!this.entries[name]) {{ this.entries[name] = []; }}` guard should not report TS2345, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn empty_array_in_generic_call_argument_still_drives_inference_to_never() {
+        // Guard against the storage-context widening leaking into generic
+        // call argument positions. There the contextual type is a still-
+        // being-inferred type parameter, and adopting it would prevent the
+        // inference engine from binding the parameter to `never`.
+        let source = r#"
+declare function f1<T>(x: T[]): T;
+let a1 = f1([]);
+let check: never = a1;
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            errors.is_empty(),
+            "f1([]) should still infer T = never (so `let check: never = a1` is OK), got: {errors:?}"
+        );
+    }
 
     #[test]
     fn rest_only_tuple_intersected_with_length_accepts_literal() {
