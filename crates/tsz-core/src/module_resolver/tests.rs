@@ -60,10 +60,7 @@ fn test_match_export_pattern_directory() {
         Some("other".to_string())
     );
     // Exact match still works
-    assert_eq!(
-        match_export_pattern("./", "./"),
-        Some(String::new())
-    );
+    assert_eq!(match_export_pattern("./", "./"), Some(String::new()));
     // Non-matching subpaths
     assert_eq!(match_export_pattern("./lib/", "./src/utils"), None);
 }
