@@ -633,9 +633,37 @@ impl<'a> CheckerState<'a> {
             // different arena. In that case, check the declaration directly to avoid
             // false positives.
             let has_type_params_in_decl = self.symbol_declaration_has_type_parameters(sym_id);
+            // Check module augmentations for the import's source module.
+            // When a symbol is imported from a module that has augmentations
+            // (e.g., `import {Row2} from '.'` where a `declare module '.'`
+            // adds `type Row2<T> = {}`), the target symbol may not have the
+            // augmented type parameters, but the module augmentation does.
+            // The import alias is in file_locals (with import_module set);
+            // the resolved target symbol loses that info.
+            let has_augmented_type_params = self
+                .ctx
+                .binder
+                .file_locals
+                .get(&base_name)
+                .is_some_and(|alias_sym_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(alias_sym_id)
+                        .and_then(|alias_sym| alias_sym.import_module.as_ref())
+                        .is_some_and(|module_spec| {
+                            let import_name = self
+                                .ctx
+                                .binder
+                                .get_symbol(alias_sym_id)
+                                .and_then(|s| s.import_name.clone())
+                                .unwrap_or_else(|| base_name.clone());
+                            self.module_augmentation_has_type_params(module_spec, &import_name)
+                        })
+                });
             // Suppress TS2315 for symbols from unresolved modules (type is ERROR)
             let symbol_type = self.get_type_of_symbol(sym_id);
             if !has_type_params_in_decl
+                && !has_augmented_type_params
                 && symbol_type != TypeId::ERROR
                 && symbol_type != TypeId::ANY
                 && !type_args_list.nodes.is_empty()
