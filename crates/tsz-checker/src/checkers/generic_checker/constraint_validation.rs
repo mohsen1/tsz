@@ -986,21 +986,43 @@ impl<'a> CheckerState<'a> {
                             constraint_resolved,
                         )
                         .is_some()
-                            && [TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]
-                                .into_iter()
-                                .any(|primitive_key| {
-                                    (base == primitive_key
-                                        || matches!(
-                                            self.format_type_diagnostic(base).as_str(),
-                                            "string | number" | "string | number | symbol"
-                                        )
-                                        || crate::query_boundaries::common::union_members(
-                                            self.ctx.types,
-                                            base,
-                                        )
-                                        .is_some_and(|members| members.contains(&primitive_key)))
-                                        && !self.is_assignable_to(primitive_key, inst_constraint)
-                                })
+                            && {
+                                // Decide membership *structurally* per primitive_key.
+                                // A display-string match ("string | number" /
+                                // "string | number | symbol") is per-base, not
+                                // per-key, so it would falsely admit SYMBOL
+                                // when base is `string | number` and emit a
+                                // spurious TS2344. Use TypeId equality and
+                                // union_members on both the unevaluated and
+                                // evaluated base — the latter recovers cases
+                                // where keyof/indexed-access bases only
+                                // decompose into a Union after evaluation.
+                                let base_evaluated = self.evaluate_type_for_assignability(base);
+                                let base_members = crate::query_boundaries::common::union_members(
+                                    self.ctx.types,
+                                    base,
+                                );
+                                let base_evaluated_members =
+                                    crate::query_boundaries::common::union_members(
+                                        self.ctx.types,
+                                        base_evaluated,
+                                    );
+                                [TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]
+                                    .into_iter()
+                                    .any(|primitive_key| {
+                                        let in_base = base == primitive_key
+                                            || base_evaluated == primitive_key
+                                            || base_members
+                                                .as_ref()
+                                                .is_some_and(|m| m.contains(&primitive_key))
+                                            || base_evaluated_members
+                                                .as_ref()
+                                                .is_some_and(|m| m.contains(&primitive_key));
+                                        in_base
+                                            && !self
+                                                .is_assignable_to(primitive_key, inst_constraint)
+                                    })
+                            }
                             && let Some(&arg_idx) = type_args_list.nodes.get(i)
                         {
                             self.error_type_constraint_not_satisfied(

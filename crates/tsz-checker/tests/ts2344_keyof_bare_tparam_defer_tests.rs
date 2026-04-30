@@ -207,3 +207,31 @@ build().overload({
         "fluent generic mapped callback context should not leak provisional TS7031, got: {diagnostics:?}"
     );
 }
+
+/// Regression test for primitive-key constraint check false-positive on
+/// SYMBOL when `base` is `string | number`.
+///
+/// The buggy display-string match (`"string | number"` /
+/// `"string | number | symbol"`) was per-base, not per-primitive_key, so
+/// SYMBOL was admitted as "present in base" when base displayed as
+/// `string | number`. Combined with the `!is_assignable_to(SYMBOL,
+/// inst_constraint)` check, this emitted a spurious TS2344 even when the
+/// base satisfied the constraint.
+#[test]
+fn test_string_or_number_base_does_not_falsely_demand_symbol_constraint() {
+    let diagnostics = compile_and_get_diagnostic_codes(
+        r#"
+type SomeType = { [k: string]: any; [n: number]: any };
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+
+declare function pickFrom<T, K extends string | number>(
+    obj: T,
+    keys: K[],
+): Pick<T, K & keyof T>;
+"#,
+    );
+    assert!(
+        !diagnostics.contains(&2344),
+        "expected no TS2344 — `string | number` base satisfies the constraint without needing SYMBOL membership, got: {diagnostics:?}"
+    );
+}

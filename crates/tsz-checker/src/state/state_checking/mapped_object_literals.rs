@@ -158,29 +158,41 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Skip computed property names: tsc emits the more specific TS2418
-        // for computed-property-value type mismatches; firing TS2322 here
-        // would shadow that code
-        // (uniqueSymbolAllowsIndexInObjectWithIndexSignature).
-        if self
-            .find_object_literal_property_element(obj_literal_idx, prop_name)
-            .and_then(|elem_idx| self.ctx.arena.get(elem_idx))
-            .and_then(|elem_node| self.ctx.arena.get_property_assignment(elem_node))
-            .and_then(|prop| self.ctx.arena.get(prop.name))
-            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+        // Skip when the source object literal contains *any* computed
+        // property name: tsc emits the more specific TS2418
+        // (Type of computed property's value …) for those, and firing
+        // TS2322 here would shadow that code
+        // (uniqueSymbolAllowsIndexInObjectWithIndexSignature). Atom-based
+        // matching of computed-symbol names from the obj literal is
+        // unreliable, so use a coarser presence check.
+        if let Some(obj_node) = self.ctx.arena.get(obj_literal_idx)
+            && let Some(obj_lit) = self.ctx.arena.get_literal_expr(obj_node)
+            && obj_lit.elements.nodes.iter().any(|&elem_idx| {
+                self.ctx
+                    .arena
+                    .get(elem_idx)
+                    .and_then(|n| self.ctx.arena.get_property_assignment(n))
+                    .and_then(|prop| self.ctx.arena.get(prop.name))
+                    .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            })
         {
             return false;
         }
 
-        let source_type_for_check = self
-            .object_literal_property_name_and_value(obj_literal_idx, prop_name)
-            .map(|(_, value_idx)| {
-                self.get_type_of_node_with_request(value_idx, &crate::context::TypingRequest::NONE)
-            })
-            .filter(|&type_id| !matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN))
-            .unwrap_or(source_prop_type);
+        // Use the caller's already-computed source_prop_type rather than
+        // re-deriving via `TypingRequest::NONE`. NONE strips contextual *and*
+        // triggers fresh-literal widening (e.g. `"select"` → `string`), which
+        // produces false positives when the property's natural literal type is
+        // assignable to the target but its widened form is not
+        // (contextualTypeBasedOnIntersectionWithAnyInTheMix1.ts).
+        if matches!(
+            source_prop_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
+        ) {
+            return false;
+        }
 
-        if self.is_assignable_to(source_type_for_check, target_prop_type) {
+        if self.is_assignable_to(source_prop_type, target_prop_type) {
             return false;
         }
 
@@ -190,7 +202,7 @@ impl<'a> CheckerState<'a> {
             .find_object_literal_property_element(obj_literal_idx, prop_name)
             .unwrap_or(obj_literal_idx);
         self.error_type_not_assignable_at_with_anchor(
-            source_type_for_check,
+            source_prop_type,
             target_prop_type_for_message,
             report_idx,
         );
