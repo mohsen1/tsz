@@ -1,30 +1,40 @@
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_solver::TypeId;
 
-/// Dense flat-vec cache for node-index-keyed `TypeId` lookups.
+/// Sparse cache for node-index-keyed `TypeId` lookups.
+///
+/// `NodeIndex` values are arena-local, so this cache is never shared across
+/// parent/child checkers. It is Arc-backed for cheap speculation snapshots:
+/// rollback stores a read snapshot and the active cache copy-on-writes only if
+/// it is mutated after the snapshot.
 #[derive(Clone, Debug)]
 pub struct NodeTypeCache {
-    data: Vec<TypeId>,
+    data: Arc<FxHashMap<u32, TypeId>>,
 }
 
 impl NodeTypeCache {
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            data: vec![TypeId::NONE; capacity],
+            data: Arc::new(FxHashMap::with_capacity_and_hasher(
+                capacity.min(4096),
+                Default::default(),
+            )),
         }
     }
 
     #[inline]
-    pub const fn new() -> Self {
-        Self { data: Vec::new() }
+    pub fn new() -> Self {
+        Self {
+            data: Arc::new(FxHashMap::default()),
+        }
     }
 
     #[inline]
     pub fn get(&self, key: &u32) -> Option<&TypeId> {
-        let idx = *key as usize;
-        self.data.get(idx).filter(|t| **t != TypeId::NONE)
+        self.data.get(key)
     }
 
     #[inline]
@@ -32,76 +42,43 @@ impl NodeTypeCache {
         if key == u32::MAX {
             return;
         }
-        let idx = key as usize;
-        if idx >= self.data.len() {
-            self.data.resize(idx + 1, TypeId::NONE);
+        let data = Arc::make_mut(&mut self.data);
+        if value == TypeId::NONE {
+            data.remove(&key);
+        } else {
+            data.insert(key, value);
         }
-        self.data[idx] = value;
     }
 
     #[inline]
     pub fn contains_key(&self, key: &u32) -> bool {
-        let idx = *key as usize;
-        self.data.get(idx).is_some_and(|t| *t != TypeId::NONE)
+        self.data.contains_key(key)
     }
 
     #[inline]
     pub fn remove(&mut self, key: &u32) -> Option<TypeId> {
-        let idx = *key as usize;
-        if let Some(slot) = self.data.get_mut(idx)
-            && *slot != TypeId::NONE
-        {
-            let old = *slot;
-            *slot = TypeId::NONE;
-            return Some(old);
-        }
-        None
+        Arc::make_mut(&mut self.data).remove(key)
     }
 
     #[inline]
     pub fn or_insert(&mut self, key: u32, value: TypeId) -> TypeId {
-        let idx = key as usize;
-        if idx >= self.data.len() {
-            self.data.resize(idx + 1, TypeId::NONE);
-        }
-        if self.data[idx] == TypeId::NONE {
-            self.data[idx] = value;
-        }
-        self.data[idx]
+        *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (u32, TypeId)> + '_ {
-        self.data
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| **t != TypeId::NONE)
-            .map(|(i, t)| (i as u32, *t))
+        self.data.iter().map(|(i, t)| (*i, *t))
     }
 
     pub fn clear(&mut self) {
-        self.data.fill(TypeId::NONE);
+        Arc::make_mut(&mut self.data).clear();
     }
 
     pub fn merge(&mut self, other: &Self) {
-        if other.data.len() > self.data.len() {
-            self.data.resize(other.data.len(), TypeId::NONE);
-        }
-        for (i, &t) in other.data.iter().enumerate() {
-            if t != TypeId::NONE {
-                self.data[i] = t;
-            }
-        }
+        Arc::make_mut(&mut self.data).extend(other.iter());
     }
 
     pub fn merge_owned(&mut self, other: Self) {
-        if other.data.len() > self.data.len() {
-            self.data.resize(other.data.len(), TypeId::NONE);
-        }
-        for (i, t) in other.data.into_iter().enumerate() {
-            if t != TypeId::NONE {
-                self.data[i] = t;
-            }
-        }
+        Arc::make_mut(&mut self.data).extend(other.iter());
     }
 
     pub fn extend<I: IntoIterator<Item = (u32, TypeId)>>(&mut self, iter: I) {
@@ -111,11 +88,11 @@ impl NodeTypeCache {
     }
 
     pub fn len(&self) -> usize {
-        self.data.iter().filter(|t| **t != TypeId::NONE).count()
+        self.data.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.data.iter().all(|t| *t == TypeId::NONE)
+        self.data.is_empty()
     }
 
     pub fn to_hash_map(&self) -> FxHashMap<u32, TypeId> {
@@ -182,98 +159,88 @@ impl Default for NarrowableIdentifierCache {
     }
 }
 
-/// Dense flat-vec cache for `SymbolId -> TypeId` lookups.
+/// Sparse cache for `SymbolId -> TypeId` lookups.
+///
+/// `SymbolId`s are global after program merge, so a dense per-checker vector
+/// scales with total program symbols even when a checker touches only a small
+/// subset. Keep the cache sparse and Arc-backed so child checkers can inherit a
+/// read snapshot cheaply; writes copy-on-write only the populated entries.
 #[derive(Clone, Debug)]
 pub struct SymbolTypeCache {
-    data: Vec<TypeId>,
+    data: Arc<FxHashMap<SymbolId, TypeId>>,
 }
 
 impl SymbolTypeCache {
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            data: vec![TypeId::NONE; capacity],
+            data: Arc::new(FxHashMap::with_capacity_and_hasher(
+                capacity.min(4096),
+                Default::default(),
+            )),
         }
     }
 
     #[inline]
-    pub const fn new() -> Self {
-        Self { data: Vec::new() }
+    pub fn new() -> Self {
+        Self {
+            data: Arc::new(FxHashMap::default()),
+        }
     }
 
     #[inline]
     pub fn get(&self, key: &SymbolId) -> Option<&TypeId> {
-        let idx = key.0 as usize;
-        self.data.get(idx).filter(|t| **t != TypeId::NONE)
+        self.data.get(key)
     }
 
     #[inline]
     pub fn insert(&mut self, key: SymbolId, value: TypeId) {
-        let idx = key.0 as usize;
-        if idx >= self.data.len() {
-            self.data.resize(idx + 1, TypeId::NONE);
+        let data = Arc::make_mut(&mut self.data);
+        if value == TypeId::NONE {
+            data.remove(&key);
+        } else {
+            data.insert(key, value);
         }
-        self.data[idx] = value;
     }
 
     #[inline]
     pub fn contains_key(&self, key: &SymbolId) -> bool {
-        let idx = key.0 as usize;
-        self.data.get(idx).is_some_and(|t| *t != TypeId::NONE)
+        self.data.contains_key(key)
     }
 
     #[inline]
     pub fn remove(&mut self, key: &SymbolId) -> Option<TypeId> {
-        let idx = key.0 as usize;
-        if let Some(slot) = self.data.get_mut(idx)
-            && *slot != TypeId::NONE
-        {
-            let old = *slot;
-            *slot = TypeId::NONE;
-            return Some(old);
-        }
-        None
+        Arc::make_mut(&mut self.data).remove(key)
     }
 
     #[inline]
     pub fn entry_or_insert(&mut self, key: SymbolId, value: TypeId) -> TypeId {
-        let idx = key.0 as usize;
-        if idx >= self.data.len() {
-            self.data.resize(idx + 1, TypeId::NONE);
-        }
-        if self.data[idx] == TypeId::NONE {
-            self.data[idx] = value;
-        }
-        self.data[idx]
+        *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
     }
 
     pub fn len(&self) -> usize {
-        self.data.iter().filter(|t| **t != TypeId::NONE).count()
+        self.data.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.data.iter().all(|t| *t == TypeId::NONE)
+        self.data.is_empty()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (SymbolId, TypeId)> + '_ {
         self.data
             .iter()
-            .enumerate()
-            .filter(|(_, t)| **t != TypeId::NONE)
-            .map(|(i, t)| (SymbolId(i as u32), *t))
+            .map(|(&symbol_id, &type_id)| (symbol_id, type_id))
     }
 
     pub fn to_hash_map(&self) -> FxHashMap<SymbolId, TypeId> {
-        self.iter().collect()
+        self.data.as_ref().clone()
     }
 
     pub fn extend(&mut self, other: Self) {
-        if other.data.len() > self.data.len() {
-            self.data.resize(other.data.len(), TypeId::NONE);
-        }
-        for (i, t) in other.data.into_iter().enumerate() {
-            if t != TypeId::NONE {
-                self.data[i] = t;
+        let data = Arc::make_mut(&mut self.data);
+        for (&symbol_id, &type_id) in other.data.iter() {
+            if type_id != TypeId::NONE {
+                data.insert(symbol_id, type_id);
             }
         }
     }

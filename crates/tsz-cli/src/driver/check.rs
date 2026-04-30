@@ -1114,53 +1114,55 @@ pub(super) fn collect_diagnostics(
         let _parallel_span =
             tracing::info_span!("parallel_check_files", files = work_queue.len()).entered();
 
-        // Pre-compute per-file module bridging — parallel across files since
-        // each binder is constructed independently from the shared
-        // `program`/`merged_augmentations`/`cached_module_specifiers`/
-        // `resolved_module_paths` borrows. On large-ts-repo (6086 files) this
-        // moves the prepare phase from sequential to N-way parallel, since
-        // the bottleneck is symbol-table cloning per binder rather than IO.
-        let per_file_binders: Vec<BinderState> = {
-            use rayon::prelude::*;
-            let _prep_span = tracing::info_span!("prepare_binders").entered();
-            work_queue
-                .par_iter()
-                .map(|&file_idx| {
-                    let file = &program.files[file_idx];
-                    let mut binder = create_binder_from_bound_file_with_augmentations(
-                        file,
-                        program,
-                        file_idx,
-                        &merged_augmentations,
-                    );
-
-                    // Bridge raw module specifiers to resolved export tables using
-                    // the pre-computed resolved_module_paths map (no FS calls needed).
-                    // Uses cached specifiers from build_resolved_module_maps.
-                    for (specifier, _, _, _) in &cached_module_specifiers[file_idx] {
-                        if let Some(&target_idx) =
-                            resolved_module_paths.get(&(file_idx, specifier.clone()))
-                        {
-                            propagate_module_export_maps(
-                                &mut binder,
-                                specifier,
-                                target_idx,
-                                program,
-                                &resolved_module_paths,
-                            );
-                        }
-                    }
-                    binder
-                })
-                .collect()
-        };
-
-        let work_items: Vec<usize> = work_queue.into_iter().collect();
         let no_check = options.no_check;
         let check_js = options.check_js;
         let explicit_check_js_false = options.explicit_check_js_false;
         let skip_lib_check = options.skip_lib_check;
         let compiler_options = options.checker.clone();
+        let mut work_items: Vec<usize> = Vec::with_capacity(work_queue.len());
+        let mut skipped_file_diagnostics: Vec<Vec<Diagnostic>> = Vec::new();
+        for file_idx in work_queue {
+            let file = &program.files[file_idx];
+            if should_skip_type_checking_for_file(&file.file_name, options, false) {
+                let mut file_diags = collect_no_check_file_diagnostics(
+                    file,
+                    options,
+                    program_has_real_syntax_errors,
+                );
+                file_diags.extend(per_file_ts7016_diagnostics[file_idx].iter().cloned());
+                skipped_file_diagnostics.push(file_diags);
+            } else {
+                work_items.push(file_idx);
+            }
+        }
+        diagnostics.extend(skipped_file_diagnostics.into_iter().flatten());
+
+        let build_checker_binder = |file_idx: usize| {
+            let file = &program.files[file_idx];
+            let mut binder = create_binder_from_bound_file_with_augmentations(
+                file,
+                program,
+                file_idx,
+                &merged_augmentations,
+            );
+
+            // Bridge raw module specifiers to resolved export tables using the
+            // pre-computed resolved_module_paths map (no FS calls needed).
+            for (specifier, _, _, _) in &cached_module_specifiers[file_idx] {
+                if let Some(&target_idx) = resolved_module_paths.get(&(file_idx, specifier.clone()))
+                {
+                    propagate_module_export_maps(
+                        &mut binder,
+                        specifier,
+                        target_idx,
+                        program,
+                        &resolved_module_paths,
+                    );
+                }
+            }
+            binder
+        };
+
         // `TypeCache` is consumed by the emit pipeline (JS or declaration
         // files). For a pure `--noEmit` run that does not also request
         // declarations the cache is never read, but extracting one per file
@@ -1185,10 +1187,7 @@ pub(super) fn collect_diagnostics(
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<CheckFileResult> = {
-            use rayon::iter::{
-                IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-                ParallelIterator,
-            };
+            use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
             // Use sequential checking for small projects (<=8 files) to avoid
             // non-deterministic false positives from concurrent type interning.
             // The TypeInterner uses DashMap for thread-safe access, but concurrent
@@ -1199,8 +1198,8 @@ pub(super) fn collect_diagnostics(
             if work_items.len() <= 8 {
                 work_items
                     .iter()
-                    .zip(per_file_binders)
-                    .map(|(&file_idx, binder)| {
+                    .map(|&file_idx| {
+                        let binder = build_checker_binder(file_idx);
                         let context = CheckFileForParallelContext {
                             file_idx,
                             binder,
@@ -1236,9 +1235,9 @@ pub(super) fn collect_diagnostics(
                 // queue.
                 work_items
                     .par_iter()
-                    .zip(per_file_binders.into_par_iter())
                     .with_min_len(1)
-                    .map(|(&file_idx, binder)| {
+                    .map(|&file_idx| {
+                        let binder = build_checker_binder(file_idx);
                         let context = CheckFileForParallelContext {
                             file_idx,
                             binder,
@@ -1264,8 +1263,8 @@ pub(super) fn collect_diagnostics(
         #[cfg(target_arch = "wasm32")]
         let file_results: Vec<CheckFileResult> = work_items
             .iter()
-            .zip(per_file_binders.into_iter())
-            .map(|(&file_idx, binder)| {
+            .map(|&file_idx| {
+                let binder = build_checker_binder(file_idx);
                 let context = CheckFileForParallelContext {
                     file_idx,
                     binder,
