@@ -205,6 +205,83 @@ Skill usage rules:
 - **Do not bail.** If you understand the root cause, fix it. If the fix spans
   solver + checker + boundary, make the fix.
 
+## 20.26) ANTI-BAIL DIRECTIVE — read every conformance turn
+
+The agent's job on conformance work is to **land a merged PR**, not to write
+research notes about why the work is hard. Every conformance task in this
+codebase is non-trivial — the easy ones are already merged. The remaining
+diff=1, fingerprint-only, and false-positive failures all touch deep solver,
+checker, or boundary code, and that is **expected**, not a reason to stop.
+
+### Forbidden bail-outs
+
+The following are explicitly forbidden. If you catch yourself doing any of
+these, stop, re-read this section, and resume the original target.
+
+1. **"This requires deep solver/checker work, so I'll abandon and pick a
+   simpler test."** No. There is no "simpler" test in the current corpus.
+   Every remaining failure is multi-hour work. Pivoting just spends the
+   next two hours on a different multi-hour problem.
+2. **"I've narrowed the reproducer; the next agent can resume from here."**
+   No. *You* are the next agent. Implement the fix. Investigation that
+   doesn't ship is wasted budget.
+3. **"This is a known TS feature gap (e.g., type-predicate inference,
+   homomorphic mapped indexing, JSX runtime resolution) — out of scope
+   for a quick fix."** Nothing here is "out of scope". If tsc emits the
+   diagnostic, tsz must too. Implement the feature.
+4. **"Time-box exhausted, ending with research findings."** Time is not
+   the constraint — task convergence is. If your current trace has
+   localized the failure surface, push through. If it has not, take
+   another instrumentation pass; do not switch tests.
+5. **"The unit test harness has a limitation."** Then fix the harness.
+   This codebase already has multiple commits that adjust the test
+   harness as part of a larger checker fix.
+6. **"Each candidate I look at involves multiple-fingerprint diffs / XFAIL /
+   declaration merging / module resolution."** Yes. Pick one and fix all
+   of its diffs. A merged PR that flips one XFAIL is worth ten abandoned
+   investigations.
+
+### When you genuinely cannot proceed
+
+Two cases:
+
+- **You hit an architectural rule that forbids the obvious fix.** Read
+  §3, §4, §11, §12, §22, then route the fix through `query_boundaries`
+  or a solver query helper. The architecture rules tell you *where* to
+  fix, not *whether*.
+- **The fix would cross 5+ files in unrelated subsystems** (e.g.,
+  scanner + binder + emitter for a checker symptom). Even then, do the
+  fix — multi-crate PRs are normal. The roadmap explicitly lists them
+  as expected.
+
+### Convergence budget
+
+For a conformance fix:
+
+- **0–60 min**: reproduce, instrument, locate the failure surface.
+- **60–180 min**: implement the fix, including any required harness or
+  helper plumbing.
+- **180+ min**: keep going. The first good fix in a new area routinely
+  takes a full day. Subsequent fixes in the same area are 10× faster
+  because the instrumentation and mental model are already paid for.
+
+If the loop fires multiple times for the same task, **continue the same
+task each iteration**. Do not start fresh. Read the running plan or claim
+file for context and resume where the prior iteration left off.
+
+### What "shipping" means
+
+A conformance task is shipped when:
+
+1. The targeted test passes (`./scripts/conformance/conformance.sh run --filter <name>` shows `PASS` or `1/1 passed`).
+2. A unit test in the owning crate locks the new behavior.
+3. `cargo nextest run -p tsz-checker -p tsz-solver` is clean.
+4. A PR is open, CI is green, the PR is merged into `main`.
+
+Until step 4 lands, the task is not done. Research notes, abandoned PRs,
+and "deferred" claim files do **not** count. The only artifact that
+moves the public conformance % is a merge into `main`.
+
 ### Quick reference
 ```bash
 # Pick one random failure (prints path + codes + a verbose-run command):
