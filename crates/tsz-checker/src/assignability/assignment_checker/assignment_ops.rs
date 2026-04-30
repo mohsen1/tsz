@@ -65,11 +65,45 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+        // Constrain the TS7008 lookup to diagnostics whose span sits within
+        // the same enclosing function-like that owns this assignment target.
+        // Without that scoping, two JS constructors in the same file with
+        // identically-named properties would cross-pollinate — `B.x = "hi"`
+        // would silently match `A`'s TS7008 for `x` and skip the
+        // assignability check, swallowing a real TS2322. This isn't a fully
+        // semantic flag (a follow-up should hang the implicit-any state on
+        // the property type itself) but it's enough to keep different
+        // constructors' member-name collisions from leaking.
+        let target_scope = self.enclosing_function_like_span(idx);
         let prefix = format!("Member '{member_name}' implicitly has an '");
         self.ctx.diagnostics.iter().any(|diag| {
-            diag.code == diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
-                && diag.message_text.starts_with(&prefix)
+            if diag.code != diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
+                || !diag.message_text.starts_with(&prefix)
+            {
+                return false;
+            }
+            match target_scope {
+                Some((scope_start, scope_end)) => {
+                    diag.start >= scope_start && diag.start < scope_end
+                }
+                // No enclosing function/class context — keep the legacy
+                // file-scoped match so top-level `this.x` patterns still
+                // benefit from the carve-out.
+                None => true,
+            }
         })
+    }
+
+    fn enclosing_function_like_span(&self, idx: NodeIndex) -> Option<(u32, u32)> {
+        let mut current = idx;
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if node.is_function_like() || node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                return Some((node.pos, node.end));
+            }
+            current = self.ctx.arena.parent_of(current)?;
+        }
+        None
     }
 
     fn is_control_flow_typed_any_assignment_target(&mut self, idx: NodeIndex) -> bool {
