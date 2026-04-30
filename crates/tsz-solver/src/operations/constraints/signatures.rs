@@ -429,6 +429,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         is_constructor: bool,
     ) -> Option<usize> {
+        let mut placeholder_visited = FxHashSet::default();
+        if self.type_contains_placeholder(target_fn, var_map, &mut placeholder_visited) {
+            let last_idx = signatures
+                .iter()
+                .rposition(|sig| sig.type_params.is_empty())?;
+            let last_arity = signatures[last_idx].params.len();
+            let all_same_arity = signatures
+                .iter()
+                .filter(|sig| sig.type_params.is_empty())
+                .all(|sig| sig.params.len() == last_arity);
+            if all_same_arity {
+                return Some(last_idx);
+            }
+        }
+
         let target_erased = self.erase_placeholders_for_inference(target_fn, var_map);
         // First pass: try non-generic signatures
         for (index, sig) in signatures.iter().enumerate() {
