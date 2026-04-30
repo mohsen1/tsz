@@ -502,10 +502,20 @@ impl<'a> CheckerState<'a> {
         // boundary, the usage executes immediately and IS a violation.
         let mut current = usage_idx;
         let mut found_decl_in_path = false;
+        // Track whether the walk has passed through a DECORATOR node. Method and
+        // parameter decorators execute immediately at class-definition time (not
+        // deferred through the decorated function's body), so a function-like
+        // boundary that is the decorated method/accessor should not stop the TDZ
+        // check. Once set, this flag persists for the rest of the upward walk so
+        // that the method-declaration boundary is treated as non-deferring.
+        let mut in_decorator = false;
         while current.is_some() {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
+            if node.kind == syntax_kind_ext::DECORATOR {
+                in_decorator = true;
+            }
             if current == decl_idx {
                 found_decl_in_path = true;
             }
@@ -519,9 +529,12 @@ impl<'a> CheckerState<'a> {
             // immediately, so they ARE TDZ violations.
             // Exception: Decorator arguments execute at class definition time,
             // so function-like boundaries within decorators don't defer execution.
+            // This covers both method decorators (@dec on method) and parameter
+            // decorators (@dec on a method parameter).
             if node.is_function_like()
                 && !self.ctx.arena.is_immediately_invoked(current)
                 && !in_class_decorator
+                && !in_decorator
             {
                 return false;
             }
