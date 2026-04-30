@@ -567,5 +567,9 @@ path = "tests/super_keyword_speculation_survival_tests.rs"
 name = "ambient_default_namespace_export_dup_tests"
 path = "tests/ambient_default_namespace_export_dup_tests.rs"
 
+[[test]]
+name = "global_this_const_property_tests"
+path = "tests/global_this_const_property_tests.rs"
+
 [lints]
 workspace = true
