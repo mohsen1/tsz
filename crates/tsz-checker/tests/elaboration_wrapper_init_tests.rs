@@ -163,3 +163,52 @@ fn as_assertion_wrapped_object_literal_anchors_at_binding() {
         "TS2322 should anchor at or before the variable binding (offset {start} < object literal at {object_literal_start}), got start={start} msg={msg:?}",
     );
 }
+
+/// `as const` is not opaque for elaboration like `as T` / `satisfies T`:
+/// it freezes literals and adds readonly without changing structural shape.
+/// tsc drills into the offending property when the inner object literal
+/// mismatches the declared type.
+///
+/// Regression for `constAssertions.ts` (Foo54374 case): `const x: { b: 2 }
+/// = { b: 3 } as const` should anchor TS2322 at the `b: 3` property, not
+/// at the variable binding.
+#[test]
+fn as_const_wrapped_object_literal_drills_to_property() {
+    let src = r#"
+interface Foo54374 {
+  a: 1;
+  b: 2;
+}
+
+const fooConst54374: Foo54374 = {
+  a: 1,
+  b: 3
+} as const
+"#;
+    let diags = diagnostics_with_pos(src);
+
+    // tsc anchors at `b: 3`. We anchor at the `b` property element. Both
+    // sit *inside* the object literal, well past the variable binding.
+    let var_binding_offset = src.find("fooConst54374").unwrap() as u32;
+    let object_literal_start = src.find('{').unwrap() as u32;
+    let b_property_offset = src.rfind("b: 3").unwrap() as u32;
+
+    let ts2322: Vec<_> = diags.iter().filter(|(code, ..)| *code == 2322).collect();
+    assert!(!ts2322.is_empty(), "expected TS2322, got: {diags:?}");
+    for (_code, start, msg) in ts2322 {
+        assert!(
+            *start >= object_literal_start,
+            "TS2322 for as-const should drill into the object literal (start={start} >= object literal at {object_literal_start}), not anchor at the binding (offset {var_binding_offset}). msg={msg:?}",
+        );
+        // Tighter: the diagnostic should anchor at or after the offending property.
+        assert!(
+            *start >= b_property_offset || (msg.contains("'3'") && msg.contains("'2'")),
+            "TS2322 should anchor at the `b: 3` property (offset >= {b_property_offset}) OR have the leaf 3-vs-2 message; got start={start} msg={msg:?}",
+        );
+        // Sanity: leaf-level message shape.
+        assert!(
+            msg.contains("'3'") && msg.contains("'2'"),
+            "expected 3-vs-2 leaf message, got: {msg:?}",
+        );
+    }
+}
