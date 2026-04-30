@@ -705,6 +705,7 @@ impl ModuleResolver {
                         specifier,
                         containing_file,
                         import_kind,
+                        importing_module_kind_for_lookup,
                     ) {
                         return ModuleLookupResult::failed(
                             CANNOT_FIND_MODULE,
@@ -843,6 +844,7 @@ impl ModuleResolver {
         specifier: &str,
         containing_file: &Path,
         _import_kind: ImportKind,
+        importing_module_kind: ImportingModuleKind,
     ) -> bool {
         let is_node16_or_next = matches!(
             self.resolution_kind,
@@ -852,8 +854,11 @@ impl ModuleResolver {
             return false;
         }
 
+        // Honor the actual import-site module kind, not just the file extension.
+        // A `.ts` file in a `type: "module"` package may have ESM imports even
+        // though the `.ts` extension alone does not force ESM.
         let importing_ext = ModuleExtension::from_path(containing_file);
-        let is_esm = importing_ext.forces_esm();
+        let is_esm = importing_ext.forces_esm() || importing_module_kind == ImportingModuleKind::Esm;
 
         let specifier_has_extension = Path::new(specifier).extension().is_some();
 

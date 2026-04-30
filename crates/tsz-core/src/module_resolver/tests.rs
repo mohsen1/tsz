@@ -4318,3 +4318,93 @@ fn test_lookup_classify_ambient_no_path_no_error() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_node16_bare_directory_specifier_emits_ts2307_not_ts2834() {
+    // In Node16/NodeNext, `./` and `../` specifiers that resolve via directory
+    // index should emit TS2307 (Cannot find module), not TS2834/TS2835, because
+    // there is no filename component to attach an extension suggestion to.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_node16_bare_dir_ts2307");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("sub")).unwrap();
+
+    fs::write(dir.join("index.mts"), "").unwrap();
+    fs::write(dir.join("sub/index.mts"), "export const x = 1;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        module_suffixes: vec![String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    // `./` in ESM file → TS2307 (bare directory, has no filename to suggest)
+    let result = resolver.resolve("./", &dir.join("index.mts"), Span::new(0, 2));
+    match result {
+        Err(ResolutionFailure::NotFound { .. }) => {} // expected TS2307
+        Err(ResolutionFailure::ImportPathNeedsExtension { .. }) => {
+            panic!("Bare './' should emit TS2307, not TS2834/TS2835");
+        }
+        other => panic!("Expected TS2307, got {:?}", other.err()),
+    }
+
+    // `./sub/` in ESM file → TS2834 (directory with index, no filename to suggest)
+    let result = resolver.resolve("./sub/", &dir.join("index.mts"), Span::new(0, 2));
+    match result {
+        Err(ResolutionFailure::ImportPathNeedsExtension { suggested_extension, .. }) => {
+            assert!(
+                suggested_extension.is_empty(),
+                "Directory './sub/' resolves via index, should have no suggestion"
+            );
+        }
+        other => panic!("Expected TS2834, got {:?}", other.err()),
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_node16_direct_index_file_gets_extension_suggestion() {
+    // `./sub/index` should emit TS2835 with a suggested extension when it
+    // resolves directly to `sub/index.mts` (direct file, not directory index).
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_node16_direct_index_sugg");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("sub")).unwrap();
+
+    fs::write(dir.join("index.mts"), "").unwrap();
+    fs::write(dir.join("sub/index.mts"), "export const x = 1;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        module_suffixes: vec![String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let result =
+        resolver.resolve("./sub/index", &dir.join("index.mts"), Span::new(0, 2));
+    match result {
+        Err(ResolutionFailure::ImportPathNeedsExtension { suggested_extension, .. }) => {
+            assert!(
+                !suggested_extension.is_empty(),
+                "Direct './sub/index' should have an extension suggestion"
+            );
+        }
+        other => panic!(
+            "Expected TS2835 with suggestion, got {:?}",
+            other.err()
+        ),
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
