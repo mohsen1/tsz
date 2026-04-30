@@ -11,7 +11,7 @@ use crate::types::{
     IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType, ObjectFlags,
     ObjectShape, PropertyInfo, TupleListId, TypeData, TypeId,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
@@ -151,12 +151,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // If we can't determine concrete keys, keep it as a mapped type (deferred)
         let key_set = match self.extract_mapped_keys(keys) {
             Some(mut keys) => {
-                // Deduplicate string literals to handle overlapping enum members.
-                // For example, `enum A { CAT = "cat" }` and `enum B { CAT = "cat" }` both
-                // produce key "cat". Without dedup, the mapped type would have two conflicting
-                // properties named "cat" with different types.
-                keys.string_literals.sort_unstable();
-                keys.string_literals.dedup();
+                // Deduplicate string literals to handle overlapping enum members
+                // (e.g. `enum A { CAT = "cat" }` and `enum B { CAT = "cat" }` both
+                // produce key "cat") while preserving the original declaration
+                // order from the constraint. tsc walks the constraint union in
+                // source order, so the resulting mapped type's property order —
+                // and therefore the type printer's output for `T[keyof T]` —
+                // must follow that same order.
+                let mut seen: FxHashSet<Atom> = FxHashSet::default();
+                keys.string_literals.retain(|atom| seen.insert(*atom));
                 keys
             }
             None => {

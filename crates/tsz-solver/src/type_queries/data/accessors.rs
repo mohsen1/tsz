@@ -433,9 +433,15 @@ pub fn get_tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> O
 /// This is the type-computation portion of `keyof T` when T is an object.
 pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     let shape = get_object_shape(db, type_id)?;
+    // Object shapes store properties sorted by atom for hash consistency. Walk
+    // them in declaration order here so the resulting `keyof` union matches
+    // tsc — tsc allocates literal types in property declaration order, which
+    // makes its alloc-order union sort emit keys in source order.
+    let mut props: Vec<&PropertyInfo> = shape.properties.iter().collect();
+    props.sort_by_key(|p| p.declaration_order);
     let mut key_types: Vec<TypeId> = Vec::new();
     let mut has_symbol_key = false;
-    for p in &shape.properties {
+    for p in props {
         if p.visibility != crate::Visibility::Public {
             continue;
         }
