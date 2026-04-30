@@ -114,6 +114,28 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Function-like source values (arrow / function expression / method
+        // shorthand) require contextual inference from the per-property target
+        // before their type is meaningful. Re-deriving them here without context
+        // and comparing against the target produces a spurious TS2322 against
+        // the *widened* mapped target instead of the per-property narrowed one.
+        // Defer to the regular property-comparison path which preserves
+        // contextual typing.
+        if self
+            .object_literal_property_name_and_value(obj_literal_idx, prop_name)
+            .and_then(|(_, value_idx)| self.ctx.arena.get(value_idx))
+            .is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::METHOD_DECLARATION
+                )
+            })
+        {
+            return false;
+        }
+
         let source_type_for_check = self
             .object_literal_property_name_and_value(obj_literal_idx, prop_name)
             .map(|(_, value_idx)| {
@@ -303,6 +325,22 @@ impl<'a> CheckerState<'a> {
                 target_prop_type,
                 TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
             ) {
+                continue;
+            }
+
+            // Function-like initializers need contextual inference from the
+            // per-property target before their type is meaningful — re-checking
+            // here without context yields a spurious TS2322 against the
+            // *widened* mapped target instead of the per-property narrowed
+            // one. Defer to the regular property-comparison path.
+            if self.ctx.arena.get(prop.initializer).is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::METHOD_DECLARATION
+                )
+            }) {
                 continue;
             }
 
