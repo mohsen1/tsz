@@ -479,3 +479,41 @@ const outputExample: { Test: { Test1: { Test2: string } } } = validatorFunc({
          not stop at `NativeTypeValidator<string>`), got: {codes:?}"
     );
 }
+
+#[test]
+fn reverse_mapped_tuple_context_application_contextual_type() {
+    // reverseMappedTupleContext.ts: array literals passed to functions whose
+    // parameter is a generic type alias application (Definition<Schema>) should also
+    // be inferred as tuples, even though the contextual type is an Application, not
+    // a bare Mapped type.
+    let code = r#"
+type Func<T> = () => T;
+type Definition<T extends unknown[]> = { [K in keyof T]: Func<T[K]> };
+
+declare function create<T extends unknown[]>(schema: Definition<T>): T;
+
+const result = create([() => 1, [() => "hello"]]);
+const x: number = result[0];
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2345),
+        "Expected no TS2345: array literal should be inferred as tuple when contextual type is a homomorphic Application, got: {codes:?}"
+    );
+}
+
+#[test]
+fn reverse_mapped_tuple_context_no_false_positive_for_non_homomorphic() {
+    // Non-homomorphic mapped types (where the constraint is not `keyof T`) should
+    // NOT force tuple inference — the array literal should remain an array.
+    let code = r#"
+declare function process<T>(items: { [K in 'a' | 'b']: T }): T;
+// This should not cause errors — non-homomorphic mapped types don't trigger tuple forcing.
+const obj = process({ a: 1, b: 2 });
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2322) && !codes.contains(&2345),
+        "Expected no type errors for non-homomorphic mapped type context, got: {codes:?}"
+    );
+}

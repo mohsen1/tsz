@@ -870,6 +870,57 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return Some(self.interner.object(reverse_properties));
                 }
             }
+
+            // Case 6b: source is a Tuple — reverse each element through its
+            // position-specific template instance (e.g. `[Box<A>, Box<B>]`
+            // against `{ [K in keyof T]: Box<T[K]> }` → T = `[A, B]`).
+            if let Some(TypeData::KeyOf(inner_placeholder)) =
+                self.interner.lookup(mapped.constraint)
+                && let Some(TypeData::Tuple(tuple_list_id)) = self.interner.lookup(source_value)
+            {
+                let elems = self.interner.tuple_list(tuple_list_id).to_vec();
+                if !elems.is_empty() && elems.iter().all(|e| !e.rest) {
+                    let iter_param_name = mapped.type_param.name;
+                    let template = mapped.template;
+                    let mut reverse_elements = Vec::with_capacity(elems.len());
+                    let mut any_reversed = false;
+
+                    for (i, elem) in elems.iter().enumerate() {
+                        let key_str = i.to_string();
+                        let key_atom = self.interner.intern_string(&key_str);
+                        let key_literal = self.interner.literal_string_atom(key_atom);
+                        let subst = TypeSubstitution::single(iter_param_name, key_literal);
+                        let instantiated = instantiate_type(self.interner, template, &subst);
+                        let reversed = match self.reverse_infer_through_template(
+                            elem.type_id,
+                            instantiated,
+                            inner_placeholder,
+                        ) {
+                            Some(v) => {
+                                any_reversed = true;
+                                v
+                            }
+                            None => TypeId::UNKNOWN,
+                        };
+                        let optional = match mapped.optional_modifier {
+                            Some(MappedModifier::Add) => false,
+                            Some(MappedModifier::Remove) => true,
+                            None => elem.optional,
+                        };
+                        reverse_elements.push(TupleElement {
+                            type_id: reversed,
+                            name: elem.name,
+                            optional,
+                            rest: false,
+                        });
+                    }
+
+                    if any_reversed {
+                        return Some(self.interner.tuple(reverse_elements));
+                    }
+                }
+            }
+
             return None;
         }
 
