@@ -704,6 +704,9 @@ impl<'a> CheckerState<'a> {
                         direct_type,
                     );
                 }
+                if !needs_cross_file_delegation {
+                    self.ctx.lib_delegation_cache.insert(sym_id, direct_type);
+                }
                 return Some((direct_type, direct_params));
             }
 

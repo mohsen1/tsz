@@ -8,25 +8,56 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+fn is_builtin_lib_file_name(file_name: &str) -> bool {
+    let basename = std::path::Path::new(file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(file_name);
+
+    if basename.starts_with("lib.") && basename.ends_with(".d.ts") {
+        return true;
+    }
+
+    let stem = basename
+        .strip_suffix(".generated.d.ts")
+        .or_else(|| basename.strip_suffix(".d.ts"))
+        .unwrap_or(basename);
+
+    stem == "lib"
+        || stem == "scripthost"
+        || stem == "decorators"
+        || stem == "decorators.legacy"
+        || stem == "dom"
+        || stem.starts_with("dom.")
+        || stem == "webworker"
+        || stem.starts_with("webworker.")
+        || stem == "esnext"
+        || stem.starts_with("esnext.")
+        || (stem.starts_with("es") && stem.as_bytes().get(2).is_some_and(u8::is_ascii_digit))
+}
+
 fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
     arena.source_files.first().is_some_and(|source_file| {
         if !source_file.is_declaration_file {
             return false;
         }
-        let file_name = std::path::Path::new(&source_file.file_name)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(source_file.file_name.as_str());
-        file_name.starts_with("lib.") && file_name.ends_with(".d.ts")
+        is_builtin_lib_file_name(&source_file.file_name)
     })
 }
 
-fn is_non_builtin_declaration_arena(arena: &NodeArena) -> bool {
-    arena
-        .source_files
-        .first()
-        .is_some_and(|source_file| source_file.is_declaration_file)
-        && !is_builtin_lib_declaration_arena(arena)
+fn is_external_package_declaration_file_name(file_name: &str) -> bool {
+    file_name.starts_with("node_modules/")
+        || file_name.starts_with("node_modules\\")
+        || file_name.contains("/node_modules/")
+        || file_name.contains("\\node_modules\\")
+}
+
+fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
+    arena.source_files.first().is_some_and(|source_file| {
+        source_file.is_declaration_file
+            && is_external_package_declaration_file_name(&source_file.file_name)
+            && !is_builtin_lib_file_name(&source_file.file_name)
+    })
 }
 
 impl<'a> CheckerState<'a> {
@@ -116,10 +147,11 @@ impl<'a> CheckerState<'a> {
         symbol_arena: &NodeArena,
         allow_complex_declarations: bool,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        // Source interfaces need exact binder-local symbol resolution for diagnostics.
-        // Built-in libs depend on merged declarations across many lib files and
-        // special canonical DefId handling. Keep both on the mature checker path.
-        if !is_non_builtin_declaration_arena(symbol_arena) {
+        // Source and local test-fixture interfaces need exact binder-local symbol
+        // resolution for diagnostics. Built-in libs depend on merged declarations
+        // across many lib files and special canonical DefId handling. Keep both
+        // on the mature checker path.
+        if !is_direct_lowering_declaration_arena(symbol_arena) {
             return None;
         }
 
@@ -250,5 +282,54 @@ impl<'a> CheckerState<'a> {
         }
 
         (!results.is_empty()).then_some(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_builtin_lib_file_name, is_external_package_declaration_file_name};
+
+    #[test]
+    fn detects_npm_and_source_tree_builtin_lib_names() {
+        assert!(is_builtin_lib_file_name("lib.es2024.d.ts"));
+        assert!(is_builtin_lib_file_name("lib.dom.d.ts"));
+        assert!(is_builtin_lib_file_name("es2024.d.ts"));
+        assert!(is_builtin_lib_file_name("es2024.full.d.ts"));
+        assert!(is_builtin_lib_file_name("dom.generated.d.ts"));
+        assert!(is_builtin_lib_file_name("dom.iterable.generated.d.ts"));
+        assert!(is_builtin_lib_file_name("webworker.asynciterable.d.ts"));
+        assert!(is_builtin_lib_file_name("decorators.legacy.d.ts"));
+    }
+
+    #[test]
+    fn does_not_treat_arbitrary_declaration_files_as_builtin_libs() {
+        assert!(!is_builtin_lib_file_name("react/index.d.ts"));
+        assert!(!is_builtin_lib_file_name(
+            "node_modules/@types/node/fs.d.ts"
+        ));
+        assert!(!is_builtin_lib_file_name("packages/foo/src/types.d.ts"));
+    }
+
+    #[test]
+    fn detects_external_package_declaration_paths() {
+        assert!(is_external_package_declaration_file_name(
+            "node_modules/react/index.d.ts"
+        ));
+        assert!(is_external_package_declaration_file_name(
+            "/repo/node_modules/@types/node/fs.d.ts"
+        ));
+        assert!(is_external_package_declaration_file_name(
+            r"C:\repo\node_modules\@types\node\fs.d.ts"
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_local_declaration_paths_as_external_packages() {
+        assert!(!is_external_package_declaration_file_name(
+            "packages/foo/src/types.d.ts"
+        ));
+        assert!(!is_external_package_declaration_file_name(
+            "/repo/fixtures/node-modules-like/types.d.ts"
+        ));
     }
 }
