@@ -9,7 +9,7 @@ FAIL TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyInterse
 FAIL TypeScript/tests/cases/compiler/contextuallyTypeAsyncFunctionReturnTypeFromUnion.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/controlFlowArrayErrors.ts | expected:[TS2345,TS7005,TS7034] actual:[TS2345,TS7005,TS7034]
 FAIL TypeScript/tests/cases/compiler/controlFlowForFunctionLike1.ts | expected:[TS2345] actual:[TS2345]
-FAIL TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expected:[TS1155,TS2345,TS2355,TS2393,TS2411,TS2448,TS2451,TS2454,TS2456,TS2502,TS2554,TS2749] actual:[TS1155,TS2355,TS2448,TS2451,TS2454,TS2502,TS2749]
+FAIL TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expected:[TS1155,TS2345,TS2355,TS2393,TS2411,TS2448,TS2451,TS2454,TS2456,TS2502,TS2554,TS2749] actual:[TS1155,TS2355,TS2411,TS2448,TS2451,TS2454,TS2502,TS2749]
 FAIL TypeScript/tests/cases/compiler/customAsyncIterator.ts | expected:[] actual:[TS2416]
 FAIL TypeScript/tests/cases/compiler/declarationEmitAliasInlineing.ts | expected:[] actual:[TS7056]
 FAIL TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts | expected:[TS2883] actual:[TS2883]
@@ -156,7 +156,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsWithIns
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsWithInstanceOfByConstructorSignature.ts | expected:[TS2322,TS2339,TS2551] actual:[TS2322,TS2339,TS2551]
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsWithInstanceOfBySymbolHasInstance.ts | expected:[TS2322,TS2339,TS2551] actual:[TS2322,TS2339,TS2551]
 FAIL TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_errorLocations1.ts | expected:[TS1360,TS2322,TS2345,TS2741] actual:[TS1360,TS2322,TS2345,TS2741]
-FAIL TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_vacuousIntersectionOfContextualTypes.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/circular2.ts | expected:[TS2456] actual:[TS2456]
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/typeOnlyESMImportFromCJS.ts | expected:[TS1541,TS1542] actual:[]
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnlyMerge3.ts | expected:[TS1362,TS2349,TS2440] actual:[TS1362,TS2440]
@@ -208,7 +207,7 @@ FAIL TypeScript/tests/cases/conformance/pedantic/noUncheckedIndexedAccess.ts | e
 FAIL TypeScript/tests/cases/conformance/references/library-reference-5.ts | expected:[TS2403] actual:[TS2403]
 FAIL TypeScript/tests/cases/conformance/salsa/assignmentToVoidZero2.ts | expected:[TS2305,TS2339] actual:[TS2305,TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/classCanExtendConstructorFunction.ts | expected:[TS2345,TS2416,TS2417,TS2507,TS2554,TS2683] actual:[TS2339,TS2345,TS2417,TS2507,TS2554,TS2683]
-FAIL TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration3.ts | expected:[TS2739] actual:[TS2451,TS2741]
+FAIL TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration3.ts | expected:[TS2739] actual:[TS2741]
 FAIL TypeScript/tests/cases/conformance/salsa/lateBoundAssignmentDeclarationSupport1.ts | expected:[TS7053] actual:[TS7053]
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportAssignment7.ts | expected:[TS2694] actual:[TS2694]
 FAIL TypeScript/tests/cases/conformance/salsa/plainJSBinderErrors.ts | expected:[TS1101,TS1102,TS1107,TS1210,TS1214,TS1215,TS1262,TS1344,TS1359,TS2528,TS18012] actual:[TS1262,TS1344,TS2528]
@@ -4258,6 +4257,7 @@ PASS TypeScript/tests/cases/compiler/memberOverride.ts
 PASS TypeScript/tests/cases/compiler/memberScope.ts
 PASS TypeScript/tests/cases/compiler/memberVariableDeclarations1.ts
 PASS TypeScript/tests/cases/compiler/mergeMultipleInterfacesReexported.ts
+PASS TypeScript/tests/cases/compiler/mergeSymbolReexportedTypeAliasInstantiation.ts
 PASS TypeScript/tests/cases/compiler/mergeWithImportedNamespace.ts
 PASS TypeScript/tests/cases/compiler/mergeWithImportedType.ts
 PASS TypeScript/tests/cases/compiler/mergedClassNamespaceRecordCast.ts
@@ -9172,6 +9172,7 @@ PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfa
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance1.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance2.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance3.ts
+PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_vacuousIntersectionOfContextualTypes.ts
 PASS TypeScript/tests/cases/conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorInvalidOperations.ts
 PASS TypeScript/tests/cases/conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithAnyOtherType.ts
 PASS TypeScript/tests/cases/conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithBooleanType.ts
@@ -12571,7 +12572,6 @@ XFAIL TypeScript/tests/cases/compiler/isolatedDeclarationErrorsObjects.ts | expe
 XFAIL TypeScript/tests/cases/compiler/isolatedModulesReExportType.ts | expected:[TS1205,TS1269,TS1448] actual:[TS1205,TS1269,TS1448,TS2307]
 XFAIL TypeScript/tests/cases/compiler/jsxNamespaceImplicitImportJSXNamespaceFromConfigPickedOverGlobalOne.tsx | expected:[TS2300] actual:[TS2300,TS2322]
 XFAIL TypeScript/tests/cases/compiler/jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne.tsx | expected:[TS2300] actual:[TS2300,TS2322]
-XFAIL TypeScript/tests/cases/compiler/mergeSymbolReexportedTypeAliasInstantiation.ts | expected:[TS2300] actual:[TS2300,TS2315]
 XFAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceEnumMergeOfReexport.ts | expected:[] actual:[TS2339]
 XFAIL TypeScript/tests/cases/compiler/promiseTry.ts | expected:[] actual:[TS2345,TS2578]
 XFAIL TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts | expected:[TS2322,TS2345,TS2589] actual:[TS2322,TS2339,TS2345,TS2589]
