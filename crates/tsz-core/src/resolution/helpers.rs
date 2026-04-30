@@ -356,7 +356,7 @@ pub(crate) fn apply_wildcard_substitution(target: &str, wildcard: &str) -> Strin
     if target.contains('*') {
         target.replace('*', wildcard)
     } else if target.ends_with('/') {
-        format!("{}{}", target, wildcard)
+        format!("{target}{wildcard}")
     } else {
         target.to_string()
     }
@@ -374,7 +374,7 @@ pub(crate) fn substitute_wildcard_in_exports(
             if s.contains('*') {
                 PackageExports::String(s.replace('*', wildcard))
             } else if s.ends_with('/') {
-                PackageExports::String(format!("{}{}", s, wildcard))
+                PackageExports::String(format!("{s}{wildcard}"))
             } else {
                 PackageExports::String(s.clone())
             }

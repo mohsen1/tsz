@@ -247,14 +247,32 @@ impl<'a> CheckerState<'a> {
             // TypeScript emits TS7051 for type keyword names and uppercase-starting names
             // (which conventionally refer to classes/interfaces).
             // Only when the parameter has NO modifiers (public A is clearly a parameter name).
+            // tsc emits TS7051 ("Parameter has a name but no type. Did you mean
+            // 'arg0: <type>'?") instead of TS7006 ("implicitly has 'any' type")
+            // in two scenarios:
+            //   1. The parameter name is a TypeScript primitive type keyword
+            //      (`string`, `number`, …) or starts with an uppercase letter
+            //      (suggesting a type/class reference). Always upgraded.
+            //   2. The parameter name is a non-modifier strict-mode reserved
+            //      word (`package`, `let`, `interface`, …) AND the enclosing
+            //      function-like is a signature without a body (method or call
+            //      signature inside an interface/type literal). Modifier-style
+            //      reserved words (`public`, `private`, `protected`) are
+            //      clearly parameter names even in a signature, so they keep
+            //      TS7006.
+            // Top-level functions and arrow/function expressions get TS7006
+            // unless rule (1) fires.
+            let in_signature_only_context = self.parameter_in_signature_only_context(param.name);
+            let always_upgrade = Self::is_type_keyword_name(&param_name)
+                || param_name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_uppercase());
+            let signature_with_non_modifier_reserved =
+                in_signature_only_context && Self::is_non_modifier_reserved_name(&param_name);
             if !has_parameter_modifiers
                 && !in_class_context
-                && (Self::is_type_keyword_name(&param_name)
-                    || param_name
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_uppercase())
-                    || Self::is_non_modifier_reserved_name(&param_name))
+                && (always_upgrade || signature_with_non_modifier_reserved)
             {
                 let suggested_name = format!("arg{param_index}");
                 self.error_at_node_msg(
@@ -270,6 +288,50 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    /// Check whether the parameter's enclosing function-like is a signature
+    /// without a body — `MethodSignature` or `CallSignature`/`ConstructSignature`
+    /// inside an interface or type literal. Those slots conventionally require
+    /// type annotations, so tsc emits the more helpful TS7051 ("Did you mean
+    /// 'arg0: <Type>'?") instead of TS7006 when a parameter has no type.
+    fn parameter_in_signature_only_context(&self, param_name_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(param_ext) = self.ctx.arena.get_extended(param_name_idx) else {
+            return false;
+        };
+        // param_name_idx -> Parameter -> function-like
+        let parameter_idx = param_ext.parent;
+        let Some(parameter_ext) = self.ctx.arena.get_extended(parameter_idx) else {
+            return false;
+        };
+        let function_like_idx = parameter_ext.parent;
+        let Some(function_like_node) = self.ctx.arena.get(function_like_idx) else {
+            return false;
+        };
+        matches!(
+            function_like_node.kind,
+            syntax_kind_ext::METHOD_SIGNATURE
+                | syntax_kind_ext::CALL_SIGNATURE
+                | syntax_kind_ext::CONSTRUCT_SIGNATURE
+        )
+    }
+
+    /// Check if a parameter name is a strict-mode reserved word that is NOT
+    /// a parameter modifier. These are reserved words like `package`, `let`,
+    /// `interface`, `static`, `implements` — words that *could* plausibly be
+    /// type names if the user forgot the `:`. Modifier-style reserved words
+    /// (`public`, `private`, `protected`) and `yield` are clearly parameter
+    /// names even when used in signature positions and so are excluded here.
+    ///
+    /// Used together with `parameter_in_signature_only_context` to decide
+    /// when to upgrade an implicit-any TS7006 to the more helpful TS7051
+    /// "Did you mean 'arg0: <Name>'?" diagnostic.
+    fn is_non_modifier_reserved_name(name: &str) -> bool {
+        matches!(
+            name,
+            "implements" | "interface" | "let" | "package" | "static"
+        )
     }
 
     /// Check if a parameter name is a TypeScript type keyword.
@@ -289,18 +351,6 @@ impl<'a> CheckerState<'a> {
                 | "never"
                 | "any"
                 | "unknown"
-        )
-    }
-
-    /// Check if a parameter name is a strict-mode reserved word that tsc treats
-    /// as a potential type annotation (TS7051) rather than a regular parameter name (TS7006).
-    /// tsc emits TS7051 for reserved words like `package` that could plausibly be
-    /// type names, but NOT for modifier keywords (`public`, `private`, `protected`)
-    /// or flow control keywords (`yield`) which are clearly parameter names.
-    fn is_non_modifier_reserved_name(name: &str) -> bool {
-        matches!(
-            name,
-            "implements" | "interface" | "let" | "package" | "static"
         )
     }
 

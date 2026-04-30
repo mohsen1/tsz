@@ -305,10 +305,8 @@ impl ModuleResolver {
             self.resolution_kind,
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
         );
-        if !skip_extension_probing {
-            if let Some(resolved) = self.try_file(path) {
-                return Some(resolved);
-            }
+        if !skip_extension_probing && let Some(resolved) = self.try_file(path) {
+            return Some(resolved);
         }
         if path.is_dir() {
             let index = path.join("index");
