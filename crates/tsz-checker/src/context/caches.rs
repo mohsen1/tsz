@@ -62,7 +62,15 @@ impl NodeTypeCache {
 
     #[inline]
     pub fn or_insert(&mut self, key: u32, value: TypeId) -> TypeId {
-        *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
+        if value == TypeId::NONE {
+            if let Some(existing) = self.data.get(&key) {
+                *existing
+            } else {
+                TypeId::NONE
+            }
+        } else {
+            *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (u32, TypeId)> + '_ {
@@ -215,7 +223,15 @@ impl SymbolTypeCache {
 
     #[inline]
     pub fn entry_or_insert(&mut self, key: SymbolId, value: TypeId) -> TypeId {
-        *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
+        if value == TypeId::NONE {
+            if let Some(existing) = self.data.get(&key) {
+                *existing
+            } else {
+                TypeId::NONE
+            }
+        } else {
+            *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
+        }
     }
 
     pub fn len(&self) -> usize {
