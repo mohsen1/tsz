@@ -2019,9 +2019,17 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Use the checker's compat-aware `is_assignable_to`, not the solver's
+        // strict subtype check. The Lawyer (CompatChecker) accepts permissive
+        // cases that the Judge (SubtypeChecker) rejects — most importantly,
+        // `{}` is assignable to any object type with all-optional properties
+        // (e.g. `BaseProps<T> { id?: string }`). Routing through the strict
+        // subtype check produced false-positive TS2322 on `let x: O[K] = {}`
+        // where K is a deferred generic key and O has all-optional value
+        // properties — tsc accepts this.
         candidate_types
             .into_iter()
-            .any(|candidate| !self.ctx.types.is_assignable_to(source, candidate))
+            .any(|candidate| !self.is_assignable_to(source, candidate))
     }
 
     fn is_deferred_generic_index_for_object(
