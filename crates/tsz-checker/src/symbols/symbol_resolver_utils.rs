@@ -173,6 +173,28 @@ impl<'a> CheckerState<'a> {
     /// parameter of `Math.atan2`), which would otherwise spoof a "lib var `y`" and
     /// suppress legitimate TS2339 reports for `globalThis.y` against a user `const y`.
     pub(crate) fn resolve_lib_global_var_symbol(&self, name: &str) -> Option<SymbolId> {
+        // A real lib global (`declare var X`, `declare function X`, `declare class X`)
+        // is at file scope: its parent symbol is either NONE or a non-callable
+        // container (SourceFile / namespace / module). Parameters of callables share
+        // the FUNCTION_SCOPED_VARIABLE flag, so the flag check alone admits cases
+        // like `moveTo(x, y)`'s `y` — which then suppresses the legitimate TS2339
+        // for `globalThis.y` when the user has `const y = 2`. Reject any lib
+        // candidate whose parent is a callable.
+        const NESTED_CALLABLE_PARENT_MASK: u32 = symbol_flags::FUNCTION
+            | symbol_flags::METHOD
+            | symbol_flags::CONSTRUCTOR
+            | symbol_flags::GET_ACCESSOR
+            | symbol_flags::SET_ACCESSOR
+            | symbol_flags::SIGNATURE;
+        let parent_is_callable = |parent: SymbolId| -> bool {
+            if parent.is_none() {
+                return false;
+            }
+            self.ctx
+                .binder
+                .get_symbol(parent)
+                .is_some_and(|p| (p.flags & NESTED_CALLABLE_PARENT_MASK) != 0)
+        };
         if self.ctx.binder.lib_symbols_are_merged() {
             for &lib_id in self.ctx.binder.lib_symbol_ids.iter() {
                 if let Some(lib_sym) = self.ctx.binder.get_symbol(lib_id)
@@ -181,6 +203,7 @@ impl<'a> CheckerState<'a> {
                     && (!lib_sym.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
                         || lib_sym.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
                     && self.symbol_has_globalable_declaration(lib_id, lib_sym, None)
+                    && !parent_is_callable(lib_sym.parent)
                 {
                     return Some(lib_id);
                 }
@@ -195,7 +218,14 @@ impl<'a> CheckerState<'a> {
                         || lib_sym.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
                     && self.symbol_has_globalable_declaration(sym_id, lib_sym, Some(lib_binder))
                 {
-                    return Some(sym_id);
+                    let parent = lib_sym.parent;
+                    let parent_is_callable_legacy = parent.is_some()
+                        && lib_binder
+                            .get_symbol(parent)
+                            .is_some_and(|p| (p.flags & NESTED_CALLABLE_PARENT_MASK) != 0);
+                    if !parent_is_callable_legacy {
+                        return Some(sym_id);
+                    }
                 }
             }
         }
