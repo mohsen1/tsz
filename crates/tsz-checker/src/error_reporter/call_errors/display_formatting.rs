@@ -1261,7 +1261,10 @@ impl<'a> CheckerState<'a> {
                 direct_arg_type
             }
         } else {
-            crate::query_boundaries::common::widen_type_for_display(self.ctx.types, arg_type)
+            crate::query_boundaries::common::widen_argument_type_for_display(
+                self.ctx.types,
+                arg_type,
+            )
         };
 
         if crate::query_boundaries::common::is_mapped_type(self.ctx.types, display_type) {

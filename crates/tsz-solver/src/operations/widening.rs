@@ -79,7 +79,7 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     // still contain widenable data, so they must go through the full path.
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, true, false)
+    widen_type_cached(db, type_id, &mut cache, true, true, false, false)
 }
 
 /// Widen for diagnostic display: like `widen_type` but preserves boolean
@@ -92,7 +92,30 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
 pub fn widen_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, false, false, false)
+    widen_type_cached(db, type_id, &mut cache, false, false, false, false)
+}
+
+/// Widen for call-argument diagnostic display: widens boolean literal
+/// intrinsics inside compound shapes so a tuple argument like
+/// `[1, 2, false, true]` renders as `[number, number, boolean, boolean]`,
+/// matching tsc's TS2345 source-type display. Like `widen_type_for_display`,
+/// it does NOT recurse into function/callable parameter types so contravariant
+/// surfaces are preserved.
+///
+/// Tuples that carry a rest element keep their boolean literal elements
+/// unchanged (`[string, number, true, ...(…)[]]`) — tsc preserves the
+/// fixed-prefix literal in that case. The carve-out is scoped to this
+/// display path via the `preserve_booleans_in_rest_tuples` parameter so
+/// inference/redeclaration paths still widen rest-tuple element booleans.
+///
+/// Use this only in diagnostic-formatting paths where the argument's literal
+/// type carries no semantic meaning (the diagnostic is structural). Narrowing
+/// flow displays should keep using `widen_type_for_display` so that
+/// `string | false` doesn't collapse to `string | boolean`.
+pub fn widen_argument_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    use rustc_hash::FxHashMap;
+    let mut cache = FxHashMap::default();
+    widen_type_cached(db, type_id, &mut cache, true, false, false, true)
 }
 
 /// Widen type for inference resolution: like `widen_type` but does NOT
@@ -106,7 +129,7 @@ pub fn widen_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> 
 pub(crate) fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, false, true)
+    widen_type_cached(db, type_id, &mut cache, true, false, true, false)
 }
 
 /// Display-widen a type for TS2403 (subsequent variable declaration) messages.
@@ -165,16 +188,32 @@ pub fn widen_type_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId 
     }
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, true, false)
+    widen_type_cached(db, type_id, &mut cache, true, true, false, false)
 }
 
 fn widen_type_cached(
     db: &dyn crate::TypeDatabase,
     type_id: TypeId,
-    cache: &mut rustc_hash::FxHashMap<TypeId, TypeId>,
+    // Keyed on `(TypeId, widen_boolean_intrinsics)` so the same compound
+    // type processed under different boolean-widening contexts inside one
+    // widening operation can't poison each other's results. The
+    // `preserve_booleans_in_rest_tuples` carve-out flips
+    // `widen_boolean_intrinsics` from `true` (outside a rest-tuple) to
+    // `false` (inside) mid-traversal; without the flag in the key, the
+    // first-processed version would short-circuit the second.
+    cache: &mut rustc_hash::FxHashMap<(TypeId, bool), TypeId>,
     widen_boolean_intrinsics: bool,
     widen_functions: bool,
     widen_object_union_members: bool,
+    // When true, boolean intrinsics inside the elements of a tuple that
+    // carries a rest element are NOT widened — `[string, number, true,
+    // ...(…)[]]` stays as-is. This is a display-only carve-out used by
+    // `widen_argument_type_for_display` to match tsc's TS2345 source-type
+    // rendering. All other widening paths (semantic widening, inference
+    // resolution, redeclaration display) pass false so tuples like
+    // `[true, ...string[]]` keep widening their fixed-prefix booleans, as
+    // `inference/infer_resolve.rs:721` explicitly relies on.
+    preserve_booleans_in_rest_tuples: bool,
 ) -> TypeId {
     // Fast path: most intrinsic types are never widened, but boolean
     // literal intrinsics (BOOLEAN_TRUE / BOOLEAN_FALSE) must widen to BOOLEAN.
@@ -187,7 +226,7 @@ fn widen_type_cached(
         return type_id;
     }
 
-    if let Some(&cached) = cache.get(&type_id) {
+    if let Some(&cached) = cache.get(&(type_id, widen_boolean_intrinsics)) {
         return cached;
     }
 
@@ -195,7 +234,7 @@ fn widen_type_cached(
     // like `D<T> { recurse: D<T>; wrapped: D<D<T>>; }`. If we encounter
     // this type_id again during recursive widening, we return the original
     // type_id (no widening) instead of diverging.
-    cache.insert(type_id, type_id);
+    cache.insert((type_id, widen_boolean_intrinsics), type_id);
 
     let result = match db.lookup(type_id) {
         // String/Number/Boolean/BigInt literals widen to their primitives
@@ -291,6 +330,7 @@ fn widen_type_cached(
                             widen_boolean_intrinsics,
                             widen_functions,
                             widen_object_union_members,
+                            preserve_booleans_in_rest_tuples,
                         )
                     })
                     .collect();
@@ -322,6 +362,7 @@ fn widen_type_cached(
                         widen_boolean_intrinsics,
                         widen_functions,
                         widen_object_union_members,
+                        preserve_booleans_in_rest_tuples,
                     )
                 };
 
@@ -336,6 +377,7 @@ fn widen_type_cached(
                         widen_boolean_intrinsics,
                         widen_functions,
                         widen_object_union_members,
+                        preserve_booleans_in_rest_tuples,
                     )
                 };
 
@@ -387,6 +429,7 @@ fn widen_type_cached(
                 widen_boolean_intrinsics,
                 widen_functions,
                 widen_object_union_members,
+                preserve_booleans_in_rest_tuples,
             );
             if widened != element_type {
                 let widened_arr = db.array(widened);
@@ -400,6 +443,21 @@ fn widen_type_cached(
         // Tuples: recursively widen element types
         Some(TypeData::Tuple(tuple_list_id)) => {
             let elements = db.tuple_list(tuple_list_id);
+            // tsc preserves boolean literal element types in tuples that have
+            // a rest element (e.g. `[string, number, true, ...(…)[]]`) when
+            // rendering call-argument displays. Honour that *only* in the
+            // call-argument display path (`preserve_booleans_in_rest_tuples`)
+            // so `widen_argument_type_for_display` widens `[1, 2, false, true]`
+            // → `[number, number, boolean, boolean]` but keeps `[string,
+            // number, true, ...(…)[]]` unchanged for
+            // `argumentExpressionContextualTyping`. Other widening paths
+            // (general semantic widening, inference resolution, redeclaration
+            // display) skip this carve-out so e.g. `[true, ...string[]]`
+            // continues to widen its fixed-prefix `true` to `boolean` — the
+            // inference resolution path explicitly relies on this for
+            // `infer_resolve.rs:721`.
+            let widen_booleans_here = widen_boolean_intrinsics
+                && !(preserve_booleans_in_rest_tuples && elements.iter().any(|elem| elem.rest));
             let mut new_elements = Vec::with_capacity(elements.len());
             let mut changed = false;
             for elem in elements.iter() {
@@ -407,9 +465,10 @@ fn widen_type_cached(
                     db,
                     elem.type_id,
                     cache,
-                    widen_boolean_intrinsics,
+                    widen_booleans_here,
                     widen_functions,
                     widen_object_union_members,
+                    preserve_booleans_in_rest_tuples,
                 );
                 if widened != elem.type_id {
                     changed = true;
@@ -444,6 +503,7 @@ fn widen_type_cached(
                         widen_boolean_intrinsics,
                         widen_functions,
                         widen_object_union_members,
+                        preserve_booleans_in_rest_tuples,
                     );
                     if widened.type_id != param.type_id {
                         changed = true;
@@ -459,6 +519,7 @@ fn widen_type_cached(
                     widen_boolean_intrinsics,
                     widen_functions,
                     widen_object_union_members,
+                    preserve_booleans_in_rest_tuples,
                 );
                 if widened != this_ty {
                     changed = true;
@@ -472,6 +533,7 @@ fn widen_type_cached(
                 widen_boolean_intrinsics,
                 widen_functions,
                 widen_object_union_members,
+                preserve_booleans_in_rest_tuples,
             );
             if widened_return != widened_shape.return_type {
                 changed = true;
@@ -509,6 +571,7 @@ fn widen_type_cached(
                                 widen_boolean_intrinsics,
                                 widen_functions,
                                 widen_object_union_members,
+                                preserve_booleans_in_rest_tuples,
                             );
                             if widened.type_id != param.type_id {
                                 changed = true;
@@ -524,6 +587,7 @@ fn widen_type_cached(
                             widen_boolean_intrinsics,
                             widen_functions,
                             widen_object_union_members,
+                            preserve_booleans_in_rest_tuples,
                         );
                         if widened != this_ty {
                             changed = true;
@@ -537,6 +601,7 @@ fn widen_type_cached(
                         widen_boolean_intrinsics,
                         widen_functions,
                         widen_object_union_members,
+                        preserve_booleans_in_rest_tuples,
                     );
                     if widened_return != widened_sig.return_type {
                         changed = true;
@@ -563,7 +628,7 @@ fn widen_type_cached(
         _ => type_id,
     };
 
-    cache.insert(type_id, result);
+    cache.insert((type_id, widen_boolean_intrinsics), result);
     result
 }
 
