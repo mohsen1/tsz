@@ -6,6 +6,8 @@ use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
+/// TSC treats `F.prototype[sym] = val` as "currently unsupported" late-bound declarations.
+/// Accessing `inst[sym]` should emit TS7053, even across CommonJS module boundaries.
 #[test]
 fn test_commonjs_constructor_index_error_uses_exported_function_name() {
     let a_source = r#"
@@ -95,9 +97,10 @@ inst[x.S];
         .map(|d| d.message_text.as_str())
         .collect::<Vec<_>>();
 
-    assert!(
-        ts7053.is_empty(),
-        "Expected no false TS7053 for cross-file CommonJS constructor symbol-keyed access, got: {ts7053:#?}"
+    assert_eq!(
+        ts7053.len(),
+        1,
+        "Expected TS7053 for cross-file CommonJS prototype element-access expando read, got: {ts7053:#?}"
     );
 }
 

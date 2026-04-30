@@ -1949,9 +1949,11 @@ class MyClass {
     );
 }
 
-/// Plain function constructor prototype symbol-keyed property → no false TS7053
+/// Prototype element-access symbol-keyed property should emit TS7053.
+/// TSC treats `Ctor.prototype[sym] = val` as "currently unsupported" late-bound
+/// assignment declarations and does NOT expose the property on the instance type.
 #[test]
-fn test_plain_function_constructor_prototype_symbol_key_no_false_error() {
+fn test_plain_function_constructor_prototype_symbol_key_emits_ts7053() {
     let source = r#"
 const _sym = Symbol("_sym");
 function Ctor() {}
@@ -1960,14 +1962,14 @@ const inst = new Ctor();
 inst[_sym];
 "#;
     let diagnostics = check_js(source);
-    let errors: Vec<_> = diagnostics
+    let ts7053: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, _)| *code == 7053 || *code == 2339)
+        .filter(|(code, _)| *code == 7053)
         .collect();
     assert_eq!(
-        errors.len(),
-        0,
-        "Expected no TS7053/TS2339 for symbol-keyed prototype constructor property, got: {errors:?}"
+        ts7053.len(),
+        1,
+        "Expected TS7053 for prototype symbol-keyed element-access, got: {diagnostics:?}"
     );
 }
 
@@ -1994,6 +1996,43 @@ bz.y = undefined;
         ts2322_for_y.len(),
         0,
         "Expected no TS2322 for assigning undefined to prototype-method property, got: {diagnostics:?}"
+    );
+}
+
+/// Prototype element-access expandos (F.prototype[sym] = val) should NOT suppress TS7053.
+/// TSC treats these as "currently unsupported" late-bound assignment declarations.
+#[test]
+fn test_prototype_element_access_expando_emits_ts7053() {
+    // Test 1: string key via const variable
+    let source_str = r#"
+const _str = "my-fake-sym";
+function F() {}
+F.prototype[_str] = "ok";
+const inst = new F();
+const _y = inst[_str];
+"#;
+    let diag_str = check_js(source_str);
+    let ts7053_str: Vec<_> = diag_str.iter().filter(|(c, _)| *c == 7053).collect();
+    assert_eq!(
+        ts7053_str.len(),
+        1,
+        "Expected TS7053 for prototype string-keyed element-access expando read, got: {diag_str:?}"
+    );
+
+    // Test 2: symbol key
+    let source_sym = r#"
+const _sym = Symbol();
+function F() {}
+F.prototype[_sym] = "ok";
+const inst = new F();
+const _z = inst[_sym];
+"#;
+    let diag_sym = check_js(source_sym);
+    let ts7053_sym: Vec<_> = diag_sym.iter().filter(|(c, _)| *c == 7053).collect();
+    assert_eq!(
+        ts7053_sym.len(),
+        1,
+        "Expected TS7053 for prototype symbol-keyed element-access expando read, got: {diag_sym:?}"
     );
 }
 
