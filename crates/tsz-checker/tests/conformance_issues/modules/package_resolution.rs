@@ -881,9 +881,15 @@ inst[x.S];
         .map(|d| d.message_text.as_str())
         .collect::<Vec<_>>();
 
+    assert_eq!(
+        ts7053.len(),
+        1,
+        "Expected TS7053 for cross-file CommonJS prototype element-access expando read. Got: {ts7053:#?}"
+    );
     assert!(
-        ts7053.is_empty(),
-        "Expected no false TS7053 for cross-file CommonJS constructor symbol-keyed access. Got: {ts7053:#?}"
+        ts7053[0].contains("'F'"),
+        "Expected TS7053 message to reference the exported function name 'F'. Got: {:?}",
+        ts7053[0]
     );
 }
 

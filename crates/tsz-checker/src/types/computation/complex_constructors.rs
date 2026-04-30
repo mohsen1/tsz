@@ -584,16 +584,22 @@ impl<'a> CheckerState<'a> {
             }
             has_prototype_evidence = true;
 
+            // TSC treats prototype element-access assignments (e.g. `F.prototype[sym] = val`)
+            // as "currently unsupported" late-bound declarations. They must not be exposed as
+            // instance properties — accessing `inst[sym]` should produce TS7053.
+            if lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                continue;
+            }
+
             if lhs_access.name_or_argument.is_none() {
                 continue;
             }
 
-            let is_computed_name = lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                || self
-                    .ctx
-                    .arena
-                    .get(lhs_access.name_or_argument)
-                    .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            let is_computed_name = self
+                .ctx
+                .arena
+                .get(lhs_access.name_or_argument)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
             let resolved_property_name = if is_computed_name {
                 self.js_prototype_binding_resolved_name(lhs_access.name_or_argument)
             } else {
