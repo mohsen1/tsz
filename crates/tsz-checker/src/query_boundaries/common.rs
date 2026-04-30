@@ -69,6 +69,44 @@ pub(crate) fn instantiate_type(
     tsz_solver::instantiate_type(db, type_id, substitution)
 }
 
+/// If `ty` is `Lazy(def_id)` for a non-generic `TypeAlias` whose body is the
+/// canonical self-keyof indexed-access shape `Foo[keyof Foo]`, return the
+/// body `TypeId` so the caller can evaluate it with a resolver-equipped
+/// evaluator. Otherwise return `None`.
+///
+/// tsc loses the outer alias when this specific reduction collapses to a
+/// concrete type. The classic case is
+/// `type WeakKey = WeakKeyTypes[keyof WeakKeyTypes]` (where `WeakKeyTypes`
+/// has only `object: object` in the es2022 lib) which displays as `object`,
+/// not `WeakKey`. The match is intentionally narrow — generic indexed-access
+/// aliases (`type Pair<T> = Pairs<T>[keyof T]`) and non-self-keyof aliases
+/// stay opaque because pre-resolving them in the formatter can blow up
+/// recursion fuel and emit spurious TS2589s.
+pub(crate) fn indexed_access_alias_body(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    ty: TypeId,
+) -> Option<TypeId> {
+    let def_id = tsz_solver::type_queries::get_lazy_def_id(db, ty)?;
+    let def = def_store.get(def_id)?;
+    if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
+        return None;
+    }
+    let body = def.body?;
+    // Only match the `Foo[keyof Foo]` self-keyof shape — narrower than
+    // "any IndexAccess" to avoid evaluating legitimately-deferred forms.
+    tsz_solver::type_queries::indexed_access_self_keyof(db, body)?;
+    Some(body)
+}
+
+/// Returns true if `ty` is still a deferred form (`Lazy` or `IndexAccess`)
+/// that the solver could not reduce. Used after attempting a full evaluate
+/// to decide whether to keep the original alias display or use the resolved
+/// form.
+pub(crate) fn is_unresolved_for_display(db: &dyn TypeDatabase, ty: TypeId) -> bool {
+    tsz_solver::type_queries::is_deferred_lazy_or_indexed_access(db, ty)
+}
+
 /// Thin wrapper around `tsz_solver::deep_reduce_for_display`.
 ///
 /// Deeply reduce meta-type applications (e.g. `InstanceType<typeof Foo>`)

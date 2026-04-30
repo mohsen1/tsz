@@ -58,3 +58,52 @@ let pair2: Pairs<FooBar>[keyof FooBar] = {
         "mapped indexed access assignments should not elaborate into the selected union member's property: {ts2322:#?}"
     );
 }
+
+/// tsc loses the outer alias when a non-generic `type Foo = X[K]` reduces to
+/// a single concrete type; the parameter shows the resolved form, not the
+/// alias name. This mirrors the lib's
+/// `type WeakKey = WeakKeyTypes[keyof WeakKeyTypes]` (where `WeakKeyTypes`
+/// has only `object: object` in es2022) which displays as `object`.
+///
+/// Repro:
+/// ```ts
+/// interface MyKeyTypes { object: object; }
+/// type MyKey = MyKeyTypes[keyof MyKeyTypes];
+/// interface MockRegistry<T> { register(target: MyKey, heldValue: T): void; }
+/// declare const f: MockRegistry<unknown>;
+/// const s: symbol = Symbol("s");
+/// f.register(s, null);
+/// // tsc: Argument of type 'symbol' is not assignable to parameter of type 'object'.
+/// ```
+#[test]
+fn indexed_access_alias_displays_resolved_form_in_call_parameter_diagnostic() {
+    let source = r#"
+interface MyKeyTypes { object: object; }
+type MyKey = MyKeyTypes[keyof MyKeyTypes];
+
+interface MockRegistry<T> {
+    register(target: MyKey, heldValue: T): void;
+}
+declare const f: MockRegistry<unknown>;
+const s: symbol = Symbol("s");
+f.register(s, null);
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for the symbol argument, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2345[0].message_text.contains("'object'"),
+        "parameter type should display as 'object' (the resolved form), not the alias name: {:?}",
+        ts2345[0].message_text
+    );
+    assert!(
+        !ts2345[0].message_text.contains("'MyKey'"),
+        "outer alias should be lost in the indexed-access reduction: {:?}",
+        ts2345[0].message_text
+    );
+}
