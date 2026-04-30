@@ -1355,3 +1355,173 @@ fn test_variance_type_param_with_constraint() {
         "Type parameter constraint should contribute at current polarity"
     );
 }
+
+// =============================================================================
+// REJECTION_UNRELIABLE handling for method bivariance vs nested callbacks
+// =============================================================================
+//
+// `tsc` treats `interface C<T> { m(x: T): void }` (T at a method's parameter
+// directly) as bivariant, but `interface C<T> { m(cb: (x: T) => void): void }`
+// (T inside a non-method callback nested in a method's parameter) as
+// covariant — assigning `C<Foo>` to `C<Bar>` should fail when `Foo` lacks
+// properties that `Bar` requires. The variance computation records this with
+// `Variance::REJECTION_UNRELIABLE`: set when only method-bivariant
+// occurrences contribute, cleared when at least one strictly-checked
+// occurrence pins the variance.
+
+#[test]
+fn test_variance_method_param_alone_is_rejection_unreliable() {
+    // interface C<T> { m(x: T): void }
+    // T appears only as a direct method parameter — variance is COVARIANT
+    // but the rejection should be flagged as unreliable so the assignability
+    // check falls through to structural method bivariance (matches tsc, where
+    // `C<Foo>` and `C<Bar>` are mutually assignable for unrelated Foo/Bar).
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+
+    let method = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+    let body = interner.object(vec![PropertyInfo::new(interner.intern_string("m"), method)]);
+
+    let t_atom = interner.intern_string("T");
+    let variance = compute_variance(&interner, body, t_atom);
+
+    assert!(
+        variance.is_covariant(),
+        "T as a direct method parameter should be COVARIANT for variance"
+    );
+    assert!(
+        variance.rejection_unreliable(),
+        "T as a direct method parameter should set REJECTION_UNRELIABLE so structural bivariance can fire"
+    );
+}
+
+#[test]
+fn test_variance_method_callback_param_is_reliable_covariant() {
+    // interface Promise<T> { then<U>(cb: (x: T) => U): U }
+    // T appears only inside a non-method callback nested inside a method
+    // parameter. Tsc treats this as COVARIANT and rejects mismatched
+    // assignments — the rejection IS reliable, so REJECTION_UNRELIABLE must
+    // NOT be set.
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+
+    let callback = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let method = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("cb")),
+            type_id: callback,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+    let body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("then"),
+        method,
+    )]);
+
+    let t_atom = interner.intern_string("T");
+    let variance = compute_variance(&interner, body, t_atom);
+
+    assert!(
+        variance.is_covariant(),
+        "T under a non-method callback inside a method param should be COVARIANT"
+    );
+    assert!(
+        !variance.rejection_unreliable(),
+        "T inside a nested callback gives a reliable variance signal — REJECTION_UNRELIABLE must NOT be set"
+    );
+}
+
+#[test]
+fn test_variance_mixed_direct_and_callback_method_param_is_reliable() {
+    // interface C<T> { m(x: T, cb: (x: T) => void): void }
+    // T appears both directly in m's params (method-bivariant) AND inside a
+    // non-method callback (strict covariant). The strict occurrence pins the
+    // variance — the result must be COVARIANT and reliably rejecting
+    // (matches tsc, which errors on `C<Foo>` -> `C<Bar>` for unrelated Foo,
+    // Bar despite the direct-param T being method-bivariant).
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+
+    let callback = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let method = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: t_param,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("cb")),
+                type_id: callback,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+    let body = interner.object(vec![PropertyInfo::new(interner.intern_string("m"), method)]);
+
+    let t_atom = interner.intern_string("T");
+    let variance = compute_variance(&interner, body, t_atom);
+
+    assert!(
+        variance.is_covariant(),
+        "Mixed direct/callback method params should resolve to COVARIANT"
+    );
+    assert!(
+        !variance.rejection_unreliable(),
+        "A strict (callback) occurrence should clear REJECTION_UNRELIABLE set by sibling direct method params"
+    );
+}

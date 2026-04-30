@@ -241,6 +241,21 @@ struct VarianceVisitor<'a, 'b> {
     /// used inside indexed access types where `{ m(x: T): any }['m']`
     /// extracts the method as a plain function, stripping method-ness.
     suppress_method_bivariance: bool,
+    /// True if the target parameter was found at a strictly-checked position —
+    /// outside any method-bivariant context AND outside any application visit
+    /// that already inherited `REJECTION_UNRELIABLE` from a nested generic.
+    /// A strict occurrence provides a reliable variance signal that overrides
+    /// the unreliability set by sibling method-bivariant occurrences: e.g.
+    /// `{ m(x: T, cb: (x: T) => void) }` should be COVARIANT, not bivariant,
+    /// because the callback occurrence pins the variance.
+    strict_occurrence_seen: bool,
+    /// Depth counter for visiting type arguments of an Application whose base
+    /// generic has `REJECTION_UNRELIABLE` in its variance. Inside such a visit
+    /// we do not treat the leaf occurrence as a strict signal — the
+    /// unreliability has already been inherited from the wrapping application
+    /// (e.g. `{ container: C1<T> }` should remain bivariant when `C1` is
+    /// bivariant).
+    inside_unreliable_application: u32,
 }
 
 impl<'a, 'b> VarianceVisitor<'a, 'b> {
@@ -259,6 +274,8 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             inside_mapped_depth: 0,
             method_bivariant_depth: 0,
             suppress_method_bivariance: false,
+            strict_occurrence_seen: false,
+            inside_unreliable_application: 0,
         }
     }
 
@@ -273,6 +290,22 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
         // the type arguments themselves are not assignable.
         if self.seen_target_in_index_access && self.result.needs_structural_fallback() {
             self.result |= Variance::REJECTION_UNRELIABLE;
+        }
+        // If we found at least one strict (non-method-bivariant, non-inherited)
+        // occurrence of the target parameter, the variance signal is reliable —
+        // clear `REJECTION_UNRELIABLE` that may have been added by sibling
+        // method-bivariant occurrences. This matches tsc, where a callback or
+        // direct-position occurrence of T pins the variance even when T also
+        // appears as a direct method parameter.
+        //
+        // Skip the clear when the target was seen as the object of an indexed
+        // access: in that case `REJECTION_UNRELIABLE` is set for an unrelated
+        // reason (indexed-access + intersection normalisation can collapse
+        // distinct type arguments into structurally equal results — see
+        // `DerivedTable<S>` in `variancePropagation`), and a sibling strict
+        // occurrence does NOT make that rejection reliable.
+        if self.strict_occurrence_seen && !self.seen_target_in_index_access {
+            self.result.remove(Variance::REJECTION_UNRELIABLE);
         }
         self.result
     }
@@ -324,6 +357,13 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
         // reliable variance signal, unlike mapped type keyof/template positions.
         if self.inside_mapped_depth == 0 {
             self.result |= Variance::DIRECT_USAGE;
+        }
+        // Track whether we've found T at a strict position. A strict occurrence
+        // is one that's outside method bivariance AND outside an application
+        // visit that already inherited unreliability. Such an occurrence pins
+        // the variance signal — see `compute()` for how this is consumed.
+        if self.method_bivariant_depth == 0 && self.inside_unreliable_application == 0 {
+            self.strict_occurrence_seen = true;
         }
     }
 
@@ -412,6 +452,8 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         let shape = self.computer.db.function_shape(FunctionShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
 
+        let saved_method_depth = self.method_bivariant_depth;
+
         // Method parameters are bivariant at assignability time, but variance
         // probing still has to see type parameters used only in method
         // parameters. Treat those occurrences as covariant-first so generic
@@ -419,19 +461,30 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // independent.
         if shape.is_method {
             if !self.suppress_method_bivariance {
-                self.method_bivariant_depth += 1;
+                self.method_bivariant_depth = saved_method_depth + 1;
                 for param in &shape.params {
                     self.visit_with_polarity(param.type_id, !current_polarity);
                 }
-                self.method_bivariant_depth -= 1;
+                self.method_bivariant_depth = saved_method_depth;
             }
         } else {
+            // Nested non-method function: T occurrences inside its parameters
+            // are NOT method-bivariant, even if this function value is itself
+            // a parameter of a surrounding method. Reset
+            // `method_bivariant_depth` for the parameter visit so that leaf
+            // occurrences record their actual variance polarity (e.g.
+            // `Promise<T>.then(cb: (x: T) => ...)` is COVARIANT, not bivariant).
+            self.method_bivariant_depth = 0;
             for param in &shape.params {
                 self.visit_with_polarity(param.type_id, !current_polarity);
             }
+            self.method_bivariant_depth = saved_method_depth;
         }
 
-        // Return type is COVARIANT: preserve polarity
+        // Return type is COVARIANT: preserve polarity. Visit at the outer
+        // (already-restored) `method_bivariant_depth` so a method's return
+        // type is treated as a strict covariant position (matches tsc, where
+        // `interface C<T> { m(): T }` is COVARIANT).
         self.visit_with_polarity(shape.return_type, current_polarity);
 
         // `this` parameter behaves like a parameter for plain functions.
@@ -450,24 +503,30 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
     fn visit_callable(&mut self, shape_id: u32) {
         let callable = self.computer.db.callable_shape(CallableShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
+        let saved_method_depth = self.method_bivariant_depth;
 
         // Call signatures
         for sig in &callable.call_signatures {
             // For methods (see visit_function for full rationale).
             if sig.is_method {
                 if !self.suppress_method_bivariance {
-                    self.method_bivariant_depth += 1;
+                    self.method_bivariant_depth = saved_method_depth + 1;
                     for param in &sig.params {
                         self.visit_with_polarity(param.type_id, !current_polarity);
                     }
-                    self.method_bivariant_depth -= 1;
+                    self.method_bivariant_depth = saved_method_depth;
                 }
             } else {
+                // Non-method call signature: reset method bivariance for the
+                // duration of the parameter visit (matches `visit_function`
+                // for non-method shapes — see comment there).
+                self.method_bivariant_depth = 0;
                 for param in &sig.params {
                     self.visit_with_polarity(param.type_id, !current_polarity);
                 }
+                self.method_bivariant_depth = saved_method_depth;
             }
-            // Return type is covariant
+            // Return type is covariant — visit at outer depth.
             self.visit_with_polarity(sig.return_type, current_polarity);
             if let Some(this_ty) = sig.this_type {
                 let polarity = if sig.is_method {
@@ -479,7 +538,13 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             }
         }
 
-        // Construct signatures follow same rules
+        // Construct signatures follow the same rules. We deliberately do NOT
+        // reset `method_bivariant_depth` here: a constructor signature inside
+        // a generic interface (e.g. `interface ObjectContaining<T> { new
+        // (sample: Partial<T>): Partial<T> }`) is not a callback in a
+        // surrounding method, so the legacy depth propagation is the safe
+        // behaviour. Changing this changed several `Partial<T>` /
+        // `nongenericPartialInstantiations*` baselines without a clear win.
         for sig in &callable.construct_signatures {
             for param in &sig.params {
                 self.visit_with_polarity(param.type_id, !current_polarity);
@@ -652,18 +717,33 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                 if base_param_variance.needs_structural_fallback() {
                     self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
                 }
-                if base_param_variance.rejection_unreliable() {
+                let inherits_unreliable = base_param_variance.rejection_unreliable();
+                if inherits_unreliable {
                     self.result |= Variance::REJECTION_UNRELIABLE;
                 }
 
                 // Composition Rules:
                 // - Covariant base param: Argument inherits current polarity
+                // - Contravariant base param: Argument flips current polarity
+                // While visiting `arg`, mark that any leaf occurrence of T
+                // appearing through this application should not count as a
+                // "strict signal": the wrapping application has already
+                // decided this position is unreliable, so the leaf merely
+                // re-emits that unreliability. Without this, a structurally
+                // bivariant wrapper such as `{ container: C1<T> }` would be
+                // incorrectly demoted to strict covariance once we clear
+                // `REJECTION_UNRELIABLE` based on `strict_occurrence_seen`.
+                if inherits_unreliable {
+                    self.inside_unreliable_application += 1;
+                }
                 if base_param_variance.contains(Variance::COVARIANT) {
                     self.visit_with_polarity(arg, current_polarity);
                 }
-                // - Contravariant base param: Argument flips current polarity
                 if base_param_variance.contains(Variance::CONTRAVARIANT) {
                     self.visit_with_polarity(arg, !current_polarity);
+                }
+                if inherits_unreliable {
+                    self.inside_unreliable_application -= 1;
                 }
                 // Note: Invariant (both bits) visits both. Independent (no bits) visits neither.
             }
