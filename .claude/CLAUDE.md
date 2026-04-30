@@ -276,11 +276,21 @@ A conformance task is shipped when:
 1. The targeted test passes (`./scripts/conformance/conformance.sh run --filter <name>` shows `PASS` or `1/1 passed`).
 2. A unit test in the owning crate locks the new behavior.
 3. `cargo nextest run -p tsz-checker -p tsz-solver` is clean.
-4. A PR is open, CI is green, the PR is merged into `main`.
+4. A non-draft PR is open against `main` with the diff and the unit
+   test, branch pushed, CI started.
 
-Until step 4 lands, the task is not done. Research notes, abandoned PRs,
-and "deferred" claim files do **not** count. The only artifact that
-moves the public conformance % is a merge into `main`.
+Once step 4 lands, the task is **shipped from the agent's perspective**.
+Do not babysit CI, do not chase rebase, do not merge — the user handles
+the merge queue. The agent's loop should immediately move on to the
+next conformance task instead of camping on the prior PR's checks.
+
+If CI later goes red on a PR you opened, the user will surface the
+failure and you'll iterate on it then. Until that happens, the open PR
+is "done" for loop purposes.
+
+Research notes, draft/abandoned PRs, and "deferred" claim files do
+**not** count as shipped. A green local build + a single-test
+conformance pass + a non-draft PR pushed to `origin` does.
 
 ### Quick reference
 ```bash
