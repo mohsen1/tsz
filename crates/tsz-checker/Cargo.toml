@@ -512,6 +512,10 @@ name = "jsdoc_constructor_typeof_source_display_tests"
 path = "tests/jsdoc_constructor_typeof_source_display_tests.rs"
 
 [[test]]
+name = "js_class_eval_arguments_no_ts1210_tests"
+path = "tests/js_class_eval_arguments_no_ts1210_tests.rs"
+
+[[test]]
 name = "jsx_excess_attr_with_spread_source_display_tests"
 path = "tests/jsx_excess_attr_with_spread_source_display_tests.rs"
 

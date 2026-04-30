@@ -154,6 +154,12 @@ impl<'a> CheckerState<'a> {
                 && self
                     .find_first_parameter_property_modifier(&param.modifiers)
                     .is_none()
+                // tsc skips this class-auto-strict bind error in JS files.
+                // Mirrors the corresponding skip in
+                // `emit_eval_or_arguments_strict_mode_error`; without it we
+                // emit a spurious TS1210 on `class c { a(arguments) {} }` in
+                // `b.js` (see `jsFileCompilationBindStrictModeErrors.ts`).
+                && !self.ctx.is_js_file()
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 if let Some((pos, end)) = self.ctx.get_node_span(param.name) {
