@@ -1540,6 +1540,78 @@ function A() {
 }
 
 #[test]
+fn test_plain_js_function_constructor_implicit_any_properties_keep_any_write_surface() {
+    let source = r#"
+function A() {
+    this.unknown = null;
+    this.unknowable = undefined;
+    this.empty = [];
+}
+var a = new A();
+a.unknown = 1;
+a.unknown = true;
+a.unknown = {};
+a.unknown = "hi";
+a.unknowable = 1;
+a.unknowable = true;
+a.unknowable = {};
+a.unknowable = "hi";
+a.empty.push(1);
+a.empty.push(true);
+a.empty.push({});
+a.empty.push("hi");
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected JS implicit-any constructor properties to accept later writes, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_checked_js_undefined_var_initializer_keeps_any_assignment_target() {
+    let source = r#"
+var u = undefined;
+u = undefined;
+u = 1;
+u = true;
+u = {};
+u = "ok";
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected checked-JS undefined-initialized var writes to use any target, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_plain_js_function_constructor_provisional_writes_merge_like_salsa() {
     let source = r#"
 function Installer () {
@@ -1604,10 +1676,16 @@ Installer.prototype.second = function () {
         .iter()
         .filter(|(_, msg)| msg.contains("Property 'push' does not exist on type 'any[]'."))
         .collect();
+    // Two pushes (`this.twices.push(1)` and the narrowed-branch
+    // `this.twices.push('hi')`) each report `Property 'push' does not exist
+    // on type 'any[]'` in the no-lib harness. This PR's checked-JS implicit-
+    // any preservation changes the typing of `this.twices` so the two access
+    // sites no longer collapse into a single diagnostic — both call sites
+    // now report independently, matching tsc's per-site behavior.
     assert_eq!(
         push_errors.len(),
-        1,
-        "Expected the no-lib harness to collapse the pre-narrowing twices push into one missing-member error, got: {diagnostics:?}"
+        2,
+        "Expected one TS2339 per push call site after JS implicit-any preservation, got: {diagnostics:?}"
     );
 }
 
@@ -1871,9 +1949,11 @@ class MyClass {
     );
 }
 
-/// Plain function constructor prototype symbol-keyed property → no false TS7053
+/// Prototype element-access symbol-keyed property should emit TS7053.
+/// TSC treats `Ctor.prototype[sym] = val` as "currently unsupported" late-bound
+/// assignment declarations and does NOT expose the property on the instance type.
 #[test]
-fn test_plain_function_constructor_prototype_symbol_key_no_false_error() {
+fn test_plain_function_constructor_prototype_symbol_key_emits_ts7053() {
     let source = r#"
 const _sym = Symbol("_sym");
 function Ctor() {}
@@ -1882,14 +1962,14 @@ const inst = new Ctor();
 inst[_sym];
 "#;
     let diagnostics = check_js(source);
-    let errors: Vec<_> = diagnostics
+    let ts7053: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, _)| *code == 7053 || *code == 2339)
+        .filter(|(code, _)| *code == 7053)
         .collect();
     assert_eq!(
-        errors.len(),
-        0,
-        "Expected no TS7053/TS2339 for symbol-keyed prototype constructor property, got: {errors:?}"
+        ts7053.len(),
+        1,
+        "Expected TS7053 for prototype symbol-keyed element-access, got: {diagnostics:?}"
     );
 }
 
@@ -1916,6 +1996,43 @@ bz.y = undefined;
         ts2322_for_y.len(),
         0,
         "Expected no TS2322 for assigning undefined to prototype-method property, got: {diagnostics:?}"
+    );
+}
+
+/// Prototype element-access expandos (F.prototype[sym] = val) should NOT suppress TS7053.
+/// TSC treats these as "currently unsupported" late-bound assignment declarations.
+#[test]
+fn test_prototype_element_access_expando_emits_ts7053() {
+    // Test 1: string key via const variable
+    let source_str = r#"
+const _str = "my-fake-sym";
+function F() {}
+F.prototype[_str] = "ok";
+const inst = new F();
+const _y = inst[_str];
+"#;
+    let diag_str = check_js(source_str);
+    let ts7053_str: Vec<_> = diag_str.iter().filter(|(c, _)| *c == 7053).collect();
+    assert_eq!(
+        ts7053_str.len(),
+        1,
+        "Expected TS7053 for prototype string-keyed element-access expando read, got: {diag_str:?}"
+    );
+
+    // Test 2: symbol key
+    let source_sym = r#"
+const _sym = Symbol();
+function F() {}
+F.prototype[_sym] = "ok";
+const inst = new F();
+const _z = inst[_sym];
+"#;
+    let diag_sym = check_js(source_sym);
+    let ts7053_sym: Vec<_> = diag_sym.iter().filter(|(c, _)| *c == 7053).collect();
+    assert_eq!(
+        ts7053_sym.len(),
+        1,
+        "Expected TS7053 for prototype symbol-keyed element-access expando read, got: {diag_sym:?}"
     );
 }
 

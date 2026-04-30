@@ -315,6 +315,32 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
             {
                 return Some(namespace_sym);
             }
+            // Cross-file fallback: when the local binder can't resolve the
+            // heritage identifier, try the other files' binders. In script
+            // (non-module) projects, classes declared across separate files
+            // share a single global namespace at compile time. Without this
+            // fallback, a class `E extends D` in file3 cannot see the class
+            // `D` defined in file2 during cycle detection — leaving 3-way
+            // inheritance loops (TS2506) silently undetected.
+            // Conformance: `classExtendsItselfIndirectly3.ts`.
+            if resolved.is_none()
+                && let Some(ident) = arena.get_identifier(node)
+            {
+                let name = ident.escaped_text.as_str();
+                if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                    for other_binder in all_binders.iter() {
+                        if std::ptr::eq(other_binder.as_ref() as *const _, binder as *const _) {
+                            continue;
+                        }
+                        if other_binder.is_external_module() {
+                            continue;
+                        }
+                        if let Some(sym) = other_binder.file_locals.get(name) {
+                            return Some(sym);
+                        }
+                    }
+                }
+            }
             resolved
         } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
             self.resolve_qualified_symbol_with(arena, binder, expr_idx)

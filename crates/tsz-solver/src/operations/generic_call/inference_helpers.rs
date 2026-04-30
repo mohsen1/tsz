@@ -286,7 +286,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             })
             .collect::<Vec<_>>();
         concrete_bounds.dedup();
-        if concrete_bounds.len() == 1
+        // When the lone surviving "concrete" bound is `never` *and* the
+        // candidate set also contained an `unknown`/`any` candidate (so
+        // BCT chose that wider type as the result), promoting `never`
+        // back into the inferred return type contradicts BCT and forces
+        // a downstream argument check (e.g. a generic identity callback
+        // whose return type still references the type variable) to
+        // reject a perfectly valid argument. Skip the promotion in that
+        // mixed case so the BCT result (`unknown`/`any`) stands.
+        //
+        // Single-never lower-bound sets (e.g. `T = never` from an
+        // unconstrained `f1<T>([])` call) are intentionally left intact:
+        // those legitimately mean "no information beyond never" and tsc
+        // also infers `never` there.
+        //
+        // Conformance: `subtypeRelationForNever.ts`.
+        let drop_never_promotion = concrete_bounds.len() == 1
+            && concrete_bounds[0] == TypeId::NEVER
+            && lower_bounds
+                .iter()
+                .any(|&b| matches!(b, TypeId::ANY | TypeId::UNKNOWN));
+        if !drop_never_promotion
+            && concrete_bounds.len() == 1
             && (crate::type_queries::contains_infer_types_db(
                 self.interner.as_type_database(),
                 inferred,

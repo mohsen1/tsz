@@ -1295,8 +1295,10 @@ impl<'a> CheckerState<'a> {
                         {
                             return self.get_type_of_node(idx);
                         }
-                        let declared_type = self.get_type_of_symbol(sym_id);
-                        return declared_type;
+                        if self.assignment_target_is_control_flow_typed_any_symbol(sym_id) {
+                            return TypeId::ANY;
+                        }
+                        return self.get_type_of_symbol(sym_id);
                     }
                 } else {
                     // Use the resolved symbol
@@ -1305,8 +1307,10 @@ impl<'a> CheckerState<'a> {
                     {
                         return self.get_type_of_node(idx);
                     }
-                    let declared_type = self.get_type_of_symbol(sym_id);
-                    return declared_type;
+                    if self.assignment_target_is_control_flow_typed_any_symbol(sym_id) {
+                        return TypeId::ANY;
+                    }
+                    return self.get_type_of_symbol(sym_id);
                 }
             }
 

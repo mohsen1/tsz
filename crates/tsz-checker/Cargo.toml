@@ -68,6 +68,10 @@ name = "ts2449_parameter_decorator_no_tdz_tests"
 path = "tests/ts2449_parameter_decorator_no_tdz_tests.rs"
 
 [[test]]
+name = "decorator_method_tdz_tests"
+path = "tests/decorator_method_tdz_tests.rs"
+
+[[test]]
 name = "ts1238_generic_decorator_tests"
 path = "tests/ts1238_generic_decorator_tests.rs"
 
@@ -488,6 +492,10 @@ name = "ts2451_type_only_namespace_merge_tests"
 path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 
 [[test]]
+name = "ts2506_cross_file_cycle_tests"
+path = "tests/ts2506_cross_file_cycle_tests.rs"
+
+[[test]]
 name = "intersection_primitive_member_assignability_tests"
 path = "tests/intersection_primitive_member_assignability_tests.rs"
 
@@ -504,8 +512,20 @@ name = "elaboration_wrapper_init_tests"
 path = "tests/elaboration_wrapper_init_tests.rs"
 
 [[test]]
+name = "ts2339_union_narrow_display_tests"
+path = "tests/ts2339_union_narrow_display_tests.rs"
+
+[[test]]
 name = "jsdoc_constructor_typeof_source_display_tests"
 path = "tests/jsdoc_constructor_typeof_source_display_tests.rs"
+
+[[test]]
+name = "global_this_decl_emit_unbound_tests"
+path = "tests/global_this_decl_emit_unbound_tests.rs"
+
+[[test]]
+name = "js_class_eval_arguments_no_ts1210_tests"
+path = "tests/js_class_eval_arguments_no_ts1210_tests.rs"
 
 [[test]]
 name = "jsx_excess_attr_with_spread_source_display_tests"
@@ -534,6 +554,10 @@ path = "tests/destructuring_rest_omit_unspreadable_tests.rs"
 [[test]]
 name = "super_keyword_speculation_survival_tests"
 path = "tests/super_keyword_speculation_survival_tests.rs"
+
+[[test]]
+name = "ambient_default_namespace_export_dup_tests"
+path = "tests/ambient_default_namespace_export_dup_tests.rs"
 
 [lints]
 workspace = true

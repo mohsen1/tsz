@@ -1077,3 +1077,78 @@ fn test_await_as_arrow_single_param_in_static_block_emits_ts1109() {
         "Expected TS1109 for 'await =>' in static block, got codes: {codes:?}"
     );
 }
+
+#[test]
+fn static_block_bare_await_computed_names_report_at_close_bracket() {
+    let source = r#"class C {
+    static {
+        ({ [await]: 1 });
+        class D {
+            [await] = 1;
+        }
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let object_await_pos = source.find("[await]").unwrap() as u32 + 1;
+    let object_close_bracket_pos = source.find("[await]").unwrap() as u32 + "[await".len() as u32;
+    let class_await_pos = source.rfind("[await]").expect("class computed await") as u32 + 1;
+    let class_close_bracket_pos =
+        source.rfind("[await]").expect("class computed await") as u32 + "[await".len() as u32;
+
+    for expected_pos in [object_close_bracket_pos, class_close_bracket_pos] {
+        assert!(
+            diags.iter().any(|diag| {
+                diag.code == diagnostic_codes::EXPRESSION_EXPECTED && diag.start == expected_pos
+            }),
+            "expected TS1109 at closing bracket byte {expected_pos}, got {diags:?}"
+        );
+    }
+    for early_pos in [object_await_pos, class_await_pos] {
+        assert!(
+            !diags.iter().any(|diag| {
+                diag.code == diagnostic_codes::EXPRESSION_EXPECTED && diag.start == early_pos
+            }),
+            "TS1109 should not be anchored at bare `await` byte {early_pos}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn static_block_await_arrow_candidates_recover_as_await_expressions() {
+    let source = r#"class C {
+    static {
+        const ff = (await) => { };
+        const fff = await => { };
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let parenthesized_close_pos = source.find("(await)").unwrap() as u32 + "(await".len() as u32;
+    let parenthesized_arrow_pos = source.find(") =>").unwrap() as u32 + ") ".len() as u32;
+    let bare_arrow_pos = source.rfind("=>").expect("bare await arrow") as u32;
+
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                && diag.start == parenthesized_close_pos
+        }),
+        "expected TS1109 at `)` after `(await`, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::EXPECTED
+                && diag.start == parenthesized_arrow_pos
+                && diag.message == "';' expected."
+        }),
+        "expected TS1005 ';' at parenthesized `=>`, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::EXPRESSION_EXPECTED && diag.start == bare_arrow_pos
+        }),
+        "expected TS1109 at `=>` after bare `await`, got {diags:?}"
+    );
+}

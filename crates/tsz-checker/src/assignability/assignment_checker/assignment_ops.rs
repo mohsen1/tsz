@@ -44,6 +44,46 @@ impl<'a> CheckerState<'a> {
         is_prototype.then_some(outer_access.name_or_argument)
     }
 
+    fn is_checked_js_implicit_any_member_assignment_target(&self, idx: NodeIndex) -> bool {
+        if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(member_name) = self
+            .ctx
+            .arena
+            .get_identifier_at(access.name_or_argument)
+            .map(|ident| ident.escaped_text.as_str())
+        else {
+            return false;
+        };
+        let prefix = format!("Member '{member_name}' implicitly has an '");
+        self.ctx.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
+                && diag.message_text.starts_with(&prefix)
+        })
+    }
+
+    fn is_control_flow_typed_any_assignment_target(&mut self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        self.resolve_identifier_symbol_for_write(idx)
+            .or_else(|| self.resolve_identifier_symbol(idx))
+            .is_some_and(|sym_id| self.assignment_target_is_control_flow_typed_any_symbol(sym_id))
+    }
+
     // =========================================================================
     // Assignment Expression Checking
     // =========================================================================
@@ -807,6 +847,13 @@ impl<'a> CheckerState<'a> {
         );
         if right_raw != TypeId::ERROR {
             self.ctx.node_types.or_insert(right_idx.0, right_raw);
+        }
+
+        if !has_explicit_jsdoc_left_type
+            && (self.is_control_flow_typed_any_assignment_target(left_idx)
+                || self.is_checked_js_implicit_any_member_assignment_target(left_idx))
+        {
+            return right_type;
         }
 
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.

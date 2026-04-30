@@ -823,7 +823,6 @@ impl ParserState {
             && self.in_static_block_context()
             && self.is_token(SyntaxKind::AwaitKeyword)
         {
-            self.error_expression_expected();
             return true;
         }
 

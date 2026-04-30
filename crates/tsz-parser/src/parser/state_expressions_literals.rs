@@ -2396,6 +2396,16 @@ impl ParserState {
                 // Computed property name: { [expr]: value }
                 let start_pos = self.token_pos();
                 self.next_token();
+                let bare_static_block_await_name =
+                    self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) && {
+                        let snapshot = self.scanner.save_state();
+                        let current = self.current_token;
+                        self.next_token();
+                        let is_bare_await = self.is_token(SyntaxKind::CloseBracketToken);
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = current;
+                        is_bare_await
+                    };
 
                 // In class member computed property names, keywords such as `public`
                 // and `yield` should emit TS1213.
@@ -2432,6 +2442,9 @@ impl ParserState {
                         diagnostic_messages::A_COMMA_EXPRESSION_IS_NOT_ALLOWED_IN_A_COMPUTED_PROPERTY_NAME,
                         diagnostic_codes::A_COMMA_EXPRESSION_IS_NOT_ALLOWED_IN_A_COMPUTED_PROPERTY_NAME,
                     );
+                }
+                if bare_static_block_await_name && self.is_token(SyntaxKind::CloseBracketToken) {
+                    self.error_expression_expected();
                 }
                 self.parse_expected(SyntaxKind::CloseBracketToken);
                 let end_pos = self.token_end();

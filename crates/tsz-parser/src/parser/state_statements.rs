@@ -1966,6 +1966,26 @@ impl ParserState {
                 // "';' expected." at the `=` position, matching tsc's diagnostic.
                 // Example: `var tt = (a, (b, c)) => ...` — rejected arrow function.
                 if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                    if self.in_static_block_context() {
+                        let arrow_pos = self.token_pos();
+                        let already_reported_expression_at_arrow =
+                            self.parse_diagnostics.last().is_some_and(|diag| {
+                                diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                                    && diag.start == arrow_pos
+                            });
+                        if !already_reported_expression_at_arrow {
+                            self.parse_error_at_current_token(
+                                "';' expected.",
+                                diagnostic_codes::EXPECTED,
+                            );
+                        }
+                        self.next_token();
+                        if self.is_token(SyntaxKind::OpenBraceToken) {
+                            self.parse_block();
+                        } else if self.is_expression_start() {
+                            self.parse_assignment_expression();
+                        }
+                    }
                     break;
                 }
 

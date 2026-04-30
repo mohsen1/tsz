@@ -1,5 +1,6 @@
 //! Import/export declaration validation (TS2307, TS2305, TS2309, TS1202).
 
+mod ambient_default_dup_collect;
 mod context_helpers;
 pub(crate) mod core;
 pub(crate) mod declaration;

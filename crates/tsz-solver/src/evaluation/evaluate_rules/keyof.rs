@@ -7,8 +7,8 @@ use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
 use crate::types::{
-    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, TupleElement, TypeData, TypeId,
-    TypeListId,
+    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, PropertyInfo, TupleElement, TypeData,
+    TypeId, TypeListId,
 };
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -326,10 +326,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 TypeData::Object(shape_id) => {
                     let shape = self.interner().object_shape(shape_id);
-                    let key_types: Vec<TypeId> = shape
+                    // Object shape properties are stored sorted by atom for hash
+                    // consistency (`intern/core/constructors.rs::object_with_flags`).
+                    // For keyof we need declaration order: tsc lazily allocates a
+                    // literal type for each key as it iterates properties in source
+                    // order, so the resulting union ends up sorted by Type.id ==
+                    // declaration order. Mirroring that here ensures the printer's
+                    // alloc-order-based union sort displays keys in source order
+                    // (e.g. `"foo" | "bar"` for `{ foo: ...; bar: ... }`).
+                    let mut props: Vec<&PropertyInfo> = shape
                         .properties
                         .iter()
                         .filter(|p| self.should_include_keyof_property(p))
+                        .collect();
+                    props.sort_by_key(|p| p.declaration_order);
+                    let key_types: Vec<TypeId> = props
+                        .into_iter()
                         .map(|p| self.property_name_atom_to_key_type(p.name))
                         .collect();
                     if key_types.is_empty() {
@@ -339,10 +351,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 TypeData::ObjectWithIndex(shape_id) => {
                     let shape = self.interner().object_shape(shape_id);
-                    let mut key_types: Vec<TypeId> = shape
+                    let mut props: Vec<&PropertyInfo> = shape
                         .properties
                         .iter()
                         .filter(|p| self.should_include_keyof_property(p))
+                        .collect();
+                    props.sort_by_key(|p| p.declaration_order);
+                    let mut key_types: Vec<TypeId> = props
+                        .into_iter()
                         .map(|p| self.property_name_atom_to_key_type(p.name))
                         .collect();
 
@@ -361,10 +377,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 TypeData::Callable(shape_id) => {
                     let shape = self.interner().callable_shape(shape_id);
-                    let mut key_types: Vec<TypeId> = shape
+                    let mut props: Vec<&PropertyInfo> = shape
                         .properties
                         .iter()
                         .filter(|p| self.should_include_keyof_property(p))
+                        .collect();
+                    props.sort_by_key(|p| p.declaration_order);
+                    let mut key_types: Vec<TypeId> = props
+                        .into_iter()
                         .map(|p| self.property_name_atom_to_key_type(p.name))
                         .collect();
 
@@ -498,7 +518,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let array_base = self
             .interner()
             .get_array_display_base_type()
-            .or_else(|| self.resolver().get_array_base_type());
+            .or_else(|| self.resolver().get_array_base_type())
+            // Fall back to the interner-registered array base. Tests and other
+            // standalone evaluator callers that wire up `set_array_base_type`
+            // without registering a display base or a resolver-side base would
+            // otherwise drop down to the lib-default key list and leak methods
+            // that aren't on the registered Array<T> shape.
+            .or_else(|| self.interner().get_array_base_type());
         if let Some(array_base) = array_base {
             let base_props = crate::type_queries::collect_homomorphic_source_property_infos(
                 self.interner(),

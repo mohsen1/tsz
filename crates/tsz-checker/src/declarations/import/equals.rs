@@ -103,44 +103,46 @@ impl<'a> CheckerState<'a> {
     /// is separate from normal symbol duplicate checking because the binder
     /// synthesizes the default export under the name `default`, while the source
     /// identifier still occupies the namespace's declaration name.
+    ///
+    /// Skip this case when a sibling value declaration (function/var/class)
+    /// shares the same name. tsc treats that as the merge being rejected by
+    /// TS2395 ("Individual declarations in merged declaration must be all
+    /// exported or all local"), and emits TS2395 alone — TS2300 here would
+    /// double-anchor the diagnostic onto the value reference. See
+    /// `namespaceNotMergedWithFunctionDefaultExport.ts`.
     pub(crate) fn check_ambient_default_namespace_export_duplicates(
         &mut self,
         statements: &[NodeIndex],
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        use std::collections::HashMap;
+        use std::collections::{HashMap, HashSet};
 
         let mut namespaces = HashMap::new();
         let mut default_export_names = Vec::new();
+        let mut sibling_value_names: HashSet<String> = HashSet::new();
 
+        // Walk top-level statements, then recurse into EXPORT_DECLARATION wrappers
+        // when the export clause is itself a value declaration (function/class/var).
+        // `export function foo(){}` is parsed as an EXPORT_DECLARATION whose
+        // `export_clause` is the inner FUNCTION_DECLARATION.
         for &stmt_idx in statements {
-            let Some(node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-
-            if node.kind == syntax_kind_ext::MODULE_DECLARATION
-                && let Some(module_decl) = self.ctx.arena.get_module(node)
-                && let Some(name_node) = self.ctx.arena.get(module_decl.name)
-                && name_node.kind == SyntaxKind::Identifier as u16
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            {
-                namespaces.insert(ident.escaped_text.clone(), module_decl.name);
-                continue;
-            }
-
-            if node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                && let Some(export_decl) = self.ctx.arena.get_export_decl(node)
-                && export_decl.is_default_export
-                && let Some(exported_node) = self.ctx.arena.get(export_decl.export_clause)
-                && exported_node.kind == SyntaxKind::Identifier as u16
-                && let Some(ident) = self.ctx.arena.get_identifier(exported_node)
-            {
-                default_export_names.push((ident.escaped_text.clone(), export_decl.export_clause));
-            }
+            self.collect_ambient_default_export_dup_targets(
+                stmt_idx,
+                &mut namespaces,
+                &mut default_export_names,
+                &mut sibling_value_names,
+            );
         }
 
         for (name, export_name_node) in default_export_names {
             if !namespaces.contains_key(&name) {
+                continue;
+            }
+            // Skip when a sibling value declaration shares the name — tsc
+            // emits TS2395 instead of TS2300 in that configuration (the
+            // exported function/var/class plus the local namespace fail to
+            // merge for export-visibility reasons, not symbol duplication).
+            if sibling_value_names.contains(&name) {
                 continue;
             }
             let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);

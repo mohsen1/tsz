@@ -230,8 +230,12 @@ a:hover { text-decoration: underline; }
 
 .subtitle {
   font-size: 1.1rem;
-  color: var(--text-secondary);
+  color: var(--text);
   margin-bottom: 2rem;
+}
+
+.wip-warning {
+  color: var(--text-secondary);
 }
 
 /* ── Code ── */
