@@ -136,6 +136,42 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Defer to the regular property-comparison path unless the target is a
+        // simple primitive or literal (or a union of those). For callable,
+        // structural, intersection, or recursive-type-alias targets, the simple
+        // is_assignable_to below misses contextual inference and
+        // method-bivariance checks the existing path performs (correlatedUnions,
+        // recursiveTupleTypeInference,
+        // contextualTypeBasedOnIntersectionWithAnyInTheMix1).
+        let target_is_simple = {
+            let is_simple = |t: TypeId| {
+                crate::query_boundaries::common::is_primitive_type(self.ctx.types, t)
+                    || crate::query_boundaries::common::is_literal_type(self.ctx.types, t)
+            };
+            is_simple(target_prop_type)
+                || crate::query_boundaries::common::union_members(self.ctx.types, target_prop_type)
+                    .is_some_and(|members| {
+                        !members.is_empty() && members.iter().all(|&m| is_simple(m))
+                    })
+        };
+        if !target_is_simple {
+            return false;
+        }
+
+        // Skip computed property names: tsc emits the more specific TS2418
+        // for computed-property-value type mismatches; firing TS2322 here
+        // would shadow that code
+        // (uniqueSymbolAllowsIndexInObjectWithIndexSignature).
+        if self
+            .find_object_literal_property_element(obj_literal_idx, prop_name)
+            .and_then(|elem_idx| self.ctx.arena.get(elem_idx))
+            .and_then(|elem_node| self.ctx.arena.get_property_assignment(elem_node))
+            .and_then(|prop| self.ctx.arena.get(prop.name))
+            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+        {
+            return false;
+        }
+
         let source_type_for_check = self
             .object_literal_property_name_and_value(obj_literal_idx, prop_name)
             .map(|(_, value_idx)| {
@@ -341,6 +377,44 @@ impl<'a> CheckerState<'a> {
                         | syntax_kind_ext::METHOD_DECLARATION
                 )
             }) {
+                continue;
+            }
+
+            // Defer to the regular property-comparison path unless the target
+            // is a simple primitive or literal (or a union of those). For
+            // callable, structural, intersection, or recursive-type-alias
+            // targets, the simple is_assignable_to below misses contextual
+            // inference and method-bivariance checks the existing path
+            // performs (correlatedUnions, recursiveTupleTypeInference,
+            // contextualTypeBasedOnIntersectionWithAnyInTheMix1).
+            let target_is_simple = {
+                let is_simple = |t: TypeId| {
+                    crate::query_boundaries::common::is_primitive_type(self.ctx.types, t)
+                        || crate::query_boundaries::common::is_literal_type(self.ctx.types, t)
+                };
+                is_simple(target_prop_type)
+                    || crate::query_boundaries::common::union_members(
+                        self.ctx.types,
+                        target_prop_type,
+                    )
+                    .is_some_and(|members| {
+                        !members.is_empty() && members.iter().all(|&m| is_simple(m))
+                    })
+            };
+            if !target_is_simple {
+                continue;
+            }
+
+            // Skip computed property names: tsc emits the more specific
+            // TS2418 for computed-property-value type mismatches; firing
+            // TS2322 here would shadow that code
+            // (uniqueSymbolAllowsIndexInObjectWithIndexSignature).
+            if self
+                .ctx
+                .arena
+                .get(prop.name)
+                .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            {
                 continue;
             }
 
