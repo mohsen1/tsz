@@ -105,7 +105,7 @@ impl ModuleResolver {
                 let resolved_ext = ModuleExtension::from_path(&resolved);
                 let resolved_via_index = {
                     let resolved_path = Path::new(&resolved);
-                    resolved_path.file_name().is_some_and(|name| {
+                    let is_index_file = resolved_path.file_name().is_some_and(|name| {
                         let name = name.to_string_lossy();
                         name == "index.ts"
                             || name == "index.tsx"
@@ -114,8 +114,33 @@ impl ModuleResolver {
                             || name == "index.d.ts"
                             || name == "index.d.mts"
                             || name == "index.d.cts"
-                    })
+                            || name == "index.mts"
+                            || name == "index.cts"
+                    });
+                    // When the specifier itself is e.g. `./subfolder/index`, the
+                    // resolution finds `subfolder/index.mts` directly — that is
+                    // direct file resolution, NOT directory index resolution.
+                    // Only treat it as "via index" when the candidate's own
+                    // filename is not already `index`.
+                    let candidate_has_index_filename = candidate
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n == "index");
+                    is_index_file && !candidate_has_index_filename
                 };
+                // Bare `./` and `../` specifiers (no path component to add an
+                // extension to) resolve via directory index but should emit TS2307
+                // (Cannot find module), not TS2834, because there is no filename
+                // to attach an extension to.
+                let is_bare_directory_specifier =
+                    matches!(specifier, "./" | ".\\" | "../" | "..\\");
+                if resolved_via_index && is_bare_directory_specifier {
+                    return Err(ResolutionFailure::NotFound {
+                        specifier: specifier.to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    });
+                }
                 if resolved_via_index {
                     return Err(ResolutionFailure::ImportPathNeedsExtension {
                         specifier: specifier.to_string(),
@@ -156,14 +181,26 @@ impl ModuleResolver {
         }
 
         if let Some(resolved) = try_resolve_candidate(&candidate) {
-            let resolved_display = resolved.to_string_lossy().replace('\\', "/");
-            let resolved_via_index = resolved_display.ends_with("/index.ts")
-                || resolved_display.ends_with("/index.tsx")
-                || resolved_display.ends_with("/index.mts")
-                || resolved_display.ends_with("/index.cts")
-                || resolved_display.ends_with("/index.d.ts")
-                || resolved_display.ends_with("/index.d.mts")
-                || resolved_display.ends_with("/index.d.cts");
+            let resolved_via_index = {
+                let resolved_path = Path::new(&resolved);
+                let is_index_file = resolved_path.file_name().is_some_and(|name| {
+                    let name = name.to_string_lossy();
+                    name == "index.ts"
+                        || name == "index.tsx"
+                        || name == "index.js"
+                        || name == "index.jsx"
+                        || name == "index.d.ts"
+                        || name == "index.d.mts"
+                        || name == "index.d.cts"
+                        || name == "index.mts"
+                        || name == "index.cts"
+                });
+                let candidate_has_index_filename = candidate
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n == "index");
+                is_index_file && !candidate_has_index_filename
+            };
             let resolved_using_ts_extension = (specifier.ends_with(".ts")
                 || specifier.ends_with(".tsx")
                 || specifier.ends_with(".mts")
