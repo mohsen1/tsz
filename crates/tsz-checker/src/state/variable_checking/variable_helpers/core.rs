@@ -1169,4 +1169,18 @@ impl<'a> CheckerState<'a> {
             &[name, &private_name],
         );
     }
+
+    /// `expr satisfies T`, `expr as T`, and `<T>expr` should be treated as
+    /// opaque wrappers for variable-declaration assignability elaboration.
+    /// tsc anchors the resulting TS2322 at the variable binding with the
+    /// outer assignment types instead of drilling into the wrapped
+    /// expression's inner structure.
+    pub(crate) fn initializer_is_type_assertion(&self, init_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        self.ctx.arena.get(init_idx).is_some_and(|n| {
+            n.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+                || n.kind == syntax_kind_ext::AS_EXPRESSION
+                || n.kind == syntax_kind_ext::TYPE_ASSERTION
+        })
+    }
 }
