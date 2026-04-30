@@ -97,7 +97,7 @@ KYSELY_REPO="${KYSELY_REPO:-https://github.com/kysely-org/kysely.git}"
 KYSELY_REF="${KYSELY_REF:-d4911be21cd568d3694dc7f879f72390635226d7}"
 KYSELY_DIR="$EXTERNAL_BENCH_DIR/kysely"
 LARGE_TS_REPO="${LARGE_TS_REPO:-https://github.com/mohsen1/large-ts-repo.git}"
-LARGE_TS_REF="${LARGE_TS_REF:-}"
+LARGE_TS_REF="${LARGE_TS_REF:-e1b22bda18664a507ed0da19c155e0365d585b18}"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
 if [ -n "${LARGE_TS_DIR:-}" ]; then
     LARGE_TS_DIR="$LARGE_TS_DIR"
