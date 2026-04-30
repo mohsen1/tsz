@@ -554,16 +554,30 @@ impl<'a> CheckerState<'a> {
         // partitioning on `done` — naive `.value` access would conflate the
         // yield value (`done:false` branch) with the `TReturn` value
         // (`done:true` branch) and produce `T | TReturn = any`.
+        //
+        // Mirror the sync counterpart at line 762: evaluate Lazy/Conditional
+        // wrappers before partitioning so Application-receiver shapes (the
+        // very case this method targets) actually expand into the
+        // `IteratorResult` discriminated union before we look for `done:true`
+        // branches. Skipping `evaluate_type` previously caused
+        // `extract_iterator_result_value_types` to fall through to its
+        // ANY-ANY fallback for the common case.
+        let resolved_awaited_next = self.ctx.types.evaluate_type(awaited_next);
         let (yield_type, _return_type) =
             tsz_solver::operations::extract_iterator_result_value_types(
                 self.ctx.types,
-                awaited_next,
+                resolved_awaited_next,
             );
-        if yield_type != TypeId::NEVER && yield_type != TypeId::ERROR {
+        // Treat ANY as extraction failure (the operation returns
+        // `(ANY, ANY)` for unresolved shapes) so we fall through to the
+        // `.value` access fallback below — matching the sync version's
+        // `yield_type != TypeId::ANY` gate. Without this, ANY short-
+        // circuited the success path and the fallback was dead code.
+        if yield_type != TypeId::ANY && yield_type != TypeId::NEVER && yield_type != TypeId::ERROR {
             return yield_type;
         }
         // Fallback: naive `value` access if partitioning yielded nothing.
-        let value_access = self.resolve_property_access_with_env(awaited_next, "value");
+        let value_access = self.resolve_property_access_with_env(resolved_awaited_next, "value");
         match value_access {
             PropertyAccessResult::Success { type_id, .. } => type_id,
             _ => TypeId::ANY,
