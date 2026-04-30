@@ -113,3 +113,39 @@ let check: never = a1;
         "f1([]) should infer T=never when there are no contra-candidates. Got: {diagnostics:#?}"
     );
 }
+
+/// Regression for `subtypeRelationForNever.ts` (TS issue #51999).
+///
+/// When a return-position type variable has both a `never` candidate (from a
+/// function returning `never`) and a non-`never` covariant candidate, the
+/// pre-Round-2 fix layer correctly picks the non-`never` value (BCT filters
+/// `never`), but the final `resolve_return_position_inference_type` was
+/// then promoting the lone surviving concrete bound — which IS `never` —
+/// back into the result whenever the BCT result was `unknown`/`any`/
+/// placeholder-bearing. The promotion contradicts BCT and forces the
+/// later argument check (e.g. `id` against `(values: a[]) => never`) to
+/// reject a perfectly valid `<a>(value: a) => a` lambda.
+///
+/// The fix excludes `never` from the concrete-bounds promotion list so
+/// the BCT-chosen result stands.
+#[test]
+fn never_return_candidate_does_not_force_never_inference() {
+    let source = r#"
+function fail(message: string): never { throw new Error(message); }
+function withFew<a, r>(values: a[], haveFew: (values: a[]) => r, haveNone: (reason: string) => r): r {
+    return values.length > 0 ? haveFew(values) : haveNone('No values.');
+}
+function id<a>(value: a): a { return value; }
+const result = withFew([1, 2, 3], id, fail);
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let blocking: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert!(
+        blocking.is_empty(),
+        "withFew([1,2,3], id, fail) should infer r from id (not collapse to never via fail). Got: {diagnostics:#?}"
+    );
+}
