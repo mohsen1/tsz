@@ -1471,3 +1471,77 @@ fn test_type_param_not_assignable_to_required_mapped() {
         "U should NOT be assignable to Required<U> (-? removes optionality)"
     );
 }
+
+#[test]
+fn test_evaluated_callable_assignable_to_all_any_application_via_display_alias() {
+    // Regression: evaluated Callable (e.g. ICEP<unknown,unknown> stored as TypeData::Callable)
+    // must be assignable to the same generic Application with all-any args (e.g. ICEP<any,any>).
+    // Without the display_alias fallback in cache.rs, application_id() returns None for the
+    // evaluated form and the variance fast path is skipped, causing structural expansion of
+    // self-referential types that incorrectly fails. (circularlySimplifyingConditionalTypesNoCrash.ts)
+    use crate::{CallSignature, CallableShape, TypeInterner, relations::subtype::SubtypeChecker};
+
+    let interner = TypeInterner::new();
+    let base_lazy = interner.lazy(DefId(99));
+
+    // Build a minimal callable: (x: unknown): unknown
+    let param_atom = interner.intern_string("x");
+    let sig = CallSignature {
+        type_params: vec![],
+        params: vec![crate::ParamInfo {
+            name: Some(param_atom),
+            type_id: TypeId::UNKNOWN,
+            optional: false,
+            rest: false,
+        }],
+        return_type: TypeId::UNKNOWN,
+        this_type: None,
+        type_predicate: None,
+        is_method: false,
+    };
+    let evaluated_callable = interner.callable(CallableShape {
+        call_signatures: vec![sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    // source_app_unknown = GenericFn<unknown> (the Application the callable was evaluated from)
+    let source_app_unknown = interner.application(base_lazy, vec![TypeId::UNKNOWN]);
+    // target_app_any = GenericFn<any>
+    let target_app_any = interner.application(base_lazy, vec![TypeId::ANY]);
+
+    // Tag the evaluated callable with the display alias so the variance fast path can recover it.
+    interner.store_display_alias(evaluated_callable, source_app_unknown);
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // KEY assertion: evaluated Callable <: GenericFn<any> must be True
+    assert!(
+        checker
+            .check_subtype(evaluated_callable, target_app_any)
+            .is_true(),
+        "evaluated Callable tagged with display_alias GenericFn<unknown> should be assignable to GenericFn<any>"
+    );
+
+    // Sanity: plain Application <: Application with all-any also works
+    assert!(
+        checker
+            .check_subtype(source_app_unknown, target_app_any)
+            .is_true(),
+        "GenericFn<unknown> should be assignable to GenericFn<any>"
+    );
+
+    // Unrelated base must not be affected
+    let other_base = interner.lazy(DefId(100));
+    let other_app = interner.application(other_base, vec![TypeId::ANY]);
+    assert!(
+        !checker
+            .check_subtype(evaluated_callable, other_app)
+            .is_true(),
+        "callable should NOT be assignable to a different generic OtherFn<any>"
+    );
+}
