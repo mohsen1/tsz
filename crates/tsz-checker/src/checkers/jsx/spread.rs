@@ -184,7 +184,14 @@ impl<'a> CheckerState<'a> {
                         .map(|p| {
                             let prop_name = self.ctx.types.resolve_atom(p.name);
                             let type_str = self.format_type(p.type_id);
-                            format!("{prop_name}: {type_str}")
+                            // Mirror `format_property` in the solver's union/intersection printer
+                            // (`crates/tsz-solver/src/diagnostics/format/compound.rs`) so an
+                            // optional property like `{ a: string; b?: number }` renders with the
+                            // `?` suffix instead of being flattened to a required form. Likewise
+                            // surface `readonly` so the diagnostic doesn't drop the modifier.
+                            let readonly = if p.readonly { "readonly " } else { "" };
+                            let optional = if p.optional { "?" } else { "" };
+                            format!("{readonly}{prop_name}{optional}: {type_str}")
                         })
                         .collect();
                     if fields.is_empty() {
