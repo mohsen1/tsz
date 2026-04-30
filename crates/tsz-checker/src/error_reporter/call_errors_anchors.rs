@@ -172,15 +172,23 @@ impl<'a> CheckerState<'a> {
                 // carries the `true` literal in `arg_type` while the solver
                 // emits `boolean` as the failure's actual. Compare both raw
                 // and literal-widened forms so the offending argument is still
-                // identified after widening.
+                // identified after widening. Note: we deliberately compare
+                // *one* side widened against the unwidened other (lines below)
+                // rather than both-widened. The both-widened comparison was
+                // too broad — for `fn(1, 2)` against overloads expecting
+                // `string`/`boolean` the solver emits `actual_type = 1`, and
+                // a both-widened match would also tag `arg_idx = 2` (since
+                // both widen to `number`), creating a false ambiguity that
+                // collapses the diagnostic anchor back to the callee. The
+                // tagged-template case the comment describes only needs one
+                // side widened to line up with the solver's failure actual.
                 let widened_arg_type = self.widen_literal_type(arg_type);
                 let widened_actual_type = self.widen_literal_type(actual_type);
                 let matches_actual = arg_type == actual_type
                     || self.resolve_lazy_type(arg_type) == actual_type
                     || self.resolve_lazy_type(actual_type) == arg_type
                     || widened_arg_type == actual_type
-                    || arg_type == widened_actual_type
-                    || widened_arg_type == widened_actual_type;
+                    || arg_type == widened_actual_type;
                 let mismatches_expected = expected_type != TypeId::ERROR
                     && expected_type != TypeId::UNKNOWN
                     && !self.is_assignable_to(arg_type, expected_type);
