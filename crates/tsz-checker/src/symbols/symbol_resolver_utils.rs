@@ -167,6 +167,11 @@ impl<'a> CheckerState<'a> {
 
     /// Search lib symbols for a function-scoped (var) value symbol with the given name.
     /// Handles block-scoped local shadowing a lib global var (e.g. `const Symbol = globalThis.Symbol`).
+    ///
+    /// Symbols whose only declaration is a parameter (kind `PARAMETER`) are rejected:
+    /// `lib_symbol_ids` can include parameter symbols leaked from lib binding (e.g. the `y`
+    /// parameter of `Math.atan2`), which would otherwise spoof a "lib var `y`" and
+    /// suppress legitimate TS2339 reports for `globalThis.y` against a user `const y`.
     pub(crate) fn resolve_lib_global_var_symbol(&self, name: &str) -> Option<SymbolId> {
         if self.ctx.binder.lib_symbols_are_merged() {
             for &lib_id in self.ctx.binder.lib_symbol_ids.iter() {
@@ -175,6 +180,7 @@ impl<'a> CheckerState<'a> {
                     && lib_sym.has_any_flags(symbol_flags::VALUE)
                     && (!lib_sym.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
                         || lib_sym.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
+                    && self.symbol_has_globalable_declaration(lib_id, lib_sym, None)
                 {
                     return Some(lib_id);
                 }
@@ -187,12 +193,44 @@ impl<'a> CheckerState<'a> {
                     && lib_sym.has_any_flags(symbol_flags::VALUE)
                     && (!lib_sym.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
                         || lib_sym.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
+                    && self.symbol_has_globalable_declaration(sym_id, lib_sym, Some(lib_binder))
                 {
                     return Some(sym_id);
                 }
             }
         }
         None
+    }
+
+    /// True iff the symbol has at least one declaration that can plausibly be
+    /// a global value (i.e. not a `Parameter` node). Used by
+    /// `resolve_lib_global_var_symbol` to filter out parameter symbols that
+    /// leak into `lib_symbol_ids`.
+    fn symbol_has_globalable_declaration(
+        &self,
+        sym_id: SymbolId,
+        sym: &tsz_binder::Symbol,
+        lib_binder_override: Option<&tsz_binder::BinderState>,
+    ) -> bool {
+        let main_arena = self.ctx.arena;
+        for &decl_idx in &sym.declarations {
+            if decl_idx.is_none() {
+                continue;
+            }
+            let arena = lib_binder_override
+                .map(|b| b.arena_for_declaration_or(sym_id, decl_idx, main_arena))
+                .unwrap_or_else(|| {
+                    self.ctx
+                        .binder
+                        .arena_for_declaration_or(sym_id, decl_idx, main_arena)
+                });
+            if let Some(node) = arena.get(decl_idx)
+                && node.kind != syntax_kind_ext::PARAMETER
+            {
+                return true;
+            }
+        }
+        false
     }
 
     // =========================================================================
