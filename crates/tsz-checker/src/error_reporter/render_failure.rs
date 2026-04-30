@@ -1873,8 +1873,24 @@ impl<'a> CheckerState<'a> {
         if depth == 0 {
             let (source_str, target_str) =
                 self.format_top_level_assignability_message_types_at(source, target, idx);
-            if let Some(tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }) =
-                nested_reason
+            // Drill into a nested LiteralTypeMismatch only when the outer
+            // source/target are themselves literal-shaped. When they are
+            // object types we keep the outer "Type 'A' is not assignable to
+            // type 'B'" + "Types of property 'X' are incompatible" hierarchy
+            // to match tsc and to avoid replacing a binding-anchored message
+            // with a leaf message that hides the structural context
+            // (typeSatisfaction_vacuousIntersectionOfContextualTypes).
+            let outer_is_structural =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)
+                    .is_some()
+                    || crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        target,
+                    )
+                    .is_some();
+            if !outer_is_structural
+                && let Some(tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }) =
+                    nested_reason
             {
                 let is_typed_array_display = |display: &str| {
                     display.starts_with("Int8Array<")
