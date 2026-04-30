@@ -173,7 +173,26 @@ impl<'a> CheckerState<'a> {
             }
 
             if !missing_props.is_empty() {
-                let spread_name = self.format_type(spread_type);
+                // Format as a fresh structural type in declaration order — tsc shows the
+                // object shape, not the type alias name, in JSX spread missing-property
+                // diagnostics.
+                let spread_name = {
+                    let mut props: Vec<_> = spread_shape.properties.to_vec();
+                    crate::query_boundaries::common::normalize_display_property_order(&mut props);
+                    let fields: Vec<String> = props
+                        .iter()
+                        .map(|p| {
+                            let prop_name = self.ctx.types.resolve_atom(p.name);
+                            let type_str = self.format_type(p.type_id);
+                            format!("{prop_name}: {type_str}")
+                        })
+                        .collect();
+                    if fields.is_empty() {
+                        "{}".to_string()
+                    } else {
+                        format!("{{ {}; }}", fields.join("; "))
+                    }
+                };
                 if missing_props.len() == 1 {
                     // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
                     let message = format_message(

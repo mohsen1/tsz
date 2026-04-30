@@ -3395,6 +3395,51 @@ let p = <Greet name={{42}} />;
 }
 
 // =============================================================================
+// TS2741 spread diagnostic: structural type form, not alias name
+// =============================================================================
+
+#[test]
+fn test_spread_ts2741_shows_structural_form_not_alias_name() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface ComponentProps {{
+    property1: string;
+    property2: number;
+}}
+interface AnotherComponentProps {{
+    property1: string;
+    AnotherProperty1: string;
+    property2: boolean;
+}}
+function AnotherComponent(props: AnotherComponentProps) {{ return <div />; }}
+declare var props: ComponentProps;
+<AnotherComponent {{...props}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2741: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| {
+            *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        })
+        .collect();
+    assert!(
+        !ts2741.is_empty(),
+        "Expected TS2741 for missing 'AnotherProperty1', got: {diags:?}"
+    );
+    let msg = &ts2741[0].1;
+    assert!(
+        msg.contains("{ property1: string; property2: number; }"),
+        "TS2741 message must show structural type form, not alias name. Got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("'ComponentProps'"),
+        "TS2741 message must not show alias name 'ComponentProps' as source type. Got: {msg:?}"
+    );
+}
+
+// =============================================================================
 // Boolean shorthand: `<Foo x/>` should report `Type 'true'` not `Type 'boolean'`
 // =============================================================================
 
