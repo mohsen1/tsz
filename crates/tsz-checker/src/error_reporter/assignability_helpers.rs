@@ -130,7 +130,31 @@ impl<'a> CheckerState<'a> {
     }
 
     fn looks_like_invalid_optional_mapped_display(display: &str) -> bool {
-        display.starts_with("{ [P in ")
+        // Recognise mapped-type displays of the shape `{ [<name> in <key>]?: <…> | undefined; }`
+        // regardless of the iteration variable name. The previous version
+        // hardcoded `[P in ` and missed every other valid name (`K`, `key`,
+        // `X`, etc.) that the printer emits — `Readonly<T> = { [K in keyof
+        // T]: T[K] }` would slip past, defeating this carve-out.
+        let Some(rest) = display.strip_prefix("{ [") else {
+            return false;
+        };
+        let Some(space_idx) = rest.find(' ') else {
+            return false;
+        };
+        let var_name = &rest[..space_idx];
+        if var_name.is_empty()
+            || !var_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+            || !var_name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        {
+            return false;
+        }
+        let after_var = &rest[space_idx + 1..];
+        after_var.starts_with("in ")
             && display.contains("]?: ")
             && display.ends_with(" | undefined; }")
     }
