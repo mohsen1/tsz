@@ -4866,11 +4866,14 @@ fn test_generic_callback_instantiation_preserves_parameter_conflicts() {
     });
 
     let result = evaluator.resolve_call(higher_order, &[generic_callback]);
-    // tsc accepts this: a generic callback <T>(x: T, y: T) => T is assignable to
-    // (x: number, y: string) => U because T can be instantiated as number | string.
+    // tsc rejects this: a generic callback <T>(x: T, y: T) => T cannot be
+    // contextually instantiated against (x: number, y: string) => U because the
+    // single naked type parameter T receives disjoint candidates (number and
+    // string) from the two parameter positions. See conformance test
+    // contextualSignatureInstantiation.ts which expects TS2345 here.
     assert!(
-        matches!(result, CallResult::Success(_)),
-        "Expected generic callback to be accepted (T instantiated as union), got {result:?}"
+        matches!(result, CallResult::ArgumentTypeMismatch { .. }),
+        "Expected generic callback to be rejected (conflicting T candidates), got {result:?}"
     );
 }
 
