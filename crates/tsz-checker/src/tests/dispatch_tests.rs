@@ -2379,4 +2379,15 @@ y = x;
         "Expected 1 TS2322 for Cb<Cb<Cb<Cb<number>>>> vs Cb<Cb<Cb<Cb<string>>>>, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
+    // Both source and target must be shown in structurally-expanded form.
+    // tsc does not preserve alias names when the alias body is an IndexedAccess type.
+    let msg = &ts2322[0].message_text;
+    assert!(
+        msg.contains("() => () => () => () => number"),
+        "Expected source to expand to '() => () => () => () => number', got: {msg}"
+    );
+    assert!(
+        msg.contains("() => () => () => () => string"),
+        "Expected target to expand to '() => () => () => () => string', got: {msg}"
+    );
 }
