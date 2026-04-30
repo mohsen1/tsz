@@ -12,9 +12,11 @@
 
 use crate::operations::iterators::get_iterator_info;
 use crate::type_queries::get_return_type;
-use crate::types::{ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility};
+use crate::types::{
+    IntrinsicKind, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility,
+};
 use crate::utils;
-use crate::visitor::application_id;
+use crate::visitor::{application_id, object_shape_id};
 use tsz_common::interner::Atom;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -129,6 +131,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Look up a property in the global Object interface (Object.prototype).
+    ///
+    /// TypeScript treats all object interface types as implicitly having Object.prototype
+    /// methods. When a structural check finds a required property absent from the source,
+    /// this fallback allows the check to pass if the global Object type provides a
+    /// compatible property.
+    fn get_object_base_property(&mut self, name: Atom) -> Option<PropertyInfo> {
+        let object_type = self.resolver.get_boxed_type(IntrinsicKind::Object)?;
+        let object_type = self.evaluate_type(object_type);
+        let shape_id = object_shape_id(self.interner, object_type)?;
+        let shape = self.interner.object_shape(shape_id);
+        self.lookup_property(&shape.properties, Some(shape_id), name)
+            .cloned()
+    }
+
     /// Check object subtyping (structural with nominal optimization).
     ///
     /// Validates that source object is a subtype of target object by checking:
@@ -239,7 +256,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     if t_prop.optional {
                         SubtypeResult::True
                     } else {
-                        SubtypeResult::False
+                        // Object.prototype fallback: TypeScript treats all object interface
+                        // types as implicitly having Object.prototype methods.
+                        if let Some(obj_prop) = self.get_object_base_property(t_prop.name) {
+                            self.check_property_compatibility(
+                                &obj_prop,
+                                t_prop,
+                                source_receiver,
+                                target_receiver,
+                            )
+                        } else {
+                            SubtypeResult::False
+                        }
                     }
                 }
             };
@@ -291,6 +319,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::False;
             }
             if !t_prop.optional {
+                // Object.prototype fallback: TypeScript treats all object interface
+                // types as implicitly having Object.prototype methods.
+                if let Some(obj_prop) = self.get_object_base_property(t_prop.name) {
+                    let compat = self.check_property_compatibility(
+                        &obj_prop,
+                        t_prop,
+                        source_receiver,
+                        target_receiver,
+                    );
+                    if compat.is_true() {
+                        continue;
+                    }
+                }
                 return SubtypeResult::False;
             }
         }
