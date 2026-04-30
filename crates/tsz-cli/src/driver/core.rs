@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::collections::VecDeque;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1437,9 +1437,13 @@ fn compile_inner(
     // workloads that load many lib files (e.g., default target with dom.d.ts).
     let checker_lib_handle = if !resolved.no_check {
         let lib_files_clone = lib_files.clone();
-        Some(std::thread::spawn(move || {
-            load_checker_libs(&lib_files_clone)
-        }))
+        Some(
+            std::thread::Builder::new()
+                .name("tsz-checker-lib-clone".to_string())
+                .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
+                .spawn(move || load_checker_libs(&lib_files_clone))
+                .context("failed to spawn checker lib clone thread")?,
+        )
     } else {
         None
     };
