@@ -279,6 +279,40 @@ impl CrossArenaAliasShortcutOutcome {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum DirectCrossFileInterfaceLoweringOutcome {
+    Success = 0,
+    RejectedNonDirectArena = 1,
+    MissingSymbol = 2,
+    NotInterface = 3,
+    DisallowedMergeFlags = 4,
+    MissingDeclarations = 5,
+    ComplexDeclaration = 6,
+    UnknownOrError = 7,
+}
+
+pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT: usize = 8;
+
+pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES: [&str;
+    DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT] = [
+    "success",
+    "rejected_non_direct_arena",
+    "missing_symbol",
+    "not_interface",
+    "disallowed_merge_flags",
+    "missing_declarations",
+    "complex_declaration",
+    "unknown_or_error",
+];
+
+impl DirectCrossFileInterfaceLoweringOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// One process-wide instance. Incremented from any thread, read once at
 /// dump time.
 pub struct PerfCounters {
@@ -302,6 +336,9 @@ pub struct PerfCounters {
     /// `DelegateCrossArenaSymbol` miss constructs a child checker.
     pub delegate_cross_arena_alias_shortcut_outcome:
         [AtomicU64; CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
+    /// Outcome buckets for direct cross-file interface lowering attempts.
+    pub direct_cross_file_interface_lowering_outcome:
+        [AtomicU64; DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
 
     // ─── checker construction ────────────────────────────────────────────
     pub checker_state_constructed: AtomicU64,
@@ -381,6 +418,8 @@ impl PerfCounters {
             delegate_cross_arena_symbol_miss_target_source_file: AtomicU64::new(0),
             delegate_cross_arena_alias_shortcut_outcome: [const { AtomicU64::new(0) };
                 CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
+            direct_cross_file_interface_lowering_outcome: [const { AtomicU64::new(0) };
+                DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
             checker_state_constructed: AtomicU64::new(0),
             checker_state_with_parent_cache_constructed: AtomicU64::new(0),
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
@@ -547,6 +586,18 @@ pub fn record_cross_arena_alias_shortcut_outcome(outcome: CrossArenaAliasShortcu
         .fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
+pub fn record_direct_cross_file_interface_lowering_outcome(
+    outcome: DirectCrossFileInterfaceLoweringOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.direct_cross_file_interface_lowering_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 impl PerfCounters {
     /// Format the current counter snapshot as a multi-line report. Returns
     /// an empty string when the counters are disabled (so callers can
@@ -624,6 +675,7 @@ impl PerfCounters {
             load(&c.resolver_read_package_json_calls),
         ) + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
+            + &Self::dump_direct_cross_file_interface_lowering_outcomes()
             + &Self::dump_by_reason()
     }
 
@@ -682,6 +734,31 @@ impl PerfCounters {
         let mut out = String::from("\nDelegateCrossArenaSymbol alias shortcut outcomes:\n");
         for (idx, name) in CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES.iter().enumerate() {
             let count = load(&c.delegate_cross_arena_alias_shortcut_outcome[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<28} {count:>12}\n"));
+            }
+        }
+        out
+    }
+
+    fn dump_direct_cross_file_interface_lowering_outcomes() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .direct_cross_file_interface_lowering_outcome
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDirect cross-file interface lowering outcomes:\n");
+        for (idx, name) in DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES
+            .iter()
+            .enumerate()
+        {
+            let count = load(&c.direct_cross_file_interface_lowering_outcome[idx]);
             if count > 0 {
                 out.push_str(&format!("  {name:<28} {count:>12}\n"));
             }
