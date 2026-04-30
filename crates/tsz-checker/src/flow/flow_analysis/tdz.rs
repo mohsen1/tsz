@@ -504,10 +504,12 @@ impl<'a> CheckerState<'a> {
         let mut found_decl_in_path = false;
         // Track whether the walk has passed through a DECORATOR node. Method and
         // parameter decorators execute immediately at class-definition time (not
-        // deferred through the decorated function's body), so a function-like
-        // boundary that is the decorated method/accessor should not stop the TDZ
-        // check. Once set, this flag persists for the rest of the upward walk so
-        // that the method-declaration boundary is treated as non-deferring.
+        // deferred through the decorated function's body), so the *one*
+        // function-like boundary that IS the decorated method/accessor should
+        // not stop the TDZ check. We clear the flag again after that boundary
+        // so any *outer* function-like (e.g. a wrapping `function setup() { class
+        // C { @dec(x) method() {} } }`) still defers correctly — otherwise the
+        // flag would suppress every ancestor boundary and produce a false TDZ.
         let mut in_decorator = false;
         while current.is_some() {
             let Some(node) = self.ctx.arena.get(current) else {
@@ -537,6 +539,16 @@ impl<'a> CheckerState<'a> {
                 && !in_decorator
             {
                 return false;
+            }
+            // Decorator boundary consumed: this is the function-like that the
+            // decorator is attached to. Clear `in_decorator` so the next outer
+            // function-like (e.g. a wrapping `function setup()`) still gets
+            // treated as a deferred boundary.
+            if in_decorator
+                && node.is_function_like()
+                && !self.ctx.arena.is_immediately_invoked(current)
+            {
+                in_decorator = false;
             }
             // IIFE - continue walking up, this function executes immediately
             // Non-static class property initializers run during constructor execution,
