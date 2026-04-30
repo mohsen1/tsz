@@ -60,6 +60,10 @@ name = "await_thenable_this_context_tests"
 path = "tests/await_thenable_this_context_tests.rs"
 
 [[test]]
+name = "promise_callback_variance_tests"
+path = "tests/promise_callback_variance_tests.rs"
+
+[[test]]
 name = "ts2449_parameter_decorator_no_tdz_tests"
 path = "tests/ts2449_parameter_decorator_no_tdz_tests.rs"
 
