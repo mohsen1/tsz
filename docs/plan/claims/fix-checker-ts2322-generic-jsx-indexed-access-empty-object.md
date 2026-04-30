@@ -45,5 +45,7 @@ Two independent failures rolled into one fingerprint mismatch:
 
 - **Reproduced** locally with `/tmp/jsx_repro.ts` (3-element IntrinsicElements). Demonstrates issue #2 cleanly. Issue #1 only with full react16.d.ts corpus.
 - **Ruled out**: the line-5 false positive does NOT reproduce on a small union — the helper handles small unions correctly.
-- **Identified**: `check_generic_index_access_subtype` lives at `crates/tsz-solver/src/relations/subtype/helpers.rs:269`. Call site at `subtype/core.rs:2228`.
-- **Next step**: add tracing in the helper and at the call site to confirm whether the False return from the helper is reaching the diagnostic emitter for issue #2; trace the per-key check on the full JSX union for issue #1 to find which element rejects `{}`.
+- **Identified**: `check_generic_index_access_subtype` lives at `crates/tsz-solver/src/relations/subtype/helpers.rs:269`. Call site at `subtype/core.rs:2228`. Visitor at `subtype/visitor.rs:828` already has the s_param.name != t_param.name guard at L840-855.
+- **Iteration 2 finding (DEBUG eprintln)**: For repro4 (`function f<Alpha…, Beta…>(x: I[Alpha]): I[Beta] { return x; }`), only ONE `is_assignable_impl` call fires, and it is `source=TypeParameter(name=Alpha) target=Union(...)` — almost certainly the constraint check `Alpha extends keyof I`, NOT the `return x` assignability check. The `return x` check is never reaching the assignability gate. `visit_index_access` is never called, hence the existing T1 vs T2 guard never gets a chance to fire.
+- **Hypothesis (next iteration)**: the return-statement handler in the checker is silently skipping the `is_assignable` call when the return type is a deferred IndexAccess containing a generic type parameter. Need to grep `check_return_statement` / `return_type_check` in `tsz-checker` and understand the bypass.
+- **Issue #1 still un-attempted**: trace the per-key check on the full JSX union — left for after issue #2 lands.
