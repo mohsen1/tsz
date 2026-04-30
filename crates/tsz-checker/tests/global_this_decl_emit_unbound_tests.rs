@@ -41,12 +41,7 @@ fn diagnostics(source: &str, file_name: &str) -> Vec<u32> {
     );
 
     checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| d.code)
-        .collect()
+    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
 }
 
 /// `export const globalThis = globalThis;` (single-file form): the right-hand
@@ -55,10 +50,7 @@ fn diagnostics(source: &str, file_name: &str) -> Vec<u32> {
 /// because the binder lookup of `globalThis` returned `SymbolId::NONE`.
 #[test]
 fn export_const_globalThis_assignment_emits_ts4025_for_self_named_export() {
-    let codes = diagnostics(
-        "export const globalThis = globalThis;\n",
-        "index.ts",
-    );
+    let codes = diagnostics("export const globalThis = globalThis;\n", "index.ts");
     assert!(
         codes.contains(&4025),
         "expected TS4025 for `export const globalThis = globalThis`, got: {codes:?}"
