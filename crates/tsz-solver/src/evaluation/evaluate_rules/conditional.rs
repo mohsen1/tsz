@@ -94,8 +94,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             let mut check_type = self.evaluate(cond.check_type);
             let extends_type = self.evaluate(cond.extends_type);
-            if matches!(self.interner().lookup(check_type), Some(TypeData::Application(_)))
-                && let Some(expanded_check) = self.try_expand_application_for_conditional_check(check_type)
+            if matches!(
+                self.interner().lookup(check_type),
+                Some(TypeData::Application(_))
+            ) && let Some(expanded_check) =
+                self.try_expand_application_for_conditional_check(check_type)
             {
                 check_type = expanded_check;
             }
@@ -819,11 +822,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && let Some(TypeData::TypeParameter(tp)) = self.interner().lookup(obj)
         {
             let subst = TypeSubstitution::single(tp.name, app.args[0]);
-            let instantiated_obj = crate::instantiation::instantiate::instantiate_type(
-                self.interner(),
-                obj,
-                &subst,
-            );
+            let instantiated_obj =
+                crate::instantiation::instantiate::instantiate_type(self.interner(), obj, &subst);
             let evaluated_obj = self.evaluate(instantiated_obj);
             let evaluated_idx = self.evaluate(idx);
             let direct = self.evaluate_index_access(evaluated_obj, evaluated_idx);
