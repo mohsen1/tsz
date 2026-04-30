@@ -384,4 +384,41 @@ impl<'a> FlowAnalyzer<'a> {
         }
         (0, u32::MAX)
     }
+
+    /// Returns `true` when `switch_expr` is an identifier that is a const alias
+    /// for a property access of `reference` (e.g. `const kind = obj.kind; switch(kind)`) or a
+    /// destructuring alias (`const { kind } = obj; switch(kind)`). This allows switch
+    /// narrowing to work for aliased discriminants.
+    pub(crate) fn is_aliased_discriminant_switch_expr(
+        &self,
+        switch_expr: NodeIndex,
+        reference: NodeIndex,
+    ) -> bool {
+        let expr = self.skip_parenthesized(switch_expr);
+        let Some(node) = self.arena.get(expr) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        // Case 1: `const alias = reference.prop` (simple property access alias)
+        if let Some((_, initializer)) = self.const_condition_initializer(expr) {
+            let init_expr = self.skip_parenthesized(initializer);
+            let Some(init_node) = self.arena.get(init_expr) else {
+                return false;
+            };
+            if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || init_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                return self
+                    .relative_discriminant_path(init_expr, reference)
+                    .is_some_and(|(path, _)| !path.is_empty());
+            }
+        }
+        // Case 2: `const { prop: alias } = reference` (destructuring alias)
+        if let Some((base, _)) = self.binding_element_property_alias(expr) {
+            return self.is_matching_reference(base, reference);
+        }
+        false
+    }
 }

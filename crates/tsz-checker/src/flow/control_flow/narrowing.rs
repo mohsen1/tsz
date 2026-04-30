@@ -1585,7 +1585,10 @@ impl<'a> FlowAnalyzer<'a> {
     /// Example: `const { type: alias } = obj` → `(obj, "type")`
     ///
     /// Returns `None` for non-identifiers, non-const bindings, or nested patterns.
-    fn binding_element_property_alias(&self, node: NodeIndex) -> Option<(NodeIndex, Atom)> {
+    pub(super) fn binding_element_property_alias(
+        &self,
+        node: NodeIndex,
+    ) -> Option<(NodeIndex, Atom)> {
         let node_data = self.arena.get(node)?;
         if node_data.kind != SyntaxKind::Identifier as u16 {
             return None;

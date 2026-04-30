@@ -542,7 +542,13 @@ impl<'a> FlowAnalyzer<'a> {
                 .relative_discriminant_path(switch_expr, reference)
                 .is_some_and(|(path, _)| !path.is_empty())
             // switch (typeof x) narrows x through typeof comparison
-            || self.is_typeof_target(switch_expr, reference);
+            || self.is_typeof_target(switch_expr, reference)
+            // switch (alias) where alias is a const alias for reference.prop
+            // (e.g. `const kind = obj.kind; switch(kind)`) or a destructuring alias
+            // (e.g. `const { kind } = obj; switch(kind)`) — the aliased discriminant
+            // path is resolved by narrow_by_switch_case_clause → narrow_by_binary_expr
+            // → discriminant_comparison → aliased_discriminant once we allow entry.
+            || self.is_aliased_discriminant_switch_expr(switch_expr, reference);
 
         if let Some(shared) = self.shared_switch_reference_cache {
             shared.borrow_mut().insert(key, affects);
