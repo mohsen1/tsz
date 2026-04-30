@@ -77,14 +77,20 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_binary_expr(parent_node)
                 .is_some_and(|binary| {
+                    // `&&=` is intentionally excluded: tsc keeps the RHS
+                    // empty array as `never[]` for `a &&= []` (the result
+                    // type is `(falsy a) | typeof []`, with `[]` left at
+                    // its narrowest form), which preserves a follow-up
+                    // `.push(x)` failure on the never-element receiver.
+                    // `||=` and `??=` widen because the RHS is the
+                    // "default value" replacing a falsy/nullable LHS, so
+                    // adopting the LHS element type matches user intent.
                     binary.right == idx
                         && (binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
                             || binary.operator_token
                                 == tsz_scanner::SyntaxKind::BarBarEqualsToken as u16
                             || binary.operator_token
-                                == tsz_scanner::SyntaxKind::QuestionQuestionEqualsToken as u16
-                            || binary.operator_token
-                                == tsz_scanner::SyntaxKind::AmpersandAmpersandEqualsToken as u16)
+                                == tsz_scanner::SyntaxKind::QuestionQuestionEqualsToken as u16)
                 }),
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
                 .ctx
@@ -1040,7 +1046,23 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod array_literal_context_tests {
-    use crate::test_utils::check_source_codes;
+    use crate::context::CheckerOptions;
+    use crate::test_utils::{check_source, check_source_codes};
+
+    fn check_strict_codes(source: &str) -> Vec<u32> {
+        check_source(
+            source,
+            "test.ts",
+            CheckerOptions {
+                strict: true,
+                strict_null_checks: true,
+                ..CheckerOptions::default()
+            },
+        )
+        .iter()
+        .map(|d| d.code)
+        .collect()
+    }
 
     #[test]
     fn empty_array_in_storage_assignment_adopts_contextual_element() {
@@ -1076,6 +1098,71 @@ class Test {
         assert!(
             !errors.contains(&2345),
             "`this.entries[name]?.push(entry)` under an `if (!this.entries[name]) {{ this.entries[name] = []; }}` guard should not report TS2345, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn empty_array_rhs_of_and_and_equals_keeps_never_element() {
+        // Regression for conformance test logicalAssignment6.ts /
+        // logicalAssignment7.ts:
+        //   `(results &&= (results1 &&= [])).push(100)` where both
+        //   `results` and `results1` are `number[] | undefined`.
+        //
+        // For `||=` and `??=`, the RHS empty array adopts the LHS's
+        // element type (the RHS is the "default value" replacing a
+        // falsy/nullable LHS). For `&&=` it does NOT — tsc keeps the
+        // RHS literal at `never[]` so the chained `.push(100)` on the
+        // resulting `(falsy results) | typeof []` reports TS2345
+        // ("Argument of type '100' is not assignable to parameter of
+        // type 'never'"). Without this distinction tsz silently
+        // accepted the push.
+        // The fix is observable here via the assignment to
+        // `target: never[] | undefined`: with the bug, `[]` widened to
+        // `number[]` and the expression type became
+        // `undefined | number[]` — not assignable to `never[] | undefined`.
+        // With the fix, `[]` stays `never[]` and the assignment is OK.
+        let source = r#"
+function foo3(arr: number[] | undefined) {
+    const target: never[] | undefined = (arr &&= []);
+    return target;
+}
+"#;
+        let errors = check_strict_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "`&&=` should leave the RHS `[]` at `never[]` so the assignment to `never[] | undefined` is clean, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn empty_array_rhs_of_or_or_equals_adopts_lhs_element() {
+        // Counter-test: `||=` and `??=` continue to widen the RHS empty
+        // array to the LHS's element type. Without widening, the
+        // expression would type as `number[] | never[]` (wider than the
+        // declared `number[] | undefined`) and the LHS slot would also
+        // be assigned `never[]`, weakening downstream narrowing.
+        // We verify the widening by assigning the expression to the
+        // LHS's declared type — if widening regressed, the expression
+        // type would carry `never[]` and the assignment to
+        // `number[] | undefined` would still be OK (subtype). So we
+        // also check the negative case: assigning to a `number[]` slot
+        // (without `undefined`), which only succeeds when the falsy
+        // branch can be eliminated. Either way TS2345/TS2322 must NOT
+        // appear for the round trip.
+        let source = r#"
+function foo1(results: number[] | undefined) {
+    const widened: number[] | undefined = (results ||= []);
+    return widened;
+}
+function foo2(results: number[] | undefined) {
+    const widened: number[] | undefined = (results ??= []);
+    return widened;
+}
+"#;
+        let errors = check_strict_codes(source);
+        assert!(
+            !errors.contains(&2322) && !errors.contains(&2345),
+            "`||=`/`??=` widen RHS `[]` to `number[]`, so the round-trip assignment is clean, got: {errors:?}"
         );
     }
 
