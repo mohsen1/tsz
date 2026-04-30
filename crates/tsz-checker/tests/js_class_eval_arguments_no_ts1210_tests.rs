@@ -32,12 +32,7 @@ fn diagnostics_with_options(source: &str, file_name: &str, opts: CheckerOptions)
     );
 
     checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| d.code)
-        .collect()
+    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
 }
 
 fn js_options() -> CheckerOptions {
@@ -52,11 +47,7 @@ fn js_options() -> CheckerOptions {
 /// error. Without this rule we emitted TS1210 (or TS1100) here.
 #[test]
 fn js_class_method_param_named_eval_does_not_emit_ts1210_or_ts1100() {
-    let codes = diagnostics_with_options(
-        "class c { a(eval) {} }\n",
-        "b.js",
-        js_options(),
-    );
+    let codes = diagnostics_with_options("class c { a(eval) {} }\n", "b.js", js_options());
     assert!(
         !codes.contains(&1210),
         "expected no TS1210 for `eval` param in JS class method; got: {codes:?}"
@@ -70,11 +61,7 @@ fn js_class_method_param_named_eval_does_not_emit_ts1210_or_ts1100() {
 /// Same rule for `arguments` as a parameter name in a JS class.
 #[test]
 fn js_class_method_param_named_arguments_does_not_emit_ts1210_or_ts1100() {
-    let codes = diagnostics_with_options(
-        "class c { a(arguments) {} }\n",
-        "b.js",
-        js_options(),
-    );
+    let codes = diagnostics_with_options("class c { a(arguments) {} }\n", "b.js", js_options());
     assert!(
         !codes.contains(&1210),
         "expected no TS1210 for `arguments` param in JS class method; got: {codes:?}"
