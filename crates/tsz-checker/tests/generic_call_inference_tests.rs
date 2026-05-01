@@ -49,6 +49,49 @@ fn relevant_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+// ─── Overloaded function arguments ───────────────────────────────────
+
+#[test]
+fn overloaded_function_argument_uses_last_signature_for_generic_inference() {
+    let source = r#"
+interface Promise<T> {
+    then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+}
+
+declare function testFunction(n: number): Promise<number>;
+declare function testFunction(s: string): Promise<string>;
+
+declare var numPromise: Promise<number>;
+var newPromise = numPromise.then(testFunction);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2345),
+        "Overloaded function argument should infer U from the last overload and reject the number callback. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_method_reports_no_overload_when_callback_inference_uses_last_signature() {
+    let source = r#"
+interface Promise<T> {
+    then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+    then<U>(cb: (x: T) => Promise<U>, error?: (error: any) => Promise<U>): Promise<U>;
+}
+
+declare function testFunction(n: number): Promise<number>;
+declare function testFunction(s: string): Promise<string>;
+
+declare var numPromise: Promise<number>;
+var newPromise = numPromise.then(testFunction);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2769),
+        "Overloaded method should reject every candidate and report TS2769. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Round-2 contextual typing for callbacks ─────────────────────────
 
 #[test]
