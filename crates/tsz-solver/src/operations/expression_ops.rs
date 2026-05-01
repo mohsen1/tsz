@@ -750,6 +750,10 @@ fn is_constructor_like<R: TypeResolver>(
         if !visited.insert(type_id) {
             return false;
         }
+        // Intrinsics are never Function/Callable/Application/Union/Intersection/Lazy.
+        if type_id.is_intrinsic() {
+            return false;
+        }
 
         match interner.lookup(type_id) {
             Some(TypeData::Function(fn_id)) => interner.function_shape(fn_id).is_constructor,
@@ -806,6 +810,13 @@ fn widen_literals(interner: &dyn TypeDatabase, types: &[TypeId]) -> Vec<TypeId> 
     types
         .iter()
         .map(|&ty| {
+            // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean).
+            if ty == TypeId::BOOLEAN_TRUE || ty == TypeId::BOOLEAN_FALSE {
+                return TypeId::BOOLEAN;
+            }
+            if ty.is_intrinsic() {
+                return ty;
+            }
             if let Some(crate::types::TypeData::Literal(ref lit)) = interner.lookup(ty) {
                 return lit.primitive_type_id();
             }
@@ -816,6 +827,12 @@ fn widen_literals(interner: &dyn TypeDatabase, types: &[TypeId]) -> Vec<TypeId> 
 
 /// Get the base type of a type (for literals, this is the primitive type).
 fn get_base_type(interner: &dyn TypeDatabase, ty: TypeId) -> Option<TypeId> {
+    if ty == TypeId::BOOLEAN_TRUE || ty == TypeId::BOOLEAN_FALSE {
+        return Some(TypeId::BOOLEAN);
+    }
+    if ty.is_intrinsic() {
+        return Some(ty);
+    }
     match interner.lookup(ty) {
         Some(crate::types::TypeData::Literal(ref lit)) => Some(lit.primitive_type_id()),
         _ => Some(ty),
