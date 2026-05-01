@@ -5,9 +5,38 @@
 //! `ResolvedModule` structure.
 
 use crate::span::Span;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use super::{COULD_NOT_FIND_DECLARATION_FILE, FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS};
+
+/// Collapse `.` and `..` segments without touching the filesystem so the
+/// path embedded in TS7016/TS6504 messages doesn't carry the join leftovers
+/// (e.g. `<containing_dir>/./node_modules/foo/index.js`). tsc canonicalizes
+/// the path before formatting; matching that is required for fingerprint
+/// parity in the conformance harness.
+fn normalize_display_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let last_is_real_dir = out
+                    .components()
+                    .next_back()
+                    .is_some_and(|c| matches!(c, Component::Normal(_)));
+                if last_is_real_dir {
+                    out.pop();
+                } else {
+                    out.push("..");
+                }
+            }
+            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => {
+                out.push(component.as_os_str());
+            }
+        }
+    }
+    out
+}
 
 // ---------------------------------------------------------------------------
 // ModuleLookupRequest / ModuleLookupResult — explicit driver-facing boundary
@@ -124,7 +153,7 @@ impl ModuleLookupResult {
                         message: format!(
                             "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
                             specifier,
-                            js_path.display()
+                            normalize_display_path(&js_path).display()
                         ),
                     })
                 } else {
@@ -132,7 +161,7 @@ impl ModuleLookupResult {
                         code: FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS,
                         message: format!(
                             "File '{}' is a JavaScript file. Did you mean to enable the 'allowJs' option?",
-                            js_path.display()
+                            normalize_display_path(&js_path).display()
                         ),
                     })
                 }
@@ -156,7 +185,7 @@ impl ModuleLookupResult {
                     message: format!(
                         "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
                         specifier,
-                        resolved_path.display()
+                        normalize_display_path(&resolved_path).display()
                     ),
                 })
             } else {
@@ -440,5 +469,41 @@ impl ModuleExtension {
 impl std::fmt::Display for ModuleExtension {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod normalize_display_path_tests {
+    use super::normalize_display_path;
+    use std::path::Path;
+
+    #[test]
+    fn collapses_curdir_join_artifacts() {
+        let p = Path::new("a/./b/./c.js");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "a/b/c.js");
+    }
+
+    #[test]
+    fn collapses_parentdir_against_real_directory() {
+        let p = Path::new("a/b/../c.js");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "a/c.js");
+    }
+
+    #[test]
+    fn preserves_leading_double_dotdot() {
+        let p = Path::new("../../foo.js");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "../../foo.js");
+    }
+
+    #[test]
+    fn preserves_leading_single_dotdot() {
+        let p = Path::new("../foo.js");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "../foo.js");
+    }
+
+    #[test]
+    fn does_not_pop_leading_parentdir_when_followed_by_more() {
+        let p = Path::new("../../../x");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "../../../x");
     }
 }
