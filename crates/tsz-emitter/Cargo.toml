@@ -18,9 +18,7 @@ tsz-parser = { workspace = true }
 tsz-binder = { workspace = true }
 tsz-solver = { workspace = true }
 rustc-hash = { workspace = true }
-smallvec = { workspace = true }
 memchr = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 
