@@ -709,10 +709,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 match (left_is_own, right_is_own) {
                     (true, false) => return std::cmp::Ordering::Less,
                     (false, true) => return std::cmp::Ordering::Greater,
-                    _ => {}
+                    // When both are own properties of the target, tsc lists
+                    // them in symbol-table insertion order. Stable `sort_by`
+                    // preserves the Vec's existing order (which mirrors
+                    // `target_props`, i.e. shape insertion order) when the
+                    // comparator returns Equal — this keeps synthesized members
+                    // like a class's `prototype` (declaration_order = 0) before
+                    // expando-appended members, matching tsc.
+                    (true, true) => return std::cmp::Ordering::Equal,
+                    (false, false) => {}
                 }
 
-                // Then sort by declaration_order
+                // Inherited-on-both-sides path: fall through to declaration_order
+                // (1-based) comparison, with alphabetic tie-break for synthesized
+                // properties. This preserves the prior interface-merge ordering.
                 match (*left_order > 0, *right_order > 0) {
                     (true, true) => left_order.cmp(right_order),
                     (true, false) => std::cmp::Ordering::Less,
