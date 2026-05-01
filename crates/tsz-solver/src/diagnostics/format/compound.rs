@@ -1117,6 +1117,9 @@ impl<'a> TypeFormatter<'a> {
     /// Returns `true` when `type_id` comes from a `declare global {}` augmentation.
     /// Such types are globally accessible and tsc never import-qualifies them.
     fn is_global_augmentation_type(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         let Some(def_store) = self.def_store else {
             return false;
         };
@@ -1330,6 +1333,9 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn is_anonymous_object_intersection_member(&mut self, id: TypeId) -> bool {
+        if id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);

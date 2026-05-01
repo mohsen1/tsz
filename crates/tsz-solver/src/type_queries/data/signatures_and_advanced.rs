@@ -31,6 +31,9 @@ pub fn get_type_parameter_info(
 
 /// Check if a type is a type parameter (`TypeParameter` or Infer).
 pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
@@ -44,6 +47,9 @@ pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// This is used to trigger const-like inference (tuple inference for array
 /// literals, readonly properties for object literals, literal preservation).
 pub fn is_const_type_variable(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info)) => info.is_const,
         Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
