@@ -351,6 +351,10 @@ pub fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         }
         let result = if type_id == TypeId::ANY {
             true
+        } else if type_id.is_intrinsic() {
+            // Non-ANY intrinsics resolve to TypeData::Intrinsic and are
+            // never Array/Tuple/Union/Intersection — skip the dyn lookup.
+            false
         } else {
             match db.lookup(type_id) {
                 Some(TypeData::Array(elem)) => walk(db, elem, visiting, memo),
@@ -385,6 +389,9 @@ pub fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// in their unevaluated form so that generic type argument structure is retained
 /// for downstream inference.
 pub fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Application(_)) => true,
         Some(TypeData::Union(list_id)) => {
@@ -594,6 +601,9 @@ pub fn map_compound_members_if_changed(
 ///
 /// Returns None if the type is not an array.
 pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Array(element_type)) => Some(element_type),
         // `readonly T[]` wraps the array in ReadonlyType — unwrap and retry.
@@ -619,6 +629,9 @@ pub fn get_tuple_elements(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<Vec<crate::types::TupleElement>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Tuple(list_id)) => {
             let elements = db.tuple_list(list_id);
@@ -685,10 +698,11 @@ pub fn union_has_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
             members.iter().any(|&m| {
-                matches!(
-                    db.lookup(m),
-                    Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-                )
+                !m.is_intrinsic()
+                    && matches!(
+                        db.lookup(m),
+                        Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+                    )
             })
         }
         _ => false,
