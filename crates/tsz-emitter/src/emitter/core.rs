@@ -15,7 +15,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 /// A class field initializer entry: (`field_name`, `initializer_node`, `init_end`, `leading_comments`, `trailing_comments`).
-pub(crate) type FieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>);
+pub(crate) type FieldInit = (String, Option<NodeIndex>, u32, Vec<String>, Vec<String>);
 
 /// A const enum entry scoped to a specific region of the source.
 /// File-level const enums use `(0, u32::MAX)` so they match any position.
