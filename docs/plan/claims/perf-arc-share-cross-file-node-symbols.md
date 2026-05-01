@@ -1,4 +1,4 @@
-Status: claim
+Status: ready
 Branch: perf/arc-share-cross-file-node-symbols
 Owner: Codex
 Created: 2026-05-01T16:47:51Z
@@ -18,5 +18,5 @@ O(1) clone instead of deep-cloning the outer `FxHashMap` once per check.
 ## Verification
 
 - `cargo fmt --check`
-- targeted `cargo check` for affected crates
-- `scripts/bench/perf-hotspots.sh --quick` before/after if the build window permits
+- `cargo check -p tsz-core -p tsz-cli`
+- `scripts/bench/perf-hotspots.sh --quick`
