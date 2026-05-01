@@ -2125,6 +2125,52 @@ impl MergedProgram {
     pub fn dependencies_of(&self, file_idx: usize) -> Option<&rustc_hash::FxHashSet<usize>> {
         self.dep_graph.as_ref().map(|dg| dg.dependencies(file_idx))
     }
+
+    /// Build the merged `file_locals` for a per-file checker binder.
+    ///
+    /// Per-file checker binders read globals through `binder.file_locals`
+    /// (e.g. when resolving `Promise`, `Iterable`, `React` and other
+    /// names), so the post-merge driver paths fold `program.globals` into
+    /// each per-file `file_locals`. This is hot — called once per file
+    /// per binder reconstruction, in parallel under rayon.
+    ///
+    /// Fast paths take advantage of `SymbolTable` being internally
+    /// `Arc<FxHashMap<String, SymbolId>>` (since #1535):
+    ///
+    /// - When the per-file local set is empty (common for trivial
+    ///   declaration files / pure re-export modules), the merged result
+    ///   is just `globals` — `Arc::clone` is O(1).
+    /// - When there are no globals (LSP probes / minimal harness setups),
+    ///   the merged result is just the per-file locals — again O(1).
+    /// - Otherwise, allocate a fresh map at the upper-bound capacity and
+    ///   insert both sides. Per-file locals win on key collisions, which
+    ///   matches the previous in-place merge behavior.
+    #[must_use]
+    pub fn build_merged_file_locals(&self, file_idx: usize) -> SymbolTable {
+        let local_table = self.file_locals.get(file_idx);
+        let local_count = local_table.map(SymbolTable::len).unwrap_or(0);
+        let globals_count = self.globals.len();
+
+        if local_count == 0 {
+            return self.globals.clone();
+        }
+        if globals_count == 0 {
+            return local_table.cloned().unwrap_or_default();
+        }
+
+        let mut file_locals = SymbolTable::with_capacity(local_count + globals_count);
+        if let Some(table) = local_table {
+            for (name, &sym_id) in table.iter() {
+                file_locals.set(name.clone(), sym_id);
+            }
+        }
+        for (name, &sym_id) in self.globals.iter() {
+            if !file_locals.has(name) {
+                file_locals.set(name.clone(), sym_id);
+            }
+        }
+        file_locals
+    }
 }
 
 /// Check if two symbols can be merged across multiple files.
@@ -5434,26 +5480,9 @@ pub fn create_binder_from_bound_file(
     let sym_to_decl_indices = Arc::clone(&file.sym_to_decl_indices);
     let symbol_arenas = Arc::clone(&file.symbol_arenas);
 
-    let local_count = program
-        .file_locals
-        .get(file_idx)
-        .map(|t| t.len())
-        .unwrap_or(0);
-    let mut file_locals = SymbolTable::with_capacity(local_count + program.globals.len());
-
-    // Copy from program.file_locals if available
-    if file_idx < program.file_locals.len() {
-        for (name, &sym_id) in program.file_locals[file_idx].iter() {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
-
-    // Also add globals (for cross-file references)
-    for (name, &sym_id) in program.globals.iter() {
-        if !file_locals.has(name) {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
+    // Merge per-file locals with program globals via the shared helper,
+    // which short-circuits to an O(1) `Arc::clone` when one side is empty.
+    let file_locals = program.build_merged_file_locals(file_idx);
 
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
@@ -5547,22 +5576,9 @@ pub fn create_binder_from_bound_file_with_shared(
     let sym_to_decl_indices = Arc::clone(&file.sym_to_decl_indices);
     let symbol_arenas = Arc::clone(&file.symbol_arenas);
 
-    let local_count = program
-        .file_locals
-        .get(file_idx)
-        .map(|t| t.len())
-        .unwrap_or(0);
-    let mut file_locals = SymbolTable::with_capacity(local_count + program.globals.len());
-    if file_idx < program.file_locals.len() {
-        for (name, &sym_id) in program.file_locals[file_idx].iter() {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
-    for (name, &sym_id) in program.globals.iter() {
-        if !file_locals.has(name) {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
+    // Merge per-file locals with program globals via the shared helper,
+    // which short-circuits to an O(1) `Arc::clone` when one side is empty.
+    let file_locals = program.build_merged_file_locals(file_idx);
 
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),

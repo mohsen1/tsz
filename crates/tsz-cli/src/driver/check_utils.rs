@@ -1612,30 +1612,12 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     // iteration on large repos.
     let symbol_arenas = Arc::clone(&program.symbol_arenas);
 
-    // Pre-size to avoid repeated rehashing when merging globals into the
-    // file-local table. The merged map ends up holding (file_locals ∪ globals);
-    // pre-allocating that upper bound eliminates the power-of-two rehashes
-    // during the per-file `set()` calls. Per-file work is small individually
-    // but multiplied across all per-binder constructions on large repos this
-    // is a measurable startup tax.
-    let local_count = program
-        .file_locals
-        .get(file_idx)
-        .map(|t| t.len())
-        .unwrap_or(0);
-    let mut file_locals = SymbolTable::with_capacity(local_count + program.globals.len());
-
-    if file_idx < program.file_locals.len() {
-        for (name, &sym_id) in program.file_locals[file_idx].iter() {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
-
-    for (name, &sym_id) in program.globals.iter() {
-        if !file_locals.has(name) {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
+    // Merge per-file locals with program globals via the shared helper,
+    // which short-circuits to an O(1) `Arc::clone` when one side is empty
+    // (common for trivial declaration files with no top-level locals).
+    // The slow path pre-sizes to (locals + globals) to avoid rehashing
+    // during inserts.
+    let file_locals = program.build_merged_file_locals(file_idx);
 
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
