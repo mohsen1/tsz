@@ -184,6 +184,20 @@ impl<'a> Printer<'a> {
         } else {
             self.ctx.block_scope_state.enter_scope();
         }
+        // Compute the block's closing `}` position so comment scans don't
+        // overshoot into comments belonging to the closing brace line.
+        // Use find_token_end_before_trivia which correctly skips `}` inside
+        // comments (e.g., `//}` in commented-out code).
+        let block_close_pos = {
+            let token_end = self.find_token_end_before_trivia(node.pos, node.end);
+            // find_token_end_before_trivia returns position AFTER the `}`,
+            // we want the position OF `}` so comments ending at `}` are excluded.
+            if token_end > node.pos {
+                token_end - 1
+            } else {
+                node.end
+            }
+        };
         // Map opening `{` to its source position
         self.map_opening_brace(node);
         self.write_with_end_marker("{");
@@ -207,7 +221,13 @@ impl<'a> Printer<'a> {
                     // they don't leak as leading comments on the first statement.
                     self.skip_trailing_same_line_comments(brace_end, node.end);
                 } else {
-                    self.emit_trailing_comments(brace_end);
+                    let scan_end = block
+                        .statements
+                        .nodes
+                        .first()
+                        .and_then(|&stmt_idx| self.arena.get(stmt_idx))
+                        .map_or(block_close_pos, |stmt_node| stmt_node.pos);
+                    self.emit_trailing_comments_before(brace_end, scan_end);
                 }
             }
         }
@@ -239,22 +259,6 @@ impl<'a> Printer<'a> {
             Some((self.writer.len(), self.writer.current_line()))
         } else {
             None
-        };
-
-        // Compute the block's closing `}` position so the last statement's
-        // trailing comment scan doesn't overshoot into comments belonging to
-        // the closing brace line (same pattern as namespace IIFE emitter).
-        // Use find_token_end_before_trivia which correctly skips `}` inside
-        // comments (e.g., `//}` in commented-out code).
-        let block_close_pos = {
-            let token_end = self.find_token_end_before_trivia(node.pos, node.end);
-            // find_token_end_before_trivia returns position AFTER the `}`,
-            // we want the position OF `}` so comments ending at `}` are excluded.
-            if token_end > node.pos {
-                token_end - 1
-            } else {
-                node.end
-            }
         };
 
         // Block-level using-declaration lowering below ES2025.
