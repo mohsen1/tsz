@@ -190,7 +190,7 @@ impl BinderState {
             symbol_arenas: Arc::new(FxHashMap::default()),
             declaration_arenas: Arc::new(FxHashMap::default()),
             sym_to_decl_indices: Arc::new(FxHashMap::default()),
-            cross_file_node_symbols: FxHashMap::default(),
+            cross_file_node_symbols: Arc::new(FxHashMap::default()),
             node_flow: Arc::new(FxHashMap::with_capacity_and_hasher(128, Default::default())),
             top_level_flow: Arc::new(FxHashMap::default()),
             switch_clause_to_switch: Arc::new(FxHashMap::default()),
@@ -260,7 +260,7 @@ impl BinderState {
         Arc::make_mut(&mut self.symbol_arenas).clear();
         Arc::make_mut(&mut self.declaration_arenas).clear();
         Arc::make_mut(&mut self.sym_to_decl_indices).clear();
-        self.cross_file_node_symbols.clear();
+        Arc::make_mut(&mut self.cross_file_node_symbols).clear();
         Arc::make_mut(&mut self.node_flow).clear();
         Arc::make_mut(&mut self.top_level_flow).clear();
         Arc::make_mut(&mut self.switch_clause_to_switch).clear();
@@ -434,7 +434,7 @@ impl BinderState {
             symbol_arenas: Arc::new(FxHashMap::default()),
             declaration_arenas: Arc::new(FxHashMap::default()),
             sym_to_decl_indices: Arc::new(FxHashMap::default()),
-            cross_file_node_symbols: FxHashMap::default(),
+            cross_file_node_symbols: Arc::new(FxHashMap::default()),
             node_flow: Arc::new(FxHashMap::default()),
             top_level_flow: Arc::new(FxHashMap::default()),
             switch_clause_to_switch: Arc::new(FxHashMap::default()),

@@ -330,7 +330,7 @@ pub struct BinderState {
     pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
     /// Cross-file `node_symbols`: maps arena pointer → `node_symbols` for that arena.
     /// Enables resolving type references in cross-file interface declarations.
-    pub cross_file_node_symbols: CrossFileNodeSymbols,
+    pub cross_file_node_symbols: Arc<CrossFileNodeSymbols>,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node.
     /// Used by the checker for control flow analysis (type narrowing).
     ///
@@ -965,7 +965,7 @@ pub struct BinderStateScopeInputs {
     pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     pub declaration_arenas: Arc<DeclarationArenaMap>,
     pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
-    pub cross_file_node_symbols: CrossFileNodeSymbols,
+    pub cross_file_node_symbols: Arc<CrossFileNodeSymbols>,
     pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     pub modules_with_export_equals: FxHashSet<String>,
     pub flow_nodes: Arc<FlowNodeArena>,
