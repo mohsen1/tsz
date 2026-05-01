@@ -171,6 +171,9 @@ fn extract_promise_inner_type(
     db: &dyn crate::caches::db::QueryDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         // Application: Promise<T> where base is PROMISE_BASE
         Some(TypeData::Application(app_id)) => {
@@ -285,6 +288,9 @@ pub fn extract_iterator_result_value_types(
     db: &dyn crate::caches::db::QueryDatabase,
     iterator_result_type: TypeId,
 ) -> (TypeId, TypeId) {
+    if iterator_result_type.is_intrinsic() {
+        return (TypeId::ANY, TypeId::ANY);
+    }
     let done_atom = db.intern_string("done");
     let value_atom = db.intern_string("value");
 

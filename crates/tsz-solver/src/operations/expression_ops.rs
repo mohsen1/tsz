@@ -391,6 +391,9 @@ fn is_template_literal_contextual_type_inner(
     if depth > 10 {
         return false;
     }
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(
             TypeData::Literal(crate::types::LiteralValue::String(_)) | TypeData::TemplateLiteral(_),
