@@ -2181,6 +2181,9 @@ fn template_has_lazy_application_in_composite(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     let Some(data) = interner.lookup(type_id) else {
         return false;
     };
@@ -2213,6 +2216,9 @@ fn template_has_lazy_application_in_composite(
 /// alias/application body is available. Deferring lets the outer evaluator,
 /// which has a real `TypeResolver`, materialize the correct key set later.
 fn mapped_constraint_needs_resolver(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     let key = match interner.lookup(type_id) {
         Some(key) => key,
         None => return false,
@@ -2262,6 +2268,9 @@ fn type_references_param(
     type_id: TypeId,
     param_name: tsz_common::interner::Atom,
 ) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match interner.lookup(type_id) {
         Some(TypeData::TypeParameter(info)) => info.name == param_name,
         Some(TypeData::Union(members_id)) | Some(TypeData::Intersection(members_id)) => {
