@@ -820,6 +820,80 @@ function check<U>(y: Bar<U>, n: number) {
     );
 }
 
+/// CJS modules whose `module.exports = <callable>` produce a merged
+/// callable+properties apparent type. tsc renders the structural form
+/// (`{ (): void; blah: any; }`) for TS2339 receivers, not the
+/// `typeof import("…")` namespace alias.
+///
+/// Repro from `compiler/pushTypeGetTypeOfAlias.ts`: when typing
+/// `exports.someProp` inside the same file, the receiver Object cached
+/// in `namespace_module_names` was synthesized from an early-call race
+/// in `infer_commonjs_export_rhs_type` (returned UNDEFINED before the
+/// function expression had been typed). Without the fix, the diagnostic
+/// fell through to `'typeof import("bar")'` instead of the structural
+/// shape.
+#[test]
+fn test_cjs_module_exports_callable_renders_structurally_in_ts2339() {
+    let source = r#"
+module.exports = function () {};
+exports.blah = exports.someProp;
+"#;
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+    let ts2339 = diagnostic_message(&diagnostics, 2339);
+    assert!(
+        ts2339.is_some(),
+        "Expected TS2339 for `exports.someProp`: {diagnostics:?}"
+    );
+    let msg = ts2339.unwrap();
+    assert!(
+        msg.contains("{ (): void; blah: any; }"),
+        "TS2339 receiver should render as the merged callable shape, not the namespace alias.\nActual: {msg}"
+    );
+    assert!(
+        !msg.contains("typeof import"),
+        "TS2339 receiver should NOT use `typeof import` for callable CJS modules.\nActual: {msg}"
+    );
+}
+
+/// Same structural rule with a different export property name. Confirms
+/// the fix is keyed on the *shape* (callable apparent type with merged
+/// properties), not on any specific identifier (per CLAUDE.md §25
+/// anti-hardcoding checklist).
+#[test]
+fn test_cjs_module_exports_callable_renders_structurally_alt_name() {
+    let source = r#"
+module.exports = function () {};
+exports.foo = exports.missing;
+"#;
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+    let ts2339 = diagnostic_message(&diagnostics, 2339);
+    assert!(
+        ts2339.is_some(),
+        "Expected TS2339 for `exports.missing`: {diagnostics:?}"
+    );
+    let msg = ts2339.unwrap();
+    assert!(
+        msg.contains("(): void") && msg.contains("foo: any"),
+        "TS2339 receiver should render the merged callable shape with the named export.\nActual: {msg}"
+    );
+}
+
 /// `new Proxy(t, {})` should not emit TS2351 ("This expression is not constructable").
 ///
 /// `ProxyConstructor` is an interface with a construct signature:
