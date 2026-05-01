@@ -318,12 +318,19 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // by the operand's constraint as an explicit property. Broad index
             // signatures on the constraint do NOT guarantee that `keyof T`
             // includes an arbitrary concrete name for every instantiation of T.
-            TypeData::KeyOf(operand) => match self.interner().lookup(operand) {
-                Some(TypeData::TypeParameter(info)) => info.constraint.is_some_and(|constraint| {
-                    self.constraint_guarantees_named_property(constraint, prop_name)
-                }),
-                _ => true,
-            },
+            TypeData::KeyOf(operand) => {
+                if operand.is_intrinsic() {
+                    return true;
+                }
+                match self.interner().lookup(operand) {
+                    Some(TypeData::TypeParameter(info)) => {
+                        info.constraint.is_some_and(|constraint| {
+                            self.constraint_guarantees_named_property(constraint, prop_name)
+                        })
+                    }
+                    _ => true,
+                }
+            }
 
             // Type parameter constraints should be checked recursively. A mapped type
             // like `Pick<T, K>` must not treat all keys as valid when `K` is
@@ -1113,6 +1120,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     /// Recursively simplifies Array<T> Application types to T[] array types.
     fn simplify_array_application(&self, type_id: TypeId, array_base: TypeId) -> TypeId {
+        // Intrinsics are never Application/Callable/Array/etc — pass through.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         match self.interner().lookup(type_id) {
             Some(TypeData::Application(app_id)) => {
                 let app = self.interner().type_application(app_id);
@@ -1279,6 +1290,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Iteratively descend into single-rest chains (e.g., [T, ...Acc])
         while let Some(rest_id) = rest_type.take() {
+            if rest_id.is_intrinsic() {
+                return None;
+            }
             let inner_list_id = match self.interner().lookup(rest_id) {
                 Some(TypeData::Tuple(id)) => id,
                 _ => return None, // Rest spreads a non-tuple → variable length
