@@ -571,6 +571,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if type_id == TypeId::ANY {
             return TypeId::ANY;
         }
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
 
         if let Some(TypeData::ReadonlyType(inner)) = self.interner.lookup(type_id) {
             return self.get_array_element_type(inner);
