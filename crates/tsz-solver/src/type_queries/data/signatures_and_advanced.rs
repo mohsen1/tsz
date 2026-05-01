@@ -194,6 +194,9 @@ pub fn get_base_constraint_for_display(db: &dyn TypeDatabase, type_id: TypeId) -
 /// The caller compares `source_count * target_count` against a threshold
 /// (tsc uses 1,000,000) to decide if the comparison is too complex.
 pub fn constituent_count(db: &dyn TypeDatabase, type_id: TypeId) -> u64 {
+    if type_id.is_intrinsic() {
+        return 1;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Union(members_id)) => {
             let members = db.type_list(members_id);
@@ -335,6 +338,9 @@ pub fn get_function_shape(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::FunctionShape>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => Some(db.function_shape(shape_id)),
         _ => None,
@@ -462,6 +468,9 @@ pub fn get_conditional_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::ConditionalType>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Conditional(cond_id)) => Some(db.conditional_type(cond_id)),
         _ => None,
@@ -513,6 +522,9 @@ pub fn get_mapped_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::MappedType>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Mapped(mapped_id)) => Some(db.mapped_type(mapped_id)),
         _ => None,
@@ -529,6 +541,9 @@ pub fn get_mapped_type_with_id(
     crate::types::MappedTypeId,
     std::sync::Arc<crate::types::MappedType>,
 )> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Mapped(mapped_id)) => Some((mapped_id, db.mapped_type(mapped_id))),
         _ => None,
