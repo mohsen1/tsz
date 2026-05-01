@@ -948,12 +948,11 @@ pub(super) fn collect_diagnostics(
     // `program.module_exports` is already `Arc`-wrapped on `MergedProgram`;
     // cheap atomic clone for ProjectEnv install.
     let program_module_exports = Arc::clone(&program.module_exports);
-    // Same rationale for `program.cross_file_node_symbols`: the outer
-    // map is `FxHashMap<usize, Arc<…>>` (~24 bytes * N_files for the
-    // entries plus hash overhead). Cloning into every one of N per-file
-    // binders scales outer-map allocation with N². Wrap once here and
-    // route consumers through `ctx.cross_file_node_symbols_for_arena`.
-    let program_cross_file_node_symbols = Arc::new(program.cross_file_node_symbols.clone());
+    // Same rationale for `program.cross_file_node_symbols`: the merged
+    // program already owns the outer map behind `Arc`, so installing it into
+    // the shared ProjectEnv is an O(1) clone instead of deep-cloning the
+    // `FxHashMap<usize, Arc<...>>` before re-sharing it.
+    let program_cross_file_node_symbols = Arc::clone(&program.cross_file_node_symbols);
     // Same rationale for `program.alias_partners`: a single shared
     // FxHashMap<SymbolId, SymbolId> beats N per-binder deep-clones.
     let program_alias_partners = Arc::clone(&program.alias_partners);

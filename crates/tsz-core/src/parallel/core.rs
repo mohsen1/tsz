@@ -1993,7 +1993,11 @@ pub struct MergedProgram {
     pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
     /// Cross-file `node_symbols`: maps arena pointer → `node_symbols` for that arena.
     /// Enables resolving type references in cross-file interface declarations.
-    pub cross_file_node_symbols: CrossFileNodeSymbols,
+    ///
+    /// Arc-wrapped so large-repo drivers can install the merged program-wide
+    /// map into shared checker context with an O(1) clone instead of
+    /// deep-cloning the outer map before re-sharing it.
+    pub cross_file_node_symbols: Arc<CrossFileNodeSymbols>,
     /// Global symbol table (exports from all files)
     pub globals: SymbolTable,
     /// Per-file symbol tables (file-local symbols, symbol IDs remapped)
@@ -3964,7 +3968,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
         symbol_arenas: Arc::new(symbol_arenas),
         declaration_arenas: Arc::new(declaration_arenas),
         sym_to_decl_indices: Arc::new(sym_to_decl_indices),
-        cross_file_node_symbols,
+        cross_file_node_symbols: Arc::new(cross_file_node_symbols),
         globals,
         file_locals: file_locals_list,
         declared_modules: Arc::new(declared_modules),
@@ -5454,7 +5458,7 @@ pub fn create_binder_from_bound_file(
             symbol_arenas,
             declaration_arenas,
             sym_to_decl_indices,
-            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
+            cross_file_node_symbols: (*program.cross_file_node_symbols).clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),
             flow_nodes: file.flow_nodes.clone(),
@@ -5565,7 +5569,7 @@ pub fn create_binder_from_bound_file_with_shared(
             symbol_arenas,
             declaration_arenas,
             sym_to_decl_indices,
-            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
+            cross_file_node_symbols: (*program.cross_file_node_symbols).clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),
             flow_nodes: file.flow_nodes.clone(),
