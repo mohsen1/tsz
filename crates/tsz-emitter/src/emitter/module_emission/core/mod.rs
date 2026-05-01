@@ -1600,6 +1600,9 @@ impl<'a> Printer<'a> {
         };
 
         if clause_node.kind != syntax_kind_ext::IMPORT_CLAUSE {
+            if self.ctx.options.verbatim_module_syntax {
+                return true;
+            }
             // For `import X = require("module")`, check if it has an external module.
             // For `import X = Y` (identifier/qualified name), only emit when the
             // target resolves to a runtime value (TypeScript elides type-only aliases).
