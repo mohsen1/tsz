@@ -28,3 +28,15 @@ fn unterminated_regex_call_argument_does_not_duplicate_call_tail() {
         "recovered regex argument must not include the call tail; output:\n{output}"
     );
 }
+
+/// Regex flags are scanned as identifier parts, not only ASCII letters. The
+/// source-text preservation path should therefore include non-BMP flag
+/// characters already captured by the parser's regex token.
+#[test]
+fn regex_literal_preserves_non_bmp_flags() {
+    let output = print_es2015("const 𝘳𝘦𝘨𝘦𝘹 = /(?𝘴𝘪-𝘮:^𝘧𝘰𝘰.)/𝘨𝘮𝘶;");
+    assert!(
+        output.contains("/(?𝘴𝘪-𝘮:^𝘧𝘰𝘰.)/𝘨𝘮𝘶"),
+        "regex literal should preserve non-BMP flags; output:\n{output}"
+    );
+}
