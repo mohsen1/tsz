@@ -28,11 +28,16 @@ pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::F
 /// Returns true for `TypeData::Callable`, `TypeData::Function`, and the
 /// intrinsic `TypeId::FUNCTION` (the global `Function` interface).
 pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::FUNCTION
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Callable(_) | TypeData::Function(_))
-        )
+    if type_id == TypeId::FUNCTION {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::Callable(_) | TypeData::Function(_))
+    )
 }
 
 /// Check if a type has call signatures (not just construct signatures).
@@ -47,6 +52,9 @@ pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 pub fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::FUNCTION {
         return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
     }
     match db.lookup(type_id) {
         Some(TypeData::Function(_)) => true,
@@ -132,6 +140,9 @@ fn type_may_display_iterator_protocol_inner(
 /// Returns `Some(len)` for tuple types with no rest elements, `None` otherwise
 /// (arrays, non-tuples, variadic tuples with rest elements).
 pub fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> Option<usize> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     if let Some(TypeData::Tuple(tuple_list_id)) = db.lookup(type_id) {
         let elements = db.tuple_list(tuple_list_id);
         if elements.iter().all(|e| !e.rest) {
