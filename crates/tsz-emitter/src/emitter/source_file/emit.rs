@@ -82,6 +82,7 @@ impl<'a> Printer<'a> {
             self.commonjs_named_import_substitutions.clear();
         }
         self.generated_temp_names.clear();
+        self.ctx.arguments_capture_counter = 0;
         self.first_for_of_emitted = false;
 
         // Pre-pass: collect const enum values for inlining at usage sites.

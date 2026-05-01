@@ -306,10 +306,19 @@ impl<'a> Printer<'a> {
         // When capturing arguments, always use block form:
         // `() => { var arguments_1 = arguments; return __awaiter(..., function* () { ... arguments_1 ... }); }`
         if captures_arguments {
+            let arguments_capture_name = loop {
+                self.ctx.arguments_capture_counter += 1;
+                let candidate = format!("arguments_{}", self.ctx.arguments_capture_counter);
+                if !self.file_identifiers.contains(&candidate) {
+                    break candidate;
+                }
+            };
             self.write(" => {");
             self.write_line();
             self.increase_indent();
-            self.write("var arguments_1 = arguments;");
+            self.write("var ");
+            self.write(&arguments_capture_name);
+            self.write(" = arguments;");
             self.write_line();
             self.write("return ");
             self.write_helper("__awaiter");
@@ -319,8 +328,10 @@ impl<'a> Printer<'a> {
 
             let saved_yield = self.ctx.emit_await_as_yield;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+            let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
             self.ctx.emit_await_as_yield = true;
             self.ctx.rewrite_arguments_to_arguments_1 = true;
+            self.ctx.arguments_capture_name = Some(arguments_capture_name);
 
             if is_block {
                 if body_is_single_line {
@@ -355,6 +366,7 @@ impl<'a> Printer<'a> {
 
             self.ctx.emit_await_as_yield = saved_yield;
             self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+            self.ctx.arguments_capture_name = saved_arguments_capture_name;
 
             self.write(";");
             self.write_line();
