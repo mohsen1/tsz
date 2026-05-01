@@ -23,6 +23,9 @@ pub fn get_type_parameter_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::TypeParamInfo> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info),
         _ => None,
@@ -31,6 +34,9 @@ pub fn get_type_parameter_info(
 
 /// Check if a type is a type parameter (`TypeParameter` or Infer).
 pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
@@ -44,6 +50,9 @@ pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// This is used to trigger const-like inference (tuple inference for array
 /// literals, readonly properties for object literals, literal preservation).
 pub fn is_const_type_variable(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info)) => info.is_const,
         Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
@@ -58,6 +67,9 @@ pub fn is_const_type_variable(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns None if not a type parameter or has no constraint.
 pub fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.constraint,
         _ => None,
@@ -68,6 +80,9 @@ pub fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> 
 ///
 /// Returns `Some(Atom)` for `TypeParameter` and `Infer` types, `None` otherwise.
 pub fn get_type_parameter_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info.name),
         _ => None,
@@ -86,6 +101,9 @@ pub fn get_type_parameter_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option
 /// `Infer` types inside conditional types should NOT be resolved here — they are checked
 /// during conditional type evaluation, not at type argument validation time.
 pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info)) => info.constraint.unwrap_or(TypeId::UNKNOWN),
         _ => type_id,
@@ -521,6 +539,9 @@ pub fn get_mapped_type_with_id(
 ///
 /// Returns None if the type is not a `TypeParameter` or `Infer`, or if it has no default.
 pub fn get_type_parameter_default(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.default,
         _ => None,
@@ -534,6 +555,9 @@ pub fn get_type_application(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::TypeApplication>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Application(app_id)) => Some(db.type_application(app_id)),
         _ => None,
@@ -544,6 +568,9 @@ pub fn get_type_application(
 ///
 /// Returns None if the type is not an `IndexAccess`.
 pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<(TypeId, TypeId)> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::IndexAccess(obj, idx)) => Some((obj, idx)),
         _ => None,
@@ -552,6 +579,9 @@ pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 
 /// Get the operand of a `KeyOf` type. Returns `Some(inner)` for `keyof T`.
 pub fn get_keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::KeyOf(inner)) => Some(inner),
         _ => None,
