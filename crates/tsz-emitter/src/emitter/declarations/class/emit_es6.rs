@@ -1773,6 +1773,13 @@ impl<'a> Printer<'a> {
             self.write(";");
         }
 
+        if class_expr_temp.is_none() {
+            for stmt in self.recovered_class_body_statements(node) {
+                self.write_line();
+                self.write(&stmt);
+            }
+        }
+
         // Emit computed property name hoisting comma expression or standalone side effects.
         if !computed_prop_entries.is_empty() {
             if class_expr_temp.is_some() {
@@ -2331,5 +2338,33 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(class_name);
             }
         }
+    }
+
+    fn recovered_class_body_statements(&self, node: &Node) -> Vec<String> {
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        let start = node.pos as usize;
+        let end = (node.end as usize).min(text.len());
+        let Some(source) = text.get(start..end) else {
+            return Vec::new();
+        };
+
+        let mut depth = 0_i32;
+        let mut recovered = Vec::new();
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if depth == 1 && (trimmed.starts_with("var ") || trimmed.starts_with("function ")) {
+                recovered.push(trimmed.replace("{}", "{ }"));
+            }
+            for ch in line.chars() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+        }
+        recovered
     }
 }
