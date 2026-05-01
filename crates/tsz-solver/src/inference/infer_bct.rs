@@ -1115,6 +1115,9 @@ impl<'a> InferenceContext<'a> {
         if type_id == TypeId::ANY {
             return TypeId::ANY;
         }
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Array(elem)) => elem,
             _ => type_id,
