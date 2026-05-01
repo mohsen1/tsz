@@ -608,7 +608,6 @@ const y = x.get("a");
 }
 
 #[test]
-#[ignore] // TODO: TS2454 for UMD namespace qualified type member needs cross-file tracking
 fn test_check_files_parallel_preserves_ts2454_for_umd_namespace_qualified_type_member() {
     let files = vec![
         (
@@ -1440,7 +1439,6 @@ c = d;
 }
 
 #[test]
-#[ignore] // TODO: Invariant generic error assignability diagnostic needs stable cross-file handling
 fn test_check_files_parallel_invariant_generic_error_preserves_assignability_diagnostic() {
     let files = vec![(
         "test.ts".to_string(),
@@ -1805,7 +1803,6 @@ fn test_check_files_parallel_cross_file_const_and_class_redeclaration_uses_ts245
 }
 
 #[test]
-#[ignore = "module augmentation duplicate export count regressed — emitting 1 TS2451 instead of 2"]
 fn test_check_files_parallel_module_augmentation_redeclaration_marks_target_file() {
     let files = vec![
         ("dir/a.ts".to_string(), "export const x = 0;\n".to_string()),
@@ -2528,7 +2525,6 @@ class D {
 }
 
 #[test]
-#[ignore] // TODO: Private name static/instance conflicts TS2804 needs parallel tracking
 fn test_check_files_parallel_private_name_static_instance_conflicts_emit_ts2804() {
     let files = vec![(
         "test.ts".to_string(),
