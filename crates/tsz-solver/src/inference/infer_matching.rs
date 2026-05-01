@@ -1539,6 +1539,11 @@ impl<'a> InferenceContext<'a> {
     ///
     /// Returns None if the type is not a literal string.
     fn extract_string_literal(&self, type_id: TypeId) -> Option<String> {
+        // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean),
+        // never Literal(String). Other intrinsics resolve to Intrinsic. Skip lookup.
+        if type_id.is_intrinsic() {
+            return None;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Literal(LiteralValue::String(s))) => Some(self.interner.resolve_atom(s)),
             _ => None,
@@ -1578,8 +1583,9 @@ impl<'a> InferenceContext<'a> {
                 }
 
                 TemplateSpan::Type(type_id) => {
-                    // Check if this is an infer variable
-                    if let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
+                    // Check if this is an infer variable. Intrinsics are never Infer.
+                    if !type_id.is_intrinsic()
+                        && let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
                         && let Some(var) = self.find_type_param(param_info.name)
                     {
                         if is_last {
@@ -1638,6 +1644,10 @@ impl<'a> InferenceContext<'a> {
     /// like `{ contains(k) { ... } }` matched against `{ [K in keyof T]: Box<T[K]> }`
     /// would infer `T[K] = any` instead of `T[K] = unknown`.
     fn get_partially_inferable_type(&self, type_id: TypeId) -> TypeId {
+        // Intrinsics are never Function/Object/Tuple — return as-is.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
