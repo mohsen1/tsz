@@ -270,13 +270,13 @@ pub use widening::*;
 #[cfg(test)]
 #[path = "../tests/bidirectional_tests.rs"]
 mod bidirectional_tests;
-// callable_tests: loaded from relations/subtype.rs
+// callable_tests: loaded from relations/subtype/core.rs
 // compat_tests: loaded from relations/compat.rs
-// contextual_tests: loaded from contextual/mod.rs
-// db_tests: loaded from caches/db.rs
-// diagnostics_tests: loaded from diagnostics.rs
+// contextual_tests: loaded from contextual/core.rs
+// db_tests: loaded from caches/query_cache.rs
+// diagnostics_tests: loaded from diagnostics/core.rs
 // evaluate_tests: loaded from evaluation/evaluate.rs
-// index_signature_tests: loaded from relations/subtype.rs
+// index_signature_tests: loaded from relations/subtype/core.rs
 // infer_tests: loaded from inference/infer.rs
 // instantiate_tests: loaded from instantiation/instantiate.rs
 #[cfg(test)]
@@ -289,13 +289,13 @@ mod enum_nominality;
 #[cfg(test)]
 #[path = "../tests/intersection_union_tests.rs"]
 mod intersection_union_tests;
-// lawyer_tests: loaded from lawyer.rs
+// lawyer_tests: loaded from relations/lawyer.rs
 #[cfg(test)]
 #[path = "../tests/mapped_key_remap_tests.rs"]
 mod mapped_key_remap_tests;
 // narrowing_tests: loaded from narrowing/mod.rs
 // operations_tests: loaded from operations/mod.rs
-// subtype_tests: loaded from relations/subtype.rs
+// subtype_tests: loaded from relations/subtype/core.rs
 #[cfg(test)]
 #[path = "../tests/intersection_distributivity_tests.rs"]
 mod intersection_distributivity_tests;
@@ -315,7 +315,7 @@ mod template_literal_subtype_tests;
 #[path = "../tests/type_law_tests.rs"]
 mod type_law_tests;
 // types_tests: loaded from types.rs
-// union_tests: loaded from relations/subtype.rs
+// union_tests: loaded from relations/subtype/core.rs
 #[cfg(test)]
 #[path = "../tests/isomorphism_tests.rs"]
 mod isomorphism_tests;
