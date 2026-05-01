@@ -230,6 +230,15 @@ pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// For union types the body is considered deferred only when **every** member
 /// is itself deferred (e.g., `JsonValue[] | readonly JsonValue[]`).
 pub fn is_structurally_deferred_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types (`number`, `string`, `any`, etc.) match
+    // none of the deferred-wrapper kinds — the existing match falls
+    // through to `_ => false` for them. `is_intrinsic()` is a free
+    // `TypeId`-range check; skip the `TypeData` lookup and match
+    // dispatch entirely. Same pattern as #2001 / #2005 / #2008 / #2009 /
+    // #2014 / #2019.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(
             TypeData::Array(_)
