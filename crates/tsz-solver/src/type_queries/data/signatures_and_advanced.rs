@@ -969,12 +969,18 @@ fn object_member_has_impossible_required_property(db: &dyn TypeDatabase, type_id
 }
 
 fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
     let type_id = if evaluated != type_id {
         evaluated
     } else {
         type_id
     };
+    if type_id.is_intrinsic() {
+        return false;
+    }
     let Some(TypeData::Intersection(list_id)) = db.lookup(type_id) else {
         return false;
     };
