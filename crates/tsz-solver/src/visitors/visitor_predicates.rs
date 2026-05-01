@@ -1574,6 +1574,11 @@ struct FunctionTypeChecker;
 
 impl FunctionTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        // Fast path: intrinsic types match no arm. Skip lookup + dispatch.
+        // Same family as #2001 / #2005 / #2008 / #2009 / #2014 / #2019 / #2025 / #2032.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match types.lookup(type_id) {
             Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
             Some(TypeData::Intersection(members)) => {
