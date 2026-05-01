@@ -964,6 +964,10 @@ impl<'a> ContextualTypeContext<'a> {
     fn is_iterable_like_object(&self, type_id: TypeId) -> bool {
         use crate::types::TypeData;
 
+        // Fast path: intrinsics are never `Object(_)` / `Intersection(_)`.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         // Check if type is an object with properties suggesting iterable/array-like behavior
         match self.interner.lookup(type_id) {
             Some(TypeData::Object(shape_id)) => {
@@ -1496,6 +1500,10 @@ impl<'a> ContextualTypeContext<'a> {
     /// This distinguishes "no param at this index" (arity gap) from "params disagree."
     fn callable_has_param_at_index(&self, type_id: TypeId, index: usize) -> bool {
         use crate::types::TypeData;
+        // Fast path: intrinsics are never `Function(_)` / `Callable(_)`.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Function(func_id)) => {
                 let shape = self.interner.function_shape(func_id);
