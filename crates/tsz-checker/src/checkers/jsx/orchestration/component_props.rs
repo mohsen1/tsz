@@ -857,17 +857,18 @@ impl<'a> CheckerState<'a> {
                         // need to keep their literal form for discriminator
                         // narrowing) and to avoid touching Function/Callable
                         // types.
-                        let is_plain_shape =
-                            tsz_solver::type_queries::is_object_type(self.ctx.types, *ty)
-                                || tsz_solver::type_queries::is_array_or_tuple_type(
+                        let widened =
+                            if crate::query_boundaries::widening::is_plain_object_or_array_shape(
+                                self.ctx.types,
+                                *ty,
+                            ) {
+                                crate::query_boundaries::widening::widen_type_for_inference(
                                     self.ctx.types,
                                     *ty,
-                                );
-                        let widened = if is_plain_shape {
-                            tsz_solver::widen_type_for_inference(self.ctx.types, *ty)
-                        } else {
-                            *ty
-                        };
+                                )
+                            } else {
+                                *ty
+                            };
                         concrete_attrs.push((name.clone(), widened));
                     }
                 }

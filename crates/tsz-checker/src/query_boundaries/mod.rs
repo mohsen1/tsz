@@ -160,3 +160,5 @@ pub(crate) mod type_construction;
     clippy::manual_map
 )]
 pub(crate) mod variance;
+#[allow(dead_code)]
+pub(crate) mod widening;
