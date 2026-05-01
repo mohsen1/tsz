@@ -274,7 +274,14 @@ impl<'a> Printer<'a> {
                         in_escape = true;
                     } else if ch == b'/' && !in_character_class {
                         i += 1; // Include closing /
-                        // Include any flags (g, i, m, etc.)
+                        if let Some(lit) = self.arena.get_literal(node) {
+                            let literal_end = regex_start.saturating_add(lit.text.len());
+                            if literal_end >= i && literal_end <= max_end {
+                                self.write(&text[regex_start..literal_end]);
+                                return;
+                            }
+                        }
+                        // Include any ASCII flags when literal metadata is unavailable.
                         while i < max_end && text.as_bytes()[i].is_ascii_alphabetic() {
                             i += 1;
                         }
