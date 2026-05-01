@@ -749,19 +749,20 @@ pub(crate) fn substitute_this_type(
 
 /// Shallow `this` substitution for call-return-position use.
 ///
-/// Replaces `ThisType` at structural positions (Intersection, Union,
-/// IndexAccess, KeyOf, Conditional, Application, etc.) but does NOT recurse
-/// into named Object/ObjectWithIndex internals. Use this from
-/// `apply_this_substitution_to_call_return` and similar paths where the
-/// substitution should leave stored interface/class method bodies'
-/// polymorphic `this` references intact for later property-access-time
-/// rebinding.
+/// Replaces `ThisType` at structural positions without recursing into named
+/// Object/ObjectWithIndex internals, leaving stored interface/class method
+/// bodies polymorphic for later property-access-time rebinding.
 pub(crate) fn substitute_this_type_at_return_position(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     type_id: TypeId,
     this_type: TypeId,
 ) -> TypeId {
-    tsz_solver::substitute_this_type_at_return_position(db, None, type_id, this_type)
+    tsz_solver::substitute_this_type_at_return_position(
+        db.as_type_database(),
+        Some(db),
+        type_id,
+        this_type,
+    )
 }
 
 /// Get the enum `DefId` for an enum type.

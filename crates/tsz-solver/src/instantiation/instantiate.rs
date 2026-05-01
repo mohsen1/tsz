@@ -29,6 +29,8 @@ const MODE_SUBSTITUTE_INFER: u8 = 0b001;
 const MODE_PRESERVE_META: u8 = 0b010;
 /// Mode bit: `preserve_unsubstituted_type_params = true`.
 const MODE_PRESERVE_UNSUBSTITUTED: u8 = 0b100;
+/// Mode bit: `shallow_this_only = true`.
+const MODE_SHALLOW_THIS_ONLY: u8 = 0b1000;
 
 /// Build the canonical-substitution component of an `InstantiationCacheKey`.
 ///
@@ -2147,12 +2149,33 @@ pub fn substitute_this_type_at_return_position(
     if type_id.is_intrinsic() {
         return type_id;
     }
+    if let Some(db) = query_db {
+        let key = InstantiationCacheKey::new(
+            type_id,
+            CanonicalSubst::empty(),
+            MODE_PRESERVE_UNSUBSTITUTED | MODE_SHALLOW_THIS_ONLY,
+            Some(this_type),
+        );
+        if let Some(cached) = db.lookup_instantiation_cache(&key) {
+            return cached;
+        }
+        let empty_subst = TypeSubstitution::new();
+        let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
+        instantiator.this_type = Some(this_type);
+        instantiator.preserve_unsubstituted_type_params = true;
+        instantiator.shallow_this_only = true;
+        let result = instantiator.instantiate(type_id);
+        if instantiator.depth_exceeded {
+            return TypeId::ERROR;
+        }
+        db.insert_instantiation_cache(key, result);
+        return result;
+    }
     let empty_subst = TypeSubstitution::new();
     let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
     instantiator.this_type = Some(this_type);
     instantiator.preserve_unsubstituted_type_params = true;
     instantiator.shallow_this_only = true;
-    let _ = query_db; // No cache — different shape from substitute_this_type_cached.
     let result = instantiator.instantiate(type_id);
     if instantiator.depth_exceeded {
         TypeId::ERROR

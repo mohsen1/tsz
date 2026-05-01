@@ -243,7 +243,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // intersection wrapping (chained `extend({a}).extend({b})`).
             crate::substitute_this_type_at_return_position(
                 self.interner(),
-                None,
+                Some(self.db),
                 type_id,
                 new_receiver,
             )
