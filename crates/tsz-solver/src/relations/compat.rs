@@ -330,6 +330,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn normalize_assignability_operand(&mut self, mut type_id: TypeId) -> TypeId {
+        // Intrinsics never resolve to Lazy/Mapped/Application/KeyOf — skip
+        // the bounded normalization loop entirely.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         // Keep normalization bounded to avoid infinite resolver/evaluator cycles.
         for _ in 0..8 {
             let next = match self.interner.lookup(type_id) {
@@ -547,7 +552,27 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn is_function_target_member(&self, member: TypeId) -> bool {
-        let is_function_object_shape = match self.interner.lookup(member) {
+        let is_function_object_shape = if member.is_intrinsic() {
+            false
+        } else {
+            self.is_function_object_shape_member(member)
+        };
+        intrinsic_kind(self.interner, member) == Some(IntrinsicKind::Function)
+            || is_function_object_shape
+            || self
+                .subtype
+                .resolver
+                .get_boxed_type(IntrinsicKind::Function)
+                .is_some_and(|boxed| boxed == member)
+            || lazy_def_id(self.interner, member).is_some_and(|def_id| {
+                self.subtype
+                    .resolver
+                    .is_boxed_def_id(def_id, IntrinsicKind::Function)
+            })
+    }
+
+    fn is_function_object_shape_member(&self, member: TypeId) -> bool {
+        match self.interner.lookup(member) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 // Function interface has ~15 properties (own + inherited Object).
@@ -564,20 +589,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 }
             }
             _ => false,
-        };
-
-        intrinsic_kind(self.interner, member) == Some(IntrinsicKind::Function)
-            || is_function_object_shape
-            || self
-                .subtype
-                .resolver
-                .get_boxed_type(IntrinsicKind::Function)
-                .is_some_and(|boxed| boxed == member)
-            || lazy_def_id(self.interner, member).is_some_and(|def_id| {
-                self.subtype
-                    .resolver
-                    .is_boxed_def_id(def_id, IntrinsicKind::Function)
-            })
+        }
     }
 
     /// Create a new compatibility checker with a resolver.
