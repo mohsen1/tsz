@@ -244,11 +244,16 @@ pub struct EmitContext {
     /// When true, `await expr` becomes `yield __await(expr)` for async generator lowering.
     pub emit_await_as_yield_await: bool,
 
-    /// When true, rewrite `arguments` identifiers to `arguments_1` inside async
-    /// generator bodies (ES2015+ path). The outer function captures arguments
-    /// with `var arguments_1 = arguments;` so the generator closure can reference
-    /// the correct scope.
+    /// When true, rewrite `arguments` identifiers inside async generator bodies
+    /// (ES2015+ path). The outer function captures arguments with a generated
+    /// `arguments_N` binding so the generator closure can reference the correct scope.
     pub rewrite_arguments_to_arguments_1: bool,
+
+    /// Generated capture binding used when `rewrite_arguments_to_arguments_1` is set.
+    pub arguments_capture_name: Option<String>,
+
+    /// File-level counter for generated `arguments_N` capture bindings.
+    pub arguments_capture_counter: u32,
 
     /// Auto-detect module mode: if true, detect imports/exports and apply `CommonJS`
     pub auto_detect_module: bool,
@@ -286,6 +291,8 @@ impl EmitContext {
             emit_await_as_yield: false,
             emit_await_as_yield_await: false,
             rewrite_arguments_to_arguments_1: false,
+            arguments_capture_name: None,
+            arguments_capture_counter: 0,
             auto_detect_module: false,
             original_module_kind: None,
             file_is_module: false,
