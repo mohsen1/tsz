@@ -5,6 +5,9 @@ use crate::visitor::{ObjectTypeKind, classify_object_type};
 use crate::{TypeDatabase, TypeId};
 
 pub fn is_fresh_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match classify_object_type(db, type_id) {
         ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
             let shape = db.object_shape(shape_id);

@@ -2029,6 +2029,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Check if a type is an Array or Tuple type.
     /// These are object types but the `ShapeExtractor` can't extract their shape.
     fn is_array_or_tuple_type(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         matches!(
             self.interner.lookup(type_id),
             Some(TypeData::Array(_)) | Some(TypeData::Tuple(_))

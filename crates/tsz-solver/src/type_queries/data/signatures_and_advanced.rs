@@ -1193,6 +1193,13 @@ pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
 /// are NOT valid base types. Used for TS2509 checking.
 #[allow(clippy::match_same_arms)]
 pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: only `any` and `object` intrinsics are valid base types;
+    // all other intrinsics (including `BOOLEAN_TRUE` / `BOOLEAN_FALSE`,
+    // which lookup as `Literal(Boolean)` and don't match the `Literal` arm)
+    // fall through to `_ => false`. Skip `lookup` for these.
+    if type_id.is_intrinsic() {
+        return type_id == TypeId::ANY || type_id == TypeId::OBJECT;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)) => true,
         Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => true,
