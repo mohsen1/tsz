@@ -1085,6 +1085,10 @@ fn resolve_concrete_conditional_result(
 /// Returns the full brand property name (e.g., `"__private_brand_#Foo"`) if found,
 /// or None if the type has no private brand.
 pub fn get_private_brand_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
+    // Fast path: intrinsics aren't `Object` / `ObjectWithIndex` / `Callable`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id)? {
         TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = db.object_shape(shape_id);
@@ -1117,6 +1121,10 @@ pub fn get_private_brand_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 ///
 /// Returns `Some(field_name)` (e.g., `"#foo"`) if found, None otherwise.
 pub fn get_private_field_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
+    // Fast path: intrinsics aren't `Object` / `ObjectWithIndex` / `Callable`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id)? {
         TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = db.object_shape(shape_id);
@@ -1150,6 +1158,10 @@ pub fn get_type_shape_symbol(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<tsz_binder::SymbolId> {
+    // Fast path: intrinsics aren't `Object` / `ObjectWithIndex` / `Callable`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id)? {
         TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             db.object_shape(shape_id).symbol
@@ -1163,6 +1175,10 @@ pub fn get_type_shape_symbol(
 ///
 /// Returns None if the type is not an Enum type.
 pub fn get_enum_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
+    // Fast path: intrinsics aren't `Enum(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Enum(def_id, _)) => Some(def_id),
         _ => None,
@@ -1173,6 +1189,10 @@ pub fn get_enum_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
 ///
 /// Returns None if the type is not an Enum type.
 pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // Fast path: intrinsics aren't `Enum(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Enum(_, member_type)) => Some(member_type),
         _ => None,
