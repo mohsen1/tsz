@@ -915,18 +915,45 @@ impl<'a> RecursiveTypeCollector<'a> {
             return;
         }
 
-        // Unified enter: checks depth, cycle, iterations
+        // Look up before entering the guard so we can short-circuit
+        // terminal kinds without paying the guard's HashSet round-trip.
+        let Some(key) = self.types.lookup(type_id) else {
+            self.collected.insert(type_id);
+            return;
+        };
+
+        // Terminal-kind fast path: these `TypeData` variants have no
+        // children, so `visit_key` is a no-op for them. Skip the recursion
+        // guard's enter/leave HashSet bookkeeping — there is no recursion,
+        // no cycle, and no depth growth. Mirrors the same fast path used in
+        // `ContainsTypeChecker` (#1988) and the sibling visitor predicates.
+        if matches!(
+            &key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.collected.insert(type_id);
+            return;
+        }
+
+        // Non-terminal: enter the guard for cycle/depth/iteration safety
+        // and recurse via `visit_key`.
         match self.guard.enter(type_id) {
             crate::recursion::RecursionResult::Entered => {}
             _ => return,
         }
 
         self.collected.insert(type_id);
-
-        if let Some(key) = self.types.lookup(type_id) {
-            self.visit_key(&key);
-        }
-
+        self.visit_key(&key);
         self.guard.leave(type_id);
     }
 
