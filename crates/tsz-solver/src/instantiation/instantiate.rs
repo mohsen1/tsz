@@ -266,6 +266,22 @@ pub struct TypeInstantiator<'a> {
     preserve_unsubstituted_type_params: bool,
     /// When set, substitutes `ThisType` with this concrete type.
     pub this_type: Option<TypeId>,
+    /// When set with `this_type`, ONLY substitute `ThisType` references at
+    /// type-combinator positions (Intersection / Union / `IndexAccess` / `KeyOf` /
+    /// Conditional, etc.). Skip recursion into Object, Function, and Callable
+    /// internals so their stored method bodies' `this` references remain
+    /// polymorphic for property-access-time rebinding.
+    ///
+    /// Required for `apply_this_substitution_to_call_return`: when a method
+    /// returns `this & T` and the receiver is `Label`, we want
+    /// `Label & T_inferred`, NOT a re-baked `Label_obj_with_this_substituted`.
+    /// Re-baking poisons subsequent intersection wrapping (the chained
+    /// `extend({a}).extend({b})` pattern in `intersectionThisTypes.ts`).
+    ///
+    /// MUST stay false for class-specialization paths (heritage merge,
+    /// `instantiate_type_with_this`) where the substitution legitimately
+    /// means "specialize this method body for this class".
+    pub shallow_this_only: bool,
     depth: u32,
     max_depth: u32,
     depth_exceeded: bool,
@@ -284,6 +300,7 @@ impl<'a> TypeInstantiator<'a> {
             preserve_meta_types: false,
             preserve_unsubstituted_type_params: false,
             this_type: None,
+            shallow_this_only: false,
             depth: 0,
             max_depth: MAX_INSTANTIATION_DEPTH,
             depth_exceeded: false,
@@ -780,6 +797,15 @@ impl<'a> TypeInstantiator<'a> {
             // Object: instantiate all property types
             TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
+                // Shallow-this mode: don't walk into Object internals when the
+                // Object has a backing symbol (named interface / class). Such
+                // types own a polymorphic `this` scope that must stay raw for
+                // property-access-time rebinding when the Object becomes part
+                // of an intersection. Anonymous Object literals (no symbol)
+                // share the outer `this` scope.
+                if self.shallow_this_only && shape.symbol.is_some() {
+                    return self.interner.intern(*key);
+                }
                 let instantiated = self.instantiate_properties(&shape.properties);
                 self.interner
                     .object_with_flags_and_symbol(instantiated, shape.flags, shape.symbol)
@@ -788,6 +814,9 @@ impl<'a> TypeInstantiator<'a> {
             // Object with index signatures: instantiate all types
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
+                if self.shallow_this_only && shape.symbol.is_some() {
+                    return self.interner.intern(*key);
+                }
                 let instantiated_props = self.instantiate_properties(&shape.properties);
                 let instantiated_string_idx =
                     self.instantiate_index_signature(shape.string_index.as_ref());
@@ -806,6 +835,56 @@ impl<'a> TypeInstantiator<'a> {
             // Note: Type params in the function create a new scope - don't substitute those
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(*shape_id);
+                // Shallow-this mode: substitute `this:` parameter slot,
+                // and substitute params/return_type only when they ARE the
+                // top-level `ThisType` (no nesting). Don't recurse into
+                // composite types like `this & T` — those carry the
+                // polymorphic `this` scope that must stay raw for
+                // intersection rebinding (chained `extend({a}).extend({b})`
+                // pattern). Top-level `this` substitution is needed for
+                // ordinary `(p: this) => this` shapes.
+                if self.shallow_this_only {
+                    let target_this = self.this_type.unwrap_or(TypeId::ERROR);
+                    let sub_top_level = |id: TypeId| -> TypeId {
+                        if matches!(self.interner.lookup(id), Some(TypeData::ThisType)) {
+                            target_this
+                        } else {
+                            id
+                        }
+                    };
+                    let new_this_slot = shape.this_type.map(sub_top_level);
+                    let new_return_type = sub_top_level(shape.return_type);
+                    let mut new_params = Vec::with_capacity(shape.params.len());
+                    let mut params_changed = false;
+                    for p in shape.params.iter() {
+                        let new_t = sub_top_level(p.type_id);
+                        if new_t != p.type_id {
+                            params_changed = true;
+                            let mut np = *p;
+                            np.type_id = new_t;
+                            new_params.push(np);
+                        } else {
+                            new_params.push(*p);
+                        }
+                    }
+                    let this_changed = match (shape.this_type, new_this_slot) {
+                        (Some(a), Some(b)) => a != b,
+                        (None, None) => false,
+                        _ => true,
+                    };
+                    if params_changed || this_changed || new_return_type != shape.return_type {
+                        return self.interner.function(FunctionShape {
+                            type_params: shape.type_params.clone(),
+                            params: new_params,
+                            this_type: new_this_slot,
+                            return_type: new_return_type,
+                            type_predicate: shape.type_predicate,
+                            is_constructor: shape.is_constructor,
+                            is_method: shape.is_method,
+                        });
+                    }
+                    return self.interner.intern(*key);
+                }
                 let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&shape.type_params);
 
                 let instantiated_type_params = self.instantiate_type_params(&shape.type_params);
@@ -839,6 +918,77 @@ impl<'a> TypeInstantiator<'a> {
             // Callable: instantiate all signatures and properties
             TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(*shape_id);
+                // Shallow-this mode: substitute the `this:` slot and
+                // top-level `ThisType` references in params / return_type;
+                // leave deeper composite types alone so polymorphic `this`
+                // in method bodies stays raw for intersection rebinding.
+                if self.shallow_this_only {
+                    let target_this = self.this_type.unwrap_or(TypeId::ERROR);
+                    let sub_top_level = |id: TypeId| -> TypeId {
+                        if matches!(self.interner.lookup(id), Some(TypeData::ThisType)) {
+                            target_this
+                        } else {
+                            id
+                        }
+                    };
+                    let rewrite_sig = |sig: &CallSignature| -> (CallSignature, bool) {
+                        let mut changed = false;
+                        let new_this_slot = sig.this_type.map(|s| {
+                            let n = sub_top_level(s);
+                            if n != s {
+                                changed = true;
+                            }
+                            n
+                        });
+                        let new_return = sub_top_level(sig.return_type);
+                        if new_return != sig.return_type {
+                            changed = true;
+                        }
+                        let mut new_params = Vec::with_capacity(sig.params.len());
+                        for p in sig.params.iter() {
+                            let new_t = sub_top_level(p.type_id);
+                            if new_t != p.type_id {
+                                changed = true;
+                                let mut np = *p;
+                                np.type_id = new_t;
+                                new_params.push(np);
+                            } else {
+                                new_params.push(*p);
+                            }
+                        }
+                        let mut new_sig = sig.clone();
+                        new_sig.this_type = new_this_slot;
+                        new_sig.return_type = new_return;
+                        new_sig.params = new_params;
+                        (new_sig, changed)
+                    };
+
+                    let mut updated_call = Vec::with_capacity(shape.call_signatures.len());
+                    let mut any_changed = false;
+                    for sig in shape.call_signatures.iter() {
+                        let (new_sig, changed) = rewrite_sig(sig);
+                        any_changed |= changed;
+                        updated_call.push(new_sig);
+                    }
+                    let mut updated_construct = Vec::with_capacity(shape.construct_signatures.len());
+                    for sig in shape.construct_signatures.iter() {
+                        let (new_sig, changed) = rewrite_sig(sig);
+                        any_changed |= changed;
+                        updated_construct.push(new_sig);
+                    }
+                    if any_changed {
+                        return self.interner.callable(CallableShape {
+                            call_signatures: updated_call,
+                            construct_signatures: updated_construct,
+                            properties: shape.properties.clone(),
+                            string_index: shape.string_index,
+                            number_index: shape.number_index,
+                            symbol: shape.symbol,
+                            is_abstract: shape.is_abstract,
+                        });
+                    }
+                    return self.interner.intern(*key);
+                }
                 let instantiated_call: Vec<CallSignature> = shape
                     .call_signatures
                     .iter()
@@ -1959,6 +2109,50 @@ pub fn substitute_this_type_cached(
     // would walk into T's constraint A, find ThisType, replace it, and return
     // the modified constraint instead of T.
     instantiator.preserve_unsubstituted_type_params = true;
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
+}
+
+/// Shallow variant of [`substitute_this_type`] for call-return-position use.
+///
+/// When a method declared as `<T>(...): this & T` is called on a receiver,
+/// the call-return-type substitution should replace `ThisType` references at
+/// the structural level of the return type (Intersection / Union /
+/// `IndexAccess` / `KeyOf` / Conditional / Application / etc.) but NOT recurse
+/// into named Object/ObjectWithIndex internals.
+///
+/// Named Object types (interfaces, classes — those with a backing symbol)
+/// own a polymorphic `this` scope. Their stored method bodies' `this`
+/// references must stay raw so that property access on the post-substitution
+/// type (typically an intersection wrapping the receiver) can rebind `this`
+/// to the actual intersection at call site, not lock it to a single member.
+///
+/// Counter-example: `instantiate_type_with_this` for class-inheritance
+/// specialization needs the **deep** [`substitute_this_type`] entry which
+/// walks Object internals. The two forms split here.
+///
+/// See `docs/plan/claims/investigation-intersection-this-eager-bind.md`
+/// for the full failure profile this fixes (chained `extend({a}).extend({b})`
+/// pattern in `intersectionThisTypes.ts`).
+pub fn substitute_this_type_at_return_position(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    let empty_subst = TypeSubstitution::new();
+    let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
+    instantiator.this_type = Some(this_type);
+    instantiator.preserve_unsubstituted_type_params = true;
+    instantiator.shallow_this_only = true;
+    let _ = query_db; // No cache — different shape from substitute_this_type_cached.
     let result = instantiator.instantiate(type_id);
     if instantiator.depth_exceeded {
         TypeId::ERROR
