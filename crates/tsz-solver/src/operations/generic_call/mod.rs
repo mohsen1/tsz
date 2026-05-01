@@ -141,6 +141,15 @@ mod return_context;
 /// `{ kind: "a" } | { kind: "b" }` where the literal property types should
 /// prevent widening of the corresponding argument properties.
 fn type_implies_literals_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> bool {
+    // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean),
+    // which the match returns true for. Other intrinsics resolve to
+    // Intrinsic/UniqueSymbol/etc. and fall through to false.
+    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(_)) => true,
         Some(TypeData::Union(list_id)) => {
@@ -172,6 +181,9 @@ fn type_references_placeholder(
 ) -> bool {
     if type_id == placeholder {
         return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
     }
     match db.lookup(type_id) {
         Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
