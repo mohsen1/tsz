@@ -1268,37 +1268,88 @@ impl<'a> CheckerState<'a> {
         &self,
         source: TypeId,
     ) -> Option<TypeId> {
-        // The source can reach this point either as `Lazy(DefId)` (when the
-        // alias hasn't been resolved through TypeEnvironment) or as the
-        // already-evaluated structural form. In either case, `find_def_for_type`
-        // points back at the alias's definition. The definition's stored
-        // `body` is the *evaluated* form, so we use the interner's
-        // `display_alias` side table to recover the as-written generic
-        // Application — that's what tsc shows for the missing-properties
-        // source, e.g. `NumberTo<number>` for `type NumberToNumber = NumberTo<number>`.
+        // The source can reach this point either as:
+        // - `Lazy(DefId)` when an unevaluated alias reference,
+        // - the already-evaluated structural form (find_def_for_type points
+        //   back at the alias's definition),
+        // - or an `Application(Lazy(DefId), [args...])` when generic.
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source)
-            .or_else(|| self.ctx.definition_store.find_def_for_type(source))?;
+            .or_else(|| self.ctx.definition_store.find_def_for_type(source))
+            .or_else(|| {
+                // Application path: peek at the application's base to find
+                // the alias's def_id.
+                let app_id =
+                    crate::query_boundaries::common::application_id(self.ctx.types, source)?;
+                let app = self.ctx.types.type_application(app_id);
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+            })?;
         let def = self.ctx.definition_store.get(def_id)?;
         if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return None;
         }
-        // Only unfold "wrapper" aliases that take no type parameters of
-        // their own. Generic aliases like `type Wrap<T> = A<T>` are
-        // already displayed by their own application form.
-        if !def.type_params.is_empty() {
+        if def.type_params.is_empty() {
+            // Non-generic wrapper alias path — recover the as-written
+            // Application form via display_alias. This exists only when the
+            // alias's body is a generic Application — for aliases of unions,
+            // intersections, object literals, or bare references, no
+            // display_alias is recorded so the alias name stays.
+            let app_origin = self.ctx.types.get_display_alias(source)?;
+            let app_id =
+                crate::query_boundaries::common::application_id(self.ctx.types, app_origin)?;
+            let app = self.ctx.types.type_application(app_id);
+            if app.args.is_empty() {
+                return None;
+            }
+            return Some(app_origin);
+        }
+
+        // Generic wrapper alias path: `type IndirectArrayish<U extends ...> =
+        // Objectish<U>;` — when source is `IndirectArrayish<any>` and the
+        // body is itself an `Application` of a different named alias, tsc
+        // unfolds one level to display `Objectish<any>` (the body alias's
+        // application form with the wrapper's type-args substituted into the
+        // body's slots). See `compiler/mappedTypeWithAny.ts` line 47 — tsc
+        // displays `Objectish<any>` for `arr = indirectArrayish` rather than
+        // the wrapper name `IndirectArrayish<any>`.
+        let body = def.body?;
+        let body_app_id = crate::query_boundaries::common::application_id(self.ctx.types, body)?;
+        let body_app = self.ctx.types.type_application(body_app_id);
+        // Body alias must be different from the wrapper itself (avoid loops).
+        let body_def_id =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, body_app.base)?;
+        if body_def_id == def_id {
             return None;
         }
-        // Recover the as-written Application form via display_alias. This
-        // exists only when the alias's body is a generic Application — for
-        // aliases of unions, intersections, object literals, or bare
-        // references, no display_alias is recorded so the alias name stays.
-        let app_origin = self.ctx.types.get_display_alias(source)?;
-        let app_id = crate::query_boundaries::common::application_id(self.ctx.types, app_origin)?;
-        let app = self.ctx.types.type_application(app_id);
-        if app.args.is_empty() {
+        // Substitute the wrapper's type-params with the source application's
+        // args so the displayed application reflects the call-site instantiation.
+        let source_app_id =
+            crate::query_boundaries::common::application_id(self.ctx.types, source)?;
+        let source_app = self.ctx.types.type_application(source_app_id);
+        if source_app.args.len() != def.type_params.len() {
             return None;
         }
-        Some(app_origin)
+        let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &def.type_params,
+            &source_app.args,
+        );
+        let body_args: Vec<TypeId> = body_app
+            .args
+            .iter()
+            .map(|&arg| {
+                crate::query_boundaries::common::instantiate_type_preserving_meta(
+                    self.ctx.types,
+                    arg,
+                    &subst,
+                )
+            })
+            .collect();
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .application(body_app.base, body_args),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
