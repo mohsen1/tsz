@@ -1550,6 +1550,9 @@ impl<'a> ContextualTypeContext<'a> {
         cond: &crate::types::ConditionalType,
     ) -> TypeId {
         use crate::types::TypeData;
+        if ty.is_intrinsic() {
+            return ty;
+        }
         match self.interner.lookup(ty) {
             Some(TypeData::Function(func_id)) => {
                 let mut shape = (*self.interner.function_shape(func_id)).clone();
