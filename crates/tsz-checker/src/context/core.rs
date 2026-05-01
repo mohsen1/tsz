@@ -201,6 +201,42 @@ impl<'a> CheckerContext<'a> {
             || !self.cross_file_symbol_targets.borrow().is_empty()
     }
 
+    /// Look up a cached cross-file symbol-type via the canonical
+    /// `CROSS_FILE_QUERY_SYMBOL_TYPE` bucket.
+    ///
+    /// Returns `None` when:
+    /// - the share-owner gate is off (`share_owner_symbol_type_results == false`),
+    /// - the bucket has no entry for `(sym_id, file_idx)`, or
+    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`.
+    ///
+    /// Used by cross-arena delegation fast-paths to skip child-checker
+    /// construction when a parallel worker has already resolved the
+    /// same symbol/file pair. Centralises the gate + bucket lookup +
+    /// sentinel filtering so individual call sites remain three lines.
+    pub fn cached_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if !self.share_owner_symbol_type_results {
+            return None;
+        }
+        let (cached_type, params) = self.definition_store.get_resolved_cross_file_query(
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
+            file_idx,
+            sym_id.0,
+            0,
+            0,
+        )?;
+        if matches!(
+            cached_type,
+            tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
+        ) {
+            return None;
+        }
+        Some((cached_type, params))
+    }
+
     /// Set the shared read-only symbol→file index.
     ///
     /// This replaces the per-checker O(N) loop that called `register_symbol_file_target`

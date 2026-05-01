@@ -63,16 +63,9 @@ impl<'a> CheckerState<'a> {
         // (sym_id, target_file_idx) pair. The canonical SYMBOL_TYPE bucket
         // returns it without any child-checker construction or
         // copy_symbol_file_targets_to_attributed work.
-        if self.ctx.share_owner_symbol_type_results
-            && let Some((cached_type, _params)) =
-                self.ctx.definition_store.get_resolved_cross_file_query(
-                    crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
-                    target_file_idx as u32,
-                    sym_id.0,
-                    0,
-                    0,
-                )
-            && !matches!(cached_type, TypeId::ERROR | TypeId::UNKNOWN)
+        if let Some((cached_type, _)) = self
+            .ctx
+            .cached_cross_file_symbol_type(sym_id, target_file_idx as u32)
         {
             return cached_type;
         }

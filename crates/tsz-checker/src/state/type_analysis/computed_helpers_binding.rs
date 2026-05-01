@@ -508,18 +508,11 @@ impl<'a> CheckerState<'a> {
                 // (sym_id, file_idx) pair, the canonical SYMBOL_TYPE bucket
                 // has the class type. Short-circuit before building a child
                 // checker.
-                if self.ctx.share_owner_symbol_type_results
-                    && let Some((cached_type, cached_params)) =
-                        self.ctx.definition_store.get_resolved_cross_file_query(
-                            super::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
-                            file_idx as u32,
-                            sym_id.0,
-                            0,
-                            0,
-                        )
-                    && !matches!(cached_type, TypeId::ERROR | TypeId::UNKNOWN)
+                if let Some(cached) = self
+                    .ctx
+                    .cached_cross_file_symbol_type(sym_id, file_idx as u32)
                 {
-                    return (cached_type, cached_params);
+                    return cached;
                 }
                 // Found class in another file's arena. Create a child checker
                 // with that arena and directly compute the class type.
