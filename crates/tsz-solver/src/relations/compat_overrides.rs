@@ -414,6 +414,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if type_id == TypeId::STRING {
             return true;
         }
+        // Fast path: other intrinsics aren't string-like — they lookup as
+        // `Intrinsic(other)` (or `Literal(Boolean)` for BOOLEAN_TRUE/FALSE),
+        // neither of which the visitor matches as string-like.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         // Use visitor to check for string literals, template literals, etc.
         let mut visitor = StringLikeVisitor { db: self.interner };
         visitor.visit_type(self.interner, type_id)
