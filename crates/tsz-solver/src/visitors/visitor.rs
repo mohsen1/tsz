@@ -1204,13 +1204,37 @@ impl<'a> ConstAssertionVisitor<'a> {
 
     /// Apply const assertion to a type, returning the transformed type ID.
     pub fn apply_const_assertion(&mut self, type_id: TypeId) -> TypeId {
+        // Terminal-kind fast path: kinds that hit the `_ => type_id` arm
+        // below have nothing to recurse into and produce the input type
+        // unchanged. Skip the `RecursionGuard::enter`/`leave` `FxHashSet`
+        // round-trip for those — the guard only matters when there are
+        // children to walk. Mirrors #1988 (ContainsTypeChecker), #1993
+        // (FreeTypeParamChecker / FreeInferChecker / ShallowContainsTypeChecker),
+        // and #1996 (RecursiveTypeCollector).
+        let lookup = self.db.lookup(type_id);
+        let needs_recursion = matches!(
+            lookup,
+            Some(
+                TypeData::Array(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::ReadonlyType(_)
+                    | TypeData::Union(_)
+                    | TypeData::Intersection(_)
+            )
+        );
+        if !needs_recursion {
+            return type_id;
+        }
+
         // Prevent infinite recursion
         match self.guard.enter(type_id) {
             crate::recursion::RecursionResult::Entered => {}
             _ => return type_id,
         }
 
-        let result = match self.db.lookup(type_id) {
+        let result = match lookup {
             // Arrays: Convert to readonly tuple
             Some(TypeData::Array(element_type)) => {
                 let const_element = self.apply_const_assertion(element_type);
