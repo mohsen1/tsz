@@ -330,6 +330,10 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn try_fast_index_large_union_member(&mut self, member: TypeId) -> Option<TypeId> {
+        // Intrinsics are never Object/ObjectWithIndex/Array/Tuple — skip lookup.
+        if member.is_intrinsic() {
+            return None;
+        }
         match self.evaluator.interner().lookup(member) {
             Some(TypeData::Object(shape_id)) => {
                 let shape = self.evaluator.interner().object_shape(shape_id);
@@ -1437,6 +1441,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         object_type: TypeId,
         index_type: TypeId,
     ) -> Option<TypeId> {
+        // Intrinsics are never Mapped or TypeParameter — bail before lookups.
+        if object_type.is_intrinsic() || index_type.is_intrinsic() {
+            return None;
+        }
         // Check if object is a mapped type
         let mapped_id = match self.interner().lookup(object_type) {
             Some(TypeData::Mapped(id)) => id,
@@ -1840,15 +1848,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // An intersection is string-like if any member is string or a string literal
                 let members = self.interner().type_list(list_id);
                 members.iter().any(|&m| {
-                    m == TypeId::STRING
-                        || matches!(
-                            self.interner().lookup(m),
-                            Some(
-                                TypeData::Literal(LiteralValue::String(_))
-                                    | TypeData::TemplateLiteral(_)
-                                    | TypeData::StringIntrinsic { .. }
-                            )
+                    if m == TypeId::STRING {
+                        return true;
+                    }
+                    // Other intrinsics (NUMBER, BOOLEAN_TRUE/FALSE, ...) never match
+                    // Literal(String)/TemplateLiteral/StringIntrinsic — skip lookup.
+                    if m.is_intrinsic() {
+                        return false;
+                    }
+                    matches!(
+                        self.interner().lookup(m),
+                        Some(
+                            TypeData::Literal(LiteralValue::String(_))
+                                | TypeData::TemplateLiteral(_)
+                                | TypeData::StringIntrinsic { .. }
                         )
+                    )
                 })
             }
             _ => false,
