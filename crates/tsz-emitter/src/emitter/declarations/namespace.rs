@@ -75,6 +75,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_recovered_anonymous_module_declaration(node, module) {
+            return;
+        }
+
         // Skip non-instantiated modules (type-only: interfaces, type aliases, empty)
         if !self.is_instantiated_module(module.body) {
             self.skip_comments_for_erased_node(node);
@@ -164,6 +168,58 @@ impl<'a> Printer<'a> {
             None
         };
         self.emit_namespace_iife(&module, parent_name.as_deref());
+    }
+
+    fn emit_recovered_anonymous_module_declaration(
+        &mut self,
+        node: &Node,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> bool {
+        if !self.get_identifier_text_idx(module.name).is_empty() {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let Ok(source) = crate::safe_slice::slice(text, start, node.end as usize) else {
+            return false;
+        };
+
+        let mut wrote = false;
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if wrote {
+                self.write_line();
+            }
+            let indent_level = line
+                .chars()
+                .take_while(|ch| matches!(ch, ' ' | '\t'))
+                .map(|ch| if ch == '\t' { 4 } else { 1 })
+                .sum::<usize>()
+                / 4;
+            for _ in 0..indent_level {
+                self.write("    ");
+            }
+            if trimmed == "module {" {
+                self.write("module;");
+                self.write_line();
+                for _ in 0..indent_level {
+                    self.write("    ");
+                }
+                self.write("{");
+            } else {
+                self.write(trimmed);
+            }
+            wrote = true;
+        }
+        if wrote {
+            self.skip_comments_for_erased_node(node);
+        }
+        wrote
     }
 
     /// Emit a namespace/module as an IIFE for ES6+ targets.
