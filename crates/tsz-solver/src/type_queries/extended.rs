@@ -375,6 +375,9 @@ pub fn get_string_literal_value(
 
 /// Check if a type contains string literal types (directly or as union members).
 pub fn type_contains_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(_))) => true,
         Some(TypeData::Union(members)) => {
@@ -435,6 +438,9 @@ pub fn get_literal_property_name(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<tsz_common::interner::Atom> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(name))) => Some(name),
         Some(TypeData::Literal(crate::types::LiteralValue::Number(num))) => {
@@ -473,6 +479,9 @@ pub enum CallSignaturesKind {
 
 /// Classify a type for call signature extraction.
 pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> CallSignaturesKind {
+    if type_id.is_intrinsic() {
+        return CallSignaturesKind::NoSignatures;
+    }
     let Some(key) = db.lookup(type_id) else {
         return CallSignaturesKind::NoSignatures;
     };
@@ -668,6 +677,12 @@ pub enum LiteralKeyKind {
 
 /// Classify a type for literal key extraction.
 pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKeyKind {
+    // BOOLEAN_TRUE/FALSE intrinsics resolve to Literal(Boolean), which the
+    // match falls through to Other; other intrinsics resolve to Intrinsic
+    // and also fall through. Safe to short-circuit all intrinsics to Other.
+    if type_id.is_intrinsic() {
+        return LiteralKeyKind::Other;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::LiteralValue::String(atom))) => {
             LiteralKeyKind::StringLiteral(atom)
