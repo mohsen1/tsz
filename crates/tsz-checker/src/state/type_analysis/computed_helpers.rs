@@ -1163,15 +1163,18 @@ impl<'a> CheckerState<'a> {
 
             // Check circularity via two paths:
             // 1. Lazy chain: resolved type is still Lazy -> follow through DefinitionStore.
-            // 2. Shared circular set: another file's checker already marked this
-            //    symbol's DefId as circular (mutual cycle where the other direction
-            //    was cached, skipping re-delegation).
+            // 2. Shared circular set: a sibling file's checker already marked
+            //    this symbol's DefId as circular during inline detection
+            //    (`is_direct_circular_reference` walks the symbol_resolution_stack
+            //    and marks every type-alias on it). This holds even when the
+            //    cached resolved type is still a Lazy placeholder for the
+            //    sibling file's alias — circular2.ts hits this path for `B`
+            //    after `/a.ts`'s recursion marks both A and B.
             let is_lazy = lazy_def_id(self.ctx.types, resolved).is_some();
-            let shared_circular = !is_lazy
-                && self
-                    .ctx
-                    .get_existing_def_id(sym_id)
-                    .is_some_and(|def_id| self.ctx.definition_store.is_circular_def(def_id));
+            let shared_circular = self
+                .ctx
+                .get_existing_def_id(sym_id)
+                .is_some_and(|def_id| self.ctx.definition_store.is_circular_def(def_id));
 
             if !is_lazy && !shared_circular {
                 continue;
