@@ -698,6 +698,9 @@ pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> Typ
 ///
 /// Returns true only for `TypeData::ObjectWithIndex`, not for `TypeData::Object`.
 pub fn is_object_with_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::ObjectWithIndex(_)))
 }
 
