@@ -1,6 +1,6 @@
 # perf(cli): share checker lib contexts
 
-Status: claim
+Status: ready
 Owner: Codex
 Branch: `perf/share-checker-lib-contexts`
 Created: 2026-05-01 18:13:36 UTC

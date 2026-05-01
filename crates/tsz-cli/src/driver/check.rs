@@ -66,7 +66,7 @@ pub(super) struct CollectDiagnosticsResult {
 #[derive(Default)]
 pub(super) struct CheckerLibSet {
     pub(super) files: Vec<Arc<LibFile>>,
-    pub(super) contexts: Vec<LibContext>,
+    pub(super) contexts: Arc<Vec<LibContext>>,
 }
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
@@ -99,7 +99,10 @@ pub(super) fn load_checker_libs(lib_files: &[Arc<LibFile>]) -> CheckerLibSet {
         })
         .collect();
 
-    CheckerLibSet { files, contexts }
+    CheckerLibSet {
+        files,
+        contexts: Arc::new(contexts),
+    }
 }
 
 fn should_skip_type_checking_for_file(
@@ -958,7 +961,7 @@ pub(super) fn collect_diagnostics(
     let program_alias_partners = Arc::clone(&program.alias_partners);
 
     let mut project_env = tsz::checker::context::ProjectEnv {
-        lib_contexts: std::sync::Arc::new(checker_libs.contexts.clone()),
+        lib_contexts: Arc::clone(&checker_libs.contexts),
         all_arenas: Arc::clone(&all_arenas),
         all_binders: Arc::clone(&all_binders),
         skeleton_declared_modules,
@@ -3758,7 +3761,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             .collect();
         let direct_checker_libs = CheckerLibSet {
             files: lib_files.clone(),
-            contexts: direct_lib_contexts.clone(),
+            contexts: Arc::new(direct_lib_contexts.clone()),
         };
         let compile_inputs: Vec<_> = sources
             .into_iter()
