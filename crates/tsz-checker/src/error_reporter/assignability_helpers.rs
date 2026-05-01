@@ -581,7 +581,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut missing: Vec<_> = target_shape
+        // tsc lists missing properties in source declaration order. The
+        // target_shape's `properties` Vec is sorted by Atom name during
+        // shape interning (for hash stability), so we cannot rely on Vec
+        // position. Each PropertyInfo carries `declaration_order` (1-based,
+        // synthesized members get 0 from the interner fixup), so collect
+        // (declaration_order, name) and sort by it.
+        let mut missing_with_order: Vec<(u32, tsz_common::interner::Atom)> = target_shape
             .properties
             .iter()
             .filter(|prop| !prop.optional)
@@ -593,14 +599,13 @@ impl<'a> CheckerState<'a> {
                         .any(|source_prop| source_prop.name == prop.name)
                 })
             })
-            .map(|prop| prop.name)
+            .map(|prop| (prop.declaration_order, prop.name))
             .collect();
-        missing.sort_by(|left, right| {
-            self.ctx
-                .types
-                .resolve_atom_ref(*left)
-                .cmp(&self.ctx.types.resolve_atom_ref(*right))
-        });
+        missing_with_order.sort_by_key(|(order, _)| *order);
+        let missing: Vec<_> = missing_with_order
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
 
         (!missing.is_empty()).then_some(missing)
     }
@@ -886,15 +891,23 @@ impl<'a> CheckerState<'a> {
                     match (left_own, right_own) {
                         (true, false) => return std::cmp::Ordering::Less,
                         (false, true) => return std::cmp::Ordering::Greater,
-                        // When both are own, tsc lists in symbol-table insertion
-                        // order. The shape's Vec position (`*_pos`) reflects that
-                        // order — including synthesized members like a class's
-                        // `prototype` (which is inserted first, even though its
-                        // `declaration_order` is 0) and JS-expando-augmented
-                        // members appended afterwards.
+                        // When both are own, tsc lists in source declaration
+                        // order. Each PropertyInfo carries a 1-based
+                        // `declaration_order` (with synthesized members
+                        // assigned a positional fixup at interning time).
+                        // The shape's Vec position (`*_pos`) is NOT useful
+                        // as the primary key here because the type interner
+                        // sorts shape properties by Atom name for hash
+                        // stability — see
+                        // `tsz_solver::intern::core::constructors::object_with_index`.
+                        // Sort by `declaration_order` first, falling back
+                        // to `*_pos` then atom name then original index
+                        // when declaration_order ties (e.g. two synthesized
+                        // members both at order 0).
                         (true, true) => {
-                            return left_pos
-                                .cmp(&right_pos)
+                            return left_order
+                                .cmp(&right_order)
+                                .then_with(|| left_pos.cmp(&right_pos))
                                 .then_with(|| left_name.cmp(right_name))
                                 .then_with(|| left_index.cmp(right_index));
                         }

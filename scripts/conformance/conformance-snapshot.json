@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-01T20:28:32Z",
-  "git_sha": "b8c62d4c61d9008785f933037fe3d2e83a88b90c",
+  "timestamp": "2026-05-01T21:42:54Z",
+  "git_sha": "d27f9dbdc449c7876776d778f7a656be68a69878",
   "summary": {
     "total_tests": 12582,
-    "passed": 12316,
-    "failed": 266,
+    "passed": 12318,
+    "failed": 264,
     "pass_rate": 97.9
   },
   "areas_by_pass_rate": [
@@ -221,9 +221,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6388,
-      "failed": 132,
-      "pass_rate": 97.98
+      "passed": 6389,
+      "failed": 131,
+      "pass_rate": 97.99
     },
     {
       "area": "externalModules",
@@ -266,13 +266,6 @@
       "passed": 176,
       "failed": 2,
       "pass_rate": 98.88
-    },
-    {
-      "area": "statements/VariableStatements",
-      "total": 95,
-      "passed": 94,
-      "failed": 1,
-      "pass_rate": 98.95
     },
     {
       "area": "parser/ecmascript5",
@@ -656,6 +649,13 @@
       "area": "scanner/ecmascript5",
       "total": 27,
       "passed": 27,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "statements/VariableStatements",
+      "total": 95,
+      "passed": 95,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -1098,15 +1098,15 @@
       "count": 1
     },
     {
-      "code": "TS18046",
-      "count": 1
-    },
-    {
       "code": "TS2604",
       "count": 1
     },
     {
       "code": "TS2305",
+      "count": 1
+    },
+    {
+      "code": "TS18046",
       "count": 1
     },
     {
@@ -1464,10 +1464,6 @@
       "count": 1
     },
     {
-      "code": "TS18046",
-      "count": 1
-    },
-    {
       "code": "TS2565",
       "count": 1
     },
@@ -1492,6 +1488,10 @@
       "count": 1
     },
     {
+      "code": "TS18046",
+      "count": 1
+    },
+    {
       "code": "TS1463",
       "count": 1
     },
@@ -1504,7 +1504,7 @@
     "false_positive": 17,
     "all_missing": 10,
     "wrong_code": 78,
-    "fingerprint_only": 161,
+    "fingerprint_only": 159,
     "same_code_count_drift": 0,
     "close_to_passing": 56
   }
