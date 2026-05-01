@@ -1123,13 +1123,24 @@ impl<'a> CheckerState<'a> {
                 self.missing_required_properties_from_index_signature_source(source, target)
             && all_missing.len() > 1
         {
-            let src_str = self.format_type_for_diagnostic_role(
-                source,
-                DiagnosticTypeDisplayRole::AssignmentSource {
-                    target,
-                    anchor_idx: idx,
-                },
-            );
+            // For TS2739 source display, when the source is a non-generic
+            // type alias whose body is a generic Application
+            // (`type B = A<X1, X2, ...>`), tsc unfolds one level to display
+            // the application form `A<X1, X2, ...>` rather than the wrapper
+            // alias name `B`. See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
+            // line 91. Falls through to the role formatter for any other shape.
+            let src_str =
+                if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+                    self.format_type_diagnostic(unfolded)
+                } else {
+                    self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    )
+                };
             let tgt_str = self.format_assignability_type_for_message(target, source);
             let prop_list: Vec<String> = all_missing
                 .iter()
@@ -1226,6 +1237,52 @@ impl<'a> CheckerState<'a> {
             message,
             diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    /// For TS2739 source display: when `source` is a non-generic type alias
+    /// (`type B = A<X1, X2, ...>`) whose body is a generic Application of a
+    /// different named type, return the body Application's TypeId so the
+    /// caller can format it as `A<X1, X2, ...>` instead of the wrapper
+    /// alias name `B`. Returns `None` for any other shape (already an
+    /// Application, primitive aliases, generic aliases with their own type
+    /// parameters, aliases of unions/intersections/object literals, etc.),
+    /// leaving normal formatting in charge.
+    pub(in crate::error_reporter) fn ts2739_alias_of_application_source_display(
+        &self,
+        source: TypeId,
+    ) -> Option<TypeId> {
+        // The source can reach this point either as `Lazy(DefId)` (when the
+        // alias hasn't been resolved through TypeEnvironment) or as the
+        // already-evaluated structural form. In either case, `find_def_for_type`
+        // points back at the alias's definition. The definition's stored
+        // `body` is the *evaluated* form, so we use the interner's
+        // `display_alias` side table to recover the as-written generic
+        // Application — that's what tsc shows for the missing-properties
+        // source, e.g. `NumberTo<number>` for `type NumberToNumber = NumberTo<number>`.
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(source))?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        // Only unfold "wrapper" aliases that take no type parameters of
+        // their own. Generic aliases like `type Wrap<T> = A<T>` are
+        // already displayed by their own application form.
+        if !def.type_params.is_empty() {
+            return None;
+        }
+        // Recover the as-written Application form via display_alias. This
+        // exists only when the alias's body is a generic Application — for
+        // aliases of unions, intersections, object literals, or bare
+        // references, no display_alias is recorded so the alias name stays.
+        let app_origin = self.ctx.types.get_display_alias(source)?;
+        let app_id = crate::query_boundaries::common::application_id(self.ctx.types, app_origin)?;
+        let app = self.ctx.types.type_application(app_id);
+        if app.args.is_empty() {
+            return None;
+        }
+        Some(app_origin)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1665,13 +1722,30 @@ impl<'a> CheckerState<'a> {
             source_type
         };
         let src_str = if depth == 0 {
-            self.format_type_for_diagnostic_role(
-                source,
-                DiagnosticTypeDisplayRole::AssignmentSource {
-                    target,
-                    anchor_idx: idx,
-                },
-            )
+            // For TS2739, when the source is a non-generic type alias whose
+            // body is a generic Application (`type B = A<X1, X2, ...>`),
+            // tsc unfolds one level to display the application form
+            // `A<X1, X2, ...>` rather than the wrapper alias name `B`.
+            // The application form names both the underlying generic and its
+            // type arguments, which is the structural information the
+            // "is missing the following properties" message is meant to
+            // expose. tsc preserves alias names in TS2322 (target context)
+            // and TS2339 (receiver), so this unfold is scoped to TS2739
+            // source rendering. See
+            // `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
+            // line 91, where `type NumberToNumber = NumberTo<number>` is
+            // displayed as `NumberTo<number>` in the missing-properties source.
+            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+                self.format_type_diagnostic(unfolded)
+            } else {
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
+            }
         } else {
             self.format_type_diagnostic(self.widen_type_for_display(display_source))
         };
