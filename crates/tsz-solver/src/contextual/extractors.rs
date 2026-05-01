@@ -880,6 +880,9 @@ pub(crate) fn extract_rest_param_type_at(
 }
 
 fn evaluate_rest_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => Some(inner),
         Some(
