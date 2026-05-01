@@ -552,6 +552,13 @@ pub fn for_each_child_by_id<F>(db: &dyn TypeDatabase, type_id: TypeId, f: F)
 where
     F: FnMut(TypeId),
 {
+    // Fast path: intrinsic types have no children. `is_intrinsic()` is a
+    // free `TypeId`-range check; skipping the `TypeData` lookup and
+    // `for_each_child` match dispatch saves wasted work on every leaf
+    // visit. Mirrors #2001 / #2005 / #2008.
+    if type_id.is_intrinsic() {
+        return;
+    }
     if let Some(type_data) = db.lookup(type_id) {
         for_each_child(db, &type_data, f);
     }
