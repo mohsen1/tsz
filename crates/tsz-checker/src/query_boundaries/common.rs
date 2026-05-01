@@ -57,16 +57,12 @@ pub(crate) use tsz_solver::TypeSubstitution;
 /// This is the result enum returned by call/new expression resolution.
 pub(crate) use tsz_solver::CallResult;
 
-/// Thin wrapper around `tsz_solver::instantiate_type`.
-///
-/// Applies a `TypeSubstitution` to a type, producing a new type with type
-/// parameters replaced by their corresponding type arguments.
 pub(crate) fn instantiate_type(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     type_id: TypeId,
     substitution: &tsz_solver::TypeSubstitution,
 ) -> TypeId {
-    tsz_solver::instantiate_type(db, type_id, substitution)
+    tsz_solver::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
 }
 
 /// If `ty` is `Lazy(def_id)` for a non-generic `TypeAlias` whose body is the
@@ -743,13 +739,12 @@ pub(crate) fn instantiate_type_with_depth_status(
     tsz_solver::instantiate_type_with_depth_status(db, type_id, substitution)
 }
 
-/// Substitute `this` type references in `type_id` with `this_type`.
 pub(crate) fn substitute_this_type(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     type_id: TypeId,
     this_type: TypeId,
 ) -> TypeId {
-    tsz_solver::substitute_this_type(db, type_id, this_type)
+    tsz_solver::substitute_this_type_cached(db.as_type_database(), Some(db), type_id, this_type)
 }
 
 /// Shallow `this` substitution for call-return-position use.
@@ -897,22 +892,22 @@ pub(crate) fn instantiate_function_shape(
             .iter()
             .map(|param| ParamInfo {
                 name: param.name,
-                type_id: instantiate_type(db, param.type_id, substitution),
+                type_id: tsz_solver::instantiate_type(db, param.type_id, substitution),
                 optional: param.optional,
                 rest: param.rest,
             })
             .collect(),
-        return_type: instantiate_type(db, func.return_type, substitution),
+        return_type: tsz_solver::instantiate_type(db, func.return_type, substitution),
         this_type: func
             .this_type
-            .map(|this_type| instantiate_type(db, this_type, substitution)),
+            .map(|this_type| tsz_solver::instantiate_type(db, this_type, substitution)),
         type_params: vec![],
         type_predicate: func.type_predicate.as_ref().map(|predicate| TypePredicate {
             asserts: predicate.asserts,
             target: predicate.target,
             type_id: predicate
                 .type_id
-                .map(|tid| instantiate_type(db, tid, substitution)),
+                .map(|tid| tsz_solver::instantiate_type(db, tid, substitution)),
             parameter_index: predicate.parameter_index,
         }),
         is_constructor: func.is_constructor,
@@ -1944,11 +1939,16 @@ pub(crate) fn split_nullish_type(
 }
 
 pub(crate) fn instantiate_type_preserving_meta(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
-    tsz_solver::instantiate_type_preserving_meta(db, type_id, substitution)
+    tsz_solver::instantiate_type_preserving_meta_cached(
+        db.as_type_database(),
+        Some(db),
+        type_id,
+        substitution,
+    )
 }
 
 pub(crate) fn get_base_type_for_comparison(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
