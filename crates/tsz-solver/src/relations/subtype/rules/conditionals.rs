@@ -311,6 +311,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if ty == check_type {
             return true;
         }
+        if ty.is_intrinsic() {
+            return false;
+        }
         // Check common wrapper types that might contain the check type
         match self.interner.lookup(ty) {
             Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
