@@ -1328,6 +1328,15 @@ impl<'a> CheckerState<'a> {
         skip_members: bool,
         guard: &mut tsz_solver::recursion::RecursionGuard<(TypeId, bool)>,
     ) -> bool {
+        // Fast path: intrinsic kinds (any / unknown / never / void / null /
+        // undefined plus the reserved PrimitiveX kinds) cannot reference any
+        // user-declared symbol. The body below would walk through them and
+        // return `false` after multiple `lazy_def_id` / `def_to_symbol_id`
+        // probes; skip the guard round-trip and the body call entirely.
+        // is_intrinsic() is a free TypeId-range check (no TypeData lookup).
+        if type_id.is_intrinsic() {
+            return false;
+        }
         let key = (type_id, requires_structure);
         if !guard.enter(key).is_entered() {
             return false;

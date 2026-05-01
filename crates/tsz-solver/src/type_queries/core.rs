@@ -189,6 +189,9 @@ pub fn is_invokable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::Object` and `TypeData::ObjectWithIndex`.
 pub fn is_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
@@ -234,6 +237,9 @@ pub fn has_nominal_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::Application`.
 pub fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::Application(_)))
 }
 
@@ -241,6 +247,9 @@ pub fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::Lazy(DefId)` (interfaces, classes, type aliases).
 pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::Lazy(_) | TypeData::Recursive(_) | TypeData::BoundParameter(_))
@@ -256,6 +265,13 @@ pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Use this instead of `visitor_predicates::is_type_parameter` when you need
 /// to treat bound (de Bruijn indexed) parameters as type-parameter-like.
 pub fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic kinds (any / unknown / never / void / null /
+    // undefined plus the reserved PrimitiveX kinds) cannot be a
+    // TypeParameter / BoundParameter / Infer. Skip the `db.lookup` virtual
+    // call for them. is_intrinsic() is a free TypeId-range check.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::TypeParameter(_) | TypeData::BoundParameter(_) | TypeData::Infer(_))
@@ -266,6 +282,9 @@ pub fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::KeyOf`.
 pub fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::KeyOf(_)))
 }
 
@@ -273,6 +292,9 @@ pub fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::ReadonlyType`.
 pub fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::ReadonlyType(_)))
 }
 
@@ -301,6 +323,9 @@ pub fn type_has_readonly_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool
 /// `ThisType` represents `this` in class methods and needs to be resolved
 /// to the concrete class type before property access.
 pub fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::ThisType))
 }
 
@@ -312,6 +337,9 @@ pub fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Returns true only for `TypeData::UniqueSymbol` types, which represent
 /// individual `typeof sym` types created for const symbol declarations.
 pub fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::UniqueSymbol(_)))
 }
 
