@@ -597,5 +597,9 @@ path = "tests/variance_skip_type_param_default_tests.rs"
 name = "reserved_keyword_param_function_type_tests"
 path = "tests/reserved_keyword_param_function_type_tests.rs"
 
+[[test]]
+name = "global_this_property_access_diagnostics_tests"
+path = "tests/global_this_property_access_diagnostics_tests.rs"
+
 [lints]
 workspace = true

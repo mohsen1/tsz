@@ -1487,7 +1487,8 @@ impl<'a> CheckerState<'a> {
             return Some(TypeId::ERROR);
         }
 
-        if is_this_global
+        let access_targets_global_this = is_this_global || self.is_global_this_expression(left_idx);
+        if access_targets_global_this
             && property_type == TypeId::ANY
             && self.ctx.no_implicit_any()
             && !self.is_js_file()

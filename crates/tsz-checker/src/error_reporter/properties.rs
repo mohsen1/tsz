@@ -389,6 +389,23 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
             return name;
         }
+        // When the receiver has a declared type annotation, prefer the source-text
+        // annotation for the property-receiver display in cases where tsz's
+        // type representation has evaluated past the user-written form:
+        //   - generic instantiations (`Bar<Foo>`),
+        //   - simple aliases (`Bar` where `type Bar = Omit<Foo, "c">`),
+        //   - intersection annotations like `Window & typeof globalThis`
+        //     (which tsz collapses to a single member during property-access
+        //     evaluation; the source text faithfully preserves all members).
+        // Skip annotations containing `{` (inline object literals need the
+        // proper type formatter to add `| undefined` for optional members).
+        // Also skip reduced intersections: tsc displays `never` for impossible
+        // intersections like `A & B` with conflicting private fields or
+        // discriminants, not the unreduced source annotation.
+        // We deliberately do NOT trigger on `|` annotations because flow
+        // narrowing legitimately replaces a union receiver with its picked
+        // member, and the narrowed display is what tsc shows.
+        let receiver_reduces_to_never = self.evaluate_type_for_assignability(type_id).is_never();
         if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
             && let Some(annotation) = self.declared_type_annotation_text_for_expression(receiver)
             && annotation
@@ -396,8 +413,10 @@ impl<'a> CheckerState<'a> {
                 .next()
                 .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
             && !annotation.contains('{')
+            && !receiver_reduces_to_never
             && (crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
-                || self.ctx.types.get_display_alias(type_id).is_some())
+                || self.ctx.types.get_display_alias(type_id).is_some()
+                || annotation.contains('&'))
         {
             // Use the source-text annotation for both generic instantiations
             // (`bar: Bar<Foo>` → `Bar<Foo>`) and simple-alias instantiations
