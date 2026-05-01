@@ -5,9 +5,32 @@
 //! `ResolvedModule` structure.
 
 use crate::span::Span;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use super::{COULD_NOT_FIND_DECLARATION_FILE, FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS};
+
+/// Collapse `.` and `..` segments without touching the filesystem so the
+/// path embedded in TS7016/TS6504 messages doesn't carry the join leftovers
+/// (e.g. `<containing_dir>/./node_modules/foo/index.js`). tsc canonicalizes
+/// the path before formatting; matching that is required for fingerprint
+/// parity in the conformance harness.
+fn normalize_display_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => {
+                out.push(component.as_os_str());
+            }
+        }
+    }
+    out
+}
 
 // ---------------------------------------------------------------------------
 // ModuleLookupRequest / ModuleLookupResult — explicit driver-facing boundary
@@ -124,7 +147,7 @@ impl ModuleLookupResult {
                         message: format!(
                             "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
                             specifier,
-                            js_path.display()
+                            normalize_display_path(&js_path).display()
                         ),
                     })
                 } else {
@@ -156,7 +179,7 @@ impl ModuleLookupResult {
                     message: format!(
                         "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
                         specifier,
-                        resolved_path.display()
+                        normalize_display_path(&resolved_path).display()
                     ),
                 })
             } else {
