@@ -1707,6 +1707,13 @@ pub fn instantiate_type_with_depth_status(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> (TypeId, bool) {
+    // Fast path: intrinsic types never need instantiation (no type-parameter
+    // occurrences, no recursion). Skip the substitution probe AND the
+    // `TypeInstantiator` construction. Mirrors the leaf fast path in
+    // `instantiate_type_cached` / `instantiate_type_preserving_cached`.
+    if type_id.is_intrinsic() {
+        return (type_id, false);
+    }
     if substitution.is_empty() || substitution.is_identity(interner) {
         return (type_id, false);
     }
@@ -1740,6 +1747,13 @@ pub fn instantiate_type_preserving_meta_cached(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
+    // Fast path: intrinsic types never need instantiation. Skip the
+    // substitution probe, the cache-key construction, and the
+    // `TypeInstantiator` setup. Mirrors `instantiate_type_cached` and
+    // `instantiate_type_preserving_cached`.
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     if substitution.is_empty() || substitution.is_identity(interner) {
         return type_id;
     }
@@ -1788,6 +1802,13 @@ pub fn instantiate_type_with_infer_cached(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
+    // Fast path: intrinsic types have no `Infer(_)` occurrences, so an
+    // infer-substituting walk produces the input unchanged. Skip the
+    // substitution probe, the cache-key construction, and the
+    // `TypeInstantiator` setup.
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     if substitution.is_empty() || substitution.is_identity(interner) {
         return type_id;
     }
