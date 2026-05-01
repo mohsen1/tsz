@@ -415,6 +415,9 @@ pub fn string_intrinsic_components(
     types: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<(StringIntrinsicKind, TypeId)> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::StringIntrinsic { kind, type_arg } => Some((*kind, *type_arg)),
         _ => None,
@@ -423,6 +426,9 @@ pub fn string_intrinsic_components(
 
 /// Extract the unique symbol ref if this is a unique symbol type.
 pub fn unique_symbol_ref(types: &dyn TypeDatabase, type_id: TypeId) -> Option<SymbolRef> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::UniqueSymbol(sym_ref) => Some(*sym_ref),
         _ => None,
@@ -431,6 +437,9 @@ pub fn unique_symbol_ref(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Sy
 
 /// Extract the module namespace symbol ref if this is a module namespace type.
 pub fn module_namespace_symbol_ref(types: &dyn TypeDatabase, type_id: TypeId) -> Option<SymbolRef> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::ModuleNamespace(sym_ref) => Some(*sym_ref),
         _ => None,
@@ -439,6 +448,9 @@ pub fn module_namespace_symbol_ref(types: &dyn TypeDatabase, type_id: TypeId) ->
 
 /// Check if a type is the special `this` type.
 pub fn is_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::ThisType => Some(true),
         _ => None,
@@ -461,6 +473,9 @@ pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Extract the function shape id if this is a function type.
 pub fn function_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<FunctionShapeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Function(shape_id) => Some(*shape_id),
         _ => None,
@@ -469,6 +484,9 @@ pub fn function_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Fu
 
 /// Extract the callable shape id if this is a callable type.
 pub fn callable_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<CallableShapeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Callable(shape_id) => Some(*shape_id),
         _ => None,
