@@ -390,6 +390,9 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
 
     /// Check if a type references the target type parameter (directly or nested).
     fn type_references_target_param(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.computer.db.lookup(type_id) {
             Some(crate::types::TypeData::TypeParameter(info)) => info.name == self.target_param,
             Some(crate::types::TypeData::KeyOf(inner)) => self.type_references_target_param(inner),
