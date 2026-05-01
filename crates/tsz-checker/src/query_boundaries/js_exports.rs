@@ -80,10 +80,17 @@ impl JsExportSurface {
     fn normalize_property_declaration_order(props: &mut [PropertyInfo]) {
         props.sort_by(
             |a, b| match (a.declaration_order > 0, b.declaration_order > 0) {
-                (true, true) => a.declaration_order.cmp(&b.declaration_order),
+                (true, true) => a
+                    .declaration_order
+                    .cmp(&b.declaration_order)
+                    .then_with(|| a.name.cmp(&b.name))
+                    .then_with(|| a.type_id.0.cmp(&b.type_id.0)),
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
-                (false, false) => std::cmp::Ordering::Equal,
+                (false, false) => a
+                    .name
+                    .cmp(&b.name)
+                    .then_with(|| a.type_id.0.cmp(&b.type_id.0)),
             },
         );
 

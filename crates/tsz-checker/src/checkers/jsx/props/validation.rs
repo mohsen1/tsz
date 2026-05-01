@@ -276,10 +276,17 @@ impl<'a> CheckerState<'a> {
             let mut props: Vec<_> = shape.properties.iter().collect();
             props.sort_by(
                 |a, b| match (a.declaration_order > 0, b.declaration_order > 0) {
-                    (true, true) => a.declaration_order.cmp(&b.declaration_order),
+                    (true, true) => a
+                        .declaration_order
+                        .cmp(&b.declaration_order)
+                        .then_with(|| a.name.cmp(&b.name))
+                        .then_with(|| a.type_id.0.cmp(&b.type_id.0)),
                     (true, false) => std::cmp::Ordering::Less,
                     (false, true) => std::cmp::Ordering::Greater,
-                    (false, false) => a.name.cmp(&b.name),
+                    (false, false) => a
+                        .name
+                        .cmp(&b.name)
+                        .then_with(|| a.type_id.0.cmp(&b.type_id.0)),
                 },
             );
             let fields = props

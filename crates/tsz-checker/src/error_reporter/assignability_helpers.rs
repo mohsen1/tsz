@@ -892,7 +892,12 @@ impl<'a> CheckerState<'a> {
                         // `prototype` (which is inserted first, even though its
                         // `declaration_order` is 0) and JS-expando-augmented
                         // members appended afterwards.
-                        (true, true) => return left_pos.cmp(&right_pos),
+                        (true, true) => {
+                            return left_pos
+                                .cmp(&right_pos)
+                                .then_with(|| left_name.cmp(right_name))
+                                .then_with(|| left_index.cmp(right_index));
+                        }
                         (false, false) => {}
                     }
                     match (
@@ -909,12 +914,16 @@ impl<'a> CheckerState<'a> {
                         (true, true, ord, _) if ord != std::cmp::Ordering::Equal => ord,
                         (true, false, _, _) => std::cmp::Ordering::Less,
                         (false, true, _, _) => std::cmp::Ordering::Greater,
-                        _ => left_index.cmp(right_index),
+                        _ => left_index
+                            .cmp(right_index)
+                            .then_with(|| left_name.cmp(right_name)),
                     }
                 }
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => left_index.cmp(right_index),
+                (None, None) => left_index
+                    .cmp(right_index)
+                    .then_with(|| left_name.cmp(right_name)),
             }
         });
 

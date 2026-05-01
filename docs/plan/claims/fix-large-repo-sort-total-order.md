@@ -1,7 +1,7 @@
 Task: Workstream 5 large-repo fixture - fix non-total sort comparator panic
-Status: claim
+Status: ready
 Branch: `fix/large-repo-sort-total-order`
-PR: pending
+PR: #2141
 
 Plan:
 - Reproduce the `large-ts-repo` runtime panic with a backtrace.
