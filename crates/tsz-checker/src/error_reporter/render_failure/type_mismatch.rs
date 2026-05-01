@@ -332,7 +332,15 @@ impl<'a> CheckerState<'a> {
         // TS2719: when source and target display identically but are different
         // types, emit the more specific "Two different types with this name
         // exist, but they are unrelated" message instead of generic TS2322.
-        if source_str == target_str {
+        // Skip when the shared display is a primitive name — primitives have
+        // no second declaration that could clash, so the "two different
+        // types" framing is wrong. This catches the case where the printer
+        // collapsed a complex type (e.g. a deferred conditional whose branch
+        // upper bound is `string`) to a primitive spelling that happens to
+        // equal the source's primitive display.
+        if source_str == target_str
+            && !crate::error_reporter::assignability::is_primitive_type_name(&source_str)
+        {
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
                 &[&source_str, &target_str],

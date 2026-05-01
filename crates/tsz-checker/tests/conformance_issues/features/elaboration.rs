@@ -770,6 +770,56 @@ function f(x: numerics.DiagnosticCategory, y: strings.DiagnosticCategory) {
     }
 }
 
+/// TS2719 ("Two different types with this name exist, but they are unrelated")
+/// must not fire when the shared display name is a primitive name. Primitives
+/// have no second declaration that could clash, so the "two different types"
+/// framing is wrong; emit plain TS2322 instead.
+///
+/// Repro from `compiler/conditionalTypeAssignabilityWhenDeferred.ts` line 47:
+/// the target is a deferred conditional whose printer falls back to the
+/// branch upper bound (`string`), and the source is the primitive `string`.
+/// Without the gate the strings compare equal and TS2719 fires.
+#[test]
+fn test_no_ts2719_when_target_evaluates_to_primitive_string() {
+    let code = r#"
+type Foo<T> = T extends true ? string : "a";
+function test<T>(x: Foo<T>, s: string) {
+  x = s;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(code);
+    assert!(
+        !has_error(&diagnostics, 2719),
+        "Should NOT emit TS2719 when display collapses to primitive `string`, got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for incompatible primitive→deferred assignment, got: {diagnostics:?}"
+    );
+}
+
+/// Same structural rule as the previous test, but with a different
+/// type-parameter name (`U`) and alias name (`Bar`) to confirm the gate is
+/// not keyed on any identifier — only on the printed primitive name.
+#[test]
+fn test_no_ts2719_when_target_evaluates_to_primitive_number() {
+    let code = r#"
+type Bar<U> = U extends true ? number : 0;
+function check<U>(y: Bar<U>, n: number) {
+  y = n;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(code);
+    assert!(
+        !has_error(&diagnostics, 2719),
+        "Should NOT emit TS2719 when display collapses to primitive `number`, got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for incompatible primitive→deferred assignment, got: {diagnostics:?}"
+    );
+}
+
 /// `new Proxy(t, {})` should not emit TS2351 ("This expression is not constructable").
 ///
 /// `ProxyConstructor` is an interface with a construct signature:
