@@ -1794,3 +1794,79 @@ const mismatched = <ElemLit prop="x">{() => 12}</ElemLit>;
         "Expected TS2322 for `() => 12` against contextual return `\"x\"`, got: {diagnostics:?}"
     );
 }
+
+/// Structural rule: when a JSX element contains an `any`-typed spread attribute
+/// before an explicit attribute, the explicit attribute's value must NOT be
+/// type-checked against the props type. The merged JSX attributes type after
+/// an `any` spread is `any`-compatible, so per-attribute assignability is moot.
+///
+/// Mirrors the `let x2 = <OverWriteAttr {...anyobj} x={3} />` line in
+/// `tsxSpreadAttributesResolution12.tsx`: tsc emits no diagnostic, but tsz
+/// previously emitted TS2322 `Type '3' is not assignable to type '2'.` at the
+/// `3` value position.
+#[test]
+fn jsx_explicit_attr_after_any_spread_no_ts2322() {
+    let source = r#"
+namespace JSX {
+    export interface Element {}
+    export interface ElementAttributesProperty { props: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements {}
+}
+interface Prop { x: 2; y: false; overwrite: string; }
+declare class Comp { props: Prop; }
+declare let anyobj: any;
+let v = <Comp {...anyobj} x={3} />;
+"#;
+    let diagnostics = check_jsx(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "Explicit attr after any-spread must not produce TS2322; got: {diagnostics:?}"
+    );
+}
+
+/// Same structural rule as above with a shorthand boolean attribute after the
+/// any-spread. tsc emits no diagnostic; tsz must match.
+#[test]
+fn jsx_shorthand_attr_after_any_spread_no_ts2322() {
+    let source = r#"
+namespace JSX {
+    export interface Element {}
+    export interface ElementAttributesProperty { props: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements {}
+}
+interface Prop { y: false; }
+declare class Comp { props: Prop; }
+declare let anyobj: any;
+let v = <Comp {...anyobj} y />;
+"#;
+    let diagnostics = check_jsx(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "Shorthand attr after any-spread must not produce TS2322; got: {diagnostics:?}"
+    );
+}
+
+/// Sanity: when there is NO any-spread, the explicit attribute is still checked
+/// against props and the mismatch produces TS2322. Guards the fix from
+/// over-suppressing the normal path.
+#[test]
+fn jsx_explicit_attr_without_any_spread_still_emits_ts2322() {
+    let source = r#"
+namespace JSX {
+    export interface Element {}
+    export interface ElementAttributesProperty { props: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements {}
+}
+interface Prop { x: 2; }
+declare class Comp { props: Prop; }
+let v = <Comp x={3} />;
+"#;
+    let diagnostics = check_jsx(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322),
+        "Without any-spread, mismatched explicit attr must produce TS2322; got: {diagnostics:?}"
+    );
+}
