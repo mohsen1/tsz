@@ -852,9 +852,22 @@ impl<'a> Printer<'a> {
     /// Emit an object-literal property node, marking accessor members to enable
     /// JS pass-through formatting rules (e.g., empty accessor-body spacing).
     pub(crate) fn emit_object_property(&mut self, property_idx: NodeIndex) {
-        let is_accessor = self.arena.get(property_idx).is_some_and(|node| {
-            node.kind == syntax_kind_ext::GET_ACCESSOR || node.kind == syntax_kind_ext::SET_ACCESSOR
-        });
+        let Some(node) = self.arena.get(property_idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::METHOD_DECLARATION
+            && self
+                .arena
+                .get_method_decl(node)
+                .is_some_and(|method| method.body.is_none())
+        {
+            self.emit_recovered_object_method_without_body(node);
+            return;
+        }
+
+        let is_accessor = node.kind == syntax_kind_ext::GET_ACCESSOR
+            || node.kind == syntax_kind_ext::SET_ACCESSOR;
 
         if is_accessor {
             self.object_literal_accessor_depth =
