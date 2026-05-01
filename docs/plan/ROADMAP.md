@@ -226,7 +226,7 @@ Source: `README.md` on 2026-05-02.
 
 | Surface | Current |
 | --- | ---: |
-| Diagnostic conformance | `97.9%` (`12,323 / 12,582`) |
+| Diagnostic conformance | `98.0%` (`12,327 / 12,582`) |
 | JavaScript emit | `91.5%` (`12,378 / 13,526`) |
 | Declaration emit | `78.9%` (`1,318 / 1,670`) |
 | Fourslash / language service | `100.0%` rounded (`6,562 / 6,562`) |
