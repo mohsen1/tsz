@@ -396,12 +396,25 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let emitted_properties: Vec<NodeIndex> = obj
+            .elements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&idx| !self.should_drop_recovered_object_method_without_body(idx))
+            .collect();
+
+        if emitted_properties.is_empty() {
+            self.write("{}");
+            return;
+        }
+
         // ES5 computed/spread lowering is handled via TransformDirective::ES5ObjectLiteral.
         // For ES2015-ES2017 targets, object spread must be lowered to Object.assign().
         // (ES2018+ supports native object spread syntax.)
         {
             use super::super::ScriptTarget;
-            let has_spread = obj.elements.nodes.iter().any(|&idx| {
+            let has_spread = emitted_properties.iter().any(|&idx| {
                 self.arena
                     .get(idx)
                     .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
@@ -410,25 +423,26 @@ impl<'a> Printer<'a> {
             let es2018_num = ScriptTarget::ES2018 as u32;
             if has_spread && target_num < es2018_num {
                 // Target is ES2015/ES2016/ES2017: lower to Object.assign()
-                let elems: Vec<NodeIndex> = obj.elements.nodes.to_vec();
-                self.emit_object_literal_with_object_assign(&elems);
+                self.emit_object_literal_with_object_assign(&emitted_properties);
                 return;
             }
         }
 
         // Check if source had a trailing comma after the last element
-        let has_trailing_comma = self.has_trailing_comma_in_source(node, &obj.elements.nodes);
+        let has_trailing_comma = obj.elements.nodes.last().copied()
+            == emitted_properties.last().copied()
+            && self.has_trailing_comma_in_source(node, &emitted_properties);
 
         // Preserve single-line formatting from source by looking only at separators
         // between properties (not inside member bodies).
         let source_single_line = self.source_text.is_some_and(|text| {
             let start = std::cmp::min(node.pos as usize, text.len());
             let end = std::cmp::min(node.end as usize, text.len());
-            if start >= end || obj.elements.nodes.is_empty() {
+            if start >= end || emitted_properties.is_empty() {
                 return false;
             }
 
-            let Some(first_node) = self.arena.get(obj.elements.nodes[0]) else {
+            let Some(first_node) = self.arena.get(emitted_properties[0]) else {
                 return false;
             };
             let first_pos = std::cmp::min(first_node.pos as usize, text.len());
@@ -436,7 +450,7 @@ impl<'a> Printer<'a> {
                 return false;
             }
 
-            for pair in obj.elements.nodes.windows(2) {
+            for pair in emitted_properties.windows(2) {
                 let Some(curr) = self.arena.get(pair[0]) else {
                     continue;
                 };
@@ -450,9 +464,7 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            let Some(last_node) = obj
-                .elements
-                .nodes
+            let Some(last_node) = emitted_properties
                 .last()
                 .and_then(|&idx| self.arena.get(idx))
             else {
@@ -465,10 +477,10 @@ impl<'a> Printer<'a> {
 
             true
         });
-        let has_multiline_object_member = if obj.elements.nodes.len() == 1 {
+        let has_multiline_object_member = if emitted_properties.len() == 1 {
             false
         } else {
-            obj.elements.nodes.iter().any(|&prop| {
+            emitted_properties.iter().any(|&prop| {
                 let Some(prop_node) = self.arena.get(prop) else {
                     return false;
                 };
@@ -506,8 +518,8 @@ impl<'a> Printer<'a> {
             })
         };
 
-        if obj.elements.nodes.len() == 1 {
-            let prop = obj.elements.nodes[0];
+        if emitted_properties.len() == 1 {
+            let prop = emitted_properties[0];
             let Some(prop_node) = self.arena.get(prop) else {
                 return;
             };
@@ -592,7 +604,7 @@ impl<'a> Printer<'a> {
         let should_emit_single_line = source_single_line && !has_multiline_object_member;
         if should_emit_single_line {
             self.write("{ ");
-            for (i, &prop) in obj.elements.nodes.iter().enumerate() {
+            for (i, &prop) in emitted_properties.iter().enumerate() {
                 if i > 0 {
                     self.write(", ");
                 }
@@ -619,7 +631,7 @@ impl<'a> Printer<'a> {
                     .map(|off| (start + off + 1) as u32)
                     .unwrap_or(node.pos + 1)
             });
-            for (i, &prop) in obj.elements.nodes.iter().enumerate() {
+            for (i, &prop) in emitted_properties.iter().enumerate() {
                 let Some(prop_node) = self.arena.get(prop) else {
                     continue;
                 };
@@ -641,7 +653,7 @@ impl<'a> Printer<'a> {
                 }
                 self.emit_object_property(prop);
 
-                let is_last = i == obj.elements.nodes.len() - 1;
+                let is_last = i == emitted_properties.len() - 1;
 
                 // Use token_end (before trivia) for comment scanning.
                 // The parser's node.end extends past trailing trivia (comments,
@@ -667,7 +679,7 @@ impl<'a> Printer<'a> {
 
                 // Check if next property is on the same line in source
                 if !is_last {
-                    let next_prop = obj.elements.nodes[i + 1];
+                    let next_prop = emitted_properties[i + 1];
                     let next_pos = self.arena.get(next_prop).map_or(prop_node.end, |n| n.pos);
                     // Check if there's a trailing comment on the same line after the comma
                     // If so, add a space between the comma and the comment
@@ -874,6 +886,44 @@ impl<'a> Printer<'a> {
             return false;
         };
         self.node_text_contains_newline(node.pos as usize, node.end as usize)
+    }
+
+    fn should_drop_recovered_object_method_without_body(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+            return false;
+        }
+        let Some(method) = self.arena.get_method_decl(node) else {
+            return false;
+        };
+        if method.body.is_some() {
+            return false;
+        }
+
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let search_start = method
+            .parameters
+            .nodes
+            .last()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.pos as usize, |param| param.end as usize)
+            .min(text.len());
+        let node_end = (node.end as usize).min(text.len());
+        let after_close_paren = text[search_start..node_end]
+            .find(')')
+            .map_or(search_start, |offset| search_start + offset + 1);
+        let scan_start = self
+            .arena
+            .get(method.type_annotation)
+            .map_or(after_close_paren, |type_node| type_node.end as usize)
+            .min(node_end);
+        let token_pos = self.skip_trivia_forward(scan_start as u32, node.end) as usize;
+
+        matches!(text.as_bytes().get(token_pos), Some(b';' | b'}'))
     }
 
     fn node_text_contains_newline(&self, start: usize, end: usize) -> bool {
