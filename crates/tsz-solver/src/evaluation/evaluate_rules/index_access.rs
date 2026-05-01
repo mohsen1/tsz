@@ -144,6 +144,9 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
     /// if the index is still a generic type (like a type parameter),
     /// we must defer evaluation instead of returning UNDEFINED.
     fn is_generic_index(&self) -> bool {
+        if self.index_type.is_intrinsic() {
+            return false;
+        }
         let key = match self.evaluator.interner().lookup(self.index_type) {
             Some(k) => k,
             None => return false,
@@ -171,6 +174,9 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
     /// types: `keyof { [P in keyof T]: V }` = `keyof T`, but the unevaluated form
     /// `keyof Application(...)` has a different TypeId than `keyof T`.
     fn intersection_contains_mapped_constraint(&mut self, constraint: TypeId) -> bool {
+        if self.index_type.is_intrinsic() {
+            return false;
+        }
         let members_arc = {
             let interner = self.evaluator.interner();
             let Some(list_id) = intersection_list_id(interner, self.index_type) else {
@@ -304,6 +310,9 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
 
     /// Check if a constraint type is itself a type parameter.
     fn is_constraint_type_parameter(&self, constraint: TypeId) -> bool {
+        if constraint.is_intrinsic() {
+            return false;
+        }
         matches!(
             self.evaluator.interner().lookup(constraint),
             Some(TypeData::TypeParameter(_))
