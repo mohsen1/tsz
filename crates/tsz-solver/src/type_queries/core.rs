@@ -72,6 +72,9 @@ pub fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// due to cross-arena declaration splitting. This detects it by checking for the
 /// characteristic properties: `apply`, `call`, and `bind`.
 pub fn is_function_interface_structural(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     use crate::visitor::{object_shape_id, object_with_index_shape_id};
     let shape_id = object_shape_id(db, type_id).or_else(|| object_with_index_shape_id(db, type_id));
     let Some(shape_id) = shape_id else {

@@ -126,6 +126,9 @@ pub fn extract_predicate_signature(
 /// TypeScript spec: `(x: unknown) => x is string | (x: unknown) => false` IS valid,
 /// but `(x: unknown) => x is string | (x: unknown) => boolean` is NOT (unsound).
 pub fn is_valid_union_predicate(db: &dyn TypeDatabase, union_type_id: TypeId) -> bool {
+    if union_type_id.is_intrinsic() {
+        return false;
+    }
     let Some(TypeData::Union(list_id)) = db.lookup(union_type_id) else {
         return false;
     };
@@ -153,6 +156,9 @@ pub fn is_valid_union_predicate(db: &dyn TypeDatabase, union_type_id: TypeId) ->
 fn is_type_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::NEVER || type_id == TypeId::BOOLEAN_FALSE {
         return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
     }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::Boolean(false))) => true,
