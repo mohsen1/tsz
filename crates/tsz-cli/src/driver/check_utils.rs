@@ -1745,18 +1745,18 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     file_idx: usize,
     augmentations: &MergedAugmentations,
 ) -> BinderState {
-    let local_count = program
+    // Cross-file lookup binders never merge program-wide globals into their
+    // `file_locals`; consumers (e.g. `resolve_in_all_binders`) only walk the
+    // per-file local entries. Since #1535 made `SymbolTable` internally
+    // `Arc<FxHashMap<String, SymbolId>>`, plain `.clone()` is an O(1)
+    // atomic refcount bump — no fresh map allocation, no per-entry
+    // `String` clones. The previous manual rebuild paid `local_count` per
+    // file, multiplied by the rayon-parallel per-file binder build.
+    let file_locals = program
         .file_locals
         .get(file_idx)
-        .map(|t| t.len())
-        .unwrap_or(0);
-    let mut file_locals = SymbolTable::with_capacity(local_count);
-
-    if file_idx < program.file_locals.len() {
-        for (name, &sym_id) in program.file_locals[file_idx].iter() {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
+        .cloned()
+        .unwrap_or_default();
 
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
