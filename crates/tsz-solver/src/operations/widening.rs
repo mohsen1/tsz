@@ -126,7 +126,7 @@ pub fn widen_argument_type_for_display(db: &dyn crate::TypeDatabase, type_id: Ty
 /// (e.g., `(x: 1 | 2) => void` → `(x: number) => void`) creates a resolved T
 /// that is structurally incompatible with the original arg type under strict
 /// function type checking, causing false TS2322.
-pub(crate) fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
     widen_type_cached(db, type_id, &mut cache, true, false, true, false)

@@ -845,7 +845,31 @@ impl<'a> CheckerState<'a> {
             match ty {
                 Some(ty) => {
                     if name != &children_prop_name {
-                        concrete_attrs.push((name.clone(), *ty));
+                        // Widen *interior* literals of plain object/array
+                        // prop values before Round 1 inference, mirroring
+                        // tsc's `getInferredType` for fresh object literals
+                        // (`{ x: "y" }` → `{ x: string }`). Use
+                        // `widen_type_for_inference` so function/callable
+                        // parameter/return types stay narrow under
+                        // strict-function-types. Gate on plain
+                        // Object/ObjectWithIndex/Array/Tuple to avoid widening
+                        // top-level primitive props like `as="button"` (which
+                        // need to keep their literal form for discriminator
+                        // narrowing) and to avoid touching Function/Callable
+                        // types.
+                        let widened =
+                            if crate::query_boundaries::widening::is_plain_object_or_array_shape(
+                                self.ctx.types,
+                                *ty,
+                            ) {
+                                crate::query_boundaries::widening::widen_type_for_inference(
+                                    self.ctx.types,
+                                    *ty,
+                                )
+                            } else {
+                                *ty
+                            };
+                        concrete_attrs.push((name.clone(), widened));
                     }
                 }
                 None => {
@@ -899,6 +923,7 @@ impl<'a> CheckerState<'a> {
         } else {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&concrete_attrs);
             let env = self.ctx.type_env.borrow();
+
             crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
                 self.ctx.types,
                 &self.ctx,

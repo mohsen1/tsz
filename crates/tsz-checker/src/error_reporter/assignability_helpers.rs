@@ -236,6 +236,42 @@ impl<'a> CheckerState<'a> {
             ));
     }
 
+    /// Like `error_type_not_assignable_at_with_display_types` but always uses
+    /// `format_type_diagnostic_widened` so that tsc-compatible widened types
+    /// (e.g. `{ x: string }` not `{ x: "y" }`) appear in the message text.
+    /// Used for JSX callback-prop mismatches where tsc shows widened forms.
+    pub(crate) fn error_type_not_assignable_at_with_display_types_widened(
+        &mut self,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
+        let (start, length) = self
+            .resolve_diagnostic_anchor(
+                anchor_idx,
+                super::fingerprint_policy::DiagnosticAnchorKind::Exact,
+            )
+            .map(|anchor| (anchor.start, anchor.length))
+            .unwrap_or_else(|| {
+                let (pos, end) = self.get_node_span(anchor_idx).unwrap_or((0, 0));
+                self.normalized_anchor_span(anchor_idx, pos, end.saturating_sub(pos))
+            });
+        let source_str = self.format_type_diagnostic_widened(source_for_display);
+        let target_str = self.format_type_diagnostic_widened(target_for_display);
+        let message = crate::diagnostics::format_message(
+            crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        self.ctx
+            .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                length,
+                message,
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            ));
+    }
+
     /// Report a type not assignable error using a pre-computed failure reason.
     /// This renders the failure reason with the provided display types and pushes the diagnostic.
     pub(crate) fn error_type_not_assignable_with_reason_and_display(

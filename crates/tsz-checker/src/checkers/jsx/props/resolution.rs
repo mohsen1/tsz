@@ -1137,7 +1137,35 @@ impl<'a> CheckerState<'a> {
                             )
                         }
                     {
-                        has_prop_type_error = true;
+                        let value_is_function =
+                            self.ctx.arena.get(value_node_idx).is_some_and(|n| {
+                                matches!(
+                                    n.kind,
+                                    syntax_kind_ext::ARROW_FUNCTION
+                                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                                )
+                            });
+                        let assignable = if value_is_function {
+                            // For function-valued JSX props, tsc anchors at the attribute
+                            // name and displays an intersection of the inferred and expected
+                            // function types in the error message.
+                            self.check_assignable_or_report_jsx_callback_prop_at(
+                                actual_type,
+                                expected_type,
+                                value_node_idx,
+                                attr_data.name,
+                            )
+                        } else {
+                            self.check_assignable_or_report_at(
+                                actual_type,
+                                expected_type,
+                                value_node_idx,
+                                attr_data.name,
+                            )
+                        };
+                        if !assignable {
+                            has_prop_type_error = true;
+                        }
                     }
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
