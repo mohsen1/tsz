@@ -538,7 +538,7 @@ impl BinderState {
     /// - Wildcard re-exports: `export * from 'bar'` - searches the re-exported module
     ///
     /// Results are cached to speed up repeated lookups (common with barrel files).
-    pub(crate) fn resolve_import_with_reexports(
+    pub fn resolve_import_with_reexports(
         &self,
         module_specifier: &str,
         export_name: &str,
