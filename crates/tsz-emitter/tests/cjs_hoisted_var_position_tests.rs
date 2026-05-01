@@ -125,6 +125,28 @@ fn esm_class_private_field_var_still_emitted() {
     assert!(
         !output.contains("Object.defineProperty(exports, \"__esModule\""),
         "ES2015 module mode must not emit a CJS __esModule preamble; \
-         output:\n{output}"
+        output:\n{output}"
+    );
+}
+
+#[test]
+fn cjs_renamed_export_of_declare_const_has_no_runtime_assignment() {
+    let source = "declare const _await: any;\nexport { _await as await };\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.await = void 0;"),
+        "renamed ambient export should keep the CJS export preamble; output:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.await = _await;"),
+        "renamed ambient export must not emit a runtime assignment; output:\n{output}"
     );
 }
