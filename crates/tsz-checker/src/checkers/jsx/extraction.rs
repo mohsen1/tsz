@@ -495,7 +495,30 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// TS2786: Check that a JSX component's return type is assignable to
+    /// Returns the user-declared `JSX.ElementType` when present and concrete.
+    ///
+    /// When `JSX.ElementType` is declared in the file's `JSX` namespace, tsc
+    /// uses it as the source of truth for what counts as a valid JSX component
+    /// (assignability of the component type to `JSX.ElementType`) and skips
+    /// the legacy `JSX.Element` / `JSX.ElementClass` return-type checks.
+    pub(super) fn get_jsx_user_element_type(&mut self) -> Option<TypeId> {
+        let sym_id = self.get_jsx_namespace_export_symbol_id("ElementType")?;
+        let raw = self.type_reference_symbol_type(sym_id);
+        let evaluated = self.evaluate_type_with_env(raw);
+        if matches!(
+            evaluated,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) {
+            return None;
+        }
+        Some(raw)
+    }
+
+    /// TS2786: Check that a JSX component is a valid JSX element type.
+    ///
+    /// When `JSX.ElementType` is declared, validates the component type by
+    /// assignability against `JSX.ElementType`. Otherwise falls back to the
+    /// legacy check that the component's return type is assignable to
     /// `JSX.Element` (SFC) or `JSX.ElementClass` (class component).
     pub(super) fn check_jsx_component_return_type(
         &mut self,
@@ -513,6 +536,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
         if self.ctx.has_parse_errors {
+            return;
+        }
+
+        // When `JSX.ElementType` is declared in scope, tsc validates the
+        // component's type against it and skips the legacy return-type checks.
+        if let Some(element_type) = self.get_jsx_user_element_type() {
+            if !self.is_assignable_to(component_type, element_type) {
+                self.report_invalid_jsx_component_return_type(tag_name_idx);
+            }
             return;
         }
 
@@ -698,6 +730,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
         if self.ctx.has_parse_errors {
+            return;
+        }
+
+        // When `JSX.ElementType` is declared, the whole-component check in
+        // `check_jsx_component_return_type` already validates assignability;
+        // the per-signature return-type check would over-emit TS2786 here.
+        if self.get_jsx_user_element_type().is_some() {
             return;
         }
 

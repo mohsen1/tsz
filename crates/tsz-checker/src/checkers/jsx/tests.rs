@@ -1870,3 +1870,93 @@ let v = <Comp x={3} />;
         "Without any-spread, mismatched explicit attr must produce TS2322; got: {diagnostics:?}"
     );
 }
+
+// ── JSX.ElementType (component-validity broadening) ──────────────────────
+//
+// When `JSX.ElementType` is declared, tsc validates the *component type*
+// against `JSX.ElementType` instead of the legacy `JSX.Element` /
+// `JSX.ElementClass` return-type checks. This lets users broaden what
+// counts as a valid JSX component (e.g. async/string/Promise function
+// components beyond `ReactElement`).
+
+/// When `JSX.ElementType` accepts a function returning `string`, an SFC
+/// returning `string` must NOT emit TS2786 — even though its return type
+/// is not assignable to the legacy `JSX.Element`.
+#[test]
+fn jsx_element_type_broadens_valid_components_no_ts2786() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {}
+    type ElementType = ((props: any) => string | number) | (new (props: any) => { render(): any });
+}
+const RenderString = ({ title }: { title: string }) => title;
+<RenderString title="x" />;
+"#;
+    let diagnostics = check_jsx_codes(source);
+    assert!(
+        !diagnostics.contains(&2786),
+        "ElementType allowing string-returning SFCs must not flag them as invalid components, got: {diagnostics:?}"
+    );
+}
+
+/// Same fix with a different iteration-variable spelling for the
+/// `ElementType` arrow parameter — guards against any name-based
+/// hardcoding (per CLAUDE.md §25).
+#[test]
+fn jsx_element_type_broadens_valid_components_no_ts2786_alt_param_name() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {}
+    type ElementType = ((p: any) => string | number) | (new (p: any) => { render(): any });
+}
+const RenderNumber = ({ title }: { title: string }) => title.length;
+<RenderNumber title="x" />;
+"#;
+    let diagnostics = check_jsx_codes(source);
+    assert!(
+        !diagnostics.contains(&2786),
+        "ElementType param-name spelling must not affect the result, got: {diagnostics:?}"
+    );
+}
+
+/// When the SFC's signature does NOT satisfy `JSX.ElementType` (e.g. a
+/// 2-parameter function but `ElementType`'s SFC member is single-param),
+/// tsc emits TS2786. tsz must too.
+#[test]
+fn jsx_element_type_rejects_extra_param_function() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {}
+    type ElementType = ((props: any) => any) | (new (props: any) => { render(): any });
+}
+function ExtraParam(props: {}, ref: number) { return null; }
+<ExtraParam />;
+"#;
+    let diagnostics = check_jsx_codes(source);
+    assert!(
+        diagnostics.contains(&2786),
+        "ElementType requires single-param SFCs; 2-param function must emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+/// When `JSX.ElementType` is NOT declared, the legacy `JSX.Element`
+/// return-type check still applies — an SFC returning `string` is invalid.
+#[test]
+fn jsx_no_element_type_falls_back_to_legacy_jsx_element_check() {
+    let source = r#"
+declare namespace JSX {
+    interface Element { __element_brand: void; }
+    interface IntrinsicElements {}
+}
+const RenderString = ({ title }: { title: string }) => title;
+<RenderString title="x" />;
+"#;
+    let diagnostics = check_jsx_codes(source);
+    assert!(
+        diagnostics.contains(&2786),
+        "Without ElementType, string-returning SFC must still emit TS2786, got: {diagnostics:?}"
+    );
+}
