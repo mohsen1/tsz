@@ -160,6 +160,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         db: &dyn crate::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         if crate::type_queries::get_tuple_elements(db, type_id).is_some() {
             return true;
         }
