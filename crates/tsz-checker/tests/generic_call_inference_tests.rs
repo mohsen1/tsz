@@ -171,6 +171,26 @@ var b = foo(g);
     );
 }
 
+#[test]
+fn overloaded_function_argument_uses_last_signature_for_generic_callback_inference() {
+    let source = r#"
+interface PromiseLike<T> {
+    then<U>(cb: (x: T) => PromiseLike<U>): PromiseLike<U>;
+}
+
+declare function testFunction(n: number): PromiseLike<number>;
+declare function testFunction(s: string): PromiseLike<string>;
+
+declare var numPromise: PromiseLike<number>;
+var newPromise = numPromise.then(testFunction);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2345),
+        "Expected TS2345 when the overloaded argument's last signature fixes U=string. Diagnostics: {diags:#?}"
+    );
+}
+
 // TODO: higher-order generic inference for compose/map/filter chains doesn't
 // correctly propagate type parameters to emit TS2339 for the invalid pipeline.
 #[test]
