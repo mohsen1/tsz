@@ -1111,8 +1111,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 })
             });
 
-        if let Some(substitution) =
-            self.conflicting_contextual_param_candidate_substitution(&source_fn, &target_fn)
+        // Handle generic function arguments when target params are inference
+        // placeholders from an outer generic call. Three cases:
+        //
+        // 1. Naked type params (e.g., `list<T>(a: T)`): Skip erasure, let
+        //    instantiation proceed. The params match 1:1 against target placeholders.
+        //
+        // 2. Non-naked type params (e.g., `unbox<W>(x: Box<W>)`) WITH a generic
+        //    contextual type: Return source_ty unchanged so `constrain_types_impl`'s
+        //    generic function branch creates fresh inference variables in the shared
+        //    context, enabling proper higher-order inference (e.g., compose(unbox, unlist)).
+        //
+        // 3. Non-naked type params WITHOUT a generic contextual type: Erase source
+        //    type params to constraints/unknown (old behavior). Without a generic
+        //    contextual type, the fresh inference variables would leak unresolved.
+        let any_target_param_is_type_param = target_param_types.iter().any(|&param_type| {
+            matches!(
+                self.interner.lookup(param_type),
+                Some(TypeData::TypeParameter(_))
+            )
+        });
+
+        // Conflicting-candidate substitution applies only when target params
+        // are concrete (post-inference) types. When *any* target param is
+        // still an inference placeholder from an outer generic call (e.g.,
+        // `apply<A,B,C>(fn: (a: A, b: B) => C, ...)` invoking `g<T>(x:T,y:T)`),
+        // the existing Case 1/2/3 placeholder-aware logic below is the
+        // correct path: two distinct unconstrained TypeParameters mapped to
+        // the same source param look "conflicting" by `is_assignable_to`,
+        // which would short-circuit erasure and produce a partially-
+        // instantiated function.
+        if !any_target_param_is_type_param
+            && let Some(substitution) =
+                self.conflicting_contextual_param_candidate_substitution(&source_fn, &target_fn)
         {
             return self.interner.function(FunctionShape {
                 params: source_fn
@@ -1146,26 +1177,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             });
         }
 
-        // Handle generic function arguments when target params are inference
-        // placeholders from an outer generic call. Three cases:
-        //
-        // 1. Naked type params (e.g., `list<T>(a: T)`): Skip erasure, let
-        //    instantiation proceed. The params match 1:1 against target placeholders.
-        //
-        // 2. Non-naked type params (e.g., `unbox<W>(x: Box<W>)`) WITH a generic
-        //    contextual type: Return source_ty unchanged so `constrain_types_impl`'s
-        //    generic function branch creates fresh inference variables in the shared
-        //    context, enabling proper higher-order inference (e.g., compose(unbox, unlist)).
-        //
-        // 3. Non-naked type params WITHOUT a generic contextual type: Erase source
-        //    type params to constraints/unknown (old behavior). Without a generic
-        //    contextual type, the fresh inference variables would leak unresolved.
-        let any_target_param_is_type_param = target_param_types.iter().any(|&param_type| {
-            matches!(
-                self.interner.lookup(param_type),
-                Some(TypeData::TypeParameter(_))
-            )
-        });
         let source_type_params_are_naked = source_fn.type_params.iter().all(|tp| {
             source_fn.params.iter().any(|param| {
                 matches!(

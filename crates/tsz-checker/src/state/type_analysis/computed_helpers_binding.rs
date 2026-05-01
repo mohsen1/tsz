@@ -507,11 +507,30 @@ impl<'a> CheckerState<'a> {
                 // Fast path: if a parallel worker already resolved this
                 // (sym_id, file_idx) pair, the canonical SYMBOL_TYPE bucket
                 // has the class type. Short-circuit before building a child
-                // checker.
+                // checker — but first populate `symbol_instance_types` from
+                // the parallel CLASS_INSTANCE_TYPE bucket. Without this,
+                // TYPE-position references (e.g. `let x: MyClass`) fall
+                // through to `class_instance_type_with_params_from_symbol`,
+                // which only searches the *current* arena and returns None
+                // for cross-file classes — so the constructor type leaks
+                // into the instance position.
                 if let Some(cached) = self
                     .ctx
                     .cached_cross_file_symbol_type(sym_id, file_idx as u32)
                 {
+                    if let Some((inst_type, _)) =
+                        self.ctx.definition_store.get_resolved_cross_file_query(
+                            super::cross_file::CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
+                            file_idx as u32,
+                            sym_id.0,
+                            0,
+                            0,
+                        )
+                        && inst_type != TypeId::ANY
+                        && inst_type != TypeId::ERROR
+                    {
+                        self.ctx.symbol_instance_types.insert(sym_id, inst_type);
+                    }
                     return cached;
                 }
                 // Found class in another file's arena. Create a child checker
