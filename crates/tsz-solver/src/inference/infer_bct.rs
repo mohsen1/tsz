@@ -364,6 +364,15 @@ impl<'a> InferenceContext<'a> {
     /// 1. Literal widening: `"hello"` -> `string`, `42` -> `number`
     /// 2. Nominal hierarchy: `Dog` -> `Animal` (via resolver)
     pub(crate) fn get_base_type(&self, ty: TypeId) -> Option<TypeId> {
+        // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean)
+        // and widen to BOOLEAN. Other intrinsics fall into the `_ => Some(ty)`
+        // arm — short-circuit them to skip the dyn-dispatched lookup.
+        if ty == TypeId::BOOLEAN_TRUE || ty == TypeId::BOOLEAN_FALSE {
+            return Some(TypeId::BOOLEAN);
+        }
+        if ty.is_intrinsic() {
+            return Some(ty);
+        }
         match self.interner.lookup(ty) {
             // Literal widening: extract intrinsic type
             Some(TypeData::Literal(_)) => {
