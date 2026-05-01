@@ -1,6 +1,6 @@
 # perf(skeleton): Arc-share expando index
 
-Status: claim
+Status: ready
 Owner: Codex
 Branch: `perf/skeleton-expando-arc-share`
 Created: 2026-05-01 17:53:33 UTC

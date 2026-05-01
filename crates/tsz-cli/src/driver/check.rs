@@ -866,7 +866,7 @@ pub(super) fn collect_diagnostics(
     let skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>> = program
         .skeleton_index
         .as_ref()
-        .map(|skel| Arc::new(skel.expando_properties.clone()));
+        .map(|skel| Arc::clone(&skel.expando_properties));
 
     // Phase 2 step 2: pre-compute the merged module-augmentations index from
     // skeleton data. The skeleton recorded each augmenting declaration's name
@@ -3820,7 +3820,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             ));
             checker
                 .ctx
-                .set_expando_index_from_skeleton(Arc::new(skel.expando_properties.clone()));
+                .set_expando_index_from_skeleton(Arc::clone(&skel.expando_properties));
         }
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
         checker.ctx.set_current_file_idx(0);

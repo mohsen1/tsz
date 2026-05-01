@@ -10,6 +10,7 @@
 use super::BindResult;
 use super::core::can_merge_symbols_cross_file;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::Arc;
 use tsz_binder::{StableLocation, SymbolId, SymbolTable};
 
 /// Per-module-specifier projection of `module_exports`: maps `export_name` to
@@ -627,7 +628,10 @@ pub struct SkeletonIndex {
     pub module_export_specifiers: FxHashSet<String>,
     /// Merged expando property assignments across all files.
     /// Maps identifier name -> set of property names assigned via `X.prop = value`.
-    pub expando_properties: FxHashMap<String, FxHashSet<String>>,
+    ///
+    /// Shared so project drivers can install the skeleton-derived index into
+    /// `ProjectEnv` without deep-cloning the program-wide map.
+    pub expando_properties: Arc<FxHashMap<String, FxHashSet<String>>>,
     /// Total number of top-level symbols across all files (before merge).
     pub total_symbol_count: usize,
     /// Total number of re-export edges across all files.
@@ -840,7 +844,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         declared_modules,
         shorthand_ambient_modules,
         module_export_specifiers,
-        expando_properties,
+        expando_properties: Arc::new(expando_properties),
         total_symbol_count,
         total_reexport_count,
         total_wildcard_reexport_count,
@@ -1083,7 +1087,7 @@ impl SkeletonIndex {
         }
 
         // Expando properties (HashMap<String, HashSet<String>>)
-        for (key, props) in &self.expando_properties {
+        for (key, props) in self.expando_properties.iter() {
             size += key.capacity();
             size += std::mem::size_of::<(String, FxHashSet<String>)>();
             for p in props {

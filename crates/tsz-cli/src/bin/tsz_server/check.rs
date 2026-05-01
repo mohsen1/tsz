@@ -187,7 +187,7 @@ impl Server {
                 Some(Arc::new(
                     tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
                 )),
-                Some(Arc::new(skel.expando_properties.clone())),
+                Some(Arc::clone(&skel.expando_properties)),
                 Some(Arc::new(skel.build_module_augmentations_index(&all_arenas))),
                 Some(Arc::new(skel.build_augmentation_targets_index())),
                 Some(Arc::new(skel.build_module_binder_index())),
@@ -451,7 +451,7 @@ impl Server {
                 Some(Arc::new(
                     tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
                 )),
-                Some(Arc::new(skel.expando_properties.clone())),
+                Some(Arc::clone(&skel.expando_properties)),
                 Some(Arc::new(skel.build_module_augmentations_index(&all_arenas))),
                 Some(Arc::new(skel.build_augmentation_targets_index())),
                 Some(Arc::new(skel.build_module_binder_index())),
