@@ -1105,10 +1105,18 @@ impl<'a> Printer<'a> {
         let mut has_runtime_module_syntax = has_synthesized_esm_import;
         let mut has_non_empty_runtime_export = has_synthesized_esm_import;
         let mut has_deferred_empty_export = false;
+        let mut skip_recovered_yield_operand_statement = false;
         for (stmt_i, &stmt_idx) in source.statements.nodes.iter().enumerate() {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
+
+            if skip_recovered_yield_operand_statement {
+                skip_recovered_yield_operand_statement = false;
+                if self.is_recovered_yield_operand_statement(stmt_node) {
+                    continue;
+                }
+            }
 
             if has_top_level_using
                 && stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
@@ -1395,7 +1403,13 @@ impl<'a> Printer<'a> {
                 .map(|next_node| next_node.pos);
 
             let before_len = self.writer.len();
-            self.emit(stmt_idx);
+            if let Some(recovered_yield_call) = self.recovered_yield_call_statement_text(stmt_node)
+            {
+                self.write(&recovered_yield_call);
+                skip_recovered_yield_operand_statement = true;
+            } else {
+                self.emit(stmt_idx);
+            }
             let emitted_output = self.writer.len() > before_len;
             let mut handled_legacy_decorated_deferred_export = false;
 
@@ -1678,5 +1692,67 @@ impl<'a> Printer<'a> {
 
         // Exit root scope for block-scoped variable tracking
         self.ctx.block_scope_state.exit_scope();
+    }
+
+    fn recovered_yield_call_statement_text(&self, node: &Node) -> Option<String> {
+        let expr_stmt = self.arena.get_expression_statement(node)?;
+        let expr_node = self.arena.get(expr_stmt.expression)?;
+        let is_recovered_yield = if expr_node.kind == syntax_kind_ext::YIELD_EXPRESSION {
+            let yield_expr = self.arena.get_unary_expr_ex(expr_node)?;
+            yield_expr.expression.is_none()
+        } else {
+            self.arena
+                .get_identifier(expr_node)
+                .is_some_and(|ident| ident.escaped_text == "yield")
+        };
+        if !is_recovered_yield {
+            return None;
+        }
+
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let mut pos = start.checked_add("yield".len())?;
+        while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t') {
+            pos += 1;
+        }
+        if bytes.get(pos) != Some(&b'(') {
+            return None;
+        }
+
+        let mut depth = 0_i32;
+        let mut end = pos;
+        while end < bytes.len() {
+            match bytes[end] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end += 1;
+                        break;
+                    }
+                }
+                b'\n' | b'\r' => return None,
+                _ => {}
+            }
+            end += 1;
+        }
+        if depth != 0 {
+            return None;
+        }
+
+        let recovered = crate::safe_slice::slice(text, start, end).ok()?.trim_end();
+        Some(format!("{recovered};"))
+    }
+
+    fn is_recovered_yield_operand_statement(&self, node: &Node) -> bool {
+        if node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        text.as_bytes().get(start) == Some(&b'(')
     }
 }
