@@ -20,7 +20,13 @@ fn normalize_display_path(path: &Path) -> PathBuf {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                if !out.pop() {
+                let last_is_real_dir = out
+                    .components()
+                    .next_back()
+                    .is_some_and(|c| matches!(c, Component::Normal(_)));
+                if last_is_real_dir {
+                    out.pop();
+                } else {
                     out.push("..");
                 }
             }
@@ -155,7 +161,7 @@ impl ModuleLookupResult {
                         code: FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS,
                         message: format!(
                             "File '{}' is a JavaScript file. Did you mean to enable the 'allowJs' option?",
-                            js_path.display()
+                            normalize_display_path(&js_path).display()
                         ),
                     })
                 }
@@ -463,5 +469,41 @@ impl ModuleExtension {
 impl std::fmt::Display for ModuleExtension {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod normalize_display_path_tests {
+    use super::normalize_display_path;
+    use std::path::Path;
+
+    #[test]
+    fn collapses_curdir_join_artifacts() {
+        let p = Path::new("a/./b/./c.js");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "a/b/c.js");
+    }
+
+    #[test]
+    fn collapses_parentdir_against_real_directory() {
+        let p = Path::new("a/b/../c.js");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "a/c.js");
+    }
+
+    #[test]
+    fn preserves_leading_double_dotdot() {
+        let p = Path::new("../../foo.js");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "../../foo.js");
+    }
+
+    #[test]
+    fn preserves_leading_single_dotdot() {
+        let p = Path::new("../foo.js");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "../foo.js");
+    }
+
+    #[test]
+    fn does_not_pop_leading_parentdir_when_followed_by_more() {
+        let p = Path::new("../../../x");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "../../../x");
     }
 }
