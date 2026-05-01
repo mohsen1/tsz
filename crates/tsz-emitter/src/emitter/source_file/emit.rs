@@ -1106,6 +1106,7 @@ impl<'a> Printer<'a> {
         let mut has_non_empty_runtime_export = has_synthesized_esm_import;
         let mut has_deferred_empty_export = false;
         let mut skip_recovered_yield_operand_statement = false;
+        let mut skip_recovered_debugger_namespace_until: Option<u32> = None;
         for (stmt_i, &stmt_idx) in source.statements.nodes.iter().enumerate() {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -1116,6 +1117,35 @@ impl<'a> Printer<'a> {
                 if self.is_recovered_yield_operand_statement(stmt_node) {
                     continue;
                 }
+            }
+
+            if let Some(skip_until) = skip_recovered_debugger_namespace_until {
+                if stmt_node.pos < skip_until {
+                    continue;
+                }
+                skip_recovered_debugger_namespace_until = None;
+            }
+
+            if let Some((line_end, trailing_comment)) =
+                self.recovered_debugger_namespace_line(stmt_node)
+            {
+                if !self.writer.is_at_line_start() {
+                    self.write_line();
+                }
+                self.write("declare;");
+                self.write_line();
+                self.write("namespace;");
+                self.write_line();
+                self.write("debugger;");
+                self.write_line();
+                self.write("{ }");
+                if let Some(comment) = trailing_comment {
+                    self.write(" ");
+                    self.write(comment);
+                }
+                self.write_line();
+                skip_recovered_debugger_namespace_until = Some(line_end);
+                continue;
             }
 
             if has_top_level_using
@@ -1754,5 +1784,25 @@ impl<'a> Printer<'a> {
         };
         let start = self.skip_trivia_forward(node.pos, node.end) as usize;
         text.as_bytes().get(start) == Some(&b'(')
+    }
+
+    fn recovered_debugger_namespace_line(&self, node: &Node) -> Option<(u32, Option<&'a str>)> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let mut line_end = start;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let line = crate::safe_slice::slice(text, start, line_end).ok()?;
+        if !line.trim_start().starts_with("declare namespace debugger") {
+            return None;
+        }
+
+        let trailing_comment = line
+            .find("//")
+            .map(|comment_start| line[comment_start..].trim());
+        Some((line_end as u32, trailing_comment))
     }
 }
