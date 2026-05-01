@@ -1,4 +1,3 @@
-FAIL TypeScript/tests/cases/compiler/arrayAssignmentTest1.ts | expected:[TS2322,TS2739,TS2740,TS2741] actual:[TS2322,TS2739,TS2740,TS2741]
 FAIL TypeScript/tests/cases/compiler/circularInlineMappedGenericTupleTypeNoCrash.ts | expected:[TS2589] actual:[]
 FAIL TypeScript/tests/cases/compiler/complexRecursiveCollections.ts | expected:[TS2320,TS2344,TS2430] actual:[TS2344,TS2430]
 FAIL TypeScript/tests/cases/compiler/computedTypesKeyofNoIndexSignatureType.ts | expected:[] actual:[TS2589]
@@ -195,7 +194,6 @@ FAIL TypeScript/tests/cases/conformance/salsa/prototypePropertyAssignmentMergeWi
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromJSConstructor.ts | expected:[TS2322,TS2531,TS7008] actual:[TS2322,TS2531,TS7008]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPrototypeAssignment.ts | expected:[TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPrototypeAssignment2.ts | expected:[TS2339] actual:[TS2339]
-FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/everyTypeWithAnnotationAndInvalidInitializer.ts | expected:[TS2322,TS2564,TS2739,TS2741] actual:[TS2322,TS2564,TS2739,TS2741]
 FAIL TypeScript/tests/cases/conformance/statements/labeledStatements/labeledStatementDeclarationListInLoopNoCrash3.ts | expected:[TS1005,TS1134,TS1135,TS1160] actual:[TS1005,TS1134,TS1135,TS1160]
 FAIL TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts | expected:[TS2322,TS2339,TS2403,TS2540,TS2542] actual:[TS2322,TS2339,TS2403,TS2540,TS2542]
 FAIL TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts | expected:[TS1338,TS2304,TS2322,TS2344] actual:[TS1338,TS2304,TS2322,TS2344]
@@ -461,6 +459,7 @@ PASS TypeScript/tests/cases/compiler/arithAssignTyping.ts
 PASS TypeScript/tests/cases/compiler/arithmeticOnInvalidTypes.ts
 PASS TypeScript/tests/cases/compiler/arithmeticOnInvalidTypes2.ts
 PASS TypeScript/tests/cases/compiler/arityErrorRelatedSpanBindingPattern.ts
+PASS TypeScript/tests/cases/compiler/arrayAssignmentTest1.ts
 PASS TypeScript/tests/cases/compiler/arrayAssignmentTest2.ts
 PASS TypeScript/tests/cases/compiler/arrayAssignmentTest3.ts
 PASS TypeScript/tests/cases/compiler/arrayAssignmentTest4.ts
@@ -11370,6 +11369,7 @@ PASS TypeScript/tests/cases/conformance/scanner/ecmascript5/scannerUnicodeEscape
 PASS TypeScript/tests/cases/conformance/scanner/ecmascript5/scannertest1.ts
 PASS TypeScript/tests/cases/conformance/scanner/jsdocInvalidTokens.ts
 PASS TypeScript/tests/cases/conformance/statements/VariableStatements/everyTypeWithAnnotationAndInitializer.ts
+PASS TypeScript/tests/cases/conformance/statements/VariableStatements/everyTypeWithAnnotationAndInvalidInitializer.ts
 PASS TypeScript/tests/cases/conformance/statements/VariableStatements/everyTypeWithInitializer.ts
 PASS TypeScript/tests/cases/conformance/statements/VariableStatements/invalidMultipleVariableDeclarations.ts
 PASS TypeScript/tests/cases/conformance/statements/VariableStatements/recursiveInitializer.ts
