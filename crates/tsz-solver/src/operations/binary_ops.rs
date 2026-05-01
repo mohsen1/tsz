@@ -905,6 +905,12 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::NUMBER || type_id == TypeId::ANY {
             return true;
         }
+        // Other intrinsics (including BOOLEAN_TRUE/FALSE which lookup as
+        // `Literal(Boolean)`) cannot match `IntrinsicKind::Number` or
+        // `LiteralValue::Number(_)` in the visitor; skip the visit.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         let mut visitor = NumberLikeVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
@@ -914,6 +920,9 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::STRING || type_id == TypeId::ANY {
             return true;
         }
+        if type_id.is_intrinsic() {
+            return false;
+        }
         let mut visitor = StringLikeVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
@@ -922,6 +931,9 @@ impl<'a> BinaryOpEvaluator<'a> {
     pub fn is_bigint_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::BIGINT || type_id == TypeId::ANY {
             return true;
+        }
+        if type_id.is_intrinsic() {
+            return false;
         }
         let mut visitor = BigIntLikeVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
