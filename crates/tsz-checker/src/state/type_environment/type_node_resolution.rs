@@ -549,7 +549,9 @@ impl<'a> CheckerState<'a> {
                 .map(|s| s.escaped_name.clone())
                 .or_else(|| self.entity_name_text(type_name_idx))
                 .unwrap_or_else(|| "<unknown>".to_string());
-            let required_count = self.count_required_reference_type_params(sym_id, &name);
+            let required_count = self
+                .count_required_type_params_from_ast(sym_id)
+                .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, &name));
             if required_count > 0 {
                 let type_params = self.get_reference_type_params_for_symbol(sym_id, &name);
                 let display_name = Self::format_generic_display_name_with_interner(

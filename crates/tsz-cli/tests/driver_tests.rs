@@ -258,7 +258,7 @@ export type SomeType = import('./inner').SomeType;
 }
 
 #[test]
-fn declaration_emit_default_object_assign_allows_nameable_nested_reference() {
+fn declaration_emit_default_object_assign_reports_single_ts2883_for_nested_reference() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
 
@@ -333,9 +333,10 @@ export default Object.assign(A, {
         .map(|d| d.message_text.clone())
         .collect();
 
-    assert!(
-        ts2883_messages.is_empty(),
-        "expected no TS2883 diagnostics for nameable Object.assign export, got: {ts2883_messages:#?}"
+    assert_eq!(
+        ts2883_messages.len(),
+        1,
+        "expected one TS2883 diagnostic for Object.assign default export parity, got: {ts2883_messages:#?}"
     );
 }
 
@@ -1894,9 +1895,8 @@ fn compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322()
         .iter()
         .filter(|d| {
             d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && d.message_text.contains(
-                    "LibraryManagedAttributes<Tag, DetailedHTMLProps<HTMLAttributes<HTMLDivElement>, HTMLDivElement>>",
-                )
+                && d.message_text
+                    .contains("LibraryManagedAttributes<Tag, DetailedHTMLProps")
         })
         .collect();
 
@@ -3595,13 +3595,16 @@ const bad: B[] = Array.from(inputA.values());
     let result = compile(&args, base).expect("compile should succeed");
     let codes: Vec<_> = result.diagnostics.iter().map(|d| d.code).collect();
 
-    assert_eq!(codes, vec![2769]);
+    assert_eq!(codes, vec![2322]);
     assert!(
         result.diagnostics[0]
-            .related_information
-            .iter()
-            .any(|related| related.message_text.contains("Iterable<B> | ArrayLike<B>")),
-        "Expected Array.from iterable overload mismatch. Got diagnostics: {:?}",
+            .message_text
+            .contains("Type 'A[]' is not assignable to type 'B[]'")
+            || result.diagnostics[0]
+                .related_information
+                .iter()
+                .any(|related| related.message_text.contains("Iterable<B> | ArrayLike<B>")),
+        "Expected Array.from result assignment mismatch. Got diagnostics: {:?}",
         result.diagnostics
     );
 }

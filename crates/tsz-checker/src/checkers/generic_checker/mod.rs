@@ -705,7 +705,9 @@ impl<'a> CheckerState<'a> {
             &type_params,
             self.ctx.types,
         );
-        let min_required = self.count_required_reference_type_params(sym_id, &base_name);
+        let min_required = self
+            .count_required_type_params_from_ast(sym_id)
+            .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, &base_name));
         self.validate_type_reference_type_arguments_against_params(
             &type_params,
             min_required,

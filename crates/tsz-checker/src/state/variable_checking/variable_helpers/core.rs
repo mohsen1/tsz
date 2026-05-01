@@ -3,7 +3,7 @@
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tsz_binder::SymbolId;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1059,7 +1059,6 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.emit_declarations() || self.ctx.is_declaration_file() || name.is_empty() {
             return;
         }
-
         if name == "globalThis"
             && initializer.is_some()
             && let Some(init_sym_id) = self.exported_variable_initializer_symbol(initializer)
@@ -1187,6 +1186,89 @@ impl<'a> CheckerState<'a> {
                 || n.kind == syntax_kind_ext::AS_EXPRESSION
                 || n.kind == syntax_kind_ext::TYPE_ASSERTION)
                 && !self.is_const_assertion_node(init_idx)
+        })
+    }
+
+    pub(crate) fn expression_is_object_assign_call(&self, expr_idx: NodeIndex) -> bool {
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && self.ctx.arena.get_call_expr(node).is_some_and(|call| {
+                    self.ctx
+                        .arena
+                        .get(call.expression)
+                        .and_then(|callee| self.ctx.arena.get_access_expr(callee))
+                        .is_some_and(|access| {
+                            self.ctx.arena.get_identifier_text(access.expression) == Some("Object")
+                                && self.ctx.arena.get_identifier_text(access.name_or_argument)
+                                    == Some("assign")
+                        })
+                })
+        })
+    }
+
+    pub(crate) fn first_non_portable_object_assign_object_literal_reference(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<(String, String)> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.ctx.arena.get_call_expr(expr_node)?;
+        if !self.expression_is_object_assign_call(expr_idx) {
+            return None;
+        }
+        let args = call.arguments.as_ref()?;
+        for &arg_idx in &args.nodes {
+            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                continue;
+            };
+            if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            let Some(literal) = self.ctx.arena.get_literal_expr(arg_node) else {
+                continue;
+            };
+            for &member_idx in &literal.elements.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let value_idx = self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(member_node)
+                    .map(|property| property.name)
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_property_assignment(member_node)
+                            .map(|property| property.initializer)
+                    });
+                let Some(value_idx) = value_idx else {
+                    continue;
+                };
+                if self.expression_resolves_to_exported_value(value_idx) {
+                    continue;
+                }
+                let value_type = self.get_type_of_node(value_idx);
+                let resolved_type = self.resolve_lazy_type(value_type);
+                if let Some(reference) = self
+                    .first_non_portable_type_reference(value_type)
+                    .or_else(|| self.first_non_portable_type_reference(resolved_type))
+                {
+                    return Some(reference);
+                }
+            }
+        }
+        None
+    }
+
+    fn expression_resolves_to_exported_value(&self, expr_idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(expr_idx) else {
+            return false;
+        };
+        self.ctx.binder.symbols.get(sym_id).is_some_and(|symbol| {
+            symbol.is_exported || symbol.has_any_flags(symbol_flags::EXPORT_VALUE)
         })
     }
 

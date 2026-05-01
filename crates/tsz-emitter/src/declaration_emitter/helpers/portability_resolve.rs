@@ -806,52 +806,6 @@ impl<'a> DeclarationEmitter<'a> {
             .collect()
     }
 
-    pub(in crate::declaration_emitter) fn emit_non_portable_symbol_diagnostic(
-        &mut self,
-        sym_id: SymbolId,
-        decl_name: &str,
-        file: &str,
-        pos: u32,
-        length: u32,
-    ) -> bool {
-        use tsz_common::diagnostics::Diagnostic;
-
-        if self.skip_portability_check {
-            return false;
-        }
-
-        let Some(binder) = self.binder else {
-            return false;
-        };
-        let Some(current_file_path) = self.current_file_path.as_deref() else {
-            return false;
-        };
-        let mut visited_types = rustc_hash::FxHashSet::default();
-        let mut visited_symbols = rustc_hash::FxHashSet::default();
-        let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
-        let mut visited_nodes = rustc_hash::FxHashSet::default();
-        let Some((from_path, type_name)) = self.check_symbol_portability(
-            sym_id,
-            binder,
-            current_file_path,
-            &mut visited_types,
-            &mut visited_symbols,
-            &mut visited_declaration_symbols,
-            &mut visited_nodes,
-        ) else {
-            return false;
-        };
-
-        self.diagnostics.push(Diagnostic::from_code(
-            2883,
-            file,
-            pos,
-            length,
-            &[decl_name, &from_path, &type_name],
-        ));
-        true
-    }
-
     pub(in crate::declaration_emitter) fn emit_non_portable_named_reference_diagnostic(
         &mut self,
         decl_name: &str,

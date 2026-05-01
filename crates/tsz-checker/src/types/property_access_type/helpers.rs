@@ -13,6 +13,56 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Choose the type to display in a TS2339 "property does not exist on type X"
+    /// message after a `PropertyNotFound` lookup.
+    ///
+    /// Structural rule: when control-flow narrowing has refined the receiver
+    /// (e.g. `if ("a" in x)` over `A | B` narrows `x` to `A`), the message
+    /// must name the *narrowed* receiver, not the declared union — that is
+    /// the type the property lookup actually ran against. Type parameters
+    /// keep their existing apparent-type display (the constraint), so a
+    /// `T extends A | B` receiver still reports the miss against `A | B`.
+    pub(crate) fn diagnostic_display_type_for_missing_property(
+        &self,
+        narrowed: TypeId,
+        apparent: TypeId,
+    ) -> TypeId {
+        if narrowed == apparent {
+            return apparent;
+        }
+        // Only swap to the narrowed receiver type when the apparent type is a
+        // union — that is the discriminated-narrowing case where the message
+        // should name the picked-out member ("Property 'b' does not exist on
+        // type 'A'." after `if ("a" in x)` over `A | B`). For non-union
+        // apparent types, keep the existing display: it preserves literal
+        // shape (e.g. `'""'` rather than the widened `'string'` you get from
+        // primitive-narrowing on a literal receiver) and the constraint-based
+        // display for type parameters.
+        if crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            narrowed,
+        ) {
+            return apparent;
+        }
+        if crate::query_boundaries::common::union_list_id(self.ctx.types, apparent).is_some() {
+            return narrowed;
+        }
+        apparent
+    }
+
+    pub(crate) fn is_array_constructor_is_array_recovery(
+        &self,
+        expression: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        property_name == "isArray"
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(expression)
+                .is_some_and(|ident| ident.escaped_text == "Array")
+    }
+
     pub(crate) fn known_declared_receiver_has_property(
         &mut self,
         expression: NodeIndex,

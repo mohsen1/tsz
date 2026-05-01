@@ -291,7 +291,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     let expr_type = self.get_type_of_node(clause_idx);
                     let resolved_type = self.resolve_lazy_type(expr_type);
                     if let Some((from_path, type_name)) = self
-                        .first_non_portable_type_reference(expr_type)
+                        .first_non_portable_object_assign_object_literal_reference(clause_idx)
+                        .or_else(|| self.first_non_portable_type_reference(expr_type))
                         .or_else(|| self.first_non_portable_type_reference(resolved_type))
                     {
                         self.error_at_node_msg(
