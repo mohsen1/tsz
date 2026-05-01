@@ -676,6 +676,64 @@ impl<'a> Printer<'a> {
         Self::with_capacity_and_options(arena, Self::DEFAULT_OUTPUT_CAPACITY, options)
     }
 
+    fn emit_recovered_let_array_assignment(&mut self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        if start >= bytes.len() {
+            return false;
+        }
+
+        let mut line_end = start;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let line = &text[start..line_end];
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("let[") && !trimmed.starts_with("let [") {
+            return false;
+        }
+
+        let Some(open_rel) = line.find('[') else {
+            return false;
+        };
+        let Some(close_rel_from_open) = line[open_rel + 1..].find(']') else {
+            return false;
+        };
+        let close_rel = open_rel + 1 + close_rel_from_open;
+        let after_close = &line[close_rel + 1..];
+        let Some(eq_rel_after_close) = after_close.find('=') else {
+            return false;
+        };
+        if !after_close[..eq_rel_after_close].trim().is_empty() {
+            return false;
+        }
+
+        let element = line[open_rel + 1..close_rel].trim().to_string();
+        let value = after_close[eq_rel_after_close + 1..]
+            .trim()
+            .trim_end_matches(';')
+            .trim()
+            .to_string();
+        if element.is_empty() || value.is_empty() {
+            return false;
+        }
+
+        // Recovery for `let[0] = 100`: TSC treats it as a malformed lexical
+        // declaration followed by recovered expression statements.
+        self.write("let [];");
+        self.write_line();
+        self.write(&element);
+        self.write_semicolon();
+        self.write_line();
+        self.write(&value);
+        self.write_semicolon();
+        true
+    }
+
     /// Create a new Printer with pre-allocated capacity and options.
     pub fn with_capacity_and_options(
         arena: &'a NodeArena,
@@ -1563,6 +1621,9 @@ impl<'a> Printer<'a> {
 
             // Empty statement
             k if k == syntax_kind_ext::EMPTY_STATEMENT => {
+                if self.emit_recovered_let_array_assignment(node) {
+                    return;
+                }
                 self.write_semicolon();
             }
 
