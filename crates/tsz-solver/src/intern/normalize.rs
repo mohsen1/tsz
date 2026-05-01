@@ -282,7 +282,8 @@ impl TypeInterner {
         for &member in members {
             if member.is_nullable() {
                 has_nullish = true;
-            } else if let Some(TypeData::TypeParameter(ref info)) = self.lookup(member)
+            } else if !member.is_intrinsic()
+                && let Some(TypeData::TypeParameter(ref info)) = self.lookup(member)
                 && let Some(constraint) = info.constraint
                 && self.is_clearly_non_nullable_constraint(constraint)
             {
