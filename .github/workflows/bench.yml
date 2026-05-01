@@ -200,6 +200,11 @@ jobs:
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
+      # Keep background benchmark runs from saturating the same self-hosted
+      # runner pool used by PR CI. Full CI fans out across lint, unit, dist,
+      # wasm, emit, conformance, and fourslash jobs; letting bench take all
+      # six shard runners at once causes PR jobs to queue under load.
+      max-parallel: 2
       matrix:
         include:
           - label: compiler-files

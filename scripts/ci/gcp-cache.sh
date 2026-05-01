@@ -405,12 +405,18 @@ suite_caches() {
       # Full Node-driven test run: TypeScript source + harness + tsz binary.
       echo "typescript-source npm scripts-node-modules typescript-harness typescript-node-modules dist-fast-commit"
       ;;
-    emit-shard|fourslash-shard)
+    emit-shard)
       # Shards get scripts/node_modules, scripts/emit/dist, TypeScript/built,
       # and TypeScript/node_modules via the node-harness artifact, and tsz via
       # the dist-fast-binaries artifact. Restore only TypeScript source here;
       # restoring npm/scripts-node_modules from GCS is redundant artifact I/O.
       echo "typescript-source"
+      ;;
+    fourslash-shard)
+      # Fourslash shards get the compiled harness, runtime deps, and
+      # TypeScript/tests/cases/fourslash via the node-harness artifact.
+      # Avoid restoring the full TypeScript source tree in every shard.
+      echo ""
       ;;
     node-harness-prep)
       # Builds TypeScript/built/local + scripts/emit/dist for downstream

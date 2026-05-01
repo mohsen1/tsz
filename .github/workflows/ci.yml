@@ -251,7 +251,8 @@ jobs:
             scripts/node_modules/ \
             scripts/emit/dist/ \
             TypeScript/built/local \
-            TypeScript/node_modules
+            TypeScript/node_modules \
+            TypeScript/tests/cases/fourslash
       - name: Upload node harness artifact
         uses: actions/upload-artifact@v4
         with:
