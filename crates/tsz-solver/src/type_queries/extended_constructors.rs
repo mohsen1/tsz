@@ -30,6 +30,9 @@ pub fn classify_for_abstract_check(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> AbstractClassCheckKind {
+    if type_id.is_intrinsic() {
+        return AbstractClassCheckKind::NotAbstract;
+    }
     let Some(key) = db.lookup(type_id) else {
         return AbstractClassCheckKind::NotAbstract;
     };
@@ -65,6 +68,9 @@ pub enum ClassDeclTypeKind {
 
 /// Classify a type for class declaration extraction.
 pub fn classify_for_class_decl(db: &dyn TypeDatabase, type_id: TypeId) -> ClassDeclTypeKind {
+    if type_id.is_intrinsic() {
+        return ClassDeclTypeKind::NotObject;
+    }
     let Some(key) = db.lookup(type_id) else {
         return ClassDeclTypeKind::NotObject;
     };
@@ -114,6 +120,9 @@ pub fn classify_for_constructor_check(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> ConstructorCheckKind {
+    if type_id.is_intrinsic() {
+        return ConstructorCheckKind::Other;
+    }
     let Some(key) = db.lookup(type_id) else {
         return ConstructorCheckKind::Other;
     };
@@ -178,6 +187,9 @@ pub enum InstanceTypeKind {
 
 /// Classify a type for instance type extraction.
 pub fn classify_for_instance_type(db: &dyn TypeDatabase, type_id: TypeId) -> InstanceTypeKind {
+    if type_id.is_intrinsic() {
+        return InstanceTypeKind::NotConstructor;
+    }
     let Some(key) = db.lookup(type_id) else {
         return InstanceTypeKind::NotConstructor;
     };
@@ -230,6 +242,9 @@ pub fn classify_for_constructor_return_merge(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> ConstructorReturnMergeKind {
+    if type_id.is_intrinsic() {
+        return ConstructorReturnMergeKind::Other;
+    }
     let Some(key) = db.lookup(type_id) else {
         return ConstructorReturnMergeKind::Other;
     };
@@ -278,6 +293,9 @@ fn classify_for_abstract_constructor(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> AbstractConstructorKind {
+    if type_id.is_intrinsic() {
+        return AbstractConstructorKind::NotAbstract;
+    }
     let Some(key) = db.lookup(type_id) else {
         return AbstractConstructorKind::NotAbstract;
     };
@@ -345,6 +363,9 @@ pub fn classify_for_base_instance_merge(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> BaseInstanceMergeKind {
+    if type_id.is_intrinsic() {
+        return BaseInstanceMergeKind::Other;
+    }
     let Some(key) = db.lookup(type_id) else {
         return BaseInstanceMergeKind::Other;
     };
