@@ -972,6 +972,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Check if a type is a Conditional whose `extends_type` is an Application containing infer.
     /// This detects patterns like `T extends Promise<infer U> ? U : T`.
     fn is_conditional_with_application_infer(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(type_id) else {
             return false;
         };
@@ -1243,6 +1246,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// - `Conditional`, `Mapped`, `IndexAccess`, `KeyOf`: Require type-level computation
     /// - These cannot be compared structurally until they are fully evaluated
     fn is_complex_type(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         let Some(key) = self.interner.lookup(type_id) else {
             return false;
         };
