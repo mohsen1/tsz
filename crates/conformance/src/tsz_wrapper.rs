@@ -1160,10 +1160,8 @@ fn atypes_package_in(lower_path: &str) -> Option<String> {
     const NEEDLE_PREFIX: &str = "node_modules/@types/";
     let rest = if let Some(idx) = lower_path.find(NEEDLE_SLASH) {
         &lower_path[idx + NEEDLE_SLASH.len()..]
-    } else if let Some(stripped) = lower_path.strip_prefix(NEEDLE_PREFIX) {
-        stripped
     } else {
-        return None;
+        lower_path.strip_prefix(NEEDLE_PREFIX)?
     };
     let segment = rest.split('/').next()?;
     if segment.is_empty() {
