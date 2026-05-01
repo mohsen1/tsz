@@ -41,6 +41,14 @@ pub fn rest_argument_element_type(db: &dyn crate::TypeDatabase, type_id: TypeId)
             return type_id;
         }
 
+        // Fast path: intrinsics aren't `ReadonlyType` / `NoInfer` /
+        // `TypeParameter` / `Infer` / `Union` / `Array` / `Tuple` /
+        // `Application` / `Conditional` / `Mapped` / `Lazy` / `IndexAccess`,
+        // so the function falls through to `_ => type_id` for them.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
         match db.lookup(type_id) {
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 rest_argument_element_type_inner(db, inner, depth - 1)
