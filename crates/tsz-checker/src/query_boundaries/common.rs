@@ -882,32 +882,31 @@ pub(crate) fn collect_all_types(
 /// Replaces type parameter references in parameter types, return type, this-type,
 /// and type predicate type. Clears `type_params` since they are now resolved.
 pub(crate) fn instantiate_function_shape(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     func: &FunctionShape,
     substitution: &tsz_solver::TypeSubstitution,
 ) -> FunctionShape {
+    let instantiate = |type_id| {
+        tsz_solver::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
+    };
     FunctionShape {
         params: func
             .params
             .iter()
             .map(|param| ParamInfo {
                 name: param.name,
-                type_id: tsz_solver::instantiate_type(db, param.type_id, substitution),
+                type_id: instantiate(param.type_id),
                 optional: param.optional,
                 rest: param.rest,
             })
             .collect(),
-        return_type: tsz_solver::instantiate_type(db, func.return_type, substitution),
-        this_type: func
-            .this_type
-            .map(|this_type| tsz_solver::instantiate_type(db, this_type, substitution)),
+        return_type: instantiate(func.return_type),
+        this_type: func.this_type.map(instantiate),
         type_params: vec![],
         type_predicate: func.type_predicate.as_ref().map(|predicate| TypePredicate {
             asserts: predicate.asserts,
             target: predicate.target,
-            type_id: predicate
-                .type_id
-                .map(|tid| tsz_solver::instantiate_type(db, tid, substitution)),
+            type_id: predicate.type_id.map(instantiate),
             parameter_index: predicate.parameter_index,
         }),
         is_constructor: func.is_constructor,
@@ -922,7 +921,7 @@ pub(crate) fn instantiate_function_shape(
 /// Returns the shape unchanged if it has no type parameters or no
 /// defaults/constraints to apply.
 pub(crate) fn instantiate_shape_to_defaults(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     func: &FunctionShape,
 ) -> FunctionShape {
     if func.type_params.is_empty() {
