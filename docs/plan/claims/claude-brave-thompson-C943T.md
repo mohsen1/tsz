@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-01
 - **Branch**: `claude/brave-thompson-C943T`
-- **PR**: TBD
+- **PR**: #1947
 - **Status**: ready
 - **Workstream**: conformance (JSX spread attribute resolution)
 
