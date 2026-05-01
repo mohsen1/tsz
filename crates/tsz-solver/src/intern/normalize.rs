@@ -243,9 +243,11 @@ impl TypeInterner {
         let mut has_primitive = false;
 
         for &member in members {
-            if member == TypeId::OBJECT {
-                has_object_intrinsic = true;
-            } else if let Some(TypeData::Intrinsic(IntrinsicKind::Object)) = self.lookup(member) {
+            // TypeId::OBJECT and PROMISE_BASE both resolve to
+            // TypeData::Intrinsic(IntrinsicKind::Object); check both directly
+            // to avoid the dyn-dispatched lookup. No other TypeId resolves
+            // to Intrinsic(Object).
+            if member == TypeId::OBJECT || member == TypeId::PROMISE_BASE {
                 has_object_intrinsic = true;
             } else if self.primitive_class_for(member).is_some() {
                 has_primitive = true;
