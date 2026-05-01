@@ -343,6 +343,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ty: TypeId,
         outer_check_type: TypeId,
     ) -> Option<TypeId> {
+        if ty.is_intrinsic() {
+            return None;
+        }
         if let Some(TypeData::Conditional(inner_cond_id)) = self.interner.lookup(ty) {
             let inner = self.interner.conditional_type(inner_cond_id);
             if inner.check_type == outer_check_type {
