@@ -103,3 +103,83 @@ r = ds;
         "TS2739 should keep alias name or its structural body when no application unfold is available. Got: {msg:?}"
     );
 }
+
+/// Regression: TS2739's missing-property list must follow the target's
+/// source-declaration order, not the global type interner's name-sorted
+/// shape position. The interner sorts properties alphabetically for stable
+/// shape hashing; if the diagnostic emit code uses that incidental shape
+/// position as the primary sort key, the missing-property list comes out
+/// in alphabetic-shuffled order. tsc lists them in declaration order.
+#[test]
+fn ts2739_lists_missing_properties_in_declaration_order_alpha_choice() {
+    let msg = ts2739_source_display(
+        r#"
+class Receiver { id: number = 0; }
+class Owner<T> {
+    source: T;
+    recurse: Owner<T>;
+    wrapped: Owner<Owner<T>>;
+}
+const target: Owner<string> = new Receiver();
+"#,
+    );
+    let source_idx = msg.find("source").expect("expected 'source' in message");
+    let recurse_idx = msg.find("recurse").expect("expected 'recurse' in message");
+    let wrapped_idx = msg.find("wrapped").expect("expected 'wrapped' in message");
+    assert!(
+        source_idx < recurse_idx && recurse_idx < wrapped_idx,
+        "TS2739 missing properties must be in declaration order (source, recurse, wrapped). Got: {msg:?}"
+    );
+}
+
+/// Anti-hardcoding cover: same structural rule with different property
+/// names. The fix is about source-declaration order, not the specific
+/// names of the missing properties — renaming `source`/`recurse`/`wrapped`
+/// to `alpha`/`beta`/`gamma` (where alphabetic order would also place
+/// `alpha` first) still requires declaration order to be honored, with
+/// `gamma` coming last even though it is alphabetically last.
+#[test]
+fn ts2739_lists_missing_properties_in_declaration_order_renamed_props() {
+    let msg = ts2739_source_display(
+        r#"
+class Sink { id: number = 0; }
+class Producer<U> {
+    zeta: U;
+    alpha: Producer<U>;
+    middle: Producer<Producer<U>>;
+}
+const out: Producer<string> = new Sink();
+"#,
+    );
+    let zeta_idx = msg.find("zeta").expect("expected 'zeta' in message");
+    let alpha_idx = msg.find("alpha").expect("expected 'alpha' in message");
+    let middle_idx = msg.find("middle").expect("expected 'middle' in message");
+    assert!(
+        zeta_idx < alpha_idx && alpha_idx < middle_idx,
+        "TS2739 missing properties must follow declaration order (zeta, alpha, middle), not alphabetic. Got: {msg:?}"
+    );
+}
+
+/// Constructor parameter properties share the constructor's class-member
+/// position, so they need their own stable sub-order before entering the
+/// class property map.
+#[test]
+fn ts2739_lists_constructor_parameter_properties_in_source_order() {
+    let msg = ts2739_source_display(
+        r#"
+class Empty {}
+class Target {
+    constructor(public zeta: string, public alpha: number) {}
+    middle: boolean = false;
+}
+const out: Target = new Empty();
+"#,
+    );
+    let zeta_idx = msg.find("zeta").expect("expected 'zeta' in message");
+    let alpha_idx = msg.find("alpha").expect("expected 'alpha' in message");
+    let middle_idx = msg.find("middle").expect("expected 'middle' in message");
+    assert!(
+        zeta_idx < alpha_idx && alpha_idx < middle_idx,
+        "TS2739 missing properties must follow constructor parameter and class member source order. Got: {msg:?}"
+    );
+}
