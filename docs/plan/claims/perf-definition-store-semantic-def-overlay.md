@@ -1,6 +1,6 @@
 # perf(cli): avoid semantic def clone before shared store
 
-Status: claim
+Status: ready
 Owner: Codex
 Branch: `perf/definition-store-semantic-def-overlay`
 Created: 2026-05-01 19:03:27 UTC

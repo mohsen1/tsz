@@ -1565,12 +1565,61 @@ impl DefinitionStore {
         semantic_defs: &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
         intern_string: impl Fn(&str) -> Atom,
     ) -> Self {
+        let entries: Vec<_> = semantic_defs
+            .iter()
+            .map(|(&sym_id, entry)| (sym_id, entry))
+            .collect();
+        Self::from_semantic_def_entries(&entries, intern_string)
+    }
+
+    /// Create a pre-populated `DefinitionStore` from a base semantic-def map plus
+    /// per-file overlay maps without cloning the base map or its entries.
+    ///
+    /// Overlay entries take precedence over base entries with the same `SymbolId`,
+    /// matching the previous clone-then-insert construction used by the CLI
+    /// shared-store setup.
+    pub fn from_semantic_defs_with_overlays<'a, I>(
+        base: &'a rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
+        overlays: I,
+        intern_string: impl Fn(&str) -> Atom,
+    ) -> Self
+    where
+        I: IntoIterator<
+            Item = &'a rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
+        >,
+    {
+        let mut overlay_entries: rustc_hash::FxHashMap<
+            tsz_binder::SymbolId,
+            &tsz_binder::SemanticDefEntry,
+        > = rustc_hash::FxHashMap::default();
+        for overlay in overlays {
+            for (&sym_id, entry) in overlay {
+                overlay_entries.insert(sym_id, entry);
+            }
+        }
+
+        let mut entries = Vec::with_capacity(base.len().saturating_add(overlay_entries.len()));
+        entries.extend(
+            base.iter()
+                .filter(|(sym_id, _)| !overlay_entries.contains_key(sym_id))
+                .map(|(&sym_id, entry)| (sym_id, entry)),
+        );
+        entries.extend(overlay_entries);
+
+        Self::from_semantic_def_entries(&entries, intern_string)
+    }
+
+    fn from_semantic_def_entries(
+        semantic_defs: &[(tsz_binder::SymbolId, &tsz_binder::SemanticDefEntry)],
+        intern_string: impl Fn(&str) -> Atom,
+    ) -> Self {
         let class_count = semantic_defs
-            .values()
+            .iter()
+            .map(|(_, entry)| *entry)
             .filter(|entry| entry.kind == tsz_binder::SemanticDefKind::Class)
             .count();
         let mut file_ids = rustc_hash::FxHashSet::default();
-        for entry in semantic_defs.values() {
+        for (_, entry) in semantic_defs {
             file_ids.insert(entry.file_id);
         }
         let store = Self::with_capacities(semantic_defs.len() + class_count, file_ids.len());
@@ -1580,7 +1629,7 @@ impl DefinitionStore {
         }
 
         // Pass 1: Create DefIds and DefinitionInfo for each entry.
-        for (&sym_id, entry) in semantic_defs {
+        for (sym_id, entry) in semantic_defs {
             let kind = match entry.kind {
                 tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
                 tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
@@ -1673,7 +1722,7 @@ impl DefinitionStore {
         }
 
         // Pass 2: Wire namespace exports from parent_namespace relationships.
-        for (&sym_id, entry) in semantic_defs {
+        for (sym_id, entry) in semantic_defs {
             if let Some(parent_sym) = entry.parent_namespace {
                 let child_def = store.find_def_by_symbol(sym_id.0);
                 let parent_def = store.find_def_by_symbol(parent_sym.0);
@@ -1685,7 +1734,7 @@ impl DefinitionStore {
         }
 
         // Pass 3: Resolve heritage names to DefIds.
-        for (&sym_id, entry) in semantic_defs {
+        for (sym_id, entry) in semantic_defs {
             let def_id = match store.find_def_by_symbol(sym_id.0) {
                 Some(id) => id,
                 None => continue,

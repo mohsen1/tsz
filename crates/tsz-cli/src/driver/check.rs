@@ -1004,16 +1004,13 @@ pub(super) fn collect_diagnostics(
     // DefId allocation is globally unique. Without this, independent DefId sequences
     // in separate checkers cause TypeId collisions via Lazy(DefId) interning.
     {
-        let mut all_semantic_defs = (*program.semantic_defs).clone();
-        for file in &program.files {
-            for (sym_id, entry) in file.semantic_defs.iter() {
-                all_semantic_defs.insert(*sym_id, entry.clone());
-            }
-        }
-        let shared_store = Arc::new(tsz_solver::def::DefinitionStore::from_semantic_defs(
-            &all_semantic_defs,
-            |s| program.type_interner.intern_string(s),
-        ));
+        let shared_store = Arc::new(
+            tsz_solver::def::DefinitionStore::from_semantic_defs_with_overlays(
+                &program.semantic_defs,
+                program.files.iter().map(|file| file.semantic_defs.as_ref()),
+                |s| program.type_interner.intern_string(s),
+            ),
+        );
         shared_store.init_file_locks(program.files.len());
         project_env.shared_definition_store = Some(shared_store);
     }
