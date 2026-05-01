@@ -3,34 +3,9 @@ name: CI
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, labeled]
-    # Docs-only changes cannot affect cargo build/test/conformance/wasm,
-    # so skip the entire workflow when every changed path matches one of
-    # the patterns below. CI workflow files (`.github/workflows/*`),
-    # `Cargo.{toml,lock}`, scripts, and `crates/**` source are NOT covered
-    # and continue to trigger the full suite. `merge_group` is intentionally
-    # left untouched so the merge queue can still verify the merge candidate
-    # against any required checks the docs-only PR happened to register.
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE*'
-      - 'CHANGELOG*'
-      - 'CONTRIBUTING*'
-      - 'CODE_OF_CONDUCT*'
-      - '.gitignore'
-      - '.editorconfig'
   merge_group:
   push:
     branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE*'
-      - 'CHANGELOG*'
-      - 'CONTRIBUTING*'
-      - 'CODE_OF_CONDUCT*'
-      - '.gitignore'
-      - '.editorconfig'
   workflow_dispatch:
 
 permissions:
@@ -73,6 +48,49 @@ jobs:
             fi
             if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
               should_run=false
+            fi
+            # Docs-only PRs cannot affect cargo build/test/conformance, so
+            # skip the heavy self-hosted suite (lint, dist-binaries, wasm,
+            # conformance, emit, fourslash) when every changed path matches
+            # one of the docs-only patterns. The gate job itself + the
+            # ubuntu-latest "CI Summary" job still run, so any
+            # required-status-checks for those names are satisfied — unlike
+            # workflow-level `paths-ignore`, which skips the entire workflow
+            # and leaves required checks pending forever (PR #1989).
+            #
+            # CI workflow files (`.github/workflows/*`), `Cargo.{toml,lock}`,
+            # scripts, and `crates/**` source are NOT classified as docs and
+            # continue to trigger the full suite. Renames are tracked via
+            # the GitHub API's `previous_filename`, so a `foo.rs` → `foo.md`
+            # rename is correctly classified as non-docs (the deleted .rs
+            # source still requires a build).
+            if [[ "$should_run" == "true" ]]; then
+              all_paths=""
+              page=1
+              while :; do
+                page_paths=$(gh api \
+                  "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100&page=${page}" \
+                  --jq '.[] | (.filename, (.previous_filename // empty))' \
+                  2>/dev/null || true)
+                if [[ -z "$page_paths" ]]; then break; fi
+                all_paths+="${page_paths}"$'\n'
+                # Stop early if we got fewer than 100 entries (last page).
+                count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
+                if [[ "$count" -lt 100 ]]; then break; fi
+                page=$((page + 1))
+                # Safety bound: 30 pages = 3000 files, well past any real PR.
+                if [[ "$page" -gt 30 ]]; then break; fi
+              done
+              if [[ -n "$all_paths" ]]; then
+                non_docs=$(printf '%s\n' "$all_paths" \
+                  | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$' \
+                  || true)
+                if [[ -z "$non_docs" ]]; then
+                  echo "PR diff is docs-only — skipping heavy CI:"
+                  printf '  %s\n' $(printf '%s\n' "$all_paths" | sort -u)
+                  should_run=false
+                fi
+              fi
             fi
             if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
               # Fork PRs cannot use self-hosted runners by default (untrusted
