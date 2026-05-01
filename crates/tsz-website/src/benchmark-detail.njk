@@ -13,21 +13,14 @@ eleventyComputed:
 
 <nav class="bench-breadcrumb" aria-label="Breadcrumb">
   <a href="/benchmarks/">Benchmarks</a>
-  <span aria-hidden="true">/</span>
-  <span>{{ benchmark.display_name }}</span>
 </nav>
 
 <h1>{{ benchmark.display_name }}</h1>
-<p class="subtitle">{{ benchmark.focus }}</p>
+{% if benchmark.detail_focus %}
+  <p class="subtitle">{{ benchmark.detail_focus }}</p>
+{% endif %}
 
 <div class="bench-detail-hero">
-  <div class="bench-detail-primary">
-    <span class="bench-pill">{{ benchmark.kind }}</span>
-    <span class="bench-pill">{{ benchmark.category }}</span>
-    {% if benchmark.is_aggregate %}
-      <span class="bench-pill">aggregate</span>
-    {% endif %}
-  </div>
   <div class="bench-detail-result">
     {% if benchmark.comparison.available %}
       <strong>
@@ -90,28 +83,6 @@ eleventyComputed:
       <span class="bench-detail-time">{% if benchmark.tsgo_time %}{{ benchmark.tsgo_time }}{% else %}n/a{% endif %}</span>
     </div>
   </div>
-</section>
-
-<section>
-  <h2>Details</h2>
-  <dl class="bench-detail-facts">
-    <div>
-      <dt>Category</dt>
-      <dd><a href="/benchmarks/#{{ benchmark.category_slug }}">{{ benchmark.category }}</a></dd>
-    </div>
-    <div>
-      <dt>Fixture</dt>
-      <dd><code>{{ benchmark.name }}</code></dd>
-    </div>
-    <div>
-      <dt>Status</dt>
-      <dd>{{ benchmark.status or "successful" }}</dd>
-    </div>
-    <div>
-      <dt>Run</dt>
-      <dd><code>{{ benchmark.tsz_command }}</code></dd>
-    </div>
-  </dl>
 </section>
 
 {% if benchmark.source_files.length %}

@@ -209,27 +209,27 @@ function ensureProjectRows(grouped) {
 function categoryMeta(category) {
   return {
     "Projects: large-ts-repo": {
-      description: "Large real-world workspace benchmark (6000+ files).",
+      title: "large-ts-repo",
       repo: "https://github.com/mohsen1/large-ts-repo",
       repoLabel: "mohsen1/large-ts-repo",
     },
     "Projects: next.js": {
-      description: "Next.js project benchmark (nextjs fixture).",
+      title: "next.js",
       repo: "https://github.com/vercel/next.js",
       repoLabel: "vercel/next.js",
     },
     "Projects: utility-types": {
-      description: "Full utility-types project benchmark.",
+      title: "utility-types",
       repo: "https://github.com/piotrwitek/utility-types",
       repoLabel: "piotrwitek/utility-types",
     },
     "Projects: ts-toolbelt": {
-      description: "Full ts-toolbelt project benchmark (when available).",
+      title: "ts-toolbelt",
       repo: "https://github.com/millsp/ts-toolbelt",
       repoLabel: "millsp/ts-toolbelt",
     },
     "Projects: ts-essentials": {
-      description: "Full ts-essentials project benchmark.",
+      title: "ts-essentials",
       repo: "https://github.com/ts-essentials/ts-essentials",
       repoLabel: "ts-essentials/ts-essentials",
     },
@@ -470,46 +470,48 @@ function readFixtureSource(name) {
   return null;
 }
 
+function externalFixturePath(name) {
+  const fixtureName = String(name || "");
+  if (fixtureName.startsWith("utility-types/")) {
+    return path.join(ROOT, ".target-bench/external/utility-types/src", fixtureName.slice("utility-types/".length));
+  }
+  if (fixtureName.startsWith("ts-toolbelt/")) {
+    return path.join(ROOT, ".target-bench/external/ts-toolbelt/sources", fixtureName.slice("ts-toolbelt/".length));
+  }
+  if (fixtureName.startsWith("ts-essentials/")) {
+    const rel = fixtureName.slice("ts-essentials/".length).replace(/\.ts$/, "/index.ts");
+    return path.join(ROOT, ".target-bench/external/ts-essentials/lib", rel);
+  }
+  return null;
+}
+
+function readExternalFixtureSource(name) {
+  const sourcePath = externalFixturePath(name);
+  if (!sourcePath) return null;
+  try {
+    return fs.readFileSync(sourcePath, "utf8").trimEnd();
+  } catch {
+    return null;
+  }
+}
+
 function sourceFilesForBenchmark(row, category) {
   if (isProjectCategory(category)) return [];
 
   const name = String(row.name || "fixture.ts");
   const fixtureName = name.endsWith(".ts") ? name : `${name}.ts`;
-  const snippet = readFixtureSource(fixtureName) || snippetForBenchmark(row, category);
+  const externalSource = isExternalLibraryCategory(category)
+    ? readExternalFixtureSource(fixtureName)
+    : null;
+  const snippet = externalSource || readFixtureSource(fixtureName) || snippetForBenchmark(row, category);
 
   if (isExternalLibraryCategory(category)) {
-    return [
-      {
-        name: fixtureName,
-        language: "typescript",
-        source: snippet,
-      },
-      {
-        name: "helpers.ts",
-        language: "typescript",
-        source: `export type DeepPartial<T> = {
-  [K in keyof T]?: T[K] extends object
-    ? DeepPartial<T[K]>
-    : T[K];
-};
-
-export type ReadonlyId = {
-  readonly id: string;
-};`,
-      },
-      {
-        name: "tsconfig.json",
-        language: "json",
-        source: `{
-  "compilerOptions": {
-    "strict": true,
-    "noEmit": true,
-    "skipLibCheck": true
-  },
-  "files": ["${fixtureName}", "helpers.ts"]
-}`,
-      },
-    ];
+    if (!externalSource) return [];
+    return [{
+      name: fixtureName,
+      language: "typescript",
+      source: externalSource,
+    }];
   }
 
   return [
@@ -555,6 +557,7 @@ function comparison(row) {
 function decorateRow(row, category, options = {}) {
   const maxMs = Math.max(Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0);
   const sourceFiles = sourceFilesForBenchmark(row, category);
+  const focus = benchmarkFocus(row, category);
   const decorated = {
     ...row,
     category,
@@ -563,7 +566,8 @@ function decorateRow(row, category, options = {}) {
     slug: benchmarkSlug(row.name),
     url: benchmarkUrl(row),
     kind: benchmarkKind(category),
-    focus: benchmarkFocus(row, category),
+    focus,
+    detail_focus: isExternalLibraryCategory(category) ? "" : focus,
     snippet: sourceFiles[0]?.source || snippetForBenchmark(row, category),
     source_files: sourceFiles,
     tsz_command: benchmarkCommand(row, category, "tsz"),
@@ -668,6 +672,10 @@ function categoryDescription(category) {
   return categoryMeta(category).description || "";
 }
 
+function categoryTitle(category) {
+  return categoryMeta(category).title || category;
+}
+
 function generateCharts(data) {
   if (!data?.results?.length) {
     return `<div class="bench-placeholder">No benchmark data is available for this local build.</div>`;
@@ -700,20 +708,22 @@ function generateCharts(data) {
       return (String(a.name || "") > String(b.name || "") ? 1 : -1);
     });
     const maxMs = Math.max(...entries.map((r) => Math.max(r.tsz_ms, r.tsgo_ms)));
-    const desc = categoryDescription(category);
+    const isProject = isProjectCategory(category);
+    const desc = isProject ? "" : categoryDescription(category);
     const repoLink = meta.repo
       ? ` <a class="bench-category-repo" href="${meta.repo}" target="_blank" rel="noopener noreferrer">${escapeHtml(meta.repoLabel || meta.repo)}</a>`
       : "";
+    const title = categoryTitle(category);
 
     if (isTinyCategory) {
       html += `<section class="bench-category bench-tiny-category">
   <details id="${slug}" class="bench-category-details">
-    <summary class="bench-category-title">${escapeHtml(category)}${repoLink}</summary>
+    <summary class="bench-category-title">${escapeHtml(title)}${repoLink}</summary>
     ${desc ? `<p class="bench-category-desc">${escapeHtml(desc)}</p>` : ""}
     <div class="bench-chart">\n`;
     } else {
-      html += `<section class="bench-category">
-  <h3 class="bench-category-title" id="${slug}">${escapeHtml(category)}${repoLink}</h3>
+      html += `<section class="bench-category${isProject ? " bench-project-category" : ""}">
+  <h3 class="bench-category-title" id="${slug}">${escapeHtml(title)}${repoLink}</h3>
   ${desc ? `<p class="bench-category-desc">${escapeHtml(desc)}</p>` : ""}
   <div class="bench-chart">\n`;
     }
@@ -724,9 +734,13 @@ function generateCharts(data) {
       const tsgoWidth = Math.max(2, (r.tsgo_ms / maxMs) * barMaxWidth);
       const winnerLabel = formatSpeedupLabel(r.tsz_ms, r.tsgo_ms);
 
+      const metaParts = isProject
+        ? [`${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`]
+        : [decorated.kind, `${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`];
+
       html += `  <div class="bench-row">
     <div class="bench-name"><a href="${decorated.url}">${escapeHtml(decorated.display_name)}</a></div>
-    <div class="bench-meta">${escapeHtml(decorated.kind)} · ${fmt(r.lines || 0)} lines · ${fmt(r.kb || 0)} KB</div>
+    <div class="bench-meta">${escapeHtml(metaParts.join(" · "))}</div>
     <p class="bench-focus">${escapeHtml(decorated.focus)}</p>
     <div class="bench-bars">
       <div class="bench-bar-row">
