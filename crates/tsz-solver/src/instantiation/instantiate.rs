@@ -376,14 +376,20 @@ impl<'a> TypeInstantiator<'a> {
     ) -> bool {
         crate::visitor::collect_all_types(interner, template)
             .into_iter()
-            .any(|candidate| match interner.lookup(candidate) {
-                Some(TypeData::IndexAccess(obj, idx)) if obj == source_obj => {
-                    matches!(
-                        interner.lookup(idx),
-                        Some(TypeData::TypeParameter(info)) if info.name == param_name
-                    )
+            .any(|candidate| {
+                if candidate.is_intrinsic() {
+                    return false;
                 }
-                _ => false,
+                match interner.lookup(candidate) {
+                    Some(TypeData::IndexAccess(obj, idx)) if obj == source_obj => {
+                        !idx.is_intrinsic()
+                            && matches!(
+                                interner.lookup(idx),
+                                Some(TypeData::TypeParameter(info)) if info.name == param_name
+                            )
+                    }
+                    _ => false,
+                }
             })
     }
 
@@ -2191,9 +2197,13 @@ fn template_has_lazy_application_in_composite(
         TypeData::Union(members) | TypeData::Intersection(members) => {
             let list = interner.type_list(members);
             list.iter().any(|&m| {
+                if m.is_intrinsic() {
+                    return false;
+                }
                 if let Some(TypeData::Application(app_id)) = interner.lookup(m) {
                     let app = interner.type_application(app_id);
-                    matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
+                    !app.base.is_intrinsic()
+                        && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
                 } else {
                     false
                 }
