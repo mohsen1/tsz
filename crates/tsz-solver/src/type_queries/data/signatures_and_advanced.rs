@@ -86,6 +86,10 @@ pub fn get_type_parameter_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option
 /// `Infer` types inside conditional types should NOT be resolved here — they are checked
 /// during conditional type evaluation, not at type argument validation time.
 pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    // Fast path: intrinsics aren't `TypeParameter(_)`; return as-is.
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info)) => info.constraint.unwrap_or(TypeId::UNKNOWN),
         _ => type_id,
@@ -176,6 +180,10 @@ pub fn get_base_constraint_for_display(db: &dyn TypeDatabase, type_id: TypeId) -
 /// The caller compares `source_count * target_count` against a threshold
 /// (tsc uses 1,000,000) to decide if the comparison is too complex.
 pub fn constituent_count(db: &dyn TypeDatabase, type_id: TypeId) -> u64 {
+    // Fast path: intrinsics aren't `Union(_)` / `Intersection(_)`; count is 1.
+    if type_id.is_intrinsic() {
+        return 1;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Union(members_id)) => {
             let members = db.type_list(members_id);
@@ -517,6 +525,10 @@ pub fn get_mapped_type_with_id(
 ///
 /// Returns None if the type is not a `TypeParameter` or `Infer`, or if it has no default.
 pub fn get_type_parameter_default(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // Fast path: intrinsics aren't `TypeParameter(_)` / `Infer(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.default,
         _ => None,
@@ -540,6 +552,10 @@ pub fn get_type_application(
 ///
 /// Returns None if the type is not an `IndexAccess`.
 pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<(TypeId, TypeId)> {
+    // Fast path: intrinsics aren't `IndexAccess(_, _)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::IndexAccess(obj, idx)) => Some((obj, idx)),
         _ => None,
@@ -548,6 +564,10 @@ pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 
 /// Get the operand of a `KeyOf` type. Returns `Some(inner)` for `keyof T`.
 pub fn get_keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // Fast path: intrinsics aren't `KeyOf(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::KeyOf(inner)) => Some(inner),
         _ => None,
