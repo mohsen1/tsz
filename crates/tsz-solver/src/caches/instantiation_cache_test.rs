@@ -22,7 +22,8 @@
 use crate::caches::query_cache::QueryCache;
 use crate::instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeSubstitution, instantiate_type_cached,
-    instantiate_type_preserving_cached, substitute_this_type_cached,
+    instantiate_type_preserving_cached, substitute_this_type_at_return_position,
+    substitute_this_type_cached,
 };
 use crate::intern::TypeInterner;
 use crate::types::{PropertyInfo, TypeId, TypeParamInfo, Visibility};
@@ -154,6 +155,37 @@ fn substitute_this_type_caches_per_this() {
     assert!(
         entries >= 2,
         "different this_type values must occupy distinct cache slots ({entries} entries)"
+    );
+}
+
+#[test]
+fn shallow_this_return_position_caches_with_distinct_mode() {
+    // The shallow return-position variant uses a different walk shape than
+    // deep substitute_this_type_cached, so it must cache under a distinct
+    // mode bit while still hitting for repeated shallow calls.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let this_t = interner.this_type();
+    let body = object_with(&interner, this_t);
+    let receiver = interner.literal_string("Receiver");
+
+    let _ = substitute_this_type_cached(&interner, Some(&db), body, receiver);
+    let entries_after_deep = db.statistics().instantiation_cache_entries;
+    let hits_after_deep = db.statistics().instantiation_cache_hits;
+
+    let shallow_1 = substitute_this_type_at_return_position(&interner, Some(&db), body, receiver);
+    let entries_after_shallow = db.statistics().instantiation_cache_entries;
+    assert!(
+        entries_after_shallow > entries_after_deep,
+        "shallow-this substitution must not alias the deep-this cache slot"
+    );
+
+    let shallow_2 = substitute_this_type_at_return_position(&interner, Some(&db), body, receiver);
+    assert_eq!(shallow_1, shallow_2);
+    assert!(
+        db.statistics().instantiation_cache_hits > hits_after_deep,
+        "second shallow-this substitution should hit the cache"
     );
 }
 
