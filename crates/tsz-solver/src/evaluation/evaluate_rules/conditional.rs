@@ -1772,6 +1772,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Check if a type is or contains a generic reference (Lazy/TypeParameter/Recursive).
     /// Recurses into nested `IndexAccess` to handle cases like `T[K1][K2]`.
     fn is_generic_ref(db: &dyn crate::TypeDatabase, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match db.lookup(type_id) {
             Some(TypeData::Lazy(_) | TypeData::TypeParameter(_) | TypeData::Recursive(_)) => true,
             Some(TypeData::IndexAccess(obj, idx)) => {

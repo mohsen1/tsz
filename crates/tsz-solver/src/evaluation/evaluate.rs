@@ -1574,6 +1574,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         type_id: TypeId,
         names: &mut FxHashSet<u32>,
     ) {
+        if type_id.is_intrinsic() {
+            return;
+        }
         match db.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = db.object_shape(shape_id);
