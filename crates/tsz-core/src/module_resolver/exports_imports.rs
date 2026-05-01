@@ -151,8 +151,9 @@ impl ModuleResolver {
             && let Some(target) = Self::resolve_export_target_to_string(value, conditions)
         {
             let resolved_using_ts_extension = key_ends_with_ts_extension(pattern);
+            let is_directory_match = pattern.ends_with('/') && !pattern.contains('*');
             return Some((
-                apply_wildcard_substitution(&target, &wildcard),
+                apply_wildcard_substitution(&target, &wildcard, is_directory_match),
                 resolved_using_ts_extension,
             ));
         }
@@ -331,7 +332,11 @@ impl ModuleResolver {
                     // Per Node.js PACKAGE_TARGET_RESOLVE spec, substitute * with the
                     // matched wildcard portion BEFORE resolving the target path.
                     // Without this, try_export_target would look for literal "*.cjs" files.
-                    let substituted_value = substitute_wildcard_in_exports(value, &wildcard);
+                    // Directory-match keys (`./lib/`) also append the wildcard to
+                    // `/`-ending targets; `*`-pattern keys (`./*`) don't.
+                    let is_directory_match = pattern.ends_with('/') && !pattern.contains('*');
+                    let substituted_value =
+                        substitute_wildcard_in_exports(value, &wildcard, is_directory_match);
                     let key_uses_ts = key_ends_with_ts_extension(pattern);
                     if let Some(resolved) = self.resolve_export_value_with_conditions(
                         package_dir,
@@ -487,8 +492,12 @@ impl ModuleResolver {
             _ => {}
         }
 
+        let is_directory_match = best_pattern
+            .map(|p| p.ends_with('/') && !p.contains('*'))
+            .unwrap_or(false);
         for target in targets {
-            let substituted = apply_wildcard_substitution(target, &best_wildcard);
+            let substituted =
+                apply_wildcard_substitution(target, &best_wildcard, is_directory_match);
             let resolved = package_dir.join(substituted.trim_start_matches("./"));
             if let Some(resolved) = self.try_file_or_directory(&resolved) {
                 return Some(resolved);

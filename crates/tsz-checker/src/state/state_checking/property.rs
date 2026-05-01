@@ -1077,11 +1077,18 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect();
 
+            // Mirror tsc's `if (!candidate.length) break;` in
+            // `discriminateTypeByDiscriminableItems`: when this discriminator
+            // produces an empty candidate set, abandon discriminator-based
+            // narrowing entirely. The previous `continue` (keeping the
+            // pre-filter set and trying the next discriminator) lets a later
+            // discriminator narrow over the *unfiltered* `active_indices` and
+            // over-narrow the result. Example: source `{a:3, c:10, ...}`
+            // against `{a:1,c:10,...}|{a:1,c:20,...}|{a:2,c:30,...}` —
+            // `a=3` produces an empty candidate set, then `c=10` would
+            // falsely pin the first member alone (TS2353 false positive).
             if candidate.is_empty() {
-                // Don't apply this discriminator — keep the previous narrowed set.
-                // Mirrors tsc's `if (!candidate.length) break;` which falls back
-                // to the prior matched set rather than emptying it.
-                continue;
+                return None;
             }
 
             if candidate.len() < active_indices.len() {
