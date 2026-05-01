@@ -709,6 +709,8 @@ pub enum ConstructorTypeKind {
 /// - Resolving symbol references for `TypeQuery`
 /// - Recursing into members/inner types
 pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> ConstructorTypeKind {
+    // Fast path: intrinsics (and the BOOLEAN_TRUE/FALSE intrinsic IDs that
+    // lookup as `Literal(Boolean)`) all fall to the `NotConstructor` arm.
     if type_id.is_intrinsic() {
         return ConstructorTypeKind::NotConstructor;
     }

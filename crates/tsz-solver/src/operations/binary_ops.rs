@@ -420,8 +420,19 @@ impl<'a> BinaryOpEvaluator<'a> {
     /// Check if a type is valid for the left side of an `instanceof` expression.
     /// TS2358: "The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter."
     pub fn is_valid_instanceof_left_operand(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+        if type_id == TypeId::ERROR
+            || type_id == TypeId::ANY
+            || type_id == TypeId::UNKNOWN
+            || type_id == TypeId::OBJECT
+            || type_id == TypeId::PROMISE_BASE
+        {
             return true;
+        }
+        // Other intrinsics (NEVER, VOID, NULL, UNDEFINED, primitives, FUNCTION,
+        // BOOLEAN_TRUE/FALSE) match no `true`-returning visitor arm and fall to
+        // `default_output() = false`. Skip the visitor for them.
+        if type_id.is_intrinsic() {
+            return false;
         }
         let mut visitor = InstanceofLeftOperandVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
