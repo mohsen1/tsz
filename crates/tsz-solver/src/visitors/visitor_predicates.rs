@@ -961,12 +961,7 @@ impl<'a> FreeTypeParamChecker<'a> {
         if let Some(&cached) = self.memo.get(&type_id) {
             return cached;
         }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
         if matches!(
@@ -976,9 +971,37 @@ impl<'a> FreeTypeParamChecker<'a> {
                 | TypeData::ThisType
                 | TypeData::BoundParameter(_)
         ) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+        // Terminal-kind fast path: types with no children to walk and no
+        // cycle risk. Mirrors the iter-7 fix in `ContainsTypeChecker.check`
+        // — the recursive walker's leaf arm in `check_key` returns `false`
+        // for these kinds, so skipping the `guard.enter`/`guard.leave`
+        // HashSet round-trip is a pure win. Memo is still updated so
+        // repeat visits stay O(1).
+        //
+        // `Intrinsic`, `ThisType`, and `BoundParameter` are excluded:
+        // `Intrinsic` is handled by the entry-level `is_intrinsic()` check;
+        // `ThisType` and `BoundParameter` already returned `true` from the
+        // predicate above.
+        if matches!(
+            key,
+            TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
         let result = self.check_key(&key);
         self.guard.leave(type_id);
@@ -1110,18 +1133,39 @@ impl<'a> FreeInferChecker<'a> {
         if let Some(&cached) = self.memo.get(&type_id) {
             return cached;
         }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
         if matches!(key, TypeData::Infer(_)) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+        // Terminal-kind fast path: types with no children to walk and no
+        // cycle risk. Mirrors the iter-7 fix in `ContainsTypeChecker.check`.
+        // `TypeParameter` is included here because this checker
+        // *deliberately* does not walk into TypeParameter constraints
+        // (see `check_key`'s leaf arm comment), so a TypeParameter at the
+        // entry has no children to visit.
+        if matches!(
+            key,
+            TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
         let result = self.check_key(&key);
         self.guard.leave(type_id);
