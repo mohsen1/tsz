@@ -113,7 +113,8 @@ pub fn look_ahead_is_type_alias_declaration(
     current_token: SyntaxKind,
 ) -> bool {
     look_ahead_is_on_same_line(scanner, current_token, |token| {
-        is_identifier_or_keyword(token) || token == SyntaxKind::NumericLiteral
+        (is_identifier_or_keyword(token) && token != SyntaxKind::VoidKeyword)
+            || token == SyntaxKind::NumericLiteral
     })
 }
 
@@ -435,6 +436,13 @@ mod tests {
     fn look_ahead_is_type_alias_declaration_false_after_line_break() {
         // ASI: `type\nFoo = ...` must not parse as a type alias decl.
         let (mut scanner, current) = scanner_after_first("type\nFoo = number");
+        assert!(!look_ahead_is_type_alias_declaration(&mut scanner, current));
+    }
+
+    #[test]
+    fn look_ahead_is_type_alias_declaration_rejects_void_keyword() {
+        let (mut scanner, current) = scanner_after_first("type void = T");
+        assert_eq!(current, SyntaxKind::TypeKeyword);
         assert!(!look_ahead_is_type_alias_declaration(&mut scanner, current));
     }
 
