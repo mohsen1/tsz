@@ -794,20 +794,45 @@ where
             return cached;
         }
 
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
-
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
 
         if (self.predicate)(&key) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+
+        // Terminal-kind fast path: types with no children to walk and no
+        // cycle risk. The recursive `check_key` below would dispatch to its
+        // leaf arm and immediately return `false` for these kinds, so
+        // skipping the `guard.enter`/`guard.leave` HashSet round-trip is a
+        // pure win. Memo is still updated so repeat visits of the same
+        // type within one `contains_type_matching` call stay O(1).
+        //
+        // `Intrinsic` is already handled by the entry-level `is_intrinsic`
+        // check above. The remaining terminal kinds match the recursive
+        // walker's leaf arm in `check_key`.
+        if matches!(
+            key,
+            TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
 
         let result = self.check_key(&key);
