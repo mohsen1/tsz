@@ -272,20 +272,20 @@ fn compare_diagnostics(
 const PRODUCTION_SUPPRESSION_DEBT_REASON: &str =
     "known compiler debt previously hidden by production diagnostic suppression";
 
+// NOTE: Each entry suppresses TS2589/etc. regressions for *failing* tests in
+// the matched paths. When a matching test starts passing, the entry becomes
+// dead code (the `mark_known_conformance_debt` branch only fires on `Fail`).
+// Periodically prune patterns whose only matches now PASS — `arrayFrom` and
+// `recursiveConditionalTypes` etc. still have a failing variant, so they
+// stay; entries below are the live set as of 2026-05-01.
 const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
-    "typeTagOnFunctionReferencesGeneric",
-    "umd-augmentation",
     "arrayFrom",
     "expandoFunctionSymbolPropertyJs",
-    "returnTypePredicateIsInstantiateInContextOfTarget",
     "inferTypePredicates",
     "recursiveConditionalTypes",
     "moduleAugmentationDoesNamespaceEnumMergeOfReexport",
-    "mergeSymbolReexportedTypeAliasInstantiation",
     "jsxNamespaceImplicitImportJSXNamespaceFromConfigPickedOverGlobalOne",
     "jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne",
-    "recursivelyExpandingUnionNoStackoverflow",
-    "genericRecursiveImplicitConstructorErrors3",
     "instantiationExpressionErrorNoCrash",
     "styledComponentsInstantiaionLimitNotReached",
     "intersectionsOfLargeUnions2",
@@ -293,11 +293,8 @@ const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
     "spellingSuggestionJSXAttribute",
     "isolatedDeclarationErrorsObjects",
     "mixinAccessModifiers",
-    "mixinAccessors1",
-    "namespacesWithTypeAliasOnlyExportsMerge",
     "typeFromPropertyAssignment39",
     "promiseTry",
-    "jsxRuntimePragma",
     "defaultPropertyAssignedClassWithPrototype",
 ];
 
