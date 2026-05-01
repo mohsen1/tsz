@@ -1011,52 +1011,83 @@ impl<'a> CheckerState<'a> {
         // - `p2: false` further narrows [0, 2] to [2] (member 0 has p2: true, not assignable)
         // Result: only member 2 is applicable, and excess property check uses that
         // narrowed set for the error message.
+        //
+        // A source property is treated as a discriminator when the *target union*
+        // exposes the property as a tsc-style discriminant property
+        // (`CheckFlags.Discriminant` = `HasLiteralType | HasNonUniformType`):
+        //   - it must occur in at least one member,
+        //   - the collected property types must contain at least one unit type, and
+        //   - the collected property types must differ across members.
+        // Once that holds, members that lack the property are filtered out — this
+        // mirrors tsc's `discriminateTypeByDiscriminableItems` where
+        // `getTypeOfPropertyOfType` returns undefined for missing properties and
+        // the member is dropped from the candidate set.
         let mut active_indices: Vec<usize> = (0..union_shapes.len()).collect();
         let mut did_narrow = false;
 
         for (prop_name, prop_type) in direct_discriminants {
-            let source_prop = source_props.iter().find(|prop| prop.name == prop_name);
-            let Some(source_prop) = source_prop else {
-                continue;
-            };
-
-            // Collect target property types only for the currently-active members.
-            // If any active member lacks the property, skip this discriminant.
-            let mut target_prop_types = Vec::with_capacity(active_indices.len());
-            let mut all_active_have_prop = true;
-            for &active_i in &active_indices {
-                let shape = &union_shapes[active_i];
-                let Some(target_prop) =
-                    shape.properties.iter().find(|p| p.name == source_prop.name)
-                else {
-                    all_active_have_prop = false;
-                    break;
-                };
-                target_prop_types.push(target_prop.type_id);
-            }
-
-            if !all_active_have_prop {
+            if source_props.iter().all(|prop| prop.name != prop_name) {
                 continue;
             }
 
-            // tsc's discriminant narrowing doesn't require ALL member property types
-            // to be unit types. It checks which members the source unit value is
-            // assignable to. E.g., for { a: null } | { a: string }, source `a: null`
-            // narrows to the first member because null is assignable to null but not
-            // to string (in strict mode).
-            let new_active: Vec<usize> = target_prop_types
+            // Collect (member_index, target_prop_type) for the FULL union, so the
+            // discriminator decision is based on the union shape rather than the
+            // currently-narrowed set (which can shrink to a single member during
+            // iteration but should still treat the original union as the reference
+            // for "is this a discriminant property?").
+            let mut full_members_with_prop: Vec<(usize, TypeId)> = Vec::new();
+            for (i, shape) in union_shapes.iter().enumerate() {
+                if let Some(target_prop) = shape.properties.iter().find(|p| p.name == prop_name) {
+                    full_members_with_prop.push((i, target_prop.type_id));
+                }
+            }
+
+            if full_members_with_prop.is_empty() {
+                continue;
+            }
+
+            // tsc's discriminant requires at least one unit/literal type and
+            // non-uniform types across the occurrences. Without those, narrowing
+            // by the property would risk over-eliminating union members whose
+            // shape only happened to differ in non-discriminator slots (for
+            // example `{ a: 1, first: string } | { a: 2, second: string }` where
+            // `first` is not a discriminant, only `a` is).
+            let any_unit = full_members_with_prop
                 .iter()
-                .enumerate()
-                .filter_map(|(local_i, &target_ty)| {
-                    self.is_subtype_of(prop_type, target_ty)
-                        .then_some(active_indices[local_i])
+                .any(|(_, ty)| query::is_unit_type(self.ctx.types, *ty));
+            if !any_unit {
+                continue;
+            }
+            let first_ty = full_members_with_prop[0].1;
+            let non_uniform = full_members_with_prop.iter().any(|(_, ty)| *ty != first_ty);
+            if !non_uniform {
+                continue;
+            }
+
+            // Filter active members: drop members that lack the property OR
+            // whose target type does not accept the source unit value.
+            let candidate: Vec<usize> = active_indices
+                .iter()
+                .copied()
+                .filter(|&i| {
+                    full_members_with_prop
+                        .iter()
+                        .find(|(idx, _)| *idx == i)
+                        .is_some_and(|(_, target_ty)| self.is_subtype_of(prop_type, *target_ty))
                 })
                 .collect();
 
-            if !new_active.is_empty() && new_active.len() < active_indices.len() {
-                active_indices = new_active;
+            if candidate.is_empty() {
+                // Don't apply this discriminator — keep the previous narrowed set.
+                // Mirrors tsc's `if (!candidate.length) break;` which falls back
+                // to the prior matched set rather than emptying it.
+                continue;
+            }
+
+            if candidate.len() < active_indices.len() {
                 did_narrow = true;
             }
+            active_indices = candidate;
         }
 
         if did_narrow && active_indices.len() < union_shapes.len() {
