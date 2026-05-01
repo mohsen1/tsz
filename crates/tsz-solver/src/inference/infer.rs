@@ -739,7 +739,8 @@ impl<'a> InferenceContext<'a> {
                     return true;
                 }
             }
-            if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(bound)
+            if !bound.is_intrinsic()
+                && let Some(TypeData::TypeParameter(info)) = self.interner.lookup(bound)
                 && self.param_depends_on_targets(info.name, targets, visited)
             {
                 return true;
@@ -1225,9 +1226,10 @@ impl<'a> InferenceContext<'a> {
     ) -> bool {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
-        info.contra_candidates
-            .iter()
-            .any(|c| !matches!(db.lookup(c.type_id), Some(TypeData::TypeParameter(_))))
+        info.contra_candidates.iter().any(|c| {
+            c.type_id.is_intrinsic()
+                || !matches!(db.lookup(c.type_id), Some(TypeData::TypeParameter(_)))
+        })
     }
 
     /// Check whether an inference variable has any contravariant candidates that are
