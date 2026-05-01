@@ -17,6 +17,10 @@ use tsz_common::Atom;
 /// Function or Callable. Also includes the string index signature value type
 /// if it's callable. Used for contextual typing of callback-bearing objects.
 pub fn collect_callable_property_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    // Fast path: intrinsics are never `Object`/`ObjectWithIndex`.
+    if type_id.is_intrinsic() {
+        return Vec::new();
+    }
     let shape_id = match db.lookup(type_id) {
         Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
         _ => return Vec::new(),
@@ -137,6 +141,10 @@ pub fn extract_type_params_for_call(
 /// only one signature. Used by the checker to emit TS2743 when no overload matches
 /// the provided type argument count.
 pub fn overload_type_param_counts(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<usize>> {
+    // Fast path: intrinsics are never `Callable(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
@@ -544,6 +552,12 @@ pub fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: Type
 /// If the type is a union, filters to only tuple/array members and returns their union.
 /// Returns None if no array/tuple constituents are found.
 pub fn get_array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // Fast path: intrinsics are never Tuple/Array/ReadonlyType/Application/
+    // Mapped/Conditional/Lazy/Union — the match below would fall through to
+    // the trailing `_` arm.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => Some(type_id),
         // `readonly T[]` and `readonly [A, B]` are wrapped in ReadonlyType — unwrap and retry.
