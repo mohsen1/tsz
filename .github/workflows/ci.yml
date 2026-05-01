@@ -250,6 +250,7 @@ jobs:
           tar --create --file node-harness.tar \
             scripts/node_modules/ \
             scripts/emit/dist/ \
+            TypeScript/Herebyfile.mjs \
             TypeScript/built/local \
             TypeScript/node_modules \
             TypeScript/tests/cases/fourslash

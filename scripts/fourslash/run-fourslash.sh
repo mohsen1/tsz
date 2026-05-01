@@ -174,6 +174,7 @@ get_target_dir() {
 
 ensure_submodule() {
     if [[ -f "$TS_DIR/built/local/harness/fourslashImpl.js" ]] \
+        && [[ -f "$TS_DIR/Herebyfile.mjs" ]] \
         && [[ -d "$TS_DIR/tests/cases/fourslash" ]]; then
         log_info "Using prepared TypeScript fourslash harness"
         return
