@@ -412,6 +412,10 @@ name = "ts2344_keyof_bare_tparam_defer_tests"
 path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 
 [[test]]
+name = "ts2344_widen_literal_arg_display_tests"
+path = "tests/ts2344_widen_literal_arg_display_tests.rs"
+
+[[test]]
 name = "promise_constructor_capability_tests"
 path = "tests/promise_constructor_capability_tests.rs"
 
