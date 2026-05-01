@@ -340,6 +340,15 @@ impl<'a> InferenceContext<'a> {
 
     /// Get the base primitive kind for a literal type.
     fn get_literal_base_kind(&self, type_id: TypeId) -> Option<u8> {
+        // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean),
+        // so they have base kind 2. Other intrinsics resolve to Intrinsic and
+        // never match Literal — short-circuit to None.
+        if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+            return Some(2);
+        }
+        if type_id.is_intrinsic() {
+            return None;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Literal(LiteralValue::String(_))) => Some(0),
             Some(TypeData::Literal(LiteralValue::Number(_))) => Some(1),
