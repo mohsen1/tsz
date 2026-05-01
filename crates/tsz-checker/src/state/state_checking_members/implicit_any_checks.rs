@@ -40,6 +40,12 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.no_implicit_any() || has_contextual_type {
             return;
         }
+        // JSDoc-declared function-type parameters can be represented as
+        // synthetic Parameter nodes inside comment spans. They are not runtime
+        // function parameters and should not trigger TS7006.
+        if self.is_node_inside_jsdoc_comment(param.name) {
+            return;
+        }
         // Skip rest parameters named 'arguments' — tsc emits TS1100 instead of TS7019
         // for `...arguments` because 'arguments' is a reserved identifier in strict mode.
         if param.dot_dot_dot_token
@@ -352,6 +358,25 @@ impl<'a> CheckerState<'a> {
                 | "any"
                 | "unknown"
         )
+    }
+
+    fn is_node_inside_jsdoc_comment(&self, node_idx: NodeIndex) -> bool {
+        use tsz_common::comments::is_jsdoc_comment;
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        comments.iter().any(|comment| {
+            is_jsdoc_comment(comment, source_text)
+                && node.pos >= comment.pos
+                && node.pos < comment.end
+        })
     }
 
     fn param_node_for_implicit_any_diagnostic(

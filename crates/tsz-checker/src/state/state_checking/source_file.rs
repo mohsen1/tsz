@@ -531,6 +531,26 @@ impl<'a> CheckerState<'a> {
                 .error(diag.start, diag.length, diag.message_text, diag.code);
         }
 
+        // JS JSDoc typedef/callback function-type parameters are comment-only
+        // syntax and must not produce runtime-parameter TS7006 diagnostics.
+        if self.is_js_file()
+            && let Some(sf) = self.ctx.arena.source_files.first()
+        {
+            use tsz_common::comments::is_jsdoc_comment;
+            self.ctx.diagnostics.retain(|diag| {
+                if diag.code
+                    != tsz_common::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                {
+                    return true;
+                }
+                !sf.comments.iter().any(|comment| {
+                    is_jsdoc_comment(comment, &sf.text)
+                        && diag.start >= comment.pos
+                        && diag.start < comment.end
+                })
+            });
+        }
+
         self.ctx.diagnostics.retain(|diag| {
             diag.code != tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
                 || !is_nested_same_wrapper_assignability_message(&diag.message_text)

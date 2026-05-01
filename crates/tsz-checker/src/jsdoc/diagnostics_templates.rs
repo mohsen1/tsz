@@ -3,6 +3,131 @@
 use crate::state::CheckerState;
 
 impl<'a> CheckerState<'a> {
+    /// TS1274: In JSDoc, `@template in/out` is invalid on function declarations.
+    ///
+    /// TypeScript allows variance modifiers on class/interface/type-alias type
+    /// parameters, but not on function type parameters. In JS sources this
+    /// shows up through JSDoc `@template` tags, so we validate function-hosted
+    /// JSDoc here and emit TS1274 at the modifier token.
+    pub(crate) fn check_jsdoc_function_template_variance_modifiers(
+        &mut self,
+        func_idx: tsz_parser::parser::NodeIndex,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, format_message};
+        use tsz_common::diagnostics::get_message_template;
+
+        if !self.is_js_file() {
+            return;
+        }
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let Some(func_node) = self.ctx.arena.get(func_idx) else {
+            return;
+        };
+
+        let Some((_jsdoc, comment_pos)) =
+            self.try_leading_jsdoc_with_pos(comments, func_node.pos, source_text)
+        else {
+            return;
+        };
+
+        let comment_end = func_node.pos.min(source_text.len() as u32) as usize;
+        let raw_comment = &source_text[comment_pos as usize..comment_end];
+        let mut cursor = 0usize;
+
+        while let Some(rel) = raw_comment[cursor..].find("@template") {
+            let template_start = cursor + rel;
+            let mut idx = template_start + "@template".len();
+
+            while let Some(ch) = raw_comment[idx..].chars().next() {
+                if ch == ' ' || ch == '\t' || ch == '*' {
+                    idx += ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+
+            // Skip a leading JSDoc constraint shape: @template {Constraint} T
+            if raw_comment[idx..].starts_with('{') {
+                let mut depth = 0i32;
+                let mut close_rel = None;
+                for (off, ch) in raw_comment[idx..].char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close_rel = Some(off);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(close_rel) = close_rel {
+                    idx += close_rel + 1;
+                    while let Some(ch) = raw_comment[idx..].chars().next() {
+                        if ch.is_ascii_whitespace() || ch == '*' {
+                            idx += ch.len_utf8();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            let mut scan = idx;
+            while let Some(ch) = raw_comment[scan..].chars().next() {
+                if ch == '\n' || ch == '\r' || ch == '@' {
+                    break;
+                }
+                if ch == ',' || ch.is_ascii_whitespace() || ch == '*' {
+                    scan += ch.len_utf8();
+                    continue;
+                }
+
+                let token_start = scan;
+                while let Some(tok_ch) = raw_comment[scan..].chars().next() {
+                    if tok_ch == '_' || tok_ch == '$' || tok_ch.is_ascii_alphanumeric() {
+                        scan += tok_ch.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+                if token_start == scan {
+                    break;
+                }
+
+                let token = &raw_comment[token_start..scan];
+                if token == "const" {
+                    continue;
+                }
+                if token == "in" || token == "out" {
+                    let template = get_message_template(
+                        diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
+                    )
+                    .unwrap_or("'{0}' modifier can only appear on a type parameter of a class, interface or type alias");
+                    let message = format_message(template, &[token]);
+                    self.error_at_position(
+                        comment_pos + token_start as u32,
+                        token.len() as u32,
+                        &message,
+                        diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
+                    );
+                    break;
+                }
+                // First non-modifier token is the type parameter name.
+                break;
+            }
+
+            cursor = scan.max(template_start + "@template".len());
+        }
+    }
+
     /// TS8039: Check for `@template` tags that follow a `@typedef`, `@callback`,
     /// or `@overload` tag within the same JSDoc comment.
     ///
