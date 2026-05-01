@@ -155,16 +155,26 @@ impl<'a> PropertyAccessEvaluator<'a> {
             || self.is_key_in_mapped_constraint(mapped.constraint, "length")
             || crate::visitor::collect_all_types(self.interner(), mapped.template)
                 .into_iter()
-                .filter_map(|candidate| match self.interner().lookup(candidate) {
-                    Some(TypeData::IndexAccess(source, idx)) => match self.interner().lookup(idx) {
-                        Some(TypeData::TypeParameter(info))
-                            if info.name == mapped.type_param.name =>
-                        {
-                            Some(source)
+                .filter_map(|candidate| {
+                    if candidate.is_intrinsic() {
+                        return None;
+                    }
+                    match self.interner().lookup(candidate) {
+                        Some(TypeData::IndexAccess(source, idx)) => {
+                            if idx.is_intrinsic() {
+                                return None;
+                            }
+                            match self.interner().lookup(idx) {
+                                Some(TypeData::TypeParameter(info))
+                                    if info.name == mapped.type_param.name =>
+                                {
+                                    Some(source)
+                                }
+                                _ => None,
+                            }
                         }
                         _ => None,
-                    },
-                    _ => None,
+                    }
                 })
                 .any(|source| self.is_array_like_type(source));
 

@@ -256,11 +256,16 @@ fn widen_type_cached(
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
             let is_fresh_member = |m: TypeId| -> bool {
+                if m == TypeId::BOOLEAN_TRUE || m == TypeId::BOOLEAN_FALSE {
+                    return true;
+                }
+                if m.is_intrinsic() {
+                    return false;
+                }
                 matches!(
                     db.lookup(m),
                     Some(TypeData::Literal(_) | TypeData::UniqueSymbol(_))
-                ) || m == TypeId::BOOLEAN_TRUE
-                    || m == TypeId::BOOLEAN_FALSE
+                )
             };
             // Allow undefined/null/void as union members — they don't need
             // widening themselves but shouldn't prevent literal siblings from
@@ -269,6 +274,9 @@ fn widen_type_cached(
                 m == TypeId::UNDEFINED || m == TypeId::NULL || m == TypeId::VOID
             };
             let is_fresh_object_member = |m: TypeId| -> bool {
+                if m.is_intrinsic() {
+                    return false;
+                }
                 match db.lookup(m) {
                     Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => db
                         .object_shape(shape_id)
@@ -278,6 +286,9 @@ fn widen_type_cached(
                 }
             };
             let is_fresh_object_or_array_member = |m: TypeId| -> bool {
+                if m.is_intrinsic() {
+                    return false;
+                }
                 match db.lookup(m) {
                     Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => {
                         is_fresh_object_member(m)
