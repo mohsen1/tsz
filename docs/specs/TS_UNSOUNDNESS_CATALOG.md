@@ -1,6 +1,6 @@
 # TypeScript Unsoundness Catalog
 
-This document catalogs known, intentional deviations from sound set-theoretic typing in TypeScript. It serves as the requirement specification for the **Compatibility Layer** (The "Lawyer") defined in `docs/architecture/SOLVER.md`. The Core Solver (The "Judge") should remain mathematically sound; the rules below are applied by the wrapper to mimic TypeScript's pragmatic design choices.
+This document catalogs known, intentional deviations from sound set-theoretic typing in TypeScript. It serves as the requirement specification for the **Compatibility Layer** (The "Lawyer") whose boundary policy now lives in `docs/architecture/BOUNDARIES.md` (the historical `SOLVER.md` referenced here was deleted in a docs cleanup; BOUNDARIES.md is the surviving Solver/Checker boundary authority). The Core Solver (The "Judge") should remain mathematically sound; the rules below are applied by the wrapper to mimic TypeScript's pragmatic design choices.
 
 ## 1. The "Any" Type
 **Behavior:** Acts as both Top (`unknown`) and Bottom (`never`). It is assignable to everything and everything is assignable to it.
