@@ -310,3 +310,62 @@ fn node16_inline_type_specifier_ignores_plain_resolver_branch_for_esm_files() {
         "Expected no TS2459 when the opposite branch only exports the symbol, got: {diagnostics:?}"
     );
 }
+
+/// Regression: when an `import type` whole-declaration uses a `resolution-mode`
+/// override that resolves the name in the alternate branch, the alias's
+/// type-resolution path must honor the override. Otherwise the generic
+/// "no exported member" emitter fires a duplicate (or false-positive) TS2305
+/// anchored at the `IMPORT_SPECIFIER`, even though `check_imported_members`
+/// (the canonical syntactic site) correctly suppressed the diagnostic.
+///
+/// The aliases must be USED in the source so the type-resolver actually runs;
+/// without a use site the bug doesn't reproduce because alias types are
+/// computed lazily.
+#[test]
+fn node16_import_type_resolution_mode_alias_use_does_not_emit_ts2305() {
+    let diagnostics = check_node16_resolution_mode(
+        r#"
+import type { RequireInterface } from "pkg" with { "resolution-mode": "require" };
+import type { ImportInterface } from "pkg" with { "resolution-mode": "import" };
+
+export interface Local extends RequireInterface, ImportInterface {}
+"#,
+        1, // default route is `pkg-import.ts` (only ImportInterface)
+        Some(true),
+    );
+
+    let ts2305: Vec<_> = diagnostics.iter().filter(|d| d.code == 2305).collect();
+    assert!(
+        ts2305.is_empty(),
+        "Expected no TS2305 when whole-declaration `import type` resolution-mode overrides resolve the name in the alternate branch, got: {ts2305:?}"
+    );
+}
+
+/// Regression: an inline-type-only specifier (`import {type X as Y}`) does
+/// NOT have an effective resolution-mode override under node16, so
+/// `check_imported_members` rightly emits TS2305 at the imported identifier
+/// when the default branch lacks the symbol. The alias type-resolution path
+/// must NOT emit a *second* TS2305 anchored at the `IMPORT_SPECIFIER` node
+/// (which would wrap the `type` keyword as well as the identifier).
+#[test]
+fn node16_inline_type_specifier_emits_single_ts2305_per_missing_name() {
+    let diagnostics = check_node16_resolution_mode(
+        r#"
+import { type RequireInterface as Req } from "pkg" with { "resolution-mode": "require" };
+
+export interface Local extends Req {}
+"#,
+        1, // default route is `pkg-import.ts` (no RequireInterface)
+        Some(true),
+    );
+
+    let ts2305: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2305 && d.message_text.contains("RequireInterface"))
+        .collect();
+    assert_eq!(
+        ts2305.len(),
+        1,
+        "Expected exactly one TS2305 for the missing `RequireInterface` from the inline-type specifier (the canonical syntactic anchor); duplicates from the alias type-resolver indicate a regression. Got: {ts2305:?}"
+    );
+}
