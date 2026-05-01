@@ -899,8 +899,14 @@ impl<'a> Printer<'a> {
                     && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                     && let Some(prop) = self.arena.get_property_decl(member_node)
                 {
-                    if prop.initializer.is_none()
-                        || !self.class_property_initializer_has_equals(member_node, prop)
+                    let has_initializer = prop.initializer.is_some()
+                        && self.class_property_initializer_has_equals(member_node, prop);
+                    let should_lower_uninitialized_instance_field =
+                        self.ctx.options.use_define_for_class_fields
+                            && (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32)
+                            && !self.arena.is_static(&prop.modifiers)
+                            && prop.initializer.is_none();
+                    if (!has_initializer && !should_lower_uninitialized_instance_field)
                         || self
                             .arena
                             .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
@@ -1002,7 +1008,7 @@ impl<'a> Printer<'a> {
                             .map_or(member_node.end, |n| n.end);
                         field_inits.push((
                             ident_name,
-                            prop.initializer,
+                            prop.initializer.is_some().then_some(prop.initializer),
                             init_end,
                             leading_comments,
                             trailing_comments,
@@ -1117,9 +1123,14 @@ impl<'a> Printer<'a> {
                     self.write("writable: true,");
                     self.write_line();
                     self.write("value: ");
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(*init_idx);
-                    });
+                    match init_idx {
+                        Some(init) => {
+                            self.with_scoped_static_initializer_context_cleared(|this| {
+                                this.emit_expression(*init);
+                            });
+                        }
+                        None => self.write("void 0"),
+                    }
                     self.write_line();
                     self.decrease_indent();
                     self.write("});");
@@ -1132,9 +1143,14 @@ impl<'a> Printer<'a> {
                         self.write(name);
                     }
                     self.write(" = ");
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(*init_idx);
-                    });
+                    match init_idx {
+                        Some(init) => {
+                            self.with_scoped_static_initializer_context_cleared(|this| {
+                                this.emit_expression(*init);
+                            });
+                        }
+                        None => self.write("void 0"),
+                    }
                     self.write(";");
                     if !trailing.is_empty() {
                         for comment in trailing {
@@ -1299,7 +1315,10 @@ impl<'a> Printer<'a> {
                     && !auto_accessor_members
                         .iter()
                         .any(|(accessor_idx, _, _, _)| *accessor_idx == member_idx)
-                    && prop.initializer.is_some()
+                    && (prop.initializer.is_some()
+                        || (self.ctx.options.use_define_for_class_fields
+                            && (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32)
+                            && !self.arena.is_static(&prop.modifiers)))
                     && !self
                         .arena
                         .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
