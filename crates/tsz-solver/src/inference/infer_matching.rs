@@ -791,6 +791,9 @@ impl<'a> InferenceContext<'a> {
         let app = self.interner.type_application(app_id);
 
         // Extract DefId from the base type (must be Lazy(DefId))
+        if app.base.is_intrinsic() {
+            return None;
+        }
         let def_id = match self.interner.lookup(app.base)? {
             TypeData::Lazy(def_id) => def_id,
             _ => return None,
