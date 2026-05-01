@@ -1227,6 +1227,8 @@ impl<'a> ES5ClassTransformer<'a> {
     ) -> Vec<IRNode> {
         // Snapshot hoisted temps before converting statements
         let hoisted_before = self.extra_hoisted_temps.borrow().len();
+        let temp_counter_before = self.temp_var_counter.get();
+        self.temp_var_counter.set(0);
 
         let mut stmts = if let Some(block_node) = self.arena.get(block_idx)
             && let Some(block) = self.arena.get_block(block_node)
@@ -1265,6 +1267,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 .collect();
             stmts.insert(0, IRNode::VarDeclList(var_decls));
         }
+        self.temp_var_counter.set(temp_counter_before);
 
         // If we have a class_alias, prepend the alias declaration: `var <alias> = this;`
         if let Some(alias) = class_alias {

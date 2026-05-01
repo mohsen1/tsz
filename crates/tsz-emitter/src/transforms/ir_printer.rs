@@ -674,6 +674,21 @@ impl<'a> IRPrinter<'a> {
                 if !has_defaults
                     && !has_rest_to_lower
                     && should_emit_single_line
+                    && body.len() == 2
+                    && matches!(body[0], IRNode::VarDeclList(_))
+                    && matches!(body[1], IRNode::ReturnStatement(Some(_)))
+                {
+                    self.write("{ ");
+                    self.emit_node(&body[0]);
+                    self.write(" ");
+                    self.emit_node(&body[1]);
+                    self.write(" }");
+                    return;
+                }
+
+                if !has_defaults
+                    && !has_rest_to_lower
+                    && should_emit_single_line
                     && body.len() == 1
                     && match &body[0] {
                         IRNode::ReturnStatement(Some(expr)) => {
