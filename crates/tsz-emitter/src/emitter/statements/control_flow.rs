@@ -523,6 +523,10 @@ impl<'a> Printer<'a> {
 
         if try_stmt.catch_clause.is_some() {
             self.write_line();
+            if let Some(catch_node) = self.arena.get(try_stmt.catch_clause) {
+                let catch_start = self.skip_trivia_forward(catch_node.pos, catch_node.end);
+                self.emit_comments_before_pos(catch_start);
+            }
             self.emit(try_stmt.catch_clause);
         }
 

@@ -67,6 +67,32 @@ fn test_block_comment_after_comma_in_multiline_object() {
     );
 }
 
+/// A comment after a single-line source catch block belongs after the closing
+/// brace once the block is expanded, not on the emitted opening brace line.
+#[test]
+fn trailing_comment_after_single_line_catch_block_stays_after_block() {
+    let source = "try { } catch (x: unknown) { x.foo; } // error in the body\n";
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("catch (x) {\n    x.foo;\n} // error in the body"),
+        "Trailing comment after catch block should stay after the closing brace.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn leading_comment_before_catch_stays_before_catch_keyword() {
+    let source = "try { console.log(); }\n// @ts-ignore\ncatch (e: number) { console.log(e); }\n";
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("}\n// @ts-ignore\ncatch (e) {"),
+        "Leading comment before catch should not move inside catch parens.\nOutput:\n{output}"
+    );
+}
+
 /// When an erased type-only declaration (interface) is followed by a non-erased
 /// statement (`;`) on the same line, trailing comments on the non-erased
 /// statement must be preserved. Regression test for the initialization filter
