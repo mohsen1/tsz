@@ -418,6 +418,52 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// Mirror tsc's TS2344 display: when the constraint is a primitive base
+    /// type (`string` / `number` / `boolean` / `bigint` / `object` / `symbol`)
+    /// and the type-argument is a literal type whose primitive class differs,
+    /// widen the literal to its primitive base so the message reads
+    /// `Type 'number' does not satisfy the constraint 'string'` instead of
+    /// `Type '42' does not satisfy the constraint 'string'`. Literal-vs-literal
+    /// mismatches (e.g. `Foo<"false">` against constraint `"true"`) keep the
+    /// literal display.
+    fn widen_literal_type_arg_for_constraint_display(
+        &self,
+        type_arg: TypeId,
+        constraint: TypeId,
+    ) -> TypeId {
+        // Only widen when the constraint is itself a primitive base type
+        // (i.e., does not carry literal members). Literal/literal-union
+        // constraints keep the literal display intact.
+        if !Self::is_primitive_base_type_for_constraint_display(constraint) {
+            return type_arg;
+        }
+        // Widen if the arg is a single literal type whose primitive class
+        // differs from the constraint, OR a union all of whose members are
+        // literals widening to the same non-matching primitive.
+        let widened = common::widen_literal_type(self.ctx.types, type_arg);
+        if widened == type_arg {
+            return type_arg;
+        }
+        if widened == constraint {
+            // Widening would make the message look like
+            // `Type 'string' does not satisfy 'string'` which is misleading.
+            return type_arg;
+        }
+        widened
+    }
+
+    const fn is_primitive_base_type_for_constraint_display(constraint: TypeId) -> bool {
+        matches!(
+            constraint,
+            TypeId::STRING
+                | TypeId::NUMBER
+                | TypeId::BOOLEAN
+                | TypeId::BIGINT
+                | TypeId::OBJECT
+                | TypeId::SYMBOL
+        )
+    }
+
     /// Report TS2344: Type does not satisfy constraint.
     pub fn error_type_constraint_not_satisfied(
         &mut self,
@@ -444,7 +490,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let mut type_str = self.format_type_diagnostic(type_arg);
+        // tsc widens a literal type-arg to its primitive base when the
+        // constraint is a primitive base type that the literal's primitive
+        // class doesn't match (e.g. `Uppercase<42>` shows `Type 'number'`
+        // against constraint `string`). Literal-vs-literal mismatches keep
+        // the literal display (`Foo<"false">` against `"true"` shows
+        // `Type '"false"'`).
+        let display_type_arg =
+            self.widen_literal_type_arg_for_constraint_display(type_arg, constraint);
+        let mut type_str = self.format_type_diagnostic(display_type_arg);
         // When the type arg node is a `typeof expr<Args>` (TYPE_QUERY with type args),
         // tsc includes "typeof" in the TS2344 message. The type formatter strips
         // "typeof" from Application(TypeQuery, args), so we prepend it here.
