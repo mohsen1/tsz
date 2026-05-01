@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
                         &message,
                         diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
                     );
-                    break;
+                    continue;
                 }
                 // First non-modifier token is the type parameter name.
                 break;

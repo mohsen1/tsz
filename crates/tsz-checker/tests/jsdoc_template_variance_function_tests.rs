@@ -29,6 +29,34 @@ function f(x) {}
 }
 
 #[test]
+fn jsdoc_function_template_in_out_modifiers_emit_two_ts1274() {
+    let source = r#"
+/**
+ * @template in out T
+ * @param {T} x
+ */
+function f(x) {}
+"#;
+
+    let diagnostics = check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts1274_count = diagnostics.iter().filter(|d| d.code == 1274).count();
+    assert_eq!(
+        ts1274_count, 2,
+        "expected two TS1274 (one per modifier) for @template in out T on function JSDoc, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsdoc_template_variance_typedefs_do_not_emit_ts7006() {
     let source = r#"
 /**
