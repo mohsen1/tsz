@@ -83,6 +83,11 @@ pub fn is_object_like_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 fn is_object_like_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsics are object-like ONLY for OBJECT and FUNCTION.
+    // All other intrinsics fall through the match to `_ => false`.
+    if type_id.is_intrinsic() {
+        return type_id == TypeId::OBJECT || type_id == TypeId::FUNCTION;
+    }
     match types.lookup(type_id) {
         Some(
             TypeData::Object(_)
@@ -241,6 +246,9 @@ pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// For union types the body is considered deferred only when **every** member
 /// is itself deferred (e.g., `JsonValue[] | readonly JsonValue[]`).
 pub fn is_structurally_deferred_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(
             TypeData::Array(_)
@@ -1614,6 +1622,10 @@ struct ObjectTypeChecker;
 
 impl ObjectTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        // Fast path: intrinsic types match no arm. Skip lookup + dispatch.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match types.lookup(type_id) {
             Some(
                 TypeData::Object(_)
