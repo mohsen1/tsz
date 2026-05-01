@@ -37,6 +37,9 @@ fn constraint_is_primitive_type(interner: &dyn crate::QueryDatabase, type_id: Ty
     {
         return true;
     }
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match interner.lookup(type_id) {
         Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
@@ -72,6 +75,9 @@ fn constraint_contains_primitive_constrained_type_param(
     depth: u32,
 ) -> bool {
     if depth > 4 {
+        return false;
+    }
+    if type_id.is_intrinsic() {
         return false;
     }
 

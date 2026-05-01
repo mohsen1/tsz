@@ -774,6 +774,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         exclude_name: tsz_common::Atom,
         tracked: &FxHashSet<tsz_common::Atom>,
     ) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(type_id) {
             return tp.name != exclude_name && tracked.contains(&tp.name);
         }
@@ -802,6 +805,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         type_id: TypeId,
         tracked: &FxHashSet<tsz_common::Atom>,
     ) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(type_id) {
             return !tracked.contains(&tp.name);
         }
