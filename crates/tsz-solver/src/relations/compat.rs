@@ -36,6 +36,15 @@ impl<'a, R: TypeResolver> ShapeExtractor<'a, R> {
 
     /// Extract shape from a type, returning None if not an object type.
     pub(crate) fn extract(&mut self, type_id: TypeId) -> Option<u32> {
+        // Fast path: intrinsic types (primitives, any, never, void, etc.)
+        // never have an object shape — `visit_intrinsic` always returns
+        // `None`. Short-circuit before paying the recursion-guard
+        // enter/leave `FxHashSet` round-trip. `is_intrinsic()` is a free
+        // TypeId-range check. Mirrors the same pattern as #1988 (visitor
+        // predicates) and #1996 (`RecursiveTypeCollector`).
+        if type_id.is_intrinsic() {
+            return None;
+        }
         match self.guard.enter(type_id) {
             crate::recursion::RecursionResult::Entered => {}
             _ => return None, // Cycle or limits exceeded
