@@ -1555,6 +1555,17 @@ struct LiteralTypeChecker;
 
 impl LiteralTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        // Fast path: intrinsic types are never literal types EXCEPT for
+        // `BOOLEAN_TRUE` (14) and `BOOLEAN_FALSE` (15) which are reserved
+        // intrinsic IDs for the `true` / `false` literal types. All other
+        // intrinsic IDs match no arm and fall through to `_ => false`.
+        // `is_intrinsic()` is a free `TypeId`-range check; the explicit
+        // exception preserves slow-path behaviour without `TypeData`
+        // lookup. Same family as #2001 / #2005 / #2008 / #2009 / #2014
+        // / #2019 / #2025.
+        if type_id.is_intrinsic() {
+            return type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE;
+        }
         match types.lookup(type_id) {
             Some(TypeData::Literal(_)) => true,
             Some(TypeData::Enum(_, structural_type)) => Self::check(types, structural_type),
