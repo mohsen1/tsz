@@ -567,6 +567,9 @@ impl<'a> InferenceContext<'a> {
         params: &mut FxHashSet<Atom>,
         visited: &mut FxHashSet<TypeId>,
     ) {
+        if ty.is_intrinsic() {
+            return;
+        }
         if !visited.insert(ty) {
             return;
         }
@@ -749,6 +752,9 @@ impl<'a> InferenceContext<'a> {
         target: Atom,
         visited: &mut FxHashSet<TypeId>,
     ) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
         if !visited.insert(ty) {
             return false;
         }
