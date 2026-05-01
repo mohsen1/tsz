@@ -31,6 +31,76 @@ fn test_definition_store_basic() {
     assert_eq!(retrieved.body, Some(TypeId::NUMBER));
 }
 
+fn semantic_def_entry(
+    name: &str,
+    file_id: u32,
+    kind: tsz_binder::SemanticDefKind,
+) -> tsz_binder::SemanticDefEntry {
+    tsz_binder::SemanticDefEntry {
+        kind,
+        name: name.to_string(),
+        file_id,
+        span_start: 0,
+        type_param_count: 0,
+        type_param_names: Vec::new(),
+        is_exported: false,
+        enum_member_names: Vec::new(),
+        is_const: false,
+        is_abstract: false,
+        extends_names: Vec::new(),
+        implements_names: Vec::new(),
+        parent_namespace: None,
+        is_global_augmentation: false,
+        is_declare: false,
+    }
+}
+
+#[test]
+fn test_definition_store_semantic_def_overlays_override_base_without_losing_base_only_defs() {
+    let interner = create_test_interner();
+    let mut base = rustc_hash::FxHashMap::default();
+    base.insert(
+        tsz_binder::SymbolId(1),
+        semantic_def_entry("BaseOnly", 1, tsz_binder::SemanticDefKind::Interface),
+    );
+    base.insert(
+        tsz_binder::SymbolId(2),
+        semantic_def_entry("BaseShadowed", 1, tsz_binder::SemanticDefKind::Interface),
+    );
+
+    let mut overlay = rustc_hash::FxHashMap::default();
+    overlay.insert(
+        tsz_binder::SymbolId(2),
+        semantic_def_entry("OverlayWins", 2, tsz_binder::SemanticDefKind::Class),
+    );
+
+    let store = DefinitionStore::from_semantic_defs_with_overlays(&base, [&overlay], |s| {
+        interner.intern_string(s)
+    });
+
+    let base_only = store
+        .find_def_by_symbol(1)
+        .and_then(|def_id| store.get(def_id))
+        .expect("base-only semantic def should be registered");
+    assert_eq!(base_only.name, interner.intern_string("BaseOnly"));
+    assert_eq!(base_only.file_id, Some(1));
+    assert_eq!(base_only.kind, DefKind::Interface);
+
+    let overlay_def = store
+        .find_def_by_symbol(2)
+        .and_then(|def_id| store.get(def_id))
+        .expect("overlay semantic def should be registered");
+    assert_eq!(overlay_def.name, interner.intern_string("OverlayWins"));
+    assert_eq!(overlay_def.file_id, Some(2));
+    assert_eq!(overlay_def.kind, DefKind::Class);
+    assert!(
+        store
+            .find_defs_by_name(interner.intern_string("BaseShadowed"))
+            .is_none(),
+        "shadowed base entry must not also register a stale definition"
+    );
+}
+
 #[test]
 fn test_definition_store_interface() {
     let interner = create_test_interner();
