@@ -820,6 +820,9 @@ impl<'a> InferenceContext<'a> {
         {
             return true;
         }
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Union(list_id)) => {
                 let members = self.interner.type_list(list_id);
