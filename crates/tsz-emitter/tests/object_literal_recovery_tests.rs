@@ -73,3 +73,30 @@ fn legitimate_trailing_comma_preserved() {
         "second property must be emitted; output:\n{output}"
     );
 }
+
+/// A recovered object method with no body (`{ foo(); }`) is erased by tsc
+/// instead of being printed as a synthetic empty method.
+#[test]
+fn object_method_without_body_is_dropped() {
+    let source = "var v = { foo(); };\n";
+    let output = print_es2015(source);
+    assert_eq!(output.trim_end(), "var v = {};");
+}
+
+/// A comma-terminated recovered object method is emitted by tsc as an empty
+/// method, and its trailing comment must not leak into the next method's params.
+#[test]
+fn comma_terminated_object_method_without_body_is_recovered() {
+    let source = "var b = {\n    foo(x = 1), // error\n    foo(x = 1) { }, // error\n};\n";
+    let output = print_es2015(source);
+
+    assert_eq!(
+        output.matches("foo(x = 1) { }").count(),
+        2,
+        "Both object methods should be emitted; output:\n{output}"
+    );
+    assert!(
+        !output.contains("foo(// error"),
+        "Trailing comment from recovered method must not move into params; output:\n{output}"
+    );
+}
