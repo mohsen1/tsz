@@ -1064,8 +1064,18 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Filter active members: drop members that lack the property OR
-            // whose target type does not accept the source unit value.
+            // Filter active members: drop members whose target type does not
+            // accept the source unit value. Members that *lack* the property
+            // are kept as candidates — tsc's `discriminateTypeByDiscriminableItems`
+            // treats missing properties on union members as compatible at the
+            // discriminator step (the missing property becomes an excess
+            // candidate downstream). Previously this filter dropped lacking
+            // members too, which caused TS2353 to be missed for object literals
+            // like `{ subkind: 1, kind: "b" }` against
+            // `{ kind: "a"; subkind: 0|1; … } | { kind: "b" }` — kind narrows
+            // to member 2, but tsz also dropped member 2 on the `subkind`
+            // pass because it lacks subkind, leaving no narrowed member and
+            // skipping excess emission entirely. See `compiler/missingDiscriminants*.ts`.
             let candidate: Vec<usize> = active_indices
                 .iter()
                 .copied()
@@ -1073,7 +1083,9 @@ impl<'a> CheckerState<'a> {
                     full_members_with_prop
                         .iter()
                         .find(|(idx, _)| *idx == i)
-                        .is_some_and(|(_, target_ty)| self.is_subtype_of(prop_type, *target_ty))
+                        .is_none_or(|(_, target_ty)| {
+                            self.is_subtype_of(prop_type, *target_ty)
+                        })
                 })
                 .collect();
 

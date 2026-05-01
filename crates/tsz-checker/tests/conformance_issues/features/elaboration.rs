@@ -829,6 +829,56 @@ function check<U>(y: Bar<U>, n: number) {
 /// `exports.someProp` inside the same file, the receiver Object cached
 /// in `namespace_module_names` was synthesized from an early-call race
 /// in `infer_commonjs_export_rhs_type` (returned UNDEFINED before the
+/// Discriminated-union excess-property check must keep union members that
+/// *lack* a discriminator property as candidates rather than dropping them.
+/// tsc's `discriminateTypeByDiscriminableItems` treats missing-on-member as
+/// compatible at the discriminator step (the missing source property becomes
+/// an excess candidate downstream).
+///
+/// Without the fix, an object literal like `{ subkind: 1, kind: "b" }` against
+/// `{ kind: "a"; subkind: 0|1; ... } | { kind: "b" }` skipped TS2353 because
+/// `subkind` narrowing dropped the `{ kind: "b" }` member (which lacks
+/// `subkind`), leaving no narrowed member and abandoning excess emission.
+///
+/// Repro from `compiler/missingDiscriminants{,2}.ts`.
+#[test]
+fn test_discriminated_union_keeps_lacking_members_for_excess_check() {
+    let source = r#"
+type Item =
+  | { kind: "a"; subkind: 0; value: string }
+  | { kind: "a"; subkind: 1; value: number }
+  | { kind: "b" };
+
+const item1: Item = { kind: "b", subkind: 1 };
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 2353),
+        "Expected TS2353 (excess property `subkind` not in `{{ kind: \"b\" }}`); got: {diagnostics:?}"
+    );
+}
+
+/// Same rule with different discriminator property names (`tag` / `extra`)
+/// — confirms the fix is keyed on the *shape* of the discriminant (one
+/// non-uniform unit-typed property), not on any specific identifier (per
+/// CLAUDE.md §25 anti-hardcoding checklist).
+#[test]
+fn test_discriminated_union_keeps_lacking_members_alt_names() {
+    let source = r#"
+type Variant =
+  | { tag: "x"; extra: 0 }
+  | { tag: "x"; extra: 1 }
+  | { tag: "y" };
+
+const v: Variant = { tag: "y", extra: 1 };
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 2353),
+        "Expected TS2353 (excess property `extra` not in `{{ tag: \"y\" }}`); got: {diagnostics:?}"
+    );
+}
+
 /// function expression had been typed). Without the fix, the diagnostic
 /// fell through to `'typeof import("bar")'` instead of the structural
 /// shape.
