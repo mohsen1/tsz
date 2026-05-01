@@ -269,9 +269,16 @@ impl<'a> CheckerState<'a> {
         };
 
         let runtime_path = format!("{source}/{runtime_suffix}");
-        if self.module_exists_cross_file(&runtime_path)
-            || self.is_ambient_module_match(&runtime_path)
-            || self.jsx_runtime_file_exists_on_disk(&source, runtime_suffix)
+        // tsc treats jsxImportSource as a package specifier — an absolute path
+        // (`/foo`) cannot be a valid package source even when a same-named
+        // source file happens to exist in the project, so it always reports
+        // TS2875. Skip the resolution checks when the source is absolute so
+        // we match that behavior.
+        let source_is_absolute = source.starts_with('/');
+        if !source_is_absolute
+            && (self.module_exists_cross_file(&runtime_path)
+                || self.is_ambient_module_match(&runtime_path)
+                || self.jsx_runtime_file_exists_on_disk(&source, runtime_suffix))
         {
             return;
         }
