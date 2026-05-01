@@ -961,12 +961,7 @@ impl<'a> FreeTypeParamChecker<'a> {
         if let Some(&cached) = self.memo.get(&type_id) {
             return cached;
         }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
         if matches!(
@@ -976,9 +971,31 @@ impl<'a> FreeTypeParamChecker<'a> {
                 | TypeData::ThisType
                 | TypeData::BoundParameter(_)
         ) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+        // Terminal-kind fast path: same set that `check_key` returns `false`
+        // for unconditionally. Short-circuit before the recursion-guard
+        // enter/leave so common terminals (`Lazy(DefId)`, `TypeQuery`, etc.)
+        // skip the per-call `FxHashSet` insert + remove. Mirrors #1978/#1990.
+        if matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
         let result = self.check_key(&key);
         self.guard.leave(type_id);
@@ -1110,18 +1127,39 @@ impl<'a> FreeInferChecker<'a> {
         if let Some(&cached) = self.memo.get(&type_id) {
             return cached;
         }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
         if matches!(key, TypeData::Infer(_)) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+        // Terminal-kind fast path: same set that `check_key` returns `false`
+        // for unconditionally (TypeParameter is included here because this
+        // walker, by design, does not descend into TypeParameter
+        // constraints/defaults). Short-circuit before the recursion-guard
+        // enter/leave dance. Mirrors #1978/#1990.
+        if matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
         let result = self.check_key(&key);
         self.guard.leave(type_id);
@@ -1248,19 +1286,42 @@ impl<'a> ShallowContainsTypeChecker<'a> {
         if let Some(&cached) = self.memo.get(&type_id) {
             return cached;
         }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
         // Direct match: is this type parameter the one we're looking for?
         if matches!(&key, TypeData::TypeParameter(info) if info.name == self.name) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+        // Terminal-kind fast path: same set that `check_key` returns `false`
+        // for unconditionally. Note: `TypeParameter(_)` is also a terminal
+        // here — by design "shallow" does not descend into constraints —
+        // but we exclude it from this short-circuit because the positive
+        // match above already drained the matching name. Any remaining
+        // `TypeParameter` is a non-match terminal. Mirrors #1978/#1990.
+        if matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
         let result = self.check_key(&key);
         self.guard.leave(type_id);
