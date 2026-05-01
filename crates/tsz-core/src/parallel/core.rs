@@ -59,6 +59,17 @@ use tsz_scanner::SyntaxKind;
 type ModuleExportEntry = FxHashMap<String, (String, Option<String>)>;
 type Reexports = FxHashMap<String, ModuleExportEntry>;
 
+fn build_sym_to_decl_indices(declaration_arenas: &DeclarationArenaMap) -> SymToDeclIndicesMap {
+    let mut sym_to_decl_indices: SymToDeclIndicesMap = FxHashMap::default();
+    for &(sym_id, decl_idx) in declaration_arenas.keys() {
+        sym_to_decl_indices
+            .entry(sym_id)
+            .or_default()
+            .push(decl_idx);
+    }
+    sym_to_decl_indices
+}
+
 /// Validate JSON syntax and return parse diagnostics for violations.
 ///
 /// TypeScript's JSON parser enforces strict JSON rules when parsing `.json` files.
@@ -1748,6 +1759,12 @@ pub struct BoundFile {
     /// so per-file binders share via `Arc::clone` instead of deep-cloning
     /// the underlying map.
     pub declaration_arenas: Arc<DeclarationArenaMap>,
+    /// Secondary index over this file's declaration arena subset.
+    ///
+    /// Built once during merge/remap so per-file binder reconstruction can
+    /// share it via `Arc::clone` instead of scanning `declaration_arenas` and
+    /// allocating a fresh derived map for every reconstructed binder.
+    pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
     /// Export visibility of namespace/module declaration nodes after binder rules.
     pub module_declaration_exports_publicly: Arc<FxHashMap<u32, bool>>,
     /// Persistent scopes (symbol IDs are global after merge).
@@ -1871,6 +1888,13 @@ impl BoundFile {
             * (std::mem::size_of::<(SymbolId, NodeIndex)>()
                 + std::mem::size_of::<Vec<Arc<NodeArena>>>()
                 + 8);
+
+        // sym_to_decl_indices
+        size += self.sym_to_decl_indices.capacity()
+            * (std::mem::size_of::<SymbolId>() + std::mem::size_of::<usize>() * 4 + 8);
+        for decl_indices in self.sym_to_decl_indices.values() {
+            size += decl_indices.capacity().saturating_sub(4) * std::mem::size_of::<NodeIndex>();
+        }
 
         // module_declaration_exports_publicly
         size += self.module_declaration_exports_publicly.capacity()
@@ -3821,6 +3845,8 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                     remapped_declaration_arenas.insert((new_sym_id, decl_idx), arenas.clone());
                 }
             }
+            let sym_to_decl_indices =
+                Arc::new(build_sym_to_decl_indices(&remapped_declaration_arenas));
 
             let symbols_with_non_local_declarations: FxHashSet<SymbolId> =
                 remapped_declaration_arenas
@@ -3873,6 +3899,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                 node_symbols: Arc::new(remapped_node_symbols),
                 symbol_arenas: Arc::new(remapped_symbol_arenas),
                 declaration_arenas: Arc::new(remapped_declaration_arenas),
+                sym_to_decl_indices,
                 module_declaration_exports_publicly: result
                     .module_declaration_exports_publicly
                     .clone(),
@@ -3954,13 +3981,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     // Build the secondary `sym_to_decl_indices` index over the program-wide
     // `declaration_arenas`. Checker paths that previously iterated every entry
     // filtering by `entry_sym_id == sym_id` use this to do a point lookup.
-    let mut sym_to_decl_indices: SymToDeclIndicesMap = FxHashMap::default();
-    for &(sym_id, decl_idx) in declaration_arenas.keys() {
-        sym_to_decl_indices
-            .entry(sym_id)
-            .or_default()
-            .push(decl_idx);
-    }
+    let sym_to_decl_indices = build_sym_to_decl_indices(&declaration_arenas);
 
     MergedProgram {
         files,
@@ -4612,6 +4633,7 @@ fn build_lib_bound_file_for_interface_checks(
     // map without disturbing the shared data.
     let mut declaration_arenas: DeclarationArenaMap = (*program.declaration_arenas).clone();
     add_user_global_interface_declaration_arenas(program, &mut declaration_arenas);
+    let sym_to_decl_indices = Arc::new(build_sym_to_decl_indices(&declaration_arenas));
 
     BoundFile {
         file_name: lib_file.file_name.clone(),
@@ -4620,6 +4642,7 @@ fn build_lib_bound_file_for_interface_checks(
         node_symbols: Arc::new(node_symbols),
         symbol_arenas: Arc::clone(&program.symbol_arenas),
         declaration_arenas: Arc::new(declaration_arenas),
+        sym_to_decl_indices,
         module_declaration_exports_publicly: Arc::new(FxHashMap::default()),
         scopes: Arc::new(Vec::new()),
         node_scope_ids: Arc::new(FxHashMap::default()),
@@ -5408,16 +5431,7 @@ pub fn create_binder_from_bound_file(
     file_idx: usize,
 ) -> BinderState {
     let declaration_arenas = Arc::clone(&file.declaration_arenas);
-    // The per-file subset is small; build a local `sym_to_decl_indices` from it
-    // so consumers that go through the secondary index still see the same set.
-    let mut sym_to_decl_indices_local: SymToDeclIndicesMap = FxHashMap::default();
-    for &(sym_id, decl_idx) in declaration_arenas.keys() {
-        sym_to_decl_indices_local
-            .entry(sym_id)
-            .or_default()
-            .push(decl_idx);
-    }
-    let sym_to_decl_indices = Arc::new(sym_to_decl_indices_local);
+    let sym_to_decl_indices = Arc::clone(&file.sym_to_decl_indices);
     let symbol_arenas = Arc::clone(&file.symbol_arenas);
 
     // Get file locals for this specific file
@@ -5526,14 +5540,7 @@ pub fn create_binder_from_bound_file_with_shared(
     // these paths are used by `check_files_parallel` and tests that expect the
     // binder's `declaration_arenas` to exclude lib-originated symbols.
     let declaration_arenas = Arc::clone(&file.declaration_arenas);
-    let mut sym_to_decl_indices_local: SymToDeclIndicesMap = FxHashMap::default();
-    for &(sym_id, decl_idx) in declaration_arenas.keys() {
-        sym_to_decl_indices_local
-            .entry(sym_id)
-            .or_default()
-            .push(decl_idx);
-    }
-    let sym_to_decl_indices = Arc::new(sym_to_decl_indices_local);
+    let sym_to_decl_indices = Arc::clone(&file.sym_to_decl_indices);
     let symbol_arenas = Arc::clone(&file.symbol_arenas);
 
     let mut file_locals = SymbolTable::new();

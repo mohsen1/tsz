@@ -1,7 +1,7 @@
 Task: Workstream 5 large-repo residency - share per-file declaration secondary index
-Status: claim
+Status: ready
 Branch: `perf/bound-file-sym-decl-index-arc`
-PR: pending
+PR: #2135
 
 Plan:
 - Add a per-file `sym_to_decl_indices` secondary index to `BoundFile`, built once during merge/remap.

@@ -1927,6 +1927,22 @@ export interface Row2 { b: string }
 
     let rebuilt_main_binder =
         crate::parallel::core::create_binder_from_bound_file(&program.files[0], &program, 0);
+    assert!(
+        std::sync::Arc::ptr_eq(
+            &rebuilt_main_binder.sym_to_decl_indices,
+            &program.files[0].sym_to_decl_indices
+        ),
+        "recreated binders should share the per-file declaration secondary index"
+    );
+    for &(sym_id, decl_idx) in program.files[0].declaration_arenas.keys() {
+        assert!(
+            program.files[0]
+                .sym_to_decl_indices
+                .get(&sym_id)
+                .is_some_and(|decl_indices| decl_indices.contains(&decl_idx)),
+            "per-file declaration secondary index should contain every declaration arena key"
+        );
+    }
     let row2_sym_id = rebuilt_main_binder
         .file_locals
         .get("Row2")
