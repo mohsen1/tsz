@@ -82,6 +82,16 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
     /// Returns a `TypeId` that represents the canonical structural form.
     /// Two types with the same structure will return the same `TypeId`.
     pub fn canonicalize(&mut self, type_id: TypeId) -> TypeId {
+        // Fast path: intrinsic types (primitives, any, never, void, etc.)
+        // are already canonical — the default arm of the inner match
+        // returns `type_id` unchanged for them. Skip the cache lookup,
+        // recursion-guard enter/leave, `TypeData` lookup, and match
+        // dispatch entirely. `is_intrinsic()` is a free `TypeId`-range
+        // check. Mirrors #2001 / #2005.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
         // 1. Check cache
         if let Some(&cached) = self.cache.get(&type_id) {
             return cached;
