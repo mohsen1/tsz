@@ -68,6 +68,24 @@ pub struct ModuleLookupError {
     pub message: String,
 }
 
+/// Render a resolved JS path for inclusion in a TS7016 diagnostic message.
+///
+/// tsc renders the resolved path without redundant `./` segments — neither
+/// as a leading prefix (`./node_modules/...`) nor as an interior segment
+/// (`/some/dir/./node_modules/...`). The relative-current-directory token
+/// is meaningful for module specifiers but not for the rendered file-path
+/// component of the diagnostic, so collapse it once at the formatting
+/// boundary. Path separators are normalised to forward slashes to match
+/// tsc's cross-platform output.
+fn display_resolved_js_path(path: &Path) -> String {
+    let raw = path.display().to_string().replace('\\', "/");
+    let mut collapsed = raw.replace("/./", "/");
+    if let Some(stripped) = collapsed.strip_prefix("./") {
+        collapsed = stripped.to_string();
+    }
+    collapsed
+}
+
 impl ModuleLookupResult {
     /// Resolved successfully to a file.
     pub const fn resolved(path: PathBuf) -> Self {
@@ -124,7 +142,7 @@ impl ModuleLookupResult {
                         message: format!(
                             "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
                             specifier,
-                            js_path.display()
+                            display_resolved_js_path(&js_path)
                         ),
                     })
                 } else {
@@ -156,7 +174,7 @@ impl ModuleLookupResult {
                     message: format!(
                         "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
                         specifier,
-                        resolved_path.display()
+                        display_resolved_js_path(&resolved_path)
                     ),
                 })
             } else {

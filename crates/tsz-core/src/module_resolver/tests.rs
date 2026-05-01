@@ -3410,6 +3410,54 @@ fn test_classify_untyped_js_without_no_implicit_any() {
     assert!(outcome.error.is_none(), "without noImplicitAny, no error");
 }
 
+#[test]
+fn ts7016_message_collapses_dot_segment_in_resolved_node_modules_path() {
+    // tsc renders TS7016 paths without redundant `./` components, whether
+    // they appear as a leading prefix or as an interior segment from a
+    // joined relative-then-absolute path. Cover both shapes plus an
+    // already-clean path so a regression in the normaliser is visible.
+    let interior_dot = ModuleLookupResult::untyped_js(
+        PathBuf::from("/work/project/./node_modules/foo/index.js"),
+        true,
+        "./node_modules/foo",
+    );
+    let leading_dot = ModuleLookupResult::untyped_js(
+        PathBuf::from("./node_modules/bar/index.js"),
+        true,
+        "./node_modules/bar",
+    );
+    let already_clean = ModuleLookupResult::resolved_untyped_js(
+        PathBuf::from("/work/project/node_modules/baz/index.js"),
+        true,
+        "baz",
+    );
+
+    let interior_msg = interior_dot.error.expect("expected TS7016").message;
+    let leading_msg = leading_dot.error.expect("expected TS7016").message;
+    let clean_msg = already_clean.error.expect("expected TS7016").message;
+
+    assert!(
+        interior_msg.contains("'/work/project/node_modules/foo/index.js'"),
+        "interior /./ should be collapsed; got: {interior_msg}"
+    );
+    assert!(
+        !interior_msg.contains("/./"),
+        "no /./ should remain; got: {interior_msg}"
+    );
+    assert!(
+        leading_msg.contains("'node_modules/bar/index.js'"),
+        "leading ./ should be stripped from path; got: {leading_msg}"
+    );
+    assert!(
+        !leading_msg.contains("'./node_modules/bar/index.js'"),
+        "leading ./ should not survive on the path; got: {leading_msg}"
+    );
+    assert!(
+        clean_msg.contains("'/work/project/node_modules/baz/index.js'"),
+        "already-clean path should be unchanged; got: {clean_msg}"
+    );
+}
+
 // =========================================================================
 // lookup() diagnostic code selection — additional coverage
 //
