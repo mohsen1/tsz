@@ -720,7 +720,7 @@ impl<'a> AstToIr<'a> {
             // Check for super.method(args) or super[expr](args) → _super.prototype.method.call(this, args)
             if self.has_super
                 && let Some(super_call) =
-                    self.try_convert_super_method_call(call.expression, args.clone())
+                    self.try_convert_super_method_call(call.expression, args.clone(), node)
             {
                 return super_call;
             }
@@ -741,6 +741,7 @@ impl<'a> AstToIr<'a> {
         &self,
         callee_idx: NodeIndex,
         args: Vec<IRNode>,
+        call_node: &Node,
     ) -> Option<IRNode> {
         let callee_node = self.arena.get(callee_idx)?;
 
@@ -767,6 +768,12 @@ impl<'a> AstToIr<'a> {
                         property: method_name.into(),
                     }
                 };
+                if access.question_dot_token
+                    || callee_node.is_optional_chain()
+                    || call_node.is_optional_chain()
+                {
+                    return Some(self.convert_optional_super_method_call(super_proto_method, args));
+                }
                 let call_method = IRNode::PropertyAccess {
                     object: Box::new(super_proto_method),
                     property: "call".to_string().into(),
@@ -801,6 +808,12 @@ impl<'a> AstToIr<'a> {
                     object: Box::new(super_base),
                     index: Box::new(index_expr),
                 };
+                if access.question_dot_token
+                    || callee_node.is_optional_chain()
+                    || call_node.is_optional_chain()
+                {
+                    return Some(self.convert_optional_super_method_call(super_proto_elem, args));
+                }
                 let call_method = IRNode::PropertyAccess {
                     object: Box::new(super_proto_elem),
                     property: "call".to_string().into(),
@@ -817,6 +830,41 @@ impl<'a> AstToIr<'a> {
         }
 
         None
+    }
+
+    fn convert_optional_super_method_call(
+        &self,
+        super_member: IRNode,
+        args: Vec<IRNode>,
+    ) -> IRNode {
+        let temp = self.generate_hoisted_temp();
+        let temp_ref = IRNode::id(temp.clone());
+        let assign_member = IRNode::Parenthesized(Box::new(IRNode::assign(
+            IRNode::id(temp.clone()),
+            super_member,
+        )));
+        let condition = IRNode::binary(
+            IRNode::binary(assign_member, "===", IRNode::NullLiteral),
+            "||",
+            IRNode::binary(IRNode::id(temp), "===", IRNode::Undefined),
+        );
+        let call_method = IRNode::PropertyAccess {
+            object: Box::new(temp_ref),
+            property: "call".to_string().into(),
+        };
+        let mut call_args = vec![IRNode::This {
+            captured: self.this_captured.get(),
+        }];
+        call_args.extend(args);
+
+        IRNode::ConditionalExpr {
+            condition: Box::new(condition),
+            when_true: Box::new(IRNode::Undefined),
+            when_false: Box::new(IRNode::CallExpr {
+                callee: Box::new(call_method),
+                arguments: call_args,
+            }),
+        }
     }
 
     fn convert_new_expression(&self, idx: NodeIndex) -> IRNode {
