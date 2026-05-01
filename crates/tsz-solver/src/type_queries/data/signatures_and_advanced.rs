@@ -23,6 +23,9 @@ pub fn get_type_parameter_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::TypeParamInfo> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info),
         _ => None,
@@ -64,6 +67,9 @@ pub fn is_const_type_variable(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns None if not a type parameter or has no constraint.
 pub fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.constraint,
         _ => None,
@@ -74,6 +80,9 @@ pub fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> 
 ///
 /// Returns `Some(Atom)` for `TypeParameter` and `Infer` types, `None` otherwise.
 pub fn get_type_parameter_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info.name),
         _ => None,
@@ -218,6 +227,9 @@ pub fn get_callable_shape(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::CallableShape>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Callable(shape_id)) => Some(db.callable_shape(shape_id)),
         _ => None,
@@ -327,6 +339,9 @@ pub fn get_function_shape(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::FunctionShape>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => Some(db.function_shape(shape_id)),
         _ => None,
@@ -454,6 +469,9 @@ pub fn get_conditional_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::ConditionalType>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Conditional(cond_id)) => Some(db.conditional_type(cond_id)),
         _ => None,
@@ -505,6 +523,9 @@ pub fn get_mapped_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::MappedType>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Mapped(mapped_id)) => Some(db.mapped_type(mapped_id)),
         _ => None,
@@ -521,6 +542,9 @@ pub fn get_mapped_type_with_id(
     crate::types::MappedTypeId,
     std::sync::Arc<crate::types::MappedType>,
 )> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Mapped(mapped_id)) => Some((mapped_id, db.mapped_type(mapped_id))),
         _ => None,
@@ -548,6 +572,9 @@ pub fn get_type_application(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::TypeApplication>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Application(app_id)) => Some(db.type_application(app_id)),
         _ => None,
