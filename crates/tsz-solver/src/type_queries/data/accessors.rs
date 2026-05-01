@@ -1085,6 +1085,9 @@ pub fn has_nonpublic_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str
 ///
 /// Returns `Some(inner)` if the type is `ReadonlyType(inner)`, otherwise `None`.
 pub fn get_readonly_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::ReadonlyType(inner)) => Some(inner),
         _ => None,
@@ -1095,6 +1098,9 @@ pub fn get_readonly_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Type
 ///
 /// Returns `Some(inner)` if the type is `NoInfer(inner)`, otherwise `None`.
 pub fn get_noinfer_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::NoInfer(inner)) => Some(inner),
         _ => None,
@@ -1106,6 +1112,9 @@ pub fn get_noinfer_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeI
 /// Returns the inner type if this is a `ReadonlyType`, otherwise returns the original type.
 /// Does not recurse - call repeatedly to fully unwrap.
 pub fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     match db.lookup(type_id) {
         Some(TypeData::ReadonlyType(inner)) => inner,
         _ => type_id,
@@ -1116,6 +1125,9 @@ pub fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
 ///
 /// Keeps unwrapping until the type is no longer a `ReadonlyType`.
 pub fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     let mut current = type_id;
     let mut depth = 0;
     const MAX_DEPTH: usize = 100;
