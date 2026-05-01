@@ -132,6 +132,9 @@ pub fn contains_generic_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeI
 /// Use this when you need to guard against caching leaked Infer results
 /// without the cost of a full recursive walk.
 pub fn is_infer_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::Infer(_)))
 }
 
@@ -232,6 +235,9 @@ pub fn contains_lazy_or_recursive_db(db: &dyn TypeDatabase, type_id: TypeId) -> 
 /// Check whether a type is itself a bare unresolved infer placeholder, not a
 /// larger structural type that merely contains placeholders.
 pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Infer(_)) => true,
         Some(TypeData::TypeParameter(tp)) => {
@@ -246,6 +252,9 @@ pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> b
 /// for generic `TypeParameter` spreads. These are 1-element rest tuples whose
 /// inner type is a `TypeParameter`.
 pub fn is_spread_marker_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     if let Some(TypeData::Tuple(elems_id)) = db.lookup(type_id) {
         let elems = db.tuple_list(elems_id);
         elems.len() == 1
