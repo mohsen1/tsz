@@ -749,6 +749,18 @@ impl<'a> CheckerState<'a> {
             {
                 return (t, Vec::new());
             }
+            // Nested destructure inside an annotated parameter
+            // (e.g. `c` in `function f({ a: { b, c } }: T)`). The single-level
+            // walker above only resolves Identifier → BindingElement → Pattern →
+            // Parameter; nested patterns add another BindingElement layer.
+            if resolved_value_decl.is_some()
+                && let Some(t) = self.resolve_nested_binding_element_from_annotated_param(
+                    resolved_value_decl,
+                    escaped_name,
+                )
+            {
+                return (t, Vec::new());
+            }
             // Variable without type annotation or initializer gets implicit 'any'
             // This prevents cascading TS2571 errors
             return (TypeId::ANY, Vec::new());

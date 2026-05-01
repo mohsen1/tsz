@@ -320,6 +320,134 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve a binding element type when the binding is nested inside another
+    /// binding pattern in an annotated function parameter, e.g. `c` in
+    /// `function f({ a: { b, c } }: { a: { b: number; c?: number } })`.
+    ///
+    /// `resolve_binding_element_from_annotated_param` only handles one level
+    /// of destructure (Identifier → `BindingElement` → Pattern → Parameter).
+    /// Anything deeper has a `Pattern → BindingElement → Pattern → ...` chain
+    /// that the single-level walker rejects.  This helper walks the chain
+    /// of arbitrary depth, collects the property-name path from innermost
+    /// out to the parameter, then applies the path against the parameter's
+    /// annotation.  At each step it propagates `| undefined` for optional
+    /// properties and strips it for any binding-element default.
+    pub(crate) fn resolve_nested_binding_element_from_annotated_param(
+        &mut self,
+        value_decl: NodeIndex,
+        name: &str,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(value_decl)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        // Walk: Identifier → BindingElement → Pattern → (BindingElement|Parameter) → ...
+        // Collect (property_name, has_initializer) from innermost outward.
+        let mut path: Vec<(String, bool)> = Vec::new();
+        let mut current = value_decl;
+        let param_idx = loop {
+            let ext = self.ctx.arena.get_extended(current)?;
+            let parent_idx = ext.parent;
+            if !parent_idx.is_some() {
+                return None;
+            }
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+            if parent_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                return None;
+            }
+            let be_data = self.ctx.arena.get_binding_element(parent_node)?;
+            // Property name resolution:
+            //   - explicit property_name (`{ a: {b, c} }` outer element has property_name="a")
+            //   - else: shorthand with `name` ident (`{ b, c }` inner element has no
+            //     property_name; the property name equals the binding identifier)
+            let prop_name_str = if be_data.property_name.is_some() {
+                self.get_identifier_text_from_idx(be_data.property_name)?
+            } else if path.is_empty() {
+                // Innermost: caller provided the binding identifier text as `name`.
+                name.to_string()
+            } else {
+                // Shorthand with no explicit property_name where `name` is itself a
+                // sub-pattern. This shape can't occur in valid TS at outer levels,
+                // so bail rather than guess.
+                return None;
+            };
+            path.push((prop_name_str, be_data.initializer.is_some()));
+            // Advance past BindingElement to the enclosing Pattern.
+            let ext2 = self.ctx.arena.get_extended(parent_idx)?;
+            let pat_idx = ext2.parent;
+            if !pat_idx.is_some() {
+                return None;
+            }
+            let pat_node = self.ctx.arena.get(pat_idx)?;
+            if pat_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                && pat_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                return None;
+            }
+            // Pattern's parent is either the next BindingElement (nested) or a
+            // Parameter (terminal). Anything else means this is not a parameter
+            // binding chain (e.g. variable declaration destructuring).
+            let ext3 = self.ctx.arena.get_extended(pat_idx)?;
+            let pat_parent_idx = ext3.parent;
+            if !pat_parent_idx.is_some() {
+                return None;
+            }
+            let pat_parent_node = self.ctx.arena.get(pat_parent_idx)?;
+            if pat_parent_node.kind == syntax_kind_ext::PARAMETER {
+                break pat_parent_idx;
+            }
+            if pat_parent_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                return None;
+            }
+            // Continue walking from the pattern; next iteration's
+            // get_extended(current).parent will yield the outer BindingElement.
+            current = pat_idx;
+        };
+
+        // We need at least 2 levels of path entries to be meaningfully "nested";
+        // single-level cases are handled by the existing
+        // `resolve_binding_element_from_annotated_param`.
+        if path.len() < 2 {
+            return None;
+        }
+
+        // Resolve the parameter annotation type.
+        let param_node = self.ctx.arena.get(param_idx)?;
+        let param = self.ctx.arena.get_parameter(param_node)?;
+        if !param.type_annotation.is_some() {
+            return None;
+        }
+        let ann_type = self.get_type_from_type_node(param.type_annotation);
+        if ann_type == TypeId::ANY || ann_type == TypeId::UNKNOWN || ann_type == TypeId::ERROR {
+            return None;
+        }
+
+        // Walk the property-name path outermost-first against the annotation,
+        // propagating optional `| undefined` for `?:` properties and stripping
+        // it for elements that have a default initializer.
+        let strict = self.ctx.strict_null_checks();
+        let mut current_type = self.evaluate_type_for_assignability(ann_type);
+        for (prop_name, has_init) in path.iter().rev() {
+            let prop_atom = self.ctx.types.intern_string(prop_name);
+            let shape = object_shape_for_type(self.ctx.types, current_type)?;
+            let prop = shape.properties.iter().find(|p| p.name == prop_atom)?;
+            let mut t = prop.type_id;
+            if prop.optional && strict {
+                t = self.ctx.types.factory().union2(t, TypeId::UNDEFINED);
+            }
+            if *has_init && strict {
+                t = crate::query_boundaries::flow::narrow_destructuring_default(
+                    self.ctx.types,
+                    t,
+                    true,
+                );
+            }
+            current_type = self.evaluate_type_for_assignability(t);
+        }
+        Some(current_type)
+    }
+
     /// Compute the type of a class symbol.
     ///
     /// Returns the class constructor type, merging with namespace exports

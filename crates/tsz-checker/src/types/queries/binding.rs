@@ -287,4 +287,41 @@ mod binding_contextual_type_tests {
             "Should not emit TS2339 for destructured param with default from unknown rest type: {codes:?}"
         );
     }
+
+    /// Nested destructuring of an optional property in an annotated parameter
+    /// must include `| undefined` in the inner binding's type. The single-level
+    /// resolver only handles `{ x }: T` patterns; nested patterns like
+    /// `{ a: { b } }: T` previously fell through to `any` and silently dropped
+    /// `| undefined`, masking real assignability errors in the function body.
+    #[test]
+    fn nested_destructured_optional_property_propagates_undefined() {
+        let codes = check_source_codes(
+            "// @strict: true
+             function f({ a: { b } }: { a: { b?: number } } = { a: {} }) {
+                 const x: number = b;
+             }",
+        );
+        assert!(
+            codes.contains(&2322),
+            "Nested destructured optional property `b` should be `number | undefined` and emit TS2322 when assigned to `number`: {codes:?}"
+        );
+    }
+
+    /// Same rule with different identifier names (`outer/inner` instead of
+    /// `a/b`) — confirms the fix is keyed on the *structure* (nested binding
+    /// pattern with optional property), not on any specific identifier name
+    /// (per CLAUDE.md §25 anti-hardcoding review checklist).
+    #[test]
+    fn nested_destructured_optional_property_propagates_undefined_alt_names() {
+        let codes = check_source_codes(
+            "// @strict: true
+             function g({ outer: { inner } }: { outer: { inner?: string } } = { outer: {} }) {
+                 const x: string = inner;
+             }",
+        );
+        assert!(
+            codes.contains(&2322),
+            "Nested destructured optional `inner` should propagate `| undefined`: {codes:?}"
+        );
+    }
 }
