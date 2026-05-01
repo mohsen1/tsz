@@ -312,6 +312,16 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
 
     /// Core recursive step with polarity tracking.
     fn visit_with_polarity(&mut self, type_id: TypeId, polarity: bool) {
+        // Fast path: intrinsic types contribute no variance information —
+        // they have no nested type parameters anywhere inside them. The
+        // visitor's `visit_intrinsic` handler is `{}`, so the guard
+        // enter/leave, polarity-stack push/pop, and dispatch are all
+        // wasted work for them. `TypeId::is_intrinsic` is a free range
+        // check. Mirrors #2001 / #2005 / #2008 / #2009.
+        if type_id.is_intrinsic() {
+            return;
+        }
+
         // Unified enter: cycle detection + depth/iteration limits
         let key = (type_id, polarity);
         match self.guard.enter(key) {
