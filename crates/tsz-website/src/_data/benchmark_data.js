@@ -69,6 +69,10 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+function escapeAttributeJson(value) {
+  return escapeHtml(JSON.stringify(value));
+}
+
 function readJsonIfExists(p) {
   try {
     return JSON.parse(fs.readFileSync(p, "utf8"));
@@ -298,7 +302,11 @@ function buildAggregateBenchmark(rows, libraryName) {
 }
 
 function displayName(name) {
-  return name
+  if (name === "privacyFunctionParameterDeclFile.ts") {
+    return "Privacy function parameter declaration file";
+  }
+
+  const cleaned = String(name || "")
     .replace(/^utility-types\//, "")
     .replace(/^ts-toolbelt\//, "")
     .replace(/^ts-essentials\//, "")
@@ -307,8 +315,11 @@ function displayName(name) {
     .replace(/^ts-essentials-project$/, "ts-essentials project")
     .replace(/^large-ts-repo$/, "large-ts-repo project")
     .replace(/^nextjs$/, "next.js full project")
+    .replace(/\.ts$/, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/_/g, " ")
     .replace(/-/g, " ");
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
 function benchmarkSlug(name) {
@@ -357,7 +368,19 @@ function benchmarkFocus(row, category) {
   if (isExternalLibraryCategory(category)) {
     return `Single-file type-check from ${libraryNameForCategory(category)} with real-world helper types.`;
   }
-  return "End-to-end no-emit type-check timing for this fixture.";
+  if (/privacy/i.test(name)) {
+    return "Declaration emit privacy checks for public APIs that reference private parameter types.";
+  }
+  if (/binder/i.test(name)) {
+    return "Binder and symbol-table setup for syntax-heavy TypeScript input.";
+  }
+  if (/controlflow|cfa/i.test(name)) {
+    return "Control-flow graph construction and narrowing analysis.";
+  }
+  if (/enum/i.test(name)) {
+    return "Enum literal subtype reduction and related assignability checks.";
+  }
+  return `No-emit type-check timing for ${displayName(name).toLowerCase()}.`;
 }
 
 function snippetForBenchmark(row, category) {
@@ -427,11 +450,83 @@ type Fixture<T> = DeepPartial<T> & {
 };`;
 }
 
+function readFixtureSource(name) {
+  const fixtureName = String(name || "");
+  if (!fixtureName.endsWith(".ts") || fixtureName.includes("/")) return null;
+
+  const candidates = [
+    path.join(ROOT, "TypeScript/tests/cases/compiler", fixtureName),
+    path.join(ROOT, "TypeScript/tests/cases/conformance", fixtureName),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      return fs.readFileSync(candidate, "utf8").trimEnd();
+    } catch {
+      // Keep looking in the next known TypeScript fixture location.
+    }
+  }
+
+  return null;
+}
+
+function sourceFilesForBenchmark(row, category) {
+  if (isProjectCategory(category)) return [];
+
+  const name = String(row.name || "fixture.ts");
+  const fixtureName = name.endsWith(".ts") ? name : `${name}.ts`;
+  const snippet = readFixtureSource(fixtureName) || snippetForBenchmark(row, category);
+
+  if (isExternalLibraryCategory(category)) {
+    return [
+      {
+        name: fixtureName,
+        language: "typescript",
+        source: snippet,
+      },
+      {
+        name: "helpers.ts",
+        language: "typescript",
+        source: `export type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends object
+    ? DeepPartial<T[K]>
+    : T[K];
+};
+
+export type ReadonlyId = {
+  readonly id: string;
+};`,
+      },
+      {
+        name: "tsconfig.json",
+        language: "json",
+        source: `{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "files": ["${fixtureName}", "helpers.ts"]
+}`,
+      },
+    ];
+  }
+
+  return [
+    {
+      name: fixtureName,
+      language: "typescript",
+      source: snippet,
+    },
+  ];
+}
+
 function benchmarkCommand(row, category, compiler) {
   if (isProjectCategory(category)) {
     return `${compiler} --noEmit -p tsconfig.json`;
   }
-  return `${compiler} --noEmit ${row.name}.ts`;
+  const name = String(row.name || "fixture.ts");
+  return `${compiler} --noEmit ${name.endsWith(".ts") ? name : `${name}.ts`}`;
 }
 
 function comparison(row) {
@@ -459,6 +554,7 @@ function comparison(row) {
 
 function decorateRow(row, category, options = {}) {
   const maxMs = Math.max(Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0);
+  const sourceFiles = sourceFilesForBenchmark(row, category);
   const decorated = {
     ...row,
     category,
@@ -468,7 +564,8 @@ function decorateRow(row, category, options = {}) {
     url: benchmarkUrl(row),
     kind: benchmarkKind(category),
     focus: benchmarkFocus(row, category),
-    snippet: snippetForBenchmark(row, category),
+    snippet: sourceFiles[0]?.source || snippetForBenchmark(row, category),
+    source_files: sourceFiles,
     tsz_command: benchmarkCommand(row, category, "tsz"),
     tsgo_command: benchmarkCommand(row, category, "tsgo"),
     tsz_time: row.tsz_ms ? formatDurationMs(row.tsz_ms, 2) : "",
@@ -477,6 +574,7 @@ function decorateRow(row, category, options = {}) {
     tsgo_width: maxMs > 0 && row.tsgo_ms ? Math.max(1, (row.tsgo_ms / maxMs) * 100).toFixed(2) : "1.00",
     is_aggregate: Boolean(options.isAggregate),
   };
+  decorated.source_files_json = escapeAttributeJson(decorated.source_files);
   decorated.comparison = comparison(decorated);
   decorated.speedup_label = formatSpeedupLabel(decorated.tsz_ms, decorated.tsgo_ms);
   return decorated;

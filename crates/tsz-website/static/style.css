@@ -294,20 +294,19 @@ tr:nth-child(even) { background: var(--table-stripe); }
 
 /* ── Progress bars ── */
 .progress-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 12rem minmax(18rem, 1fr) 22rem;
   align-items: center;
   gap: 1rem;
   margin: 0.75rem 0;
 }
 
 .progress-label {
-  min-width: 8rem;
   font-weight: 500;
   font-size: 0.9rem;
 }
 
 .progress-bar {
-  flex: 1;
   height: 1.25rem;
   background: var(--bg-code);
   border-radius: 4px;
@@ -327,7 +326,6 @@ tr:nth-child(even) { background: var(--table-stripe); }
 .progress-fill.fourslash { background: var(--text-secondary); }
 
 .progress-stat {
-  min-width: 12rem;
   text-align: right;
   font-size: 0.85rem;
   color: var(--text-secondary);
@@ -671,9 +669,7 @@ tr:nth-child(even) { background: var(--table-stripe); }
   gap: 1.5rem;
   align-items: start;
   margin: 1.5rem 0 2rem;
-  padding: 1rem 0;
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0;
 }
 
 .bench-detail-primary,
@@ -729,8 +725,7 @@ tr:nth-child(even) { background: var(--table-stripe); }
   grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
   gap: 1rem 2rem;
   margin: 1.5rem 0 2.25rem;
-  padding: 1rem 0;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0;
 }
 
 .bench-metric {
@@ -801,8 +796,7 @@ tr:nth-child(even) { background: var(--table-stripe); }
   display: grid;
   grid-template-columns: 7rem minmax(0, 1fr);
   gap: 0.75rem;
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 0.75rem;
+  padding-top: 0.25rem;
 }
 
 .bench-detail-facts dt {
@@ -818,9 +812,52 @@ tr:nth-child(even) { background: var(--table-stripe); }
   overflow-wrap: anywhere;
 }
 
-.bench-snippet {
-  max-height: 22rem;
-  margin-top: 0.75rem;
+.benchmark-source-viewer {
+  margin: 0.75rem 0 2.25rem;
+}
+
+.benchmark-source-tabs {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  padding: 0.65rem 0;
+  scrollbar-width: thin;
+}
+
+.benchmark-source-tabs button {
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  padding: 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.benchmark-source-tabs button[aria-selected="true"] {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.benchmark-source-editor {
+  min-height: 12rem;
+  height: clamp(12rem, 34vh, 22rem);
+}
+
+.benchmark-source-editor .bench-snippet {
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.benchmark-source-editor .monaco-editor,
+.benchmark-source-editor .monaco-editor .margin,
+.benchmark-source-editor .monaco-editor-background,
+.benchmark-source-editor .monaco-editor .inputarea.ime-input {
+  background: var(--bg-code) !important;
 }
 
 /* ── Footer ── */
@@ -925,14 +962,40 @@ tr:nth-child(even) { background: var(--table-stripe); }
   }
   .bench-detail-bars .bench-bar-row {
     grid-template-columns: 2.5rem minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    gap: 0.5rem;
+    height: auto;
+  }
+  .bench-detail-bars .bench-bar-label {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .bench-detail-meter {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
   .bench-detail-time {
     grid-column: 2;
-    text-align: left;
-    margin-top: -0.45rem;
+    grid-row: 1;
+    text-align: right;
+    margin-top: 0;
   }
   .bench-detail-facts div {
     grid-template-columns: 1fr;
     gap: 0.25rem;
+  }
+  .benchmark-source-tabs {
+    gap: 0.85rem;
+    margin-right: -1.25rem;
+    padding-right: 1.25rem;
+  }
+  .benchmark-source-editor {
+    height: 16rem;
+    margin-left: -1.25rem;
+    margin-right: -1.25rem;
+  }
+  .benchmark-source-editor .monaco-editor,
+  .benchmark-source-editor .bench-snippet {
+    padding-left: 1.25rem;
   }
 }
