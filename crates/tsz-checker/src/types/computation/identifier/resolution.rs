@@ -640,6 +640,23 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or(NodeIndex::NONE);
 
+            // Fast path: if another checker (parallel worker, prior delegation)
+            // already resolved this cross-file value symbol's type, reuse the
+            // cached answer instead of building a fresh child checker.
+            if self.ctx.share_owner_symbol_type_results
+                && let Some((cached_type, _params)) =
+                    self.ctx.definition_store.get_resolved_cross_file_query(
+                        crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
+                        file_idx as u32,
+                        sym_id.0,
+                        0,
+                        0,
+                    )
+                && !matches!(cached_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
+            {
+                return Some(cached_type);
+            }
+
             if !Self::enter_cross_arena_delegation() {
                 continue;
             }
