@@ -516,6 +516,27 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // When the user defines `JSX.ElementType`, that type — not `JSX.Element`
+        // — is the authoritative constraint for what can appear as a JSX
+        // component. tsc validates `component_type` directly against
+        // `JSX.ElementType` and skips the older return-type-vs-`JSX.Element`
+        // check entirely. This unblocks React 18 / Server Component patterns
+        // where a component may return string / number / array / Promise as
+        // long as `JSX.ElementType` admits them.
+        if let Some(element_type_sym_id) = self.get_jsx_namespace_export_symbol_id("ElementType") {
+            let element_type = self.type_reference_symbol_type(element_type_sym_id);
+            if !matches!(
+                element_type,
+                TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+            ) {
+                if self.is_assignable_to(component_type, element_type) {
+                    return;
+                }
+                self.report_invalid_jsx_component_return_type(tag_name_idx);
+                return;
+            }
+        }
+
         let jsx_element_type_raw = self.get_jsx_element_type_for_check();
         let jsx_element_class_type_raw = self.get_jsx_element_class_type();
         if jsx_element_type_raw.is_none() && jsx_element_class_type_raw.is_none() {
