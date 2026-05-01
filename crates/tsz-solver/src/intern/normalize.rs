@@ -592,6 +592,9 @@ impl TypeInterner {
         let mut callable_shapes: Vec<Arc<CallableShape>> = Vec::new();
 
         for &member in members {
+            if member.is_intrinsic() {
+                continue;
+            }
             let Some(key) = self.lookup(member) else {
                 continue;
             };
@@ -638,6 +641,9 @@ impl TypeInterner {
         let mut brand_sets: SmallVec<[FxHashSet<Atom>; 8]> = SmallVec::new();
 
         for &member in members {
+            if member.is_intrinsic() {
+                continue;
+            }
             let Some(type_data) = self.lookup(member) else {
                 continue;
             };

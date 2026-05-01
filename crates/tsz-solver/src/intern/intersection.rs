@@ -431,6 +431,9 @@ impl TypeInterner {
         // construct signatures treated as overloads, losing the intersection semantics.
         let mut construct_source_count = 0;
         for &member in members {
+            if member.is_intrinsic() {
+                continue;
+            }
             let has_construct = match self.lookup(member) {
                 Some(TypeData::Function(func_id)) => self.function_shape(func_id).is_constructor,
                 Some(TypeData::Callable(callable_id)) => !self
@@ -565,6 +568,9 @@ impl TypeInterner {
 
         // Check if all members are objects
         for &member in members {
+            if member.is_intrinsic() {
+                return None;
+            }
             match self.lookup(member) {
                 Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     objects.push(self.object_shape(shape_id));
