@@ -134,3 +134,89 @@ fn no_ts2451_with_different_class_name_two_choices() {
         }
     }
 }
+
+/// Mirrors `conformance/salsa/jsContainerMergeTsDeclaration3.ts`.
+///
+/// Structural rule: when a JS-file `const X = <init>` merges with a TS-file
+/// `declare class X`, JS-side expando assignments to `X.prop` augment the
+/// merged static side. The initializer's assignability check therefore sees
+/// `prop` as a required member of the declared `typeof X`, and tsc emits
+/// TS2739 (multiple missing properties) — not TS2741 — when the initializer
+/// shape is missing both `prototype` and the JS-augmented members.
+///
+/// The TS2739 message must list missing properties in symbol-table insertion
+/// order (synthesized `prototype` first, JS-side expandos last). tsc emits
+/// `prototype, d` in this order.
+#[test]
+fn js_const_merging_with_dts_class_lists_prototype_before_expando() {
+    let diags = compile_files(
+        &[
+            ("a.d.ts", "declare class A {}"),
+            ("b.js", "const A = { };\nA.d = { };"),
+        ],
+        1,
+    );
+    let ts2739_msg = diags
+        .iter()
+        .find(|(c, _)| *c == 2739)
+        .map(|(_, m)| m.clone())
+        .unwrap_or_else(|| panic!("expected TS2739; got: {diags:?}"));
+    let proto_pos = ts2739_msg.find("prototype").unwrap_or(usize::MAX);
+    let d_pos = ts2739_msg
+        .find(", d")
+        .or_else(|| ts2739_msg.find(": d"))
+        .unwrap_or(usize::MAX);
+    assert!(
+        proto_pos < d_pos,
+        "TS2739 must list `prototype` before the JS-augmented `d`; got: {ts2739_msg}"
+    );
+}
+
+#[test]
+fn js_const_merging_with_dts_class_emits_ts2739_not_ts2741() {
+    let diags = compile_files(
+        &[
+            ("a.d.ts", "declare class A {}"),
+            ("b.js", "const A = { };\nA.d = { };"),
+        ],
+        1,
+    );
+    assert_eq!(
+        count_code(&diags, 2741),
+        0,
+        "must not emit TS2741 (single missing property) when both `prototype` and a JS expando are missing; got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2739),
+        1,
+        "must emit TS2739 (multiple missing properties) for the merged `typeof A` static side; got: {diags:?}"
+    );
+}
+
+/// Anti-hardcoding (§25): the rule is structural over names. Repeat the
+/// salsa container-merge case with two different class names AND two
+/// different expando property names. The TS2739 outcome must hold in every
+/// combination.
+#[test]
+fn js_class_merge_ts2739_independent_of_identifier_choices() {
+    for class_name in ["Widget", "Foo"] {
+        for expando in ["d", "extra"] {
+            let dts_src = format!("declare class {class_name} {{}}");
+            let js_src = format!("const {class_name} = {{ }};\n{class_name}.{expando} = {{ }};");
+            let diags = compile_files(
+                &[("a.d.ts", dts_src.as_str()), ("b.js", js_src.as_str())],
+                1,
+            );
+            assert_eq!(
+                count_code(&diags, 2741),
+                0,
+                "TS2741 must not fire for class '{class_name}' + expando '{expando}'; got: {diags:?}"
+            );
+            assert_eq!(
+                count_code(&diags, 2739),
+                1,
+                "TS2739 must fire for class '{class_name}' + expando '{expando}'; got: {diags:?}"
+            );
+        }
+    }
+}

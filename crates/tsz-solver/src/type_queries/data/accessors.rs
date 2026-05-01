@@ -260,12 +260,15 @@ fn signature_has_literal_types(db: &dyn TypeDatabase, sig: &crate::types::CallSi
 /// Get the symbol associated with an object type's shape.
 ///
 /// Returns the `SymbolId` from the `ObjectShape` for Object or `ObjectWithIndex`
-/// types. Returns None for non-object types or objects without a symbol.
+/// types, or from the `CallableShape` for Callable types (e.g. a class
+/// constructor type's `typeof X` view, including expando-augmented variants).
+/// Returns None for non-object types or types without a recorded symbol.
 pub fn get_object_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             db.object_shape(shape_id).symbol
         }
+        Some(TypeData::Callable(shape_id)) => db.callable_shape(shape_id).symbol,
         _ => None,
     }
 }
