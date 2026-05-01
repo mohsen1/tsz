@@ -595,7 +595,7 @@ impl<'a> CheckerState<'a> {
         if let Some(access) = self.ctx.arena.get_access_expr(node) {
             let receiver_type = self.get_type_of_node(access.expression);
             if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
-                return crate::query_boundaries::common::substitute_this_type(
+                return crate::query_boundaries::common::substitute_this_type_at_return_position(
                     self.ctx.types,
                     return_type,
                     receiver_type,
@@ -604,7 +604,7 @@ impl<'a> CheckerState<'a> {
             if let Some(receiver_sym) = self.resolve_identifier_symbol(access.expression) {
                 let receiver_type = self.get_type_of_symbol(receiver_sym);
                 if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
-                    return crate::query_boundaries::common::substitute_this_type(
+                    return crate::query_boundaries::common::substitute_this_type_at_return_position(
                         self.ctx.types,
                         return_type,
                         receiver_type,
