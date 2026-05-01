@@ -639,6 +639,28 @@ pub fn contains_type_parameter_named_shallow(
         if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
             continue;
         }
+        // Terminal kinds have no children to enumerate. Skipping
+        // `for_each_child_by_id` (which would iterate an empty child set)
+        // saves the closure setup and visitor dispatch on the very common
+        // input shape where the predicate is the entry-point lookup result.
+        // The kinds listed here match the leaf arms of every other walker
+        // that returns `false` for them — see `ContainsTypeChecker.check_key`,
+        // `FreeTypeParamChecker.check_key`, and `FreeInferChecker.check_key`.
+        if matches!(
+            &data,
+            TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            continue;
+        }
         // For all other types, use the generic child visitor.
         super::visitor::for_each_child_by_id(types, current, |child| {
             if !visited.contains(&child) {
