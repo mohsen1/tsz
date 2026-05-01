@@ -94,6 +94,9 @@ pub fn extract_type_params_for_call(
     type_id: TypeId,
     type_arg_count: usize,
 ) -> Option<Vec<crate::types::TypeParamInfo>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => {
             let shape = db.function_shape(shape_id);
@@ -395,7 +398,7 @@ fn is_keyof_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
     match db.lookup(type_id) {
         Some(TypeData::KeyOf(target)) => {
-            matches!(db.lookup(target), Some(TypeData::TypeParameter(_)))
+            !target.is_intrinsic() && matches!(db.lookup(target), Some(TypeData::TypeParameter(_)))
         }
         Some(TypeData::Intersection(members)) => {
             let member_list = db.type_list(members);
@@ -411,13 +414,22 @@ fn is_keyof_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Returns `Some(source)` for homomorphic mapped types like `{ [K in keyof T]: T[K] }`,
 /// `None` otherwise.
 pub fn homomorphic_mapped_source(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     let Some(TypeData::Mapped(mapped_id)) = db.lookup(type_id) else {
         return None;
     };
     let mapped = db.mapped_type(mapped_id);
+    if mapped.template.is_intrinsic() {
+        return None;
+    }
     let Some(TypeData::IndexAccess(source, idx)) = db.lookup(mapped.template) else {
         return None;
     };
+    if idx.is_intrinsic() {
+        return None;
+    }
     let Some(TypeData::TypeParameter(param)) = db.lookup(idx) else {
         return None;
     };
