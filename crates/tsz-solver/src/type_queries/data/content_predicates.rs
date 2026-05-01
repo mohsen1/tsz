@@ -441,6 +441,9 @@ pub fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId)
 ///
 /// Returns None if the type is not a union.
 pub fn get_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
@@ -455,6 +458,9 @@ pub fn get_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<T
 /// tsc expands such type aliases in error messages instead of preserving the
 /// alias name — e.g. `type T2 = "a" | "b"` displays as `"a" | "b"`, not `T2`.
 pub fn is_primitive_or_literal_compound(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     let members_id = match db.lookup(type_id) {
         Some(TypeData::Union(m)) | Some(TypeData::Intersection(m)) => m,
         _ => return false,
@@ -496,6 +502,9 @@ pub fn is_literal_or_primitive_or_compound_of_those(
 ///
 /// Returns None if the type is not an intersection.
 pub fn get_intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Intersection(list_id)) => {
             let members = db.type_list(list_id);
@@ -645,6 +654,9 @@ pub fn get_tuple_elements(
 /// is a deliberate hint in TypeScript to infer tuple types from array literals.
 /// Used by `Promise.all`, `Promise.allSettled`, and similar APIs.
 pub fn union_contains_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
@@ -660,6 +672,9 @@ pub fn union_contains_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// `string | MyInterface` even if `MyInterface` contains type parameters internally.
 /// Used to suppress diagnostics when generic type parameters are directly present.
 pub fn union_has_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
