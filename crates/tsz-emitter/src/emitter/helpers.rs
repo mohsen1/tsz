@@ -705,6 +705,33 @@ impl<'a> Printer<'a> {
         self.emit_unemitted_comments_between_impl(from_pos, to_pos, true)
     }
 
+    pub(crate) fn emit_unemitted_comments_between_without_trailing_space(
+        &mut self,
+        from_pos: u32,
+        to_pos: u32,
+    ) -> bool {
+        self.emit_unemitted_comments_between_impl(from_pos, to_pos, false)
+    }
+
+    pub(crate) fn has_unemitted_comments_between(&self, from_pos: u32, to_pos: u32) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+
+        let mut scan_idx = self.comment_emit_idx;
+        while scan_idx < self.all_comments.len() {
+            let c = &self.all_comments[scan_idx];
+            if c.pos >= from_pos && c.end <= to_pos {
+                return true;
+            }
+            if c.pos >= to_pos {
+                return false;
+            }
+            scan_idx += 1;
+        }
+        false
+    }
+
     fn emit_unemitted_comments_between_impl(
         &mut self,
         from_pos: u32,
