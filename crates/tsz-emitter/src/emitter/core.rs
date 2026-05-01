@@ -1298,7 +1298,7 @@ impl<'a> Printer<'a> {
                 self.emit_string_literal(node);
             }
             k if k == SyntaxKind::RegularExpressionLiteral as u16 => {
-                self.emit_regex_literal(node);
+                self.emit_regex_literal(idx, node);
             }
             k if k == SyntaxKind::TrueKeyword as u16 => {
                 self.write("true");
