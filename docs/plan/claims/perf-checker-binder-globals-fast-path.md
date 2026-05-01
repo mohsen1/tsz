@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-02
 - **Branch**: `perf/checker-binder-globals-fast-path`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2158
+- **Status**: ready
 - **Workstream**: 5 (large-repo residency)
 
 ## Intent
@@ -39,7 +39,18 @@ call sites delegate to the helper.
 
 ## Verification
 
-- `cargo nextest run -p tsz-core` — all green
-- `cargo nextest run -p tsz-cli` — same passing set as `main`
-- New unit tests cover: combined locals + globals merge, locals-win
-  collision, empty-locals fast path.
+- `cargo fmt --check`
+- `cargo check -p tsz-core -p tsz-cli`
+- `cargo test -p tsz-core build_merged_file_locals`
+- `cargo clippy -p tsz-core -p tsz-cli --all-targets -- -D warnings`
+- `scripts/bench/perf-hotspots.sh --quick`
+  (`artifacts/perf/hotspots-20260501-153608.json`): tsz beat tsgo on all five
+  quick fixtures: 100 classes 2.10x, 50 generic functions 1.61x,
+  DeepPartial optional-chain N=50 1.53x, Shallow optional-chain N=50 1.45x,
+  Constraint conflicts N=30 1.76x.
+- Guarded large-repo sample:
+  `RUST_BACKTRACE=1 scripts/safe-run.sh --limit 75% --interval 2 --verbose -- .target-bench/dist/tsz --extendedDiagnostics --noEmit -p ~/code/large-ts-repo/tsconfig.flat.bench.json`;
+  manual stop after a stable sample window (exit 130 from Ctrl-C), peak sampled
+  physical footprint 9369 MB / 12288 MB guard.
+- New unit tests cover: combined locals + globals merge, locals-win collision,
+  empty-locals fast path.
