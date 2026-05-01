@@ -1183,9 +1183,11 @@ impl<'a> InferenceContext<'a> {
         // members that did not structurally match flow to naked type variables.
         // This prevents `B | PromiseLike<B>` from inferring `T = B | PromiseLike<B>`
         // against `T | PromiseLike<T>` after the wrapper member already matched.
-        let (naked_params, structured_params): (Vec<TypeId>, Vec<TypeId>) = parameterized
-            .iter()
-            .partition(|&&t| matches!(self.interner.lookup(t), Some(TypeData::TypeParameter(_))));
+        let (naked_params, structured_params): (Vec<TypeId>, Vec<TypeId>) =
+            parameterized.iter().partition(|&&t| {
+                !t.is_intrinsic()
+                    && matches!(self.interner.lookup(t), Some(TypeData::TypeParameter(_)))
+            });
 
         let mut structurally_matched_sources = std::collections::HashSet::new();
         for &source_ty in resolved_sources.iter() {

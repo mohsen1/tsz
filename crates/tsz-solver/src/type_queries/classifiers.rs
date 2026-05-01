@@ -269,6 +269,9 @@ pub fn indexed_access_self_keyof(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
     let TypeData::IndexAccess(obj, idx) = db.lookup(type_id)? else {
         return None;
     };
+    if idx.is_intrinsic() {
+        return None;
+    }
     let TypeData::KeyOf(idx_inner) = db.lookup(idx)? else {
         return None;
     };
