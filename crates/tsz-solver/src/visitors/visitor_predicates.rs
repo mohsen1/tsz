@@ -55,6 +55,14 @@ pub fn is_function_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 fn is_function_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types are never `Function` / `Callable` /
+    // `Intersection` — the existing match falls through to `_ => false`
+    // for them. `is_intrinsic()` is a free `TypeId`-range check; skip the
+    // `TypeData` lookup and match dispatch entirely. Same pattern as
+    // #2001 / #2005 / #2008 / #2009 / #2014.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
         Some(TypeData::Intersection(members)) => {
