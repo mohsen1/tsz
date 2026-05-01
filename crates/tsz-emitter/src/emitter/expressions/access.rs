@@ -216,6 +216,15 @@ impl<'a> Printer<'a> {
         // Map the `.` token to its source position
         if let Some(expr_node) = self.arena.get(access.expression) {
             self.map_token_after(expr_node.end, node.end, b'.');
+            if let Some(name_node) = self.arena.get(access.name_or_argument)
+                && self.has_unemitted_comments_between(expr_node.end, name_node.pos)
+            {
+                self.write_space();
+                self.emit_unemitted_comments_between_without_trailing_space(
+                    expr_node.end,
+                    name_node.pos,
+                );
+            }
         }
         self.write_dot_token(access.expression);
         // When the property name is missing (error recovery), the source layout
