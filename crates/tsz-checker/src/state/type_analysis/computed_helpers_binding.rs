@@ -506,14 +506,9 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .cached_cross_file_symbol_type(sym_id, file_idx as u32)
                 {
-                    if let Some((inst_type, _)) =
-                        self.ctx.definition_store.get_resolved_cross_file_query(
-                            super::cross_file::CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
-                            file_idx as u32,
-                            sym_id.0,
-                            0,
-                            0,
-                        )
+                    if let Some((inst_type, _)) = self
+                        .ctx
+                        .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
                         && inst_type != TypeId::ANY
                         && inst_type != TypeId::ERROR
                     {

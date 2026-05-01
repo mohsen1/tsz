@@ -223,4 +223,36 @@ impl<'a> CheckerContext<'a> {
             Vec::new(),
         );
     }
+
+    /// Look up a cached cross-file class-instance-type via the canonical
+    /// `CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE` bucket.
+    ///
+    /// Returns `None` when:
+    /// - the share-owner gate is off (`share_owner_symbol_type_results == false`), or
+    /// - the bucket has no entry for `(sym_id, file_idx)`.
+    ///
+    /// Note: this helper does **not** filter `TypeId::ERROR` /
+    /// `TypeId::UNKNOWN` / `TypeId::ANY`. Class-instance bucket consumers
+    /// disagree on which sentinels are meaningful (the
+    /// `delegate_to_cross_arena_class_instance_lookup` site forwards the
+    /// raw cached entry; the `computed_helpers_binding` site filters
+    /// `ANY` / `ERROR` before populating `symbol_instance_types`). Apply
+    /// per-call filtering at the call site rather than baking it into the
+    /// helper.
+    pub fn cached_cross_file_class_instance_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if !self.share_owner_symbol_type_results {
+            return None;
+        }
+        self.definition_store.get_resolved_cross_file_query(
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
+            file_idx,
+            sym_id.0,
+            0,
+            0,
+        )
+    }
 }
