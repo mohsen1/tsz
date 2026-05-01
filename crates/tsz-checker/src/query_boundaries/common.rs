@@ -1294,6 +1294,20 @@ pub(crate) fn is_primitive_or_literal_compound(db: &dyn TypeDatabase, type_id: T
     tsz_solver::type_queries::is_primitive_or_literal_compound(db, type_id)
 }
 
+/// Returns `true` if `type_id` is itself a literal/primitive, or a union or
+/// intersection composed entirely of literal/primitive members.
+///
+/// Used for diagnostic display: when a generic type-alias application reduces
+/// to such a "terminal" form (e.g. `KeysExtendedBy<M, number>` reducing to
+/// `"b"`), tsc drops the alias name and shows the resolved literal/primitive
+/// in error messages. Object/interface results keep the alias form.
+pub(crate) fn is_literal_or_primitive_or_compound_of_those(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::is_literal_or_primitive_or_compound_of_those(db, type_id)
+}
+
 pub(crate) fn is_array_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_array_type(db, type_id)
 }

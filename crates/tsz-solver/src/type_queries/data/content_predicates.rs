@@ -460,6 +460,29 @@ pub fn is_primitive_or_literal_compound(db: &dyn TypeDatabase, type_id: TypeId) 
     })
 }
 
+/// Returns `true` if `type_id` is itself a literal/primitive, or a union or
+/// intersection composed entirely of literal/primitive members.
+///
+/// Used for diagnostic display: when a generic type alias application reduces
+/// to such a "terminal" form (e.g. `KeysExtendedBy<M, number>` reducing to
+/// `"b"`), tsc drops the alias and shows the resolved literal in error
+/// messages. Object/interface results keep the alias form.
+pub fn is_literal_or_primitive_or_compound_of_those(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(_) | TypeData::Intrinsic(_)) => true,
+        Some(TypeData::Union(_) | TypeData::Intersection(_)) => {
+            is_primitive_or_literal_compound(db, type_id)
+        }
+        _ => false,
+    }
+}
+
 /// Get the members of an intersection type.
 ///
 /// Returns None if the type is not an intersection.

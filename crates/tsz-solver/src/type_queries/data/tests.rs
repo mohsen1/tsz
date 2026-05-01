@@ -863,3 +863,115 @@ fn contains_application_union_without_app() {
     let union = interner.union2(TypeId::STRING, TypeId::NUMBER);
     assert!(!contains_application_in_structure(&interner, union));
 }
+
+// =========================================================================
+// is_literal_or_primitive_or_compound_of_those
+// =========================================================================
+//
+// This predicate decides whether an evaluated generic-alias application should
+// drop its alias name in diagnostic display (matching tsc's behaviour). When
+// the result is a literal/primitive (or a union/intersection of those), the
+// alias is dropped — `KeysExtendedBy<M, number>` shows as `'"b"'`. When the
+// result is structural (object/interface/array/etc.), the alias is preserved.
+
+#[test]
+fn literal_or_primitive_compound_for_string_literal() {
+    let interner = TypeInterner::new();
+    let lit = interner.literal_string("b");
+    assert!(is_literal_or_primitive_or_compound_of_those(&interner, lit));
+}
+
+#[test]
+fn literal_or_primitive_compound_for_number_literal() {
+    let interner = TypeInterner::new();
+    let lit = interner.literal_number(1.0);
+    assert!(is_literal_or_primitive_or_compound_of_those(&interner, lit));
+}
+
+#[test]
+fn literal_or_primitive_compound_for_intrinsic_primitives() {
+    let interner = TypeInterner::new();
+    for ty in [
+        TypeId::STRING,
+        TypeId::NUMBER,
+        TypeId::BOOLEAN,
+        TypeId::BIGINT,
+        TypeId::SYMBOL,
+        TypeId::NULL,
+        TypeId::UNDEFINED,
+        TypeId::VOID,
+    ] {
+        assert!(
+            is_literal_or_primitive_or_compound_of_those(&interner, ty),
+            "{ty:?} should be classified as primitive/literal-like"
+        );
+    }
+}
+
+#[test]
+fn literal_or_primitive_compound_for_union_of_literals() {
+    let interner = TypeInterner::new();
+    let a = interner.literal_string("a");
+    let b = interner.literal_string("b");
+    let union = interner.union2(a, b);
+    assert!(is_literal_or_primitive_or_compound_of_those(
+        &interner, union
+    ));
+}
+
+#[test]
+fn literal_or_primitive_compound_for_union_of_literal_and_primitive() {
+    let interner = TypeInterner::new();
+    let a = interner.literal_string("a");
+    let union = interner.union2(a, TypeId::NUMBER);
+    assert!(is_literal_or_primitive_or_compound_of_those(
+        &interner, union
+    ));
+}
+
+#[test]
+fn literal_or_primitive_compound_rejects_objects() {
+    let interner = TypeInterner::new();
+    let obj = interner.object(vec![]);
+    assert!(!is_literal_or_primitive_or_compound_of_those(
+        &interner, obj
+    ));
+}
+
+#[test]
+fn literal_or_primitive_compound_rejects_arrays_and_tuples() {
+    let interner = TypeInterner::new();
+    let arr = interner.array(TypeId::STRING);
+    assert!(!is_literal_or_primitive_or_compound_of_those(
+        &interner, arr
+    ));
+    let tuple = interner.tuple(vec![crate::types::TupleElement {
+        type_id: TypeId::STRING,
+        optional: false,
+        rest: false,
+        name: None,
+    }]);
+    assert!(!is_literal_or_primitive_or_compound_of_those(
+        &interner, tuple
+    ));
+}
+
+#[test]
+fn literal_or_primitive_compound_rejects_union_with_object() {
+    let interner = TypeInterner::new();
+    let obj = interner.object(vec![]);
+    let union = interner.union2(obj, TypeId::STRING);
+    assert!(!is_literal_or_primitive_or_compound_of_those(
+        &interner, union
+    ));
+}
+
+#[test]
+fn literal_or_primitive_compound_rejects_application() {
+    let interner = TypeInterner::new();
+    let base = interner.lazy(crate::def::DefId(1));
+    let app = interner.application(base, vec![TypeId::STRING]);
+    assert!(!is_literal_or_primitive_or_compound_of_those(
+        &interner, app
+    ));
+}
