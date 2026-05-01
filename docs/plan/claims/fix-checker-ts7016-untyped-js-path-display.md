@@ -3,7 +3,7 @@ name: Fix checker TS7016 untyped JS path display
 description: Collapse `.` segments in TS7016 / TS6504 file path arguments before formatting so the rendered message has no `<dir>/./<rest>` leftover from `PathBuf::join`.
 type: project
 branch: fix-checker-ts7016-untyped-js-path-display
-status: ready
+status: shipped (PR #1975 — `fix(checker): collapse `.` segments in TS7016/TS6504 path display`)
 scope: module_resolver (TS7016 / TS6504 message rendering)
 
 ## Summary
