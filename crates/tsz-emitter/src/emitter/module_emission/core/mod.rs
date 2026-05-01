@@ -1218,12 +1218,126 @@ impl<'a> Printer<'a> {
                             .ctx
                             .module_state
                             .value_declaration_names
-                            .contains(&local_name);
+                            .contains(&local_name)
+                            && (!self.ctx.is_commonjs()
+                                || self.local_export_has_runtime_declaration(&local_name));
                     }
                 }
                 true
             })
             .collect()
+    }
+
+    fn local_export_has_runtime_declaration(&self, name: &str) -> bool {
+        let mut found_local_declaration = false;
+
+        for (idx, stmt_node) in self.arena.nodes.iter().enumerate() {
+            let stmt_idx = NodeIndex(idx as u32);
+            let is_top_level = self
+                .arena
+                .parent_of(stmt_idx)
+                .and_then(|parent_idx| self.arena.get(parent_idx))
+                .is_some_and(|parent| parent.kind == syntax_kind_ext::SOURCE_FILE);
+            if !is_top_level || !self.statement_declares_export_local_name(stmt_node, name) {
+                continue;
+            }
+
+            found_local_declaration = true;
+            if !self.is_erased_statement(stmt_node) {
+                return true;
+            }
+        }
+
+        !found_local_declaration
+    }
+
+    fn statement_declares_export_local_name(&self, stmt_node: &Node, name: &str) -> bool {
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                self.arena.get_variable(stmt_node).is_some_and(|var_stmt| {
+                    var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
+                        self.arena.get(decl_list_idx).is_some_and(|decl_list_node| {
+                            self.arena
+                                .get_variable(decl_list_node)
+                                .is_some_and(|decl_list| {
+                                    decl_list.declarations.nodes.iter().any(|&decl_idx| {
+                                        self.arena.get(decl_idx).is_some_and(|decl_node| {
+                                            self.arena
+                                                .get_variable_declaration(decl_node)
+                                                .is_some_and(|decl| {
+                                                    self.get_identifier_text_idx(decl.name) == name
+                                                })
+                                        })
+                                    })
+                                })
+                        })
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(stmt_node)
+                .and_then(|func| self.get_identifier_text_opt(func.name))
+                .is_some_and(|func_name| func_name == name),
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(stmt_node)
+                .and_then(|class| self.get_identifier_text_opt(class.name))
+                .is_some_and(|class_name| class_name == name),
+            k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                .arena
+                .get_enum(stmt_node)
+                .and_then(|enum_decl| self.get_identifier_text_opt(enum_decl.name))
+                .is_some_and(|enum_name| enum_name == name),
+            k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                .arena
+                .get_module(stmt_node)
+                .and_then(|module| self.get_identifier_text_opt(module.name))
+                .is_some_and(|module_name| module_name == name),
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => self
+                .arena
+                .get_import_decl(stmt_node)
+                .and_then(|import_decl| self.arena.get(import_decl.import_clause))
+                .and_then(|clause_node| self.arena.get_import_clause(clause_node))
+                .is_some_and(|clause| {
+                    self.get_identifier_text_idx(clause.name) == name
+                        || self
+                            .arena
+                            .get(clause.named_bindings)
+                            .is_some_and(|bindings_node| {
+                                self.named_imports_declare_local_name(bindings_node, name)
+                            })
+                }),
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
+                .arena
+                .get_import_decl(stmt_node)
+                .is_some_and(|import_decl| {
+                    self.get_identifier_text_idx(import_decl.import_clause) == name
+                }),
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => self
+                .arena
+                .get_export_decl(stmt_node)
+                .and_then(|export| self.arena.get(export.export_clause))
+                .is_some_and(|clause_node| {
+                    self.statement_declares_export_local_name(clause_node, name)
+                }),
+            _ => false,
+        }
+    }
+
+    fn named_imports_declare_local_name(&self, bindings_node: &Node, name: &str) -> bool {
+        let Some(named) = self.arena.get_named_imports(bindings_node) else {
+            return false;
+        };
+        if self.get_identifier_text_idx(named.name) == name {
+            return true;
+        }
+        named.elements.nodes.iter().any(|&spec_idx| {
+            self.arena
+                .get(spec_idx)
+                .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                .is_some_and(|spec| self.get_identifier_text_idx(spec.name) == name)
+        })
     }
 
     pub(in crate::emitter) fn export_clause_is_type_only(&self, clause_node: &Node) -> bool {
