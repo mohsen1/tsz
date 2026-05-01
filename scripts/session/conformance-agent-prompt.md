@@ -22,9 +22,28 @@ gap between `tsz` and `tsc` without introducing new gaps.
 
 ## Pick your target (random)
 
-There is one human-facing picker. Use it. `quick-pick.sh` delegates to the
-shared implementation in `scripts/session/pick.py`, so advanced selection
-modes still share the same rules without adding more wrapper scripts.
+There is **one** human-facing picker. Use it. `quick-pick.sh` delegates to
+the shared implementation in `scripts/session/pick.py`, so advanced
+selection modes share the same rules without adding more wrapper scripts.
+
+> ### ⛔ DO NOT CREATE A NEW PICKER SCRIPT
+>
+> This is a recurring failure mode. Past sessions have shipped — and other
+> sessions have had to delete — at least eight near-duplicate "random
+> failure" pickers (`pick.sh`, `pick-random-failure.sh`,
+> `quick-random-failure.sh`, `random-failure.sh`, `random-failure-pick.sh`,
+> `random-target.sh`, `random-quick.sh`, `quick-pick.sh`). PR #1957
+> deleted 11 orphan session scripts at once for this reason; PR #1981
+> was opened immediately afterwards adding a ninth.
+>
+> **The canonical entry point is `scripts/session/quick-pick.sh`.** If
+> you think the existing picker is missing a feature you need (a flag, a
+> filter, a different output format), extend `scripts/session/pick.py`
+> behind a new `quick-pick.sh` flag instead of forking a new script.
+> Do not add `scripts/session/random-*.sh`, `scripts/session/pick-*.sh`,
+> or any new top-level "picker" wrapper. If you cannot find `quick-pick.sh`
+> in the worktree, the worktree is broken — fix that, do not paper over
+> it with a new script.
 
 ```bash
 # Pick ONE random failure (prints path + codes + diff + a verbose-run command)
