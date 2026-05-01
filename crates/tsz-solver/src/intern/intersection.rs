@@ -8,6 +8,9 @@ impl TypeInterner {
     /// Empty objects like `{}` represent "any non-nullish value" in TypeScript.
     /// In intersections like `string & {}`, the empty object is redundant and can be removed.
     fn is_empty_object(&self, id: TypeId) -> bool {
+        if id.is_intrinsic() {
+            return false;
+        }
         match self.lookup(id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.object_shape(shape_id);
