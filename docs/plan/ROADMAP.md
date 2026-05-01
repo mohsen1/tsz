@@ -4,16 +4,59 @@ Date: 2026-04-25
 
 Status: living plan. This is the single planning document for project direction across conformance, emit, performance, architecture, LSP/WASM, Sound Mode, and DRY cleanup. Do not add new roadmap files under `docs/plan/`; update this file instead.
 
-## Top Priorities (2026-04-26)
+## Top Priorities (2026-05-01)
 
-**The two metrics that move the needle for users are diagnostic conformance and emit pass rate.** Everything else is supporting work. When picking a slice:
+**Performance is now the first-class focus.** Conformance and emit are within
+3-25 points of `tsc` parity; the largest user-visible gap left is large-repo
+runtime/RSS. The exit criterion for this priority shift is "tsz finishes
+large-repo benchmarks without OOM or timeout, at ≥100% of the matched-fixture
+tsgo (TS7) baseline on `scripts/bench/perf-hotspots.sh` hot families." Every
+other workstream is supporting work behind this goal.
 
-1. **Conformance fixes (Workstream 1)** — first-class priority. Pick a random failure with `scripts/session/quick-pick.sh`, fix the root cause cleanly, ship with one regression test, measure net conformance delta. A typical fix lands +1 to +20 conformance tests in one PR.
-2. **Emit pass rate (Workstream 2)** — second-class priority. JS emit at `91.1%` and declaration emit at `76.5%` are the largest public pass-rate gaps. Bucket failures by transform family; route fixes through lowering/IR.
-3. **Architectural fixes that unblock conformance/emit** — third-class. Solver invariants, query-boundary plumbing, fingerprint-printer fixes when the printer is the actual bug.
-4. **Test coverage and DRY refactors** — *deprioritized*. Pure-additive unit-test PRs and harness consolidations are easy to land but do not move public metrics. Take them only when (a) you've already shipped a conformance/emit slice this session, or (b) the test you're adding locks a behavior that is about to change in a forthcoming conformance/emit fix. Avoid adding tests purely to "increase coverage" of an untested helper — that work is real but lower-leverage than fixing a failing conformance test.
+When picking a slice:
 
-**Ranking heuristic**: when in doubt, run `scripts/session/quick-pick.sh` and fix what it gives you. The session log shows conformance fixes consistently move the public conformance %; test-coverage PRs move it by 0.
+1. **Performance to 100% (Workstream 5)** — first-class priority. Goal: tsz
+   finishes the `large-ts-repo` fixture (6086 files, 39 MB) without OOM /
+   timeout, and `scripts/bench/perf-hotspots.sh` matched-fixture timings reach
+   100% of the pinned tsgo baseline. Each iteration must measure: capture a
+   before/after on `perf-hotspots.sh --quick` (or the relevant hotspot family),
+   record peak RSS for any large-repo-touching change, and post both numbers
+   in the PR description. Sub-targets, in order: (a) finish Arc-share /
+   skeleton-residency migrations called out in §5; (b) wire remaining
+   `instantiate_type` cache entry points per the §5 constraints; (c) extend
+   the SYMBOL_TYPE bucket fast-path family (#1922-#1949) to any remaining
+   cross-file lookup site that still goes through the legacy path; (d)
+   reduce per-file deep clones of program-wide maps that block large-repo
+   completion. Bench gates: `scripts/bench/perf-hotspots.sh --quick` must not
+   regress against the pinned baseline; `scripts/bench/precommit-microbench.sh`
+   stays green.
+2. **Conformance fixes (Workstream 1)** — second-class priority. Pick a random
+   failure with `scripts/session/quick-pick.sh`, fix the root cause cleanly,
+   ship with one regression test, measure net conformance delta. A typical
+   fix lands +1 to +20 conformance tests in one PR. **Now subordinated to
+   the performance goal**: a conformance fix that introduces a hot-path
+   slowdown must be reworked or held until the slowdown is offset.
+3. **Emit pass rate (Workstream 2)** — third-class priority. JS emit at
+   `91.1%` and declaration emit at `76.5%` are the largest public pass-rate
+   gaps. Bucket failures by transform family; route fixes through
+   lowering/IR. Same perf gate as conformance.
+4. **Architectural fixes that unblock perf/conformance/emit** — fourth-class.
+   Solver invariants, query-boundary plumbing, fingerprint-printer fixes
+   when the printer is the actual bug.
+5. **Test coverage and DRY refactors** — *deprioritized*. Pure-additive
+   unit-test PRs and harness consolidations are easy to land but do not move
+   public metrics. Take them only when (a) you've already shipped a
+   perf/conformance/emit slice this session, or (b) the test you're adding
+   locks a behavior that is about to change in a forthcoming perf or
+   conformance fix. Avoid adding tests purely to "increase coverage" of an
+   untested helper — that work is real but lower-leverage than the active
+   perf workstream.
+
+**Ranking heuristic**: when in doubt, look at §5 ("Stable Identity, Skeletons,
+And Large-Repo Residency") for the next perf slice. Run
+`scripts/bench/perf-hotspots.sh --quick` to measure the impact. Drop to
+`scripts/session/quick-pick.sh` for a conformance slice only when no perf
+slice is actionable in the current session window.
 
 This document supersedes the previous scattered plan files in `docs/plan/` and the former standalone DRY audit. All planning claims now live here.
 
