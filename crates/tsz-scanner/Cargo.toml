@@ -12,7 +12,6 @@ categories.workspace = true
 
 [dependencies]
 tsz-common = { workspace = true }
-memchr = { workspace = true }
 serde = { workspace = true }
 wasm-bindgen = { workspace = true }
 

@@ -17,7 +17,6 @@ tsz-scanner = { workspace = true }
 tsz-binder = { workspace = true }
 rustc-hash = { workspace = true }
 ena = { workspace = true }
-indexmap = { workspace = true }
 bitflags = { workspace = true }
 tracing = { workspace = true }
 smallvec = { workspace = true }

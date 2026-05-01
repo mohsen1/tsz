@@ -16,12 +16,8 @@ crate-type = ["cdylib"]
 tsz = { path = "../tsz-core", package = "tsz-core" }
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
-tsz-parser = { workspace = true }
-tsz-binder = { workspace = true }
 tsz-solver = { workspace = true }
 tsz-checker = { workspace = true }
-tsz-emitter = { workspace = true }
-tsz-lsp = { workspace = true }
 wasm-bindgen = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

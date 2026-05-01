@@ -57,13 +57,6 @@ serde_json = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
 rustc-hash = { workspace = true }
 rayon = { workspace = true }
-memchr = { workspace = true }
-smallvec = { workspace = true }
-dashmap = { workspace = true }
-fixedbitset = { workspace = true }
-ena = { workspace = true }
-indexmap = { workspace = true }
-bitflags = { workspace = true }
 tracing = { workspace = true }
 once_cell = { workspace = true }
 
