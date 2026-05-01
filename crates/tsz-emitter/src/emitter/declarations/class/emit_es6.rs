@@ -2401,13 +2401,18 @@ impl<'a> Printer<'a> {
         let mut recovered = Vec::new();
         for line in source.lines() {
             let trimmed = line.trim();
-            if depth == 1
-                && (trimmed.starts_with("function ")
+            if depth == 1 {
+                if let Some(statements) =
+                    Self::recovered_missing_identifier_class_member_statements(trimmed)
+                {
+                    recovered.extend(statements);
+                } else if trimmed.starts_with("function ")
                     || (trimmed.starts_with("var ")
                         && !trimmed.contains("//")
-                        && !trimmed.contains("()")))
-            {
-                recovered.push(trimmed.replace("{}", "{ }"));
+                        && !trimmed.contains("()"))
+                {
+                    recovered.push(trimmed.replace("{}", "{ }"));
+                }
             }
             for ch in line.chars() {
                 match ch {
@@ -2418,5 +2423,30 @@ impl<'a> Printer<'a> {
             }
         }
         recovered
+    }
+
+    fn recovered_missing_identifier_class_member_statements(trimmed: &str) -> Option<Vec<String>> {
+        let rest = trimmed.strip_prefix("public ")?.trim();
+        let block = rest.strip_suffix(';').unwrap_or(rest).trim();
+        let inner = block.strip_prefix('{')?.strip_suffix('}')?.trim();
+        if inner.is_empty() {
+            return Some(vec!["{ }".to_string()]);
+        }
+
+        let bracket_end = inner.find(']')?;
+        let bracket_body = inner.get(1..bracket_end)?;
+        let type_name = inner
+            .get(bracket_end + 1..)?
+            .trim()
+            .strip_prefix(':')?
+            .trim();
+        let (name, ty) = bracket_body.split_once(':')?;
+
+        Some(vec![
+            "{".to_string(),
+            format!("    [{}, {}];", name.trim(), ty.trim()),
+            format!("    {};", type_name),
+            "}".to_string(),
+        ])
     }
 }
