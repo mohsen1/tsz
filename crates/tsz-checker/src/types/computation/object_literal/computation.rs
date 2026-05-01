@@ -40,6 +40,60 @@ fn is_literal_permissive_context(ctx: TypeId) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Merge a single spread-contributed property into the running
+    /// `properties` map.
+    ///
+    /// tsc's spread merge rule is asymmetric on the *later* property's
+    /// optionality:
+    /// - When the later property is **required**, it fully overrides the
+    ///   earlier one (the runtime always sees the later value).
+    /// - When the later property is **optional**, the runtime may skip
+    ///   it, so the earlier contribution still applies. The merged read
+    ///   type is the union of both, the merged write type is the union
+    ///   of both write types, and the merged property is required iff
+    ///   *some* contributor was required. `readonly` is intersected.
+    ///
+    /// The unconditional-override path that this replaces broke the
+    /// optional-later case in
+    /// `compiler/conformance/types/spread/objectSpreadStrictNull.ts`,
+    /// where `{ ...definiteString, ...optionalNumber }` should produce
+    /// `{ sn: string | number }`, not `{ sn?: number }`.
+    fn merge_spread_property(
+        &self,
+        properties: &mut rustc_hash::FxHashMap<tsz_common::interner::Atom, PropertyInfo>,
+        prop: &PropertyInfo,
+    ) {
+        use std::collections::hash_map::Entry;
+        match properties.entry(prop.name) {
+            Entry::Vacant(slot) => {
+                slot.insert(prop.clone());
+            }
+            Entry::Occupied(mut slot) => {
+                if prop.optional {
+                    let earlier = slot.get().clone();
+                    let merged_type = self.ctx.types.union2(earlier.type_id, prop.type_id);
+                    let merged_write = self.ctx.types.union2(earlier.write_type, prop.write_type);
+                    slot.insert(PropertyInfo {
+                        name: prop.name,
+                        type_id: merged_type,
+                        write_type: merged_write,
+                        // Required wins on optionality.
+                        optional: earlier.optional && prop.optional,
+                        readonly: earlier.readonly && prop.readonly,
+                        is_method: prop.is_method,
+                        is_class_prototype: false,
+                        visibility: prop.visibility,
+                        parent_id: prop.parent_id,
+                        declaration_order: prop.declaration_order,
+                        is_string_named: prop.is_string_named,
+                    });
+                } else {
+                    slot.insert(prop.clone());
+                }
+            }
+        }
+    }
+
     fn function_like_has_explicit_signature_annotations(&self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
             return false;
@@ -2474,13 +2528,13 @@ impl<'a> CheckerState<'a> {
                         spread_display_order_base =
                             spread_display_order_base.saturating_sub(SPREAD_DISPLAY_ORDER_STRIDE);
                         for prop in &spread_props_for_display {
-                            properties.insert(prop.name, prop.clone());
+                            self.merge_spread_property(&mut properties, prop);
                         }
 
                         // Also apply non-union spread to any existing union branches
                         for branch in &mut union_spread_branches {
                             for prop in &spread_props_for_display {
-                                branch.insert(prop.name, prop.clone());
+                                self.merge_spread_property(branch, prop);
                             }
                         }
                     }
