@@ -16,6 +16,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// - For unions: ALL members must be constructable (stricter than function calls)
     /// - For intersections: Returns intersection of instance types (Mixin pattern)
     pub fn resolve_new(&mut self, type_id: TypeId, arg_types: &[TypeId]) -> CallResult {
+        // Intrinsics are never Function/Callable/Union/Intersection/Application
+        // /Lazy — fail fast as NotCallable.
+        if type_id.is_intrinsic() {
+            return CallResult::NotCallable { type_id };
+        }
         let key = match self.interner.lookup(type_id) {
             Some(k) => k,
             None => return CallResult::NotCallable { type_id },
