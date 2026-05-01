@@ -938,10 +938,12 @@ impl<'a> Printer<'a> {
     }
 
     /// Try to collect inline CJS export info for a variable statement.
-    /// Returns `Some(vec of (decoded_name, emit_name, initializer_idx))` if ALL
-    /// declarators are simple identifier bindings with initializers. Returns None if
-    /// any declarator uses destructuring or lacks an initializer (in which case we
-    /// fall back to split form).
+    /// Returns `Some(vec of (decoded_name, emit_name, initializer_idx))` when all
+    /// declarators are simple identifier bindings and every initialized declarator
+    /// can be emitted inline. Declarators without initializers are omitted because
+    /// the CommonJS/AMD preamble already initializes their export slots.
+    ///
+    /// Returns `None` if any declarator uses destructuring or needs split form.
     ///
     /// `decoded_name` is the semantic name (for set tracking/matching).
     /// `emit_name` preserves unicode escapes from the source to match tsc output.
@@ -976,9 +978,8 @@ impl<'a> Printer<'a> {
                     .unwrap_or(&ident.escaped_text)
                     .to_string();
 
-                // Must have an initializer
                 if decl.initializer.is_none() {
-                    return None;
+                    continue;
                 }
 
                 // tsc uses split form (const x = val; exports.x = x;) for
@@ -998,9 +999,6 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if result.is_empty() {
-            return None;
-        }
         Some(result)
     }
 
