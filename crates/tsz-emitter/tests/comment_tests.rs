@@ -67,6 +67,22 @@ fn test_block_comment_after_comma_in_multiline_object() {
     );
 }
 
+#[test]
+fn comment_between_call_and_property_access_stays_before_dot() {
+    let source =
+        "var z = this.then(x => result)/*S*/.then(x => \"abc\")/*string*/.then(x => x.length);\n";
+    let output = parse_and_print_with_opts(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("this.then(x => result) /*S*/.then(x => \"abc\") /*string*/.then"),
+        "Comments between chained calls and property access should stay before the dot.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(".then(/*S*/"),
+        "Comments must not move into the following call arguments.\nOutput:\n{output}"
+    );
+}
+
 /// A comment after a single-line source catch block belongs after the closing
 /// brace once the block is expanded, not on the emitted opening brace line.
 #[test]
