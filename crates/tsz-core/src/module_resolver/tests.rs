@@ -4356,7 +4356,10 @@ fn test_node16_bare_directory_specifier_emits_ts2307_not_ts2834() {
     // `./sub/` in ESM file → TS2834 (directory with index, no filename to suggest)
     let result = resolver.resolve("./sub/", &dir.join("index.mts"), Span::new(0, 2));
     match result {
-        Err(ResolutionFailure::ImportPathNeedsExtension { suggested_extension, .. }) => {
+        Err(ResolutionFailure::ImportPathNeedsExtension {
+            suggested_extension,
+            ..
+        }) => {
             assert!(
                 suggested_extension.is_empty(),
                 "Directory './sub/' resolves via index, should have no suggestion"
@@ -4391,19 +4394,18 @@ fn test_node16_direct_index_file_gets_extension_suggestion() {
     };
     let mut resolver = ModuleResolver::new(&options);
 
-    let result =
-        resolver.resolve("./sub/index", &dir.join("index.mts"), Span::new(0, 2));
+    let result = resolver.resolve("./sub/index", &dir.join("index.mts"), Span::new(0, 2));
     match result {
-        Err(ResolutionFailure::ImportPathNeedsExtension { suggested_extension, .. }) => {
+        Err(ResolutionFailure::ImportPathNeedsExtension {
+            suggested_extension,
+            ..
+        }) => {
             assert!(
                 !suggested_extension.is_empty(),
                 "Direct './sub/index' should have an extension suggestion"
             );
         }
-        other => panic!(
-            "Expected TS2835 with suggestion, got {:?}",
-            other.err()
-        ),
+        other => panic!("Expected TS2835 with suggestion, got {:?}", other.err()),
     }
 
     let _ = fs::remove_dir_all(&dir);

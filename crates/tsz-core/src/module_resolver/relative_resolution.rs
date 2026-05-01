@@ -132,10 +132,8 @@ impl ModuleResolver {
                 // extension to) resolve via directory index but should emit TS2307
                 // (Cannot find module), not TS2834, because there is no filename
                 // to attach an extension to.
-                let is_bare_directory_specifier = matches!(
-                    specifier,
-                    "./" | ".\\" | "../" | "..\\"
-                );
+                let is_bare_directory_specifier =
+                    matches!(specifier, "./" | ".\\" | "../" | "..\\");
                 if resolved_via_index && is_bare_directory_specifier {
                     return Err(ResolutionFailure::NotFound {
                         specifier: specifier.to_string(),

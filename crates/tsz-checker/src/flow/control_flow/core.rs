@@ -1306,12 +1306,17 @@ impl<'a> FlowAnalyzer<'a> {
                     self.assignment_targets_reference_node(flow.node, reference)
                 };
                 if targets_reference {
-                    let is_control_flow_typed_any = control_flow_typed_any_symbol;
-                    let preserve_unknown_catch_type = initial_type == TypeId::UNKNOWN
-                        && symbol_id
-                            .or_else(|| self.reference_symbol(reference))
-                            .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
-                    if self.assignment_reads_reference_before_write(flow.node, reference) {
+                    // For const symbols declared via destructuring, the declared type
+                    // already correctly accounts for all possible values including
+                    // default-initializer widening. Recomputing the assigned type from
+                    // the destructuring source would use flow-narrowed types of other
+                    // variables (e.g. computed property key expressions) and incorrectly
+                    // discard union members — the const binding's type must remain the
+                    // full union computed at declaration time.
+                    let is_const = symbol_id.is_some_and(|sid| self.is_const_symbol(sid));
+                    let is_destructuring = self.is_destructuring_assignment(flow.node);
+                    let is_const_destructuring = is_const && is_destructuring;
+                    if is_const_destructuring {
                         if let Some(&ant) = flow.antecedent.first() {
                             if let Some(&ant_type) = results.get(&ant) {
                                 ant_type
@@ -1330,183 +1335,219 @@ impl<'a> FlowAnalyzer<'a> {
                         } else {
                             current_type
                         }
-                    } else
-                    // CRITICAL FIX: Skip "killing definition" narrowing for ANY and ERROR types only
-                    // These types should preserve their identity across assignments to match tsc behavior
-                    //
-                    // IMPORTANT: unknown is NOT included here because it SHOULD be narrowed by assignments
-                    // Example: let x: unknown; x = 123; should narrow x to number
-                    //
-                    // Catch variables with declared/implicit unknown are special:
-                    // plain assignments do not change their flow type.
-                    //
-                    // any absorbs assignments (stays any)
-                    // error persists to prevent cascading errors
-                    if (initial_type != TypeId::ANY || is_control_flow_typed_any)
-                        && initial_type != TypeId::ERROR
-                        && !preserve_unknown_catch_type
-                    {
-                        // Check if this is a destructuring assignment (widens literals to primitives)
-                        let is_destructuring = self.is_destructuring_assignment(flow.node);
-
-                        // CRITICAL FIX: Try to get assigned type for ALL assignments, including destructuring
-                        // Previously: Only direct assignments (x = ...) worked
-                        // Now: Destructuring ([x] = ...) also works because get_assigned_type handles it
-                        //
-                        // Filter out ERROR types: during loop fixed-point iteration,
-                        // node_types may contain ERROR for expressions not yet type-checked
-                        // (chicken-and-egg: we need x's type to check `len(x)`, but we need
-                        // `len(x)`'s result to determine x's loop type). ERROR is "subtype of
-                        // everything" so narrow_assignment would keep all union members,
-                        // incorrectly returning the full declared type.
-                        let raw_assigned =
-                            self.get_assigned_type(flow.node, reference, is_destructuring);
-                        if let Some(assigned_type) = raw_assigned.filter(|&t| t != TypeId::ERROR) {
-                            let assigned_type = if is_control_flow_typed_any {
-                                query::widen_literal_to_primitive(self.interner, assigned_type)
-                            } else {
-                                assigned_type
-                            };
-                            // For logical assignments (??=, ||=, &&=), the binder creates
-                            // a two-branch flow graph: one branch for the short-circuit
-                            // (original value, with condition narrowing) and one branch for
-                            // the assignment (RHS value). On the assignment branch, the
-                            // variable holds exactly the RHS value — skip narrow_assignment
-                            // which uses mutual-subtype filtering and can fail when the RHS
-                            // type is structurally different from declared union members
-                            // (e.g., arrow with different return type).
-                            if self.is_logical_assignment(flow.node) {
-                                assigned_type
-                            } else if self.is_access_reference(reference) {
-                                // Property/element access reads should keep their declared read
-                                // type for constructor-valued and generic callable members.
-                                // A prior write can be assignment-compatible without changing the
-                                // member's declared read surface, especially for interface/class
-                                // members with generic call/construct signatures.
-                                let widened =
-                                    query::widen_literal_to_primitive(self.interner, assigned_type);
-                                let callable_read_preserves_declared_type = |type_id| {
-                                    let function_shape =
-                                        query::function_shape_for_type(self.interner, type_id);
-                                    let has_generic_call_signatures =
-                                        query::call_signatures_for_type(self.interner, type_id)
-                                            .is_some_and(|sigs| {
-                                                sigs.iter().any(|sig| !sig.type_params.is_empty())
-                                            });
-                                    let construct_signatures = query::construct_signatures_for_type(
-                                        self.interner,
-                                        type_id,
+                    } else {
+                        let is_control_flow_typed_any = control_flow_typed_any_symbol;
+                        let preserve_unknown_catch_type = initial_type == TypeId::UNKNOWN
+                            && symbol_id
+                                .or_else(|| self.reference_symbol(reference))
+                                .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
+                        if self.assignment_reads_reference_before_write(flow.node, reference) {
+                            if let Some(&ant) = flow.antecedent.first() {
+                                if let Some(&ant_type) = results.get(&ant) {
+                                    ant_type
+                                } else if !visited.contains(&ant) {
+                                    defer_to_antecedent(
+                                        worklist,
+                                        in_worklist,
+                                        ant,
+                                        current_flow,
+                                        current_type,
                                     );
-                                    function_shape.as_ref().is_some_and(|shape| {
-                                        shape.is_constructor || !shape.type_params.is_empty()
-                                    }) || has_generic_call_signatures
-                                        || construct_signatures
-                                            .as_ref()
-                                            .is_some_and(|sigs| !sigs.is_empty())
-                                };
-                                let preserves_declared_callable_read_type =
-                                    callable_read_preserves_declared_type(initial_type)
-                                        || callable_read_preserves_declared_type(widened);
-                                if preserves_declared_callable_read_type {
-                                    initial_type
-                                } else if self.is_assignable_to(widened, initial_type) {
-                                    widened
+                                    continue;
                                 } else {
-                                    initial_type
+                                    current_type
                                 }
-                            } else if is_destructuring
-                                && self.arena.get(flow.node).is_some_and(|node| {
-                                    node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                                })
-                            {
-                                // Destructuring-assignment writes already compute a
-                                // branch-sensitive assigned type for the specific target.
-                                // Re-reducing against the declared annotation can leak
-                                // unrelated union members from the old declared type.
-                                assigned_type
-                            } else if is_control_flow_typed_any {
-                                // Unannotated mutable locals such as `let x;` evolve from
-                                // their writes rather than staying explicit `any`.
-                                assigned_type
-                            } else {
-                                // Killing definition: replace type with RHS type and stop traversal.
-                                // Use the DECLARED type for narrowing (matching tsc's getAssignmentReducedType),
-                                // not initial_type which may be an already-narrowed type from loop analysis.
-                                // This is critical for loops like `let code: 0|1 = 0; while(true) { code = code === 1 ? 0 : 1; }`
-                                // where initial_type is `0` (narrowed) but declared type is `0|1`.
-                                let declared_type = symbol_id
-                                    .and_then(|sid| self.binder.get_symbol(sid))
-                                    .filter(|sym| sym.value_declaration.is_some())
-                                    .and_then(|sym| {
-                                        self.node_types.and_then(|nt| {
-                                            self.annotation_type_from_var_decl_node(
-                                                sym.value_declaration,
-                                            )
-                                            .or_else(|| nt.get(&sym.value_declaration.0).copied())
-                                        })
-                                    });
-                                let narrowing_base = declared_type.unwrap_or(initial_type);
-                                // For const declarations with enum types: if the assigned
-                                // type is a member of the enum, narrow directly to the
-                                // member type. This enables flow narrowing for patterns like
-                                // `const e: E = E.ONE` where e should have type E.ONE.
-                                // Only applies to const (not var/let) to avoid changing
-                                // mutable variable semantics.
-                                if self.is_const_variable_declaration(flow.node)
-                                    && crate::query_boundaries::common::enum_components(
-                                        self.interner,
-                                        narrowing_base,
-                                    )
-                                    .is_some()
-                                    && self.is_assignable_to(assigned_type, narrowing_base)
-                                {
-                                    return assigned_type;
-                                }
-                                self.narrow_assignment(narrowing_base, assigned_type)
-                            }
-                        } else {
-                            // This walk is provisional: assignment typing has not been computed
-                            // for the RHS yet. Do not publish the declared-type result into the
-                            // shared flow cache or later reads will reuse a stale answer.
-                            cacheable_walk = false;
-                            // If we can't resolve the RHS type, conservatively return declared type
-                            // The value HAS changed, so we can't continue to antecedent
-                            if self.is_await_assignment_for_reference(flow.node, reference) {
-                                // `x = await expr` assigns a realized value. When RHS typing
-                                // isn't available yet, keep this sound by at least excluding
-                                // `undefined` from the assignment base.
-                                let declared_type = symbol_id
-                                    .and_then(|sid| self.binder.get_symbol(sid))
-                                    .filter(|sym| sym.value_declaration.is_some())
-                                    .and_then(|sym| {
-                                        self.node_types.and_then(|nt| {
-                                            self.annotation_type_from_var_decl_node(
-                                                sym.value_declaration,
-                                            )
-                                            .or_else(|| nt.get(&sym.value_declaration.0).copied())
-                                        })
-                                    })
-                                    .unwrap_or(initial_type);
-                                flow_boundary::narrow_destructuring_default(
-                                    self.interner.as_type_database(),
-                                    declared_type,
-                                    true,
-                                )
                             } else {
                                 current_type
                             }
-                        }
-                    } else {
-                        // For any/error/unknown-catch types: Don't apply narrowing - continue to antecedent
-                        // This allows condition narrowing (typeof guards) to still work
-                        if let Some(&ant) = flow.antecedent.first() {
-                            if !in_worklist.contains(&ant) && !visited.contains(&ant) {
-                                worklist.push_back((ant, current_type));
-                                in_worklist.insert(ant);
+                        } else
+                        // CRITICAL FIX: Skip "killing definition" narrowing for ANY and ERROR types only
+                        // These types should preserve their identity across assignments to match tsc behavior
+                        //
+                        // IMPORTANT: unknown is NOT included here because it SHOULD be narrowed by assignments
+                        // Example: let x: unknown; x = 123; should narrow x to number
+                        //
+                        // Catch variables with declared/implicit unknown are special:
+                        // plain assignments do not change their flow type.
+                        //
+                        // any absorbs assignments (stays any)
+                        // error persists to prevent cascading errors
+                        if (initial_type != TypeId::ANY || is_control_flow_typed_any)
+                            && initial_type != TypeId::ERROR
+                            && !preserve_unknown_catch_type
+                        {
+                            // Check if this is a destructuring assignment (widens literals to primitives)
+                            let is_destructuring = self.is_destructuring_assignment(flow.node);
+
+                            // CRITICAL FIX: Try to get assigned type for ALL assignments, including destructuring
+                            // Previously: Only direct assignments (x = ...) worked
+                            // Now: Destructuring ([x] = ...) also works because get_assigned_type handles it
+                            //
+                            // Filter out ERROR types: during loop fixed-point iteration,
+                            // node_types may contain ERROR for expressions not yet type-checked
+                            // (chicken-and-egg: we need x's type to check `len(x)`, but we need
+                            // `len(x)`'s result to determine x's loop type). ERROR is "subtype of
+                            // everything" so narrow_assignment would keep all union members,
+                            // incorrectly returning the full declared type.
+                            let raw_assigned =
+                                self.get_assigned_type(flow.node, reference, is_destructuring);
+                            if let Some(assigned_type) =
+                                raw_assigned.filter(|&t| t != TypeId::ERROR)
+                            {
+                                let assigned_type = if is_control_flow_typed_any {
+                                    query::widen_literal_to_primitive(self.interner, assigned_type)
+                                } else {
+                                    assigned_type
+                                };
+                                // For logical assignments (??=, ||=, &&=), the binder creates
+                                // a two-branch flow graph: one branch for the short-circuit
+                                // (original value, with condition narrowing) and one branch for
+                                // the assignment (RHS value). On the assignment branch, the
+                                // variable holds exactly the RHS value — skip narrow_assignment
+                                // which uses mutual-subtype filtering and can fail when the RHS
+                                // type is structurally different from declared union members
+                                // (e.g., arrow with different return type).
+                                if self.is_logical_assignment(flow.node) {
+                                    assigned_type
+                                } else if self.is_access_reference(reference) {
+                                    // Property/element access reads should keep their declared read
+                                    // type for constructor-valued and generic callable members.
+                                    // A prior write can be assignment-compatible without changing the
+                                    // member's declared read surface, especially for interface/class
+                                    // members with generic call/construct signatures.
+                                    let widened = query::widen_literal_to_primitive(
+                                        self.interner,
+                                        assigned_type,
+                                    );
+                                    let callable_read_preserves_declared_type = |type_id| {
+                                        let function_shape =
+                                            query::function_shape_for_type(self.interner, type_id);
+                                        let has_generic_call_signatures =
+                                            query::call_signatures_for_type(self.interner, type_id)
+                                                .is_some_and(|sigs| {
+                                                    sigs.iter()
+                                                        .any(|sig| !sig.type_params.is_empty())
+                                                });
+                                        let construct_signatures =
+                                            query::construct_signatures_for_type(
+                                                self.interner,
+                                                type_id,
+                                            );
+                                        function_shape.as_ref().is_some_and(|shape| {
+                                            shape.is_constructor || !shape.type_params.is_empty()
+                                        }) || has_generic_call_signatures
+                                            || construct_signatures
+                                                .as_ref()
+                                                .is_some_and(|sigs| !sigs.is_empty())
+                                    };
+                                    let preserves_declared_callable_read_type =
+                                        callable_read_preserves_declared_type(initial_type)
+                                            || callable_read_preserves_declared_type(widened);
+                                    if preserves_declared_callable_read_type {
+                                        initial_type
+                                    } else if self.is_assignable_to(widened, initial_type) {
+                                        widened
+                                    } else {
+                                        initial_type
+                                    }
+                                } else if is_destructuring
+                                    && self.arena.get(flow.node).is_some_and(|node| {
+                                        node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                    })
+                                {
+                                    // Destructuring-assignment writes already compute a
+                                    // branch-sensitive assigned type for the specific target.
+                                    // Re-reducing against the declared annotation can leak
+                                    // unrelated union members from the old declared type.
+                                    assigned_type
+                                } else if is_control_flow_typed_any {
+                                    // Unannotated mutable locals such as `let x;` evolve from
+                                    // their writes rather than staying explicit `any`.
+                                    assigned_type
+                                } else {
+                                    // Killing definition: replace type with RHS type and stop traversal.
+                                    // Use the DECLARED type for narrowing (matching tsc's getAssignmentReducedType),
+                                    // not initial_type which may be an already-narrowed type from loop analysis.
+                                    // This is critical for loops like `let code: 0|1 = 0; while(true) { code = code === 1 ? 0 : 1; }`
+                                    // where initial_type is `0` (narrowed) but declared type is `0|1`.
+                                    let declared_type = symbol_id
+                                        .and_then(|sid| self.binder.get_symbol(sid))
+                                        .filter(|sym| sym.value_declaration.is_some())
+                                        .and_then(|sym| {
+                                            self.node_types.and_then(|nt| {
+                                                self.annotation_type_from_var_decl_node(
+                                                    sym.value_declaration,
+                                                )
+                                                .or_else(|| {
+                                                    nt.get(&sym.value_declaration.0).copied()
+                                                })
+                                            })
+                                        });
+                                    let narrowing_base = declared_type.unwrap_or(initial_type);
+                                    // For const declarations with enum types: if the assigned
+                                    // type is a member of the enum, narrow directly to the
+                                    // member type. This enables flow narrowing for patterns like
+                                    // `const e: E = E.ONE` where e should have type E.ONE.
+                                    // Only applies to const (not var/let) to avoid changing
+                                    // mutable variable semantics.
+                                    if self.is_const_variable_declaration(flow.node)
+                                        && crate::query_boundaries::common::enum_components(
+                                            self.interner,
+                                            narrowing_base,
+                                        )
+                                        .is_some()
+                                        && self.is_assignable_to(assigned_type, narrowing_base)
+                                    {
+                                        return assigned_type;
+                                    }
+                                    self.narrow_assignment(narrowing_base, assigned_type)
+                                }
+                            } else {
+                                // This walk is provisional: assignment typing has not been computed
+                                // for the RHS yet. Do not publish the declared-type result into the
+                                // shared flow cache or later reads will reuse a stale answer.
+                                cacheable_walk = false;
+                                // If we can't resolve the RHS type, conservatively return declared type
+                                // The value HAS changed, so we can't continue to antecedent
+                                if self.is_await_assignment_for_reference(flow.node, reference) {
+                                    // `x = await expr` assigns a realized value. When RHS typing
+                                    // isn't available yet, keep this sound by at least excluding
+                                    // `undefined` from the assignment base.
+                                    let declared_type = symbol_id
+                                        .and_then(|sid| self.binder.get_symbol(sid))
+                                        .filter(|sym| sym.value_declaration.is_some())
+                                        .and_then(|sym| {
+                                            self.node_types.and_then(|nt| {
+                                                self.annotation_type_from_var_decl_node(
+                                                    sym.value_declaration,
+                                                )
+                                                .or_else(|| {
+                                                    nt.get(&sym.value_declaration.0).copied()
+                                                })
+                                            })
+                                        })
+                                        .unwrap_or(initial_type);
+                                    flow_boundary::narrow_destructuring_default(
+                                        self.interner.as_type_database(),
+                                        declared_type,
+                                        true,
+                                    )
+                                } else {
+                                    current_type
+                                }
                             }
-                            *results.get(&ant).unwrap_or(&current_type)
                         } else {
-                            current_type
+                            // For any/error/unknown-catch types: Don't apply narrowing - continue to antecedent
+                            // This allows condition narrowing (typeof guards) to still work
+                            if let Some(&ant) = flow.antecedent.first() {
+                                if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                                    worklist.push_back((ant, current_type));
+                                    in_worklist.insert(ant);
+                                }
+                                *results.get(&ant).unwrap_or(&current_type)
+                            } else {
+                                current_type
+                            }
                         }
                     }
                 } else if self.assignment_affects_reference_node(flow.node, reference) {

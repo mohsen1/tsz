@@ -1148,12 +1148,41 @@ impl<'a> FlowAnalyzer<'a> {
             None => return false, // Assume mutable if we can't determine
         };
 
-        let decl_idx = symbol.value_declaration;
+        let mut decl_idx = symbol.value_declaration;
         if decl_idx.is_none() {
             return false; // Assume mutable if no declaration
         }
 
-        self.arena.is_const_variable_declaration(decl_idx)
+        // Walk up the parent chain to find the enclosing VARIABLE_DECLARATION.
+        // Destructured bindings have value_declaration set to BINDING_ELEMENT or
+        // Identifier inside a BINDING_ELEMENT, not the VARIABLE_DECLARATION itself.
+        loop {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                // For simple identifiers, walk up to the parent (usually VARIABLE_DECLARATION)
+                let Some(ext) = self.arena.get_extended(decl_idx) else {
+                    return false;
+                };
+                if ext.parent.is_none() {
+                    return false;
+                }
+                decl_idx = ext.parent;
+                continue;
+            }
+            if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                return self.arena.is_const_variable_declaration(decl_idx);
+            }
+            // BINDING_ELEMENT, BINDING_PATTERN, etc. — walk up
+            let Some(ext) = self.arena.get_extended(decl_idx) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            decl_idx = ext.parent;
+        }
     }
 
     /// Narrow type based on a binary expression (===, !==, typeof checks, etc.)
