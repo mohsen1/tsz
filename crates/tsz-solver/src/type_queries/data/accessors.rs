@@ -496,6 +496,9 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
 /// This matches the interner-side preservation rule used for intersections like
 /// `{ v: T } & ({ v: A, a: string } | { v: B, b: string })`.
 pub fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     let Some(members) = get_intersection_members(db, type_id) else {
         return false;
     };
