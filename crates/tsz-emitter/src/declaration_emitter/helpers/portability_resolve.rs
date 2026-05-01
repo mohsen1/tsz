@@ -1320,16 +1320,6 @@ impl<'a> DeclarationEmitter<'a> {
             ) {
                 return Some(result);
             }
-            if self.type_application_has_public_surface_reference_with_portable_arguments(
-                app.base,
-                &app.args,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
-            ) {
-                return None;
-            }
         }
 
         if let Some(callable_id) = tsz_solver::visitor::callable_shape_id(interner, type_id) {
