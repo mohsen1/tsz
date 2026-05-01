@@ -583,8 +583,31 @@ impl<'a> CheckerState<'a> {
         // Deferred spread entries: (spread_type, expr_idx, attr_index) for TS2322.
         let mut spread_entries: Vec<(TypeId, NodeIndex, usize)> = Vec::new();
 
-        // Check each attribute
+        // Pre-scan: if any attribute is an `any`/`error`/`unknown`-typed spread,
+        // tsc widens the merged JSX-attributes object to be `any`-compatible
+        // and skips per-attribute assignability checks against the props type
+        // for *every* explicit attribute on the element (regardless of order).
+        // Mirrors `tsxSpreadAttributesResolution12.tsx` where
+        // `<OverWriteAttr {...anyobj} x={3} />` produces no TS2322.
         let attr_nodes = &attrs.properties.nodes;
+        let any_spread_present = attr_nodes.iter().any(|&attr_idx| {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                return false;
+            };
+            if attr_node.kind != syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                return false;
+            }
+            let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
+                return false;
+            };
+            let spread_type = self.compute_normalized_jsx_spread_type_with_request(
+                spread_data.expression,
+                &TypingRequest::NONE,
+            );
+            matches!(spread_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
+        });
+
+        // Check each attribute
         for (attr_i, &attr_idx) in attr_nodes.iter().enumerate() {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
                 continue;
@@ -732,8 +755,11 @@ impl<'a> CheckerState<'a> {
                 // Track for TS2783 spread-overwrite detection
                 named_attr_nodes.insert(attr_name.clone(), attr_data.name);
 
-                // Skip prop-type checking when props type is any/error/contains-error
-                if skip_prop_checks {
+                // Skip prop-type checking when props type is any/error/contains-error,
+                // or when an `any`/`error`/`unknown`-typed spread is present anywhere on
+                // the element (the merged JSX-attributes object is `any`-compatible, so
+                // tsc's `checkJsxExpression`/intersection logic suppresses TS2322 here).
+                if skip_prop_checks || any_spread_present {
                     let attr_value_type =
                         self.compute_jsx_attr_value_type_without_context(attr_data.initializer);
                     if let Some(entry) = provided_attrs.last_mut() {
