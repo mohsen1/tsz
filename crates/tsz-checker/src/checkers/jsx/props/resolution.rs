@@ -3,7 +3,7 @@
 
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
-use crate::diagnostics::{diagnostic_messages, format_message};
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1037,13 +1037,7 @@ impl<'a> CheckerState<'a> {
                             .implicit_any_checked_closures
                             .insert(value_node_idx);
                         self.invalidate_function_like_for_contextual_retry(value_node_idx);
-                        let param_span_end = self
-                            .ctx
-                            .arena
-                            .get_function(value_node)
-                            .and_then(|func| self.ctx.arena.get(func.body))
-                            .map_or(value_node.end, |body_node| body_node.pos);
-                        function_param_diagnostic_span = Some((value_node.pos, param_span_end));
+                        function_param_diagnostic_span = Some((value_node.pos, value_node.end));
                     }
                     let contextual_expected_type =
                         if self.ctx.arena.get(value_node_idx).is_some_and(|node| {
@@ -1055,6 +1049,7 @@ impl<'a> CheckerState<'a> {
                             expected_context_type
                         };
                     // Set contextual type to preserve narrow literal types.
+                    let is_function_attr = function_param_diagnostic_span.is_some();
                     let spec_snap = function_param_diagnostic_span
                         .map(|_| DiagnosticSpeculationSnapshot::new(&self.ctx));
                     let actual_type = self.compute_type_of_node_with_request(
@@ -1068,8 +1063,13 @@ impl<'a> CheckerState<'a> {
                         (function_param_diagnostic_span, spec_snap)
                     {
                         snap.rollback_filtered(&mut self.ctx, |diag| {
-                            !(matches!(diag.code, 7006 | 7019 | 7031 | 7051)
-                                && diag.start >= start
+                            !(matches!(
+                                diag.code,
+                                7006 | 7019
+                                    | 7031
+                                    | 7051
+                                    | diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                            ) && diag.start >= start
                                 && diag.start < end)
                         });
                     }
@@ -1105,15 +1105,37 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             actual_type,
                         );
+                    // When the attribute value is a function expression, tsc
+                    // displays the target type as the intersection of the
+                    // actual (inferred) function type and the expected
+                    // (declared) function type.  Construct that intersection
+                    // for the target so the error fingerprint matches.
+                    let effective_expected = if is_function_attr {
+                        self.ctx
+                            .types
+                            .factory()
+                            .intersection2_raw(actual_type, expected_type)
+                    } else {
+                        expected_type
+                    };
                     if actual_type != TypeId::ANY
                         && actual_type != TypeId::ERROR
                         && !attr_has_unresolved_type_params
-                        && !self.check_assignable_or_report_at(
-                            actual_type,
-                            expected_type,
-                            value_node_idx,
-                            attr_data.name,
-                        )
+                        && !if is_function_attr {
+                            self.check_assignable_or_report_at_without_source_elaboration(
+                                actual_type,
+                                effective_expected,
+                                value_node_idx,
+                                attr_data.name,
+                            )
+                        } else {
+                            self.check_assignable_or_report_at(
+                                actual_type,
+                                effective_expected,
+                                value_node_idx,
+                                attr_data.name,
+                            )
+                        }
                     {
                         has_prop_type_error = true;
                     }

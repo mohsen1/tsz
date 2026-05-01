@@ -5372,3 +5372,61 @@ declare var Obj2: Obj2type;
         );
     }
 }
+
+#[test]
+fn test_generic_jsx_function_attr_error_anchors_at_attribute_not_body() {
+    // When a function-valued JSX attribute produces a body-level type error,
+    // tsc suppresses the body-level error and anchors the TS2322 at the
+    // attribute name. The target type displays as the intersection of the
+    // actual (inferred) function type and the expected (declared) function type.
+    let lib_source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface ElementClass {
+        render(): any;
+    }
+    interface IntrinsicElements {}
+    interface ElementAttributesProperty {
+        props: {};
+    }
+}
+declare namespace React {
+    class Component<P, S> {
+        props: P;
+        state: S;
+    }
+}
+"#;
+
+    let main_source = r#"
+interface BaseProps<T> {
+    initialValues: T;
+    nextValues: (cur: T) => T;
+}
+declare class MyComponent<Props = {}, Values = {}> extends React.Component<Props & BaseProps<Values>, {}> {
+    iv: Values;
+}
+// The function body returns `string` but the expected return type is `{ x: string }`.
+// TS2322 should fire at the attribute anchor, and the target should show the
+// intersection of the actual and expected callable types.
+let d = <MyComponent initialValues={{ x: "y" }} nextValues={a => a.x} />;
+"#;
+
+    let diags = cross_file_jsx_diagnostics(lib_source, main_source);
+    let ts2322_diags: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        !ts2322_diags.is_empty(),
+        "Expected TS2322 for mismatched function-valued attr return type, got: {diags:?}"
+    );
+
+    for (_, message) in &ts2322_diags {
+        assert!(
+            message.contains(" & "),
+            "TS2322 target should show intersection of callable types with '&', got: {message}"
+        );
+    }
+}

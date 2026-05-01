@@ -81,6 +81,13 @@ impl<'db> TypeFactory<'db> {
         self.db.intersection2(left, right)
     }
 
+    /// Create a two-member intersection WITHOUT normalization (no callable/object merging).
+    /// Preserves the intersection form for display purposes.
+    #[inline]
+    pub fn intersection2_raw(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.db.intersect_types_raw2(left, right)
+    }
+
     #[inline]
     pub fn array(&self, element: TypeId) -> TypeId {
         self.db.array(element)

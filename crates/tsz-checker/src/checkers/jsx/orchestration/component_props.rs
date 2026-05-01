@@ -885,6 +885,15 @@ impl<'a> CheckerState<'a> {
                 });
 
         // === Round 1: Infer type params from concrete attrs only ===
+        // Widen property types of fresh object literal attrs before inference.
+        // JSX attribute expression values like `initialValues={{ x: "y" }}`
+        // should infer Values as `{ x: string }` (not `{ x: "y" }`), matching
+        // tsc's getWidenedType. Primitive literals (`"button"`, `12`) are
+        // preserved so string-literal attrs keep precise types for conditional
+        // type matching.
+        for (_, ty) in &mut concrete_attrs {
+            *ty = self.widen_jsx_object_attr_type(*ty);
+        }
         let mut substitution = if concrete_attrs.is_empty() {
             crate::query_boundaries::common::TypeSubstitution::new()
         } else {
