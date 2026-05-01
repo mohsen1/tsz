@@ -5434,8 +5434,12 @@ pub fn create_binder_from_bound_file(
     let sym_to_decl_indices = Arc::clone(&file.sym_to_decl_indices);
     let symbol_arenas = Arc::clone(&file.symbol_arenas);
 
-    // Get file locals for this specific file
-    let mut file_locals = SymbolTable::new();
+    let local_count = program
+        .file_locals
+        .get(file_idx)
+        .map(|t| t.len())
+        .unwrap_or(0);
+    let mut file_locals = SymbolTable::with_capacity(local_count + program.globals.len());
 
     // Copy from program.file_locals if available
     if file_idx < program.file_locals.len() {
@@ -5543,7 +5547,12 @@ pub fn create_binder_from_bound_file_with_shared(
     let sym_to_decl_indices = Arc::clone(&file.sym_to_decl_indices);
     let symbol_arenas = Arc::clone(&file.symbol_arenas);
 
-    let mut file_locals = SymbolTable::new();
+    let local_count = program
+        .file_locals
+        .get(file_idx)
+        .map(|t| t.len())
+        .unwrap_or(0);
+    let mut file_locals = SymbolTable::with_capacity(local_count + program.globals.len());
     if file_idx < program.file_locals.len() {
         for (name, &sym_id) in program.file_locals[file_idx].iter() {
             file_locals.set(name.clone(), sym_id);
