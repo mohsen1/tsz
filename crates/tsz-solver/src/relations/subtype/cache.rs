@@ -73,6 +73,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// For non-enum resolutions (e.g., recursive interfaces), the `def_guard` is
     /// critical for preventing infinite recursion and must NOT be released.
     fn is_lazy_to_same_enum(&self, original: TypeId, resolved: TypeId) -> bool {
+        if original.is_intrinsic() || resolved.is_intrinsic() {
+            return false;
+        }
         if let Some(lazy_def) = lazy_def_id(self.interner, original)
             && let Some((enum_def, _)) = enum_components(self.interner, resolved)
         {

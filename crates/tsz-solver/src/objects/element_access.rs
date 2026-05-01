@@ -162,6 +162,9 @@ impl<'a> ElementAccessEvaluator<'a> {
     }
 
     fn should_report_no_index_signature(&self, object_type: TypeId, index_type: TypeId) -> bool {
+        if object_type.is_intrinsic() {
+            return false;
+        }
         let index_type = evaluate_type(self.interner, index_type);
         // PERF: Reuse a single SubtypeChecker across all checks
         let mut checker = crate::relations::subtype::SubtypeChecker::new(self.interner);
