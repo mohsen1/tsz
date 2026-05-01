@@ -295,6 +295,9 @@ pub enum PromiseTypeKind {
 /// This function examines a type and returns information about how to handle it
 /// when checking for promise-like types.
 pub fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseTypeKind {
+    if type_id.is_intrinsic() {
+        return PromiseTypeKind::NotPromise;
+    }
     let Some(key) = db.lookup(type_id) else {
         return PromiseTypeKind::NotPromise;
     };
@@ -417,6 +420,9 @@ pub fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
     if type_id == TypeId::BOOLEAN_FALSE {
         return Some("false".to_string());
+    }
+    if type_id.is_intrinsic() {
+        return None;
     }
 
     match db.lookup(type_id) {
