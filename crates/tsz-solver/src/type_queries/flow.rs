@@ -356,6 +356,9 @@ pub enum LiteralValueKind {
 
 /// Classify a type to extract literal value (string or number).
 pub fn classify_for_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralValueKind {
+    if type_id.is_intrinsic() {
+        return LiteralValueKind::None;
+    }
     let Some(key) = db.lookup(type_id) else {
         return LiteralValueKind::None;
     };
@@ -1420,6 +1423,10 @@ pub fn has_type_query_for_symbol(
             continue;
         }
 
+        if ty.is_intrinsic() {
+            continue;
+        }
+
         let resolved = resolve_lazy(ty);
         if resolved != ty {
             worklist.push(resolved);
@@ -1496,6 +1503,9 @@ fn extract_contextual_type_params_inner(
     depth: u32,
 ) -> Option<Vec<crate::types::TypeParamInfo>> {
     if depth > 20 {
+        return None;
+    }
+    if type_id.is_intrinsic() {
         return None;
     }
 
