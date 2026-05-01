@@ -25,6 +25,14 @@ use tsz_common::Atom;
 ///
 /// Matches: `TypeData::Literal`(_)
 pub fn is_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // BOOLEAN_TRUE / BOOLEAN_FALSE are reserved intrinsic TypeIds whose
+    // TypeData::lookup returns Literal(Boolean), so they ARE literal types.
+    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Literal(_)))
 }
 
@@ -32,6 +40,9 @@ pub fn is_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Matches: `TypeData::ModuleNamespace`(_)
 pub fn is_module_namespace_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::ModuleNamespace(_)))
 }
 
@@ -44,6 +55,9 @@ pub fn is_module_namespace_type(types: &dyn TypeDatabase, type_id: TypeId) -> bo
 /// numeric from string enums. When it's still `Lazy`, the checker may need to
 /// use symbol-based fallback checks.
 pub fn is_lazy_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Lazy(_)))
 }
 
@@ -162,6 +176,9 @@ fn has_late_bound_members_impl(types: &dyn TypeDatabase, type_id: TypeId) -> boo
 
 /// Check if a type is an empty object type (no properties, no index signatures).
 pub fn is_empty_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Object(shape_id)) => {
             let shape = types.object_shape(shape_id);
@@ -205,21 +222,33 @@ pub fn is_primitive_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is a union type.
 pub fn is_union_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Union(_)))
 }
 
 /// Check if a type is an intersection type.
 pub fn is_intersection_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Intersection(_)))
 }
 
 /// Check if a type is an array type.
 pub fn is_array_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Array(_)))
 }
 
 /// Check if a type is a tuple type (including readonly tuples wrapped in `ReadonlyType`).
 pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Tuple(_)) => true,
         Some(TypeData::ReadonlyType(inner)) => is_tuple_type(types, inner),
@@ -266,6 +295,9 @@ pub fn is_structurally_deferred_type(types: &dyn TypeDatabase, type_id: TypeId) 
 
 /// Check if a type is a type parameter.
 pub fn is_type_parameter(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         types.lookup(type_id),
         Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
@@ -274,6 +306,9 @@ pub fn is_type_parameter(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is a conditional type.
 pub fn is_conditional_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Conditional(_)))
 }
 
@@ -283,6 +318,9 @@ pub fn is_conditional_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// (TS2322) since the deferred conditional makes the assignment incompatible
 /// regardless of excess properties.
 pub fn has_deferred_conditional_member(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Conditional(_)) => true,
         Some(TypeData::Intersection(list_id)) => {
@@ -297,26 +335,41 @@ pub fn has_deferred_conditional_member(types: &dyn TypeDatabase, type_id: TypeId
 
 /// Check if a type is a mapped type.
 pub fn is_mapped_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Mapped(_)))
 }
 
 /// Check if a type is an index access type.
 pub fn is_index_access_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
 }
 
 /// Check if a type is a type query (typeof) type.
 pub fn is_type_query_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::TypeQuery(_)))
 }
 
 /// Check if a type is a template literal type.
 pub fn is_template_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::TemplateLiteral(_)))
 }
 
 /// Check if a type is a type reference (Lazy/DefId).
 pub fn is_type_reference(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         types.lookup(type_id),
         Some(TypeData::Lazy(_) | TypeData::Recursive(_))
@@ -325,6 +378,9 @@ pub fn is_type_reference(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is a generic type application.
 pub fn is_generic_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Application(_)))
 }
 
