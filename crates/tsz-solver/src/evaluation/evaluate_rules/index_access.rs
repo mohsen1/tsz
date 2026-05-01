@@ -243,6 +243,9 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         if constraint == self.index_type {
             return true;
         }
+        if constraint.is_intrinsic() {
+            return false;
+        }
 
         let interner = self.evaluator.interner();
         let same_type_param_name = match (
@@ -1821,6 +1824,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// of string. When used as an index on an object with a string index signature,
     /// they should resolve to the string index signature's value type.
     fn is_string_like_index(&self, index_type: TypeId) -> bool {
+        if index_type.is_intrinsic() {
+            return false;
+        }
         match self.interner().lookup(index_type) {
             Some(TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. }) => true,
             Some(TypeData::Intersection(list_id)) => {

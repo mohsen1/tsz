@@ -746,6 +746,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     fn is_concrete_application_led_intersection(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         let Some(TypeData::Intersection(members)) = self.interner().lookup(type_id) else {
             return false;
         };
@@ -1745,6 +1748,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // - IndexAccess like `T[K]` where object or index is generic
         //   (TSC's `isGenericType` returns true for IndexedAccessType with
         //   generic components, causing conditional type deferral)
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner().lookup(type_id) {
             Some(TypeData::Intersection(list_id)) => {
                 let members = self.interner().type_list(list_id);
