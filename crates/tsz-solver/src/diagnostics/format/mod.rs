@@ -129,6 +129,40 @@ pub struct TypeFormatter<'a> {
 }
 
 impl<'a> TypeFormatter<'a> {
+    /// For Application-arg display: when the arg is an `IndexAccess(obj, idx)`
+    /// whose `obj` is fully concrete (no type parameters, no infer
+    /// placeholders) and `idx` is a literal, resolve the indexed access for
+    /// display. tsc unfolds these — `View<TypeA["bar"]>` is shown as
+    /// `View<TypeB>` — because the concrete index is just an indirection
+    /// over the resolved property type.
+    ///
+    /// Returns the original `arg` for any other shape (deferred `IndexAccess`
+    /// over a type parameter, non-literal index, etc.) so generic and
+    /// deferred types continue to print verbatim.
+    fn resolve_concrete_index_access_for_display(&self, arg: TypeId) -> TypeId {
+        let Some(TypeData::IndexAccess(obj, idx)) = self.interner.lookup(arg) else {
+            return arg;
+        };
+        if crate::type_queries::contains_type_parameters_db(self.interner, obj)
+            || crate::type_queries::contains_type_parameters_db(self.interner, idx)
+        {
+            return arg;
+        }
+        // Idx must be a literal (or union of literals) for tsc's unfold —
+        // a generic key would also be deferred even when the obj is concrete.
+        if !matches!(
+            self.interner.lookup(idx),
+            Some(TypeData::Literal(_) | TypeData::Union(_))
+        ) {
+            return arg;
+        }
+        let resolved = crate::evaluation::evaluate::evaluate_index_access(self.interner, obj, idx);
+        if resolved == arg || resolved == TypeId::ERROR {
+            return arg;
+        }
+        resolved
+    }
+
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         TypeFormatter {
             interner,
@@ -1288,7 +1322,7 @@ impl<'a> TypeFormatter<'a> {
                 let args: Vec<Cow<'static, str>> = display_args
                     .iter()
                     .take(visible_arg_count)
-                    .map(|&arg| self.format(arg))
+                    .map(|&arg| self.format(self.resolve_concrete_index_access_for_display(arg)))
                     .collect();
                 let result = if args.is_empty() {
                     base_str.to_string()
