@@ -124,6 +124,17 @@ pub fn has_late_bound_members(types: &dyn TypeDatabase, type_id: TypeId) -> bool
 }
 
 fn has_late_bound_members_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types (`number`, `string`, `any`, `never`, etc.)
+    // are not Object/ObjectWithIndex/Intersection, so the existing match
+    // falls through to the `_` arm. Calling `evaluate_type` on an intrinsic
+    // returns the same TypeId, which then short-circuits to `false` — but
+    // only after a `TypeData` lookup, an eight-arm match dispatch, and an
+    // `evaluate_type` call. `TypeId::is_intrinsic` is a free range check;
+    // skip the rest entirely. Same pattern as #2001 / #2005 / #2008 / #2009 /
+    // #2014 / #2015 / #2017 / #2019.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(TypeData::ObjectWithIndex(shape_id)) | Some(TypeData::Object(shape_id)) => {
             let shape = types.object_shape(shape_id);
