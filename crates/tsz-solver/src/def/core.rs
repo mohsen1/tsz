@@ -1078,9 +1078,10 @@ impl DefinitionStore {
             return;
         }
         use dashmap::mapref::entry::Entry;
-        match self.type_to_def.entry(type_id) {
+        let _outcome = match self.type_to_def.entry(type_id) {
             Entry::Vacant(e) => {
                 e.insert(def_id);
+                "vacant-insert"
             }
             Entry::Occupied(mut e) => {
                 let existing = *e.get();
@@ -1094,14 +1095,16 @@ impl DefinitionStore {
                 match (existing_pos, new_pos) {
                     (Some((ef, ep)), Some((nf, np))) if (nf, np) < (ef, ep) => {
                         e.insert(def_id);
+                        "occupied-replace-newer-first"
                     }
                     (None, Some(_)) => {
                         e.insert(def_id);
+                        "occupied-replace-no-existing-pos"
                     }
-                    _ => {}
+                    _ => "occupied-keep-existing",
                 }
             }
-        }
+        };
     }
 
     /// Look up the `DefId` that produced the given `TypeId`.
@@ -1109,6 +1112,18 @@ impl DefinitionStore {
     /// Returns `Some(def_id)` if a class/interface was registered for this type.
     pub fn find_def_for_type(&self, type_id: TypeId) -> Option<DefId> {
         self.type_to_def.get(&type_id).map(|r| *r)
+    }
+
+    /// Unconditionally register a `TypeId` → `DefId` mapping, overwriting any
+    /// existing entry. This bypasses the source-position priority check used by
+    /// [`register_type_to_def`] and is intended for cases where the caller has
+    /// structural evidence (e.g., shape-symbol ownership) that this def is the
+    /// correct display name for the type.
+    pub fn force_register_type_to_def(&self, type_id: TypeId, def_id: DefId) {
+        if type_id.is_intrinsic() {
+            return;
+        }
+        self.type_to_def.insert(type_id, def_id);
     }
 
     /// Register a mapping from a `Class` `DefId` to its `ClassConstructor` companion `DefId`.

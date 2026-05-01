@@ -1055,9 +1055,23 @@ impl<'a> CheckerState<'a> {
                             )
                         })
                     {
-                        self.ctx
-                            .definition_store
-                            .register_type_to_def(resolved, def_id);
+                        // When the resolved type's shape symbol belongs to a
+                        // different symbol than the def, skip registration so
+                        // the formatter shows the base name. E.g., for
+                        // `interface A2 extends A1 { }` where A2 is empty, the
+                        // resolved type is A1's instance type; it must display
+                        // as "A1", not "A2".
+                        let shape_sym = crate::query_boundaries::common::type_shape_symbol(
+                            self.ctx.types.as_type_database(),
+                            resolved,
+                        );
+                        let def_sym = self.ctx.def_to_symbol_id(def_id);
+                        let skip = shape_sym.is_some_and(|ss| def_sym.is_some_and(|ds| ss != ds));
+                        if !skip {
+                            self.ctx
+                                .definition_store
+                                .register_type_to_def(resolved, def_id);
+                        }
                     }
                     return self.resolve_lazy_type_inner(resolved, visited);
                 }

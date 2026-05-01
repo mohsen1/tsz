@@ -240,26 +240,49 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    // For merged interface+namespace symbols, return the structural type
-                    // directly instead of Lazy wrapper. The Lazy wrapper causes property
-                    // access to incorrectly classify the type as a namespace value,
-                    // blocking interface member resolution.
-                    //
-                    // Also return structural type for interfaces with index signatures
-                    // (ObjectWithIndex) — Lazy causes issues with flow analysis there.
-                    //
-                    // Also return Unknown directly when cross-file interface resolution
-                    // fails — wrapping in Lazy(DefId) would create an unresolvable ref.
+                    // When the interface is empty (has no own members) and heritage
+                    // merging returns the base type directly, the structural type's
+                    // shape symbol points to the base symbol, not the interface's
+                    // symbol. In that case return the structural type without
+                    // registering it against the interface's DefId, so the display
+                    // shows the base type name (matching tsc).
+                    let structural_shape_symbol =
+                        crate::query_boundaries::common::type_shape_symbol(
+                            self.ctx.types.as_type_database(),
+                            structural_type,
+                        );
+                    let structural_belongs_to_different_symbol =
+                        structural_shape_symbol.is_some_and(|s| s != sym_id);
+
+                    // When the interface transparently passes through to its base
+                    // (e.g. `interface A2 extends A1 { }`), bypass both the
+                    // type→def registration and the Lazy wrapper — return the
+                    // structural type directly so the formatter shows the base name.
+                    if structural_belongs_to_different_symbol {
+                        // When the interface transparently passes through to
+                        // its base (e.g. `interface A2 extends A1 {}`),
+                        // register the merged structural type to the base
+                        // symbol's DefId so diagnostics show the base name.
+                        // Use get_or_create_def_id to get the canonical DefId
+                        // (DefKind::Class for classes, DefKind::Interface for
+                        // interfaces), not the constructor companion.
+                        let shape_sym = structural_shape_symbol
+                            .expect("shape symbol exists after structural_belongs_to_different_symbol check");
+                        let correct_def = self.ctx.get_or_create_def_id(shape_sym);
+                        self.ctx
+                            .definition_store
+                            .force_register_type_to_def(structural_type, correct_def);
+                        self.ctx.leave_recursion();
+                        return structural_type;
+                    }
+
+                    // For merged interface+namespace symbols, return the structural
+                    // type directly instead of Lazy wrapper.
                     if is_merged_with_namespace
                         || should_force_interface_decl_path
                         || query::is_object_with_index_type(self.ctx.types, structural_type)
                         || structural_type == TypeId::UNKNOWN
                     {
-                        // For interfaces with index signatures (e.g. String, Array),
-                        // register type → DefId so the TypeFormatter can display the
-                        // interface name instead of the full structural expansion.
-                        // Skip for namespace-merged and forced paths to avoid incorrect
-                        // name associations.
                         if !is_merged_with_namespace
                             && !should_force_interface_decl_path
                             && structural_type != TypeId::ERROR
@@ -273,14 +296,10 @@ impl<'a> CheckerState<'a> {
                         return structural_type;
                     }
 
-                    // Return Lazy wrapper for regular interfaces
-                    // But if the interface has default type parameters, create an Application
-                    // type with the default arguments applied (matching tsc behavior).
-                    //
-                    // Also register structural_type → DefId so the TypeFormatter can
-                    // display the interface name even when Lazy types are evaluated to
-                    // their structural form (e.g., in union members `D | E` where the
-                    // solver may evaluate each member during subtype checks).
+                    // Return Lazy wrapper for regular interfaces.
+                    // Register structural_type → DefId so the TypeFormatter can
+                    // display the interface name even when Lazy types are evaluated
+                    // to their structural form.
                     if structural_type != TypeId::ERROR
                         && structural_type != TypeId::UNKNOWN
                         && structural_type != TypeId::ANY

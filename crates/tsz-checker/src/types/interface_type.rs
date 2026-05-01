@@ -904,6 +904,14 @@ impl<'a> CheckerState<'a> {
         let derived_resolved = self.resolve_type_for_interface_merge(derived);
         let base_resolved = self.resolve_type_for_interface_merge(base);
 
+        // When the derived interface has no own members (empty body, everything
+        // comes from the base), use the base type directly so the display name
+        // matches tsc. An interface like `A2 extends A1 { }` that adds nothing
+        // to the base class should display as the base class name in errors.
+        if self.is_empty_interface_type(derived_resolved) {
+            return base_resolved;
+        }
+
         let derived_kind = classify_for_interface_merge(self.ctx.types, derived_resolved);
         let base_kind = classify_for_interface_merge(self.ctx.types, base_resolved);
         trace!(derived_kind = ?derived_kind, base_kind = ?base_kind, "Classified types for merge");
@@ -1382,5 +1390,33 @@ impl<'a> CheckerState<'a> {
             name_idx,
         )?;
         Some(self.ctx.types.intern_string(&name))
+    }
+
+    /// Returns true when a resolved interface type has no own members.
+    ///
+    /// An interface like `interface A2 extends A1 { }` that adds nothing to
+    /// the base type should resolve to the base type directly so the display
+    /// name matches tsc (showing the base class name, not the empty interface).
+    fn is_empty_interface_type(&self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::common::InterfaceMergeKind;
+        let kind =
+            crate::query_boundaries::common::classify_for_interface_merge(self.ctx.types, type_id);
+        match kind {
+            InterfaceMergeKind::Object(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none()
+            }
+            InterfaceMergeKind::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                shape.call_signatures.is_empty()
+                    && shape.construct_signatures.is_empty()
+                    && shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none()
+            }
+            _ => false,
+        }
     }
 }

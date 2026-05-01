@@ -622,6 +622,16 @@ impl<'a> TypeFormatter<'a> {
             return Cow::Borrowed("...");
         }
         let type_key = self.interner.lookup(type_id);
+        let _type_variant = type_key.as_ref().map(|td| match td {
+            TypeData::Lazy(_) => "Lazy",
+            TypeData::Object(_) => "Object",
+            TypeData::ObjectWithIndex(_) => "ObjectWithIndex",
+            TypeData::Callable(_) => "Callable",
+            TypeData::Union(_) => "Union",
+            TypeData::Intersection(_) => "Intersection",
+            TypeData::Function(_) => "Function",
+            _ => "Other",
+        });
         if self.long_property_receiver_display
             && (8..=self.long_property_receiver_object_elision_end_depth)
                 .contains(&self.current_depth)

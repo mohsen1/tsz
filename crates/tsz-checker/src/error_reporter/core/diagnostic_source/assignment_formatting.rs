@@ -62,7 +62,8 @@ impl<'a> CheckerState<'a> {
         // return the interface name directly. This prevents get_type_of_node from
         // resolving the Lazy to its structural form, losing the name (e.g., showing
         // "{ constraint: Constraint<this>; ... }" instead of "Num").
-        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source)
+        let is_lazy = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source);
+        if let Some(def_id) = is_lazy
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::Interface
             && def.type_params.is_empty()
@@ -70,7 +71,6 @@ impl<'a> CheckerState<'a> {
             let name = self.ctx.types.resolve_atom_ref(def.name);
             return name.to_string();
         }
-
         if let Some(display) = self.jsdoc_annotated_expression_display(anchor_idx, target) {
             return display;
         }
@@ -324,7 +324,7 @@ impl<'a> CheckerState<'a> {
             let resolved = self.judge_evaluate(resolved_for_access);
             let resolver =
                 tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
-            if !formatted.contains('{')
+            let has_structural_formatted = !formatted.contains('{')
                 && !formatted.contains('[')
                 && !formatted.contains('|')
                 && !formatted.contains('&')
@@ -332,15 +332,15 @@ impl<'a> CheckerState<'a> {
                 && !crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     display_type,
-                )
-                && (resolver.has_index_signature(
-                    resolved,
-                    tsz_solver::objects::index_signatures::IndexKind::String,
-                ) || resolver.has_index_signature(
-                    resolved,
-                    tsz_solver::objects::index_signatures::IndexKind::Number,
-                ))
-            {
+                );
+            let has_index_sig = resolver.has_index_signature(
+                resolved,
+                tsz_solver::objects::index_signatures::IndexKind::String,
+            ) || resolver.has_index_signature(
+                resolved,
+                tsz_solver::objects::index_signatures::IndexKind::Number,
+            );
+            if has_structural_formatted && has_index_sig {
                 if let Some(structural) = self.format_structural_indexed_object_type(resolved) {
                     return structural;
                 }
@@ -358,27 +358,30 @@ impl<'a> CheckerState<'a> {
                 && !display.starts_with("typeof ")
                 && !display.contains("[P in ")
                 && !display.contains("[K in ")
-                // Don't use annotation text for union types — the TypeFormatter
-                // reorders null/undefined to the end to match tsc's display.
-                // Annotation text preserves the user's original order which
-                // differs from tsc's canonical display.
                 && (!display.contains(" | ")
                     || Self::display_has_member_literals_assignability(&display))
-                // Don't use annotation text when the formatted type includes
-                // `| undefined` (added by strictNullChecks for optional params)
-                // that the raw annotation text doesn't have. The annotation text
-                // reflects the source code literally and misses the semantic
-                // `| undefined` injection.
                 && (!formatted.contains("| undefined") || display.contains("| undefined"))
-                // Don't use annotation text for string intrinsic types when it
-                // differs from the formatted type. tsc collapses idempotent
-                // nesting (e.g. Uppercase<Uppercase<string>> → Uppercase<string>)
-                // at type creation time, so the annotation text may be stale.
                 && (!crate::query_boundaries::common::is_string_intrinsic_type(
                     self.ctx.types,
                     display_type,
                 ) || display.trim() == formatted)
             {
+                // When the actual expression type belongs to a different
+                // definition than the annotation text (e.g. transparent
+                // interfaces: `interface A2 extends A1 {}` where the
+                // structural type is A1's), use the type system's
+                // canonical name instead of the raw annotation.
+                let def_name_matches = self
+                    .ctx
+                    .definition_store
+                    .find_def_for_type(display_type)
+                    .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                    .map(|def| self.ctx.types.resolve_atom_ref(def.name).as_ref() == display)
+                    .unwrap_or(true); // If type has no def, trust the annotation
+                if !def_name_matches {
+                    return self.format_type_diagnostic(display_type);
+                }
+
                 if crate::query_boundaries::common::enum_def_id(self.ctx.types, display_type)
                     .is_some()
                 {
@@ -593,6 +596,25 @@ impl<'a> CheckerState<'a> {
                 ) {
                     return assignability_display;
                 }
+            }
+            // When the annotation text is a simple identifier and the
+            // TypeFormatter resolves it to a different simple identifier
+            // (e.g., transparent interface `interface A2 extends A1 {}`
+            // where the structural type is the base class's), preserve
+            // the explicit target annotation. Only applies when BOTH
+            // sides are bare identifiers without generics, union/intersect
+            // operators, or structural delimiters.
+            fn is_bare_identifier(s: &str) -> bool {
+                s.as_bytes()
+                    .first()
+                    .copied()
+                    .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.')
+            }
+            if fallback != display && is_bare_identifier(&display) && is_bare_identifier(&fallback)
+            {
+                return self.format_annotation_like_type(&display);
             }
             return fallback;
         }

@@ -1692,3 +1692,65 @@ class Customers {
         "Expected TS2394 for constructor overload/implementation arity mismatch, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn transparent_interface_displays_base_name_in_source_and_annotation_in_target() {
+    // When an empty interface extends a class (`interface A2 extends A1 {}`),
+    // the structural type is the base class's instance type.
+    //
+    // - SOURCE position: tsc shows the base class name (A1), not the
+    //   interface name (A2). E.g.: `const c: C = a;` where `a: A2` =>
+    //   "Property '#something' is missing in type 'A1'..."
+    //
+    // - TARGET position: tsc shows the interface annotation name (A2),
+    //   not the base class name (A1). E.g.: `const b: A2 = new B()` =>
+    //   "Type 'B' is not assignable to type 'A2'."
+    let source = r#"
+class A1 { }
+interface A2 extends A1 { }
+declare const a: A2;
+class C { #something: number }
+const c: C = a;
+
+class A { #foo: number; }
+interface A2e extends A { }
+class B { #foo: number; }
+const b: A2e = new B();
+"#;
+    let diagnostics =
+        compile_and_get_raw_diagnostics_named("test.ts", source, CheckerOptions::default());
+
+    // TS2741: source display should show "A1" (base class), not "A2"
+    let ts2741: Vec<_> = diagnostics.iter().filter(|d| d.code == 2741).collect();
+    assert!(
+        !ts2741.is_empty(),
+        "expected TS2741 for private name mismatch, got: {diagnostics:?}"
+    );
+    for d in &ts2741 {
+        assert!(
+            d.message_text.contains("'A1'"),
+            "TS2741 source should show base class name 'A1', got: {d:?}"
+        );
+        assert!(
+            !d.message_text.contains("'A2'"),
+            "TS2741 source should NOT show interface name 'A2', got: {d:?}"
+        );
+    }
+
+    // TS2322: target display should show "A2e" (annotation), not "A"
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "expected TS2322 for assignability, got: {diagnostics:?}"
+    );
+    for d in &ts2322 {
+        assert!(
+            d.message_text.contains("'A2e'"),
+            "TS2322 target should show interface annotation 'A2e', got: {d:?}"
+        );
+        assert!(
+            !d.message_text.contains("'A'") || d.message_text.contains("'A2e'"),
+            "TS2322 target should NOT show base class name 'A' instead of annotation, got: {d:?}"
+        );
+    }
+}
