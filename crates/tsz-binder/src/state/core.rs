@@ -192,7 +192,7 @@ impl BinderState {
             sym_to_decl_indices: Arc::new(FxHashMap::default()),
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: Arc::new(FxHashMap::with_capacity_and_hasher(128, Default::default())),
-            top_level_flow: FxHashMap::default(),
+            top_level_flow: Arc::new(FxHashMap::default()),
             switch_clause_to_switch: Arc::new(FxHashMap::default()),
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
@@ -262,7 +262,7 @@ impl BinderState {
         Arc::make_mut(&mut self.sym_to_decl_indices).clear();
         self.cross_file_node_symbols.clear();
         Arc::make_mut(&mut self.node_flow).clear();
-        self.top_level_flow.clear();
+        Arc::make_mut(&mut self.top_level_flow).clear();
         Arc::make_mut(&mut self.switch_clause_to_switch).clear();
         self.hoisted_vars.clear();
         self.hoisted_functions.clear();
@@ -436,7 +436,7 @@ impl BinderState {
             sym_to_decl_indices: Arc::new(FxHashMap::default()),
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: Arc::new(FxHashMap::default()),
-            top_level_flow: FxHashMap::default(),
+            top_level_flow: Arc::new(FxHashMap::default()),
             switch_clause_to_switch: Arc::new(FxHashMap::default()),
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
@@ -561,7 +561,7 @@ impl BinderState {
             sym_to_decl_indices,
             cross_file_node_symbols,
             node_flow,
-            top_level_flow: FxHashMap::default(),
+            top_level_flow: Arc::new(FxHashMap::default()),
             switch_clause_to_switch,
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
@@ -1029,7 +1029,7 @@ impl BinderState {
         Arc::make_mut(&mut self.scopes).clear();
         Arc::make_mut(&mut self.node_scope_ids).clear();
         self.current_scope_id = ScopeId::NONE;
-        self.top_level_flow.clear();
+        Arc::make_mut(&mut self.top_level_flow).clear();
 
         // Create root persistent scope for the source file, pre-sized for declarations
         self.enter_persistent_scope_with_capacity(
@@ -1094,7 +1094,7 @@ impl BinderState {
             // Second pass: bind each statement
             for &stmt_idx in &sf.statements.nodes {
                 self.bind_node(arena, stmt_idx);
-                self.top_level_flow.insert(stmt_idx.0, self.current_flow);
+                Arc::make_mut(&mut self.top_level_flow).insert(stmt_idx.0, self.current_flow);
             }
 
             self.bind_jsdoc_import_tags(arena, sf, root);
@@ -1766,7 +1766,7 @@ impl BinderState {
         }
 
         for stmt_idx in old_suffix_statements {
-            self.top_level_flow.remove(&stmt_idx.0);
+            Arc::make_mut(&mut self.top_level_flow).remove(&stmt_idx.0);
         }
 
         // Reset transient binding state while keeping existing symbols and scopes.
@@ -1794,7 +1794,7 @@ impl BinderState {
 
         for &stmt_idx in new_suffix_statements {
             self.bind_node(arena, stmt_idx);
-            self.top_level_flow.insert(stmt_idx.0, self.current_flow);
+            Arc::make_mut(&mut self.top_level_flow).insert(stmt_idx.0, self.current_flow);
         }
 
         self.sync_current_scope_to_persistent();

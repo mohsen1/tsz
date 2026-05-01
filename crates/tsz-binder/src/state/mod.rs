@@ -344,7 +344,11 @@ pub struct BinderState {
     /// the case during a single binder's construction).
     pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     /// Flow node after each top-level statement (for incremental binding).
-    pub(crate) top_level_flow: FxHashMap<u32, FlowNodeId>,
+    ///
+    /// Arc-wrapped so `BinderState::clone()` does not deep-clone the per-file
+    /// top-level flow map. Binding and incremental rebind mutations use
+    /// `Arc::make_mut`, which is free while the binder is uniquely owned.
+    pub(crate) top_level_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     /// Map case/default clause nodes to their containing switch statement.
     ///
     /// `Arc`-wrapped so per-file binders constructed by the CLI driver
