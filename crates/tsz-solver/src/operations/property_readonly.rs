@@ -216,6 +216,9 @@ pub fn is_readonly_index_signature(
 /// evaluates the base type alias to check if the underlying mapped type
 /// has a readonly modifier.
 pub fn is_mapped_type_with_readonly_modifier(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match interner.lookup(type_id) {
         Some(TypeData::Mapped(mapped_id)) => {
             let mapped = interner.get_mapped(mapped_id);
