@@ -2,7 +2,14 @@ use std::fmt::Write;
 
 use crate::context::transform::IdentifierId;
 use crate::emitter::Printer;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
+
+fn trim_ascii_whitespace_end(text: &str, mut end: usize) -> usize {
+    while end > 0 && text.as_bytes()[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    end
+}
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -242,7 +249,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(in crate::emitter) fn emit_regex_literal(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_regex_literal(&mut self, idx: NodeIndex, node: &Node) {
         // Regex literals should be emitted exactly as they appear in source
         // to preserve the pattern and flags (e.g., /\r\n/g)
         if let Some(text) = self.source_text {
@@ -284,8 +291,68 @@ impl<'a> Printer<'a> {
         }
         // Fallback: use the literal text from the node
         if let Some(lit) = self.arena.get_literal(node) {
+            if let Some(text) = self.trim_recovered_call_arg_regex(idx, &lit.text) {
+                self.write(text);
+                return;
+            }
             self.write(&lit.text);
         }
+    }
+
+    fn trim_recovered_call_arg_regex<'b>(&self, idx: NodeIndex, text: &'b str) -> Option<&'b str> {
+        if !text.starts_with('/') || self.regex_text_has_closing_slash(text) {
+            return None;
+        }
+
+        let parent = self.arena.parent_of(idx)?;
+        let parent_node = self.arena.get(parent)?;
+        if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let mut end = trim_ascii_whitespace_end(text, text.len());
+        if end > 0 && text.as_bytes()[end - 1] == b';' {
+            end -= 1;
+            end = trim_ascii_whitespace_end(text, end);
+        }
+
+        let mut trimmed_close_paren = false;
+        while end > 0 && text.as_bytes()[end - 1] == b')' {
+            trimmed_close_paren = true;
+            end -= 1;
+            end = trim_ascii_whitespace_end(text, end);
+        }
+
+        if trimmed_close_paren && end > 1 {
+            Some(&text[..end])
+        } else {
+            None
+        }
+    }
+
+    fn regex_text_has_closing_slash(&self, text: &str) -> bool {
+        let bytes = text.as_bytes();
+        let mut i = 1;
+        let mut in_escape = false;
+        let mut in_character_class = false;
+
+        while i < bytes.len() {
+            let ch = bytes[i];
+            if in_escape {
+                in_escape = false;
+            } else if ch == b'\\' {
+                in_escape = true;
+            } else if ch == b'/' && !in_character_class {
+                return true;
+            } else if ch == b'[' {
+                in_character_class = true;
+            } else if ch == b']' {
+                in_character_class = false;
+            }
+            i += 1;
+        }
+
+        false
     }
 
     pub(in crate::emitter) fn emit_string_literal(&mut self, node: &Node) {
