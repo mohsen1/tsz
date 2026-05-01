@@ -60,6 +60,39 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> TypeId {
+        // Iterate the input's own union members first when available, so a
+        // failed resolve of one branch (e.g. a poisoned alias body) doesn't
+        // narrow the union by dropping ERROR members through union
+        // normalization.
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            let mut callable_members = Vec::new();
+            for member in members {
+                let resolved_member = self.resolve_type_for_property_access(member);
+                let resolved_member = self.evaluate_type_with_env(resolved_member);
+                let is_callable = crate::query_boundaries::common::function_shape_for_type(
+                    self.ctx.types,
+                    resolved_member,
+                )
+                .is_some_and(|shape| !shape.is_constructor)
+                    || crate::query_boundaries::common::call_signatures_for_type(
+                        self.ctx.types,
+                        resolved_member,
+                    )
+                    .is_some_and(|sigs| !sigs.is_empty());
+                if is_callable {
+                    callable_members
+                        .push(self.normalize_jsx_contextual_callable_member(resolved_member));
+                }
+            }
+            return match callable_members.len() {
+                0 => type_id,
+                1 => callable_members[0],
+                _ => self.ctx.types.factory().union(callable_members),
+            };
+        }
+
         let resolved = self.resolve_type_for_property_access(type_id);
         let resolved = self.evaluate_type_with_env(resolved);
         let Some(members) =
@@ -96,6 +129,28 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> TypeId {
+        // Prefer the input's own union members when the input is already a
+        // union. `resolve_type_for_property_access` walks each Lazy member
+        // and can collapse a union when one branch fails to resolve (e.g.
+        // a poisoned alias body returning ERROR), which then evaluates to
+        // a single branch — incorrectly narrowing
+        // `ReactNode | undefined` to `undefined` and producing spurious
+        // TS2322 children mismatches against `Element`.
+        let direct_members =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id);
+        if let Some(members) = direct_members {
+            let single_members: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&member| !self.type_requires_multiple_children(member))
+                .collect();
+            return match single_members.as_slice() {
+                [] => type_id,
+                [single_member] => *single_member,
+                _ => self.ctx.types.factory().union(single_members),
+            };
+        }
+
         let resolved = self.resolve_type_for_property_access(type_id);
         let resolved = self.evaluate_type_with_env(resolved);
         let Some(members) =
