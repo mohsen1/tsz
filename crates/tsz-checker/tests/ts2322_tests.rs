@@ -4428,3 +4428,78 @@ fn no_infer_intersection_of_two_no_infers_emits_ts2559() {
         "Expected TS2559 for {{ x: string }} against NoInfer<U> & NoInfer<V> target. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_const_destructured_computed_property_not_narrowed_by_flow() {
+    // Const destructured bindings with computed property keys should keep
+    // their full declared type (union of all possible values) and not be
+    // narrowed through flow-dependent computed property key variables.
+    //
+    // Rule: const bindings declared via destructuring have their type fixed
+    // at declaration time. Flow analysis must not recompute the type from
+    // the destructuring source using already-narrowed types of other
+    // variables, because that discards union members introduced by
+    // default-initializer widening.
+    let source = r#"
+let a: 0 | 1 = 1;
+const [{ [a]: b } = [a = 0, 9] as const] = [[8, 9] as const];
+const bb: 0 | 8 = b;
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322_msgs: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, msg)| msg.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322_msgs.len(),
+        1,
+        "Expected exactly one TS2322 for wrong assignment, got: {diagnostics:#?}"
+    );
+
+    // The source type must be '0 | 8 | 9' (full union), not '9' (narrowed).
+    assert!(
+        ts2322_msgs[0].contains("0 | 8 | 9"),
+        "Expected source type '0 | 8 | 9' (full union), got: {}",
+        ts2322_msgs[0],
+    );
+    assert!(
+        ts2322_msgs[0].contains("0 | 8"),
+        "Expected target type '0 | 8', got: {}",
+        ts2322_msgs[0],
+    );
+}
+
+#[test]
+fn test_destructured_parameter_in_const_fn_is_not_treated_as_const() {
+    // Regression: `is_const_symbol` walked past PARAMETER/ARROW_FUNCTION
+    // boundaries to the enclosing `const fn = …` VARIABLE_DECLARATION,
+    // wrongly classifying the parameter as const. This caused
+    // `analyze_loop_fixed_point` to skip the iteration and emit stale
+    // narrowed types for parameters reassigned inside loops.
+    //
+    // The walk must terminate when it encounters PARAMETER, FUNCTION_*,
+    // CLASS_*, or SOURCE_FILE — those are scope boundaries past which the
+    // symbol is no longer the variable being declared.
+    let source = r#"
+const fn = ({ x }: { x: number | string }) => {
+    while (Math.random() < 0.5) {
+        x = "next";
+    }
+    const y: number | string = x;
+    return y;
+};
+"#;
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    assert_eq!(
+        ts2322, 0,
+        "Destructured parameter in const-fn must not be skipped by fixed-point iteration; \
+         got TS2322 diagnostics: {diagnostics:#?}"
+    );
+}

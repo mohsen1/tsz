@@ -1148,12 +1148,63 @@ impl<'a> FlowAnalyzer<'a> {
             None => return false, // Assume mutable if we can't determine
         };
 
-        let decl_idx = symbol.value_declaration;
+        let mut decl_idx = symbol.value_declaration;
         if decl_idx.is_none() {
             return false; // Assume mutable if no declaration
         }
 
-        self.arena.is_const_variable_declaration(decl_idx)
+        // Walk up the parent chain to find the enclosing VARIABLE_DECLARATION.
+        // Destructured bindings have value_declaration set to BINDING_ELEMENT or
+        // Identifier inside a BINDING_ELEMENT, not the VARIABLE_DECLARATION itself.
+        //
+        // The walk must stop at scope-creating nodes (parameters, functions,
+        // accessors, classes, source file). Otherwise a destructured parameter
+        // inside a `const`-declared function — e.g.
+        // `const fn = ({x}) => …` — walks past PARAMETER → ARROW_FUNCTION up
+        // to VARIABLE_DECLARATION(fn) and reports the parameter as const.
+        loop {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                // For simple identifiers, walk up to the parent (usually VARIABLE_DECLARATION)
+                let Some(ext) = self.arena.get_extended(decl_idx) else {
+                    return false;
+                };
+                if ext.parent.is_none() {
+                    return false;
+                }
+                decl_idx = ext.parent;
+                continue;
+            }
+            if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                return self.arena.is_const_variable_declaration(decl_idx);
+            }
+            if matches!(
+                decl_node.kind,
+                syntax_kind_ext::PARAMETER
+                    | syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::CONSTRUCTOR
+                    | syntax_kind_ext::GET_ACCESSOR
+                    | syntax_kind_ext::SET_ACCESSOR
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::SOURCE_FILE
+            ) {
+                return false;
+            }
+            // BINDING_ELEMENT, BINDING_PATTERN, etc. — walk up
+            let Some(ext) = self.arena.get_extended(decl_idx) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            decl_idx = ext.parent;
+        }
     }
 
     /// Narrow type based on a binary expression (===, !==, typeof checks, etc.)
