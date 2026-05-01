@@ -1105,47 +1105,11 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             actual_type,
                         );
-                    // When the attribute value is a function expression, tsc
-                    // displays the target type as the intersection of the
-                    // actual (inferred) function type and the expected
-                    // (declared) function type.  Construct that intersection
-                    // for the target so the error fingerprint matches.
-                    let effective_expected = if is_function_attr {
-                        self.ctx
-                            .types
-                            .factory()
-                            .intersection2_raw(actual_type, expected_type)
-                    } else {
-                        expected_type
-                    };
                     if actual_type != TypeId::ANY
                         && actual_type != TypeId::ERROR
                         && !attr_has_unresolved_type_params
-                        && !if is_function_attr {
-                            self.check_assignable_or_report_at_without_source_elaboration(
-                                actual_type,
-                                effective_expected,
-                                value_node_idx,
-                                attr_data.name,
-                            )
-                        } else {
-                            self.check_assignable_or_report_at(
-                                actual_type,
-                                effective_expected,
-                                value_node_idx,
-                                attr_data.name,
-                            )
-                        }
                     {
-                        let value_is_function =
-                            self.ctx.arena.get(value_node_idx).is_some_and(|n| {
-                                matches!(
-                                    n.kind,
-                                    syntax_kind_ext::ARROW_FUNCTION
-                                        | syntax_kind_ext::FUNCTION_EXPRESSION
-                                )
-                            });
-                        let assignable = if value_is_function {
+                        let assignable = if is_function_attr {
                             // For function-valued JSX props, tsc anchors at the attribute
                             // name and displays an intersection of the inferred and expected
                             // function types in the error message.
