@@ -414,6 +414,9 @@ pub fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 ///
 /// Returns `TypeId::ERROR` if the type is not a Function.
 pub fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return TypeId::ERROR;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => db.function_shape(shape_id).return_type,
         _ => TypeId::ERROR,
@@ -424,6 +427,9 @@ pub fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeI
 ///
 /// Returns an empty vector if the type is not a Function.
 pub fn get_function_parameter_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    if type_id.is_intrinsic() {
+        return Vec::new();
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => db
             .function_shape(shape_id)
@@ -499,6 +505,9 @@ define_intrinsic_check!(is_symbol_type, SYMBOL, Symbol);
 pub fn is_symbol_or_unique_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::SYMBOL {
         return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
     }
     matches!(
         db.lookup(type_id),
