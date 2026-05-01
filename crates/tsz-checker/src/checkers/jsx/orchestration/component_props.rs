@@ -845,10 +845,20 @@ impl<'a> CheckerState<'a> {
             match ty {
                 Some(ty) => {
                     if name != &children_prop_name {
-                        // Widen literal types before Round 1 inference to match tsc's
-                        // getInferredType behavior: e.g. `{ x: "y" }` → `{ x: string }`.
-                        let widened =
-                            crate::query_boundaries::common::widen_type(self.ctx.types, *ty);
+                        // Widen *interior* literals of object/array prop values
+                        // before Round 1 inference, mirroring tsc's
+                        // getInferredType behavior: `{ x: "y" }` → `{ x: string }`.
+                        // Top-level primitive-literal props (e.g. `as="button"`)
+                        // are kept narrow — those drive discriminator-style
+                        // conditional-type narrowing downstream.
+                        let widened = if crate::query_boundaries::common::is_object_like_type(
+                            self.ctx.types,
+                            *ty,
+                        ) {
+                            crate::query_boundaries::common::widen_type_deep(self.ctx.types, *ty)
+                        } else {
+                            *ty
+                        };
                         concrete_attrs.push((name.clone(), widened));
                     }
                 }
