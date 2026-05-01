@@ -25,3 +25,9 @@ fn public_index_signature_block_member_emits_recovered_block_statement() {
         "class C {\n}\n{\n    [name, string];\n    VariableDeclaration;\n}\n;\n"
     );
 }
+
+#[test]
+fn es2015_type_only_class_property_is_erased() {
+    let output = print_es2015("class C {\n    foo: string;\n}\n");
+    assert_eq!(output, "class C {\n}\n");
+}

@@ -435,8 +435,12 @@ impl<'a> Printer<'a> {
         // (they are TypeScript-only declarations: typed props, bare props)
         // Exception: Private fields (#name) are always emitted — they are runtime declarations.
         // Exception: `accessor` fields are always emitted — they are ES2024 auto-accessors.
-        // Exception: useDefineForClassFields (ES2022+) keeps uninitialised props as class fields.
-        if prop.initializer.is_none() && !self.ctx.options.use_define_for_class_fields {
+        // Exception: native class-field emit keeps uninitialised props as class fields.
+        let target_supports_native_fields =
+            (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
+        let preserves_uninitialized_fields =
+            self.ctx.options.use_define_for_class_fields && target_supports_native_fields;
+        if prop.initializer.is_none() && !preserves_uninitialized_fields {
             let is_private = self
                 .arena
                 .get(prop.name)
