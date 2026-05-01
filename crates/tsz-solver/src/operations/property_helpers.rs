@@ -202,6 +202,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
     fn is_array_like_type(&self, type_id: TypeId) -> bool {
         use crate::types::TypeData;
 
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner().lookup(type_id) {
             Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
             Some(TypeData::TypeParameter(info)) => {
