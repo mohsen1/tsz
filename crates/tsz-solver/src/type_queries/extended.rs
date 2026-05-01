@@ -366,6 +366,15 @@ pub fn get_string_literal_value(
 
 /// Check if a type contains string literal types (directly or as union members).
 pub fn type_contains_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types (`string`, `number`, `any`, …) are not
+    // `Literal(String(_))` and cannot contain one. The match below would
+    // fall through to `_ => false`. Skip the `TypeData` lookup and match
+    // dispatch entirely. Same pattern as the open intrinsic-fast-path
+    // family (#2001 / #2005 / #2008 / #2009 / #2014 / #2019 / #2026 /
+    // #2030).
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(_))) => true,
         Some(TypeData::Union(members)) => {
@@ -626,6 +635,10 @@ pub fn get_tuple_list_id(
 
 /// Get the base type of an application type.
 pub fn get_application_base(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // Fast path: intrinsics are never `Application(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Application(app_id)) => Some(db.type_application(app_id).base),
         _ => None,
@@ -647,6 +660,12 @@ pub enum LiteralKeyKind {
 
 /// Classify a type for literal key extraction.
 pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKeyKind {
+    // Fast path: intrinsics (`string`, `number`, `any`, …) are not
+    // `Literal(_)` / `Union(_)` and the match below already returns
+    // `LiteralKeyKind::Other` for them via the `_` arm.
+    if type_id.is_intrinsic() {
+        return LiteralKeyKind::Other;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::LiteralValue::String(atom))) => {
             LiteralKeyKind::StringLiteral(atom)
@@ -718,6 +737,13 @@ pub enum ArrayLikeKind {
 
 /// Classify a type for array-like checking.
 pub fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeKind {
+    // Fast path: intrinsics (`string`, `number`, `any`, `never`, …) are
+    // never Array/Tuple/ReadonlyType/TypeParameter/Infer/Union/Intersection/
+    // Application/Conditional/Mapped, so the match below would fall
+    // through to `_ => ArrayLikeKind::Other`.
+    if type_id.is_intrinsic() {
+        return ArrayLikeKind::Other;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Array(elem)) => ArrayLikeKind::Array(elem),
         Some(TypeData::Tuple(_)) => ArrayLikeKind::Tuple,
