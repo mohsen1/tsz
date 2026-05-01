@@ -3,9 +3,34 @@ name: CI
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, labeled]
+    # Docs-only changes cannot affect cargo build/test/conformance/wasm,
+    # so skip the entire workflow when every changed path matches one of
+    # the patterns below. CI workflow files (`.github/workflows/*`),
+    # `Cargo.{toml,lock}`, scripts, and `crates/**` source are NOT covered
+    # and continue to trigger the full suite. `merge_group` is intentionally
+    # left untouched so the merge queue can still verify the merge candidate
+    # against any required checks the docs-only PR happened to register.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - 'CHANGELOG*'
+      - 'CONTRIBUTING*'
+      - 'CODE_OF_CONDUCT*'
+      - '.gitignore'
+      - '.editorconfig'
   merge_group:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - 'CHANGELOG*'
+      - 'CONTRIBUTING*'
+      - 'CODE_OF_CONDUCT*'
+      - '.gitignore'
+      - '.editorconfig'
   workflow_dispatch:
 
 permissions:
