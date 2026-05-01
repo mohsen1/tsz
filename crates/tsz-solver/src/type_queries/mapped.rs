@@ -358,6 +358,11 @@ pub fn classify_mapped_source(db: &dyn TypeDatabase, source: TypeId) -> MappedSo
 }
 
 fn classify_mapped_source_inner(db: &dyn TypeDatabase, source: TypeId) -> MappedSourceKind {
+    // Intrinsics never match Array/Tuple/ObjectWithIndex/TypeParameter and the
+    // match below falls through to `_ => Object`. Skip the dyn lookup.
+    if source.is_intrinsic() {
+        return MappedSourceKind::Object;
+    }
     match db.lookup(source) {
         Some(TypeData::Array(element_type)) => MappedSourceKind::Array(element_type),
         Some(TypeData::Tuple(tuple_id)) => MappedSourceKind::Tuple(tuple_id),
@@ -393,6 +398,7 @@ fn classify_mapped_source_inner(db: &dyn TypeDatabase, source: TypeId) -> Mapped
 pub fn is_identity_name_mapping(db: &dyn TypeDatabase, mapped: &crate::types::MappedType) -> bool {
     match mapped.name_type {
         None => true,
+        Some(nt) if nt.is_intrinsic() => false,
         Some(nt) => matches!(
             db.lookup(nt),
             Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
@@ -672,7 +678,9 @@ pub fn collect_homomorphic_source_property_infos(
             .collect()
     }
 
-    if let Some(TypeData::Array(element_type)) = db.lookup(source) {
+    if !source.is_intrinsic()
+        && let Some(TypeData::Array(element_type)) = db.lookup(source)
+    {
         return collect_array_property_infos(db, element_type);
     }
 
