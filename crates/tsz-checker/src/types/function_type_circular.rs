@@ -636,9 +636,9 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if let Some(sym_id) = (node.kind == SyntaxKind::Identifier as u16)
-            .then(|| self.resolve_identifier_symbol(expr_idx))
-            .flatten()
+        if node.kind == SyntaxKind::Identifier as u16
+            && !self.identifier_is_non_value_name_position(expr_idx)
+            && let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
             && sym_id == function_sym
         {
             return self.identifier_flows_through_wrapped_call(expr_idx, require_wrapped_call);
@@ -745,9 +745,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if let Some(sym_id) = (node.kind == SyntaxKind::Identifier as u16)
-            .then(|| self.resolve_identifier_symbol(expr_idx))
-            .flatten()
+        if node.kind == SyntaxKind::Identifier as u16
+            && !self.identifier_is_non_value_name_position(expr_idx)
+            && let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
             && resolving_vars.contains(&sym_id)
         {
             found.insert(sym_id);

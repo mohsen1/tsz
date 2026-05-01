@@ -2391,3 +2391,81 @@ y = x;
         "Expected target to expand to '() => () => () => () => string', got: {msg}"
     );
 }
+
+// Regression: a property-name identifier that happens to share a name with the
+// enclosing variable must not be treated as a self-reference for TS7023.
+//
+// Rule: when a function-like initializer scans its body for self-references
+// to detect circular return-type inference, identifiers in non-value name
+// positions (property access RHS, qualified-name RHS, property/method/accessor
+// names) are property keys, not lexical references — they must not match
+// the enclosing variable's symbol.
+#[test]
+fn ts7023_no_false_positive_on_property_name_collision_assign() {
+    // `Object.assign` inside an arrow body is a property name on the right of
+    // a property access. The lexical `assign` variable is not referenced.
+    let diags = check_source_diagnostics(
+        r#"
+const assign = <T, U>(a: T, b: U) => Object.assign(a, b);
+"#,
+    );
+    let ts7023: Vec<_> = diags.iter().filter(|d| d.code == 7023).collect();
+    assert!(
+        ts7023.is_empty(),
+        "Expected no TS7023 for property-name collision with enclosing variable, got: {:?}",
+        ts7023.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts7023_no_false_positive_on_property_name_collision_alt_name() {
+    // Same rule with a different variable name to prove the fix is structural,
+    // not name-specific.
+    let diags = check_source_diagnostics(
+        r#"
+const merge = <T, U>(a: T, b: U) => Object.merge(a, b);
+declare namespace Object { function merge<A, B>(a: A, b: B): A & B; }
+"#,
+    );
+    let ts7023: Vec<_> = diags.iter().filter(|d| d.code == 7023).collect();
+    assert!(
+        ts7023.is_empty(),
+        "Expected no TS7023 for `merge` colliding with property name, got: {:?}",
+        ts7023.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts7023_still_fires_on_genuine_self_reference() {
+    // Sanity: a real recursive call inside a function-like initializer
+    // without a return type annotation must still produce TS7023.
+    let diags = check_source_diagnostics(
+        r#"
+const recur = (n: number) => recur(n);
+"#,
+    );
+    let ts7023: Vec<_> = diags.iter().filter(|d| d.code == 7023).collect();
+    assert_eq!(
+        ts7023.len(),
+        1,
+        "Expected TS7023 for genuine recursive arrow without return annotation, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts7023_no_false_positive_when_property_key_matches_outer_var() {
+    // The key in an object literal (also a non-value name position) must not
+    // be treated as a lexical reference to a same-named outer variable.
+    let diags = check_source_diagnostics(
+        r#"
+const wrap = (x: number) => ({ wrap: x });
+"#,
+    );
+    let ts7023: Vec<_> = diags.iter().filter(|d| d.code == 7023).collect();
+    assert!(
+        ts7023.is_empty(),
+        "Expected no TS7023 when an object property key matches the enclosing variable name, got: {:?}",
+        ts7023.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
