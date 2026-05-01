@@ -66,6 +66,7 @@
 //! to the centralized `IRPrinter`.
 
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
+use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_common::source_map::Mapping;
 use tsz_parser::parser::NodeIndex;
@@ -179,14 +180,15 @@ impl<'a> AsyncES5Emitter<'a> {
         &mut self,
         body_idx: NodeIndex,
     ) -> (String, Vec<String>) {
-        self.emit_generator_body_and_hoisted_vars(body_idx, false)
+        let (body, hoisted, _) = self.emit_generator_body_and_hoisted_vars(body_idx, false);
+        (body, hoisted)
     }
 
     /// Emit a generator body with await, returning hoisted var names.
     pub fn emit_generator_body_with_await_and_hoisted_vars(
         &mut self,
         body_idx: NodeIndex,
-    ) -> (String, Vec<String>) {
+    ) -> (String, Vec<String>, Vec<String>) {
         self.emit_generator_body_and_hoisted_vars(body_idx, true)
     }
 
@@ -194,10 +196,11 @@ impl<'a> AsyncES5Emitter<'a> {
         &mut self,
         body_idx: NodeIndex,
         has_await: bool,
-    ) -> (String, Vec<String>) {
+    ) -> (String, Vec<String>, Vec<String>) {
         let mut ir = self
             .transformer
             .transform_generator_body(body_idx, has_await);
+        let directives = Self::extract_and_remove_directive_prologue(&mut ir);
         let hoisted = AsyncES5Transformer::extract_and_remove_var_decls(&mut ir);
         let mut printer = IRPrinter::with_arena(self.arena);
         if let Some(text) = self.source_text {
@@ -206,7 +209,27 @@ impl<'a> AsyncES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_tslib_prefix(self.tslib_prefix);
         printer.emit(&ir);
-        (printer.take_output(), hoisted)
+        (printer.take_output(), hoisted, directives)
+    }
+
+    fn extract_and_remove_directive_prologue(generator_body: &mut IRNode) -> Vec<String> {
+        let IRNode::GeneratorBody { cases, .. } = generator_body else {
+            return Vec::new();
+        };
+        let Some(first_case) = cases.first_mut() else {
+            return Vec::new();
+        };
+
+        let mut directives = Vec::new();
+        while let Some(IRNode::ExpressionStatement(expr)) = first_case.statements.first() {
+            let directive = match expr.as_ref() {
+                IRNode::StringLiteral(text) | IRNode::RawStringLiteral(text) => text.to_string(),
+                _ => break,
+            };
+            directives.push(directive);
+            first_case.statements.remove(0);
+        }
+        directives
     }
 
     /// Emit a complete async function transformation
