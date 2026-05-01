@@ -389,6 +389,25 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
             return name;
         }
+        if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
+            && self
+                .ctx
+                .arena
+                .get(receiver)
+                .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            && !self.is_this_in_nested_function_without_own_this_binding(receiver)
+            && self.current_this_type() == Some(type_id)
+            && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+                .is_some()
+            && let Some(class_idx) = self.nearest_enclosing_class(receiver)
+        {
+            let class_name = self.get_class_name_with_type_params_from_decl(class_idx);
+            return if class_name == "<anonymous>" {
+                "(Anonymous class)".to_string()
+            } else {
+                class_name
+            };
+        }
         // When the receiver has a declared type annotation, prefer the source-text
         // annotation for the property-receiver display in cases where tsz's
         // type representation has evaluated past the user-written form:

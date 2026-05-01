@@ -1645,21 +1645,50 @@ impl<'a> CheckerState<'a> {
                     // aliases (value position), we need the variable/function
                     // type so the imported binding is callable/constructable.
                     let mut result = if let Some(sym) = self.get_symbol_globally(export_sym_id) {
+                        let sym_name = sym.escaped_name.clone();
+                        let declarations = sym.declarations.clone();
+                        let value_declaration = sym.value_declaration;
                         let has_interface = sym.has_any_flags(symbol_flags::INTERFACE);
                         let has_value = sym.flags
                             & (symbol_flags::FUNCTION_SCOPED_VARIABLE
                                 | symbol_flags::BLOCK_SCOPED_VARIABLE
                                 | symbol_flags::FUNCTION)
                             != 0;
-                        if has_interface && has_value && sym.value_declaration.is_some() {
-                            let vd = sym.value_declaration;
-                            let vd_type =
-                                self.type_of_value_declaration_for_symbol(export_sym_id, vd);
-                            if vd_type != TypeId::UNKNOWN && vd_type != TypeId::ERROR {
-                                vd_type
+                        if has_interface && has_value {
+                            let value_decl = if value_declaration.is_some() {
+                                value_declaration
                             } else {
-                                self.get_type_of_symbol(export_sym_id)
+                                declarations
+                                    .iter()
+                                    .copied()
+                                    .find(|&decl_idx| self.declaration_is_value_like(decl_idx))
+                                    .unwrap_or(NodeIndex::NONE)
+                            };
+                            if value_decl.is_none() {
+                                self.local_value_type_for_same_name_symbol(export_sym_id, &sym_name)
+                                    .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id))
+                            } else {
+                                let vd_type = if self.ctx.arena.get(value_decl).is_some() {
+                                    self.type_of_value_declaration_for_symbol(
+                                        export_sym_id,
+                                        value_decl,
+                                    )
+                                } else {
+                                    self.cross_file_value_declaration_type(
+                                        export_sym_id,
+                                        value_decl,
+                                    )
+                                    .unwrap_or(TypeId::ERROR)
+                                };
+                                if vd_type != TypeId::UNKNOWN && vd_type != TypeId::ERROR {
+                                    vd_type
+                                } else {
+                                    self.get_type_of_symbol(export_sym_id)
+                                }
                             }
+                        } else if has_interface {
+                            self.local_value_type_for_same_name_symbol(export_sym_id, &sym_name)
+                                .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id))
                         } else {
                             self.get_type_of_symbol(export_sym_id)
                         }

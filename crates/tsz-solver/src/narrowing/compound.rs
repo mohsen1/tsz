@@ -667,7 +667,10 @@ impl<'a> NarrowingContext<'a> {
                 .iter()
                 .filter_map(|&member| {
                     let narrowed = self.narrow_to_array(member);
-                    if narrowed == TypeId::NEVER {
+                    if narrowed == TypeId::NEVER
+                        || self.union_has_array_member_for_element(&members, member)
+                            && self.is_type_parameter_array_intersection(member, narrowed)
+                    {
                         None
                     } else {
                         Some(narrowed)
@@ -797,5 +800,30 @@ impl<'a> NarrowingContext<'a> {
         // Check if type is Array, Tuple, or ReadonlyArray (wrapped)
         type_queries::is_array_type(self.db, type_id)
             || type_queries::is_tuple_type(self.db, type_id)
+    }
+
+    fn union_has_array_member_for_element(&self, members: &[TypeId], element_type: TypeId) -> bool {
+        members.iter().any(|&member| {
+            let resolved = self.resolve_type(member);
+            crate::type_queries::get_array_element_type(self.db, resolved) == Some(element_type)
+        })
+    }
+
+    fn is_type_parameter_array_intersection(
+        &self,
+        original_member: TypeId,
+        narrowed: TypeId,
+    ) -> bool {
+        if type_param_info(self.db, original_member).is_none() {
+            return false;
+        }
+        let Some(members_id) = intersection_list_id(self.db, narrowed) else {
+            return false;
+        };
+        let members = self.db.type_list(members_id);
+        members.contains(&original_member)
+            && members.iter().any(|&member| {
+                crate::type_queries::get_array_element_type(self.db, member) == Some(TypeId::ANY)
+            })
     }
 }

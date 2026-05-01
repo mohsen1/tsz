@@ -15,43 +15,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Choose the type to display in a TS2339 "property does not exist on type X"
-    /// message after a `PropertyNotFound` lookup.
-    ///
-    /// Structural rule: when control-flow narrowing has refined the receiver
-    /// (e.g. `if ("a" in x)` over `A | B` narrows `x` to `A`), the message
-    /// must name the *narrowed* receiver, not the declared union — that is
-    /// the type the property lookup actually ran against. Type parameters
-    /// keep their existing apparent-type display (the constraint), so a
-    /// `T extends A | B` receiver still reports the miss against `A | B`.
-    fn diagnostic_display_type_for_missing_property(
-        &self,
-        narrowed: TypeId,
-        apparent: TypeId,
-    ) -> TypeId {
-        if narrowed == apparent {
-            return apparent;
-        }
-        // Only swap to the narrowed receiver type when the apparent type is a
-        // union — that is the discriminated-narrowing case where the message
-        // should name the picked-out member ("Property 'b' does not exist on
-        // type 'A'." after `if ("a" in x)` over `A | B`). For non-union
-        // apparent types, keep the existing display: it preserves literal
-        // shape (e.g. `'""'` rather than the widened `'string'` you get from
-        // primitive-narrowing on a literal receiver) and the constraint-based
-        // display for type parameters.
-        if crate::query_boundaries::state::checking::is_type_parameter_like(
-            self.ctx.types,
-            narrowed,
-        ) {
-            return apparent;
-        }
-        if crate::query_boundaries::common::union_list_id(self.ctx.types, apparent).is_some() {
-            return narrowed;
-        }
-        apparent
-    }
-
     /// Inner implementation of property access type resolution.
     pub(crate) fn get_type_of_property_access_inner(
         &mut self,
@@ -1916,6 +1879,15 @@ impl<'a> CheckerState<'a> {
                 }
 
                 PropertyAccessResult::PropertyNotFound { .. } => {
+                    if self.is_array_constructor_is_array_recovery(access.expression, property_name)
+                    {
+                        return self.finalize_property_access_result(
+                            idx,
+                            TypeId::ANY,
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
                     if self.is_stale_unconstrained_type_parameter(object_type_for_access) {
                         // Stale type parameter from two-pass resolution.
                         // The updated version in scope has a constraint (likely ERROR),

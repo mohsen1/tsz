@@ -1270,29 +1270,15 @@ impl<'a> CheckerState<'a> {
 
         if let Some(local_name) = self.get_declaration_name_text(value_decl)
             && local_name != escaped_name
-            && let Some(local_sym_id) = self.ctx.binder.file_locals.get(&local_name)
-            && local_sym_id != sym_id
         {
-            return Some(
-                self.merged_value_type_for_symbol_if_available(local_sym_id)
-                    .unwrap_or_else(|| self.get_type_of_symbol(local_sym_id)),
-            );
+            return self.local_export_identifier_value_type(sym_id, &local_name);
         }
 
         let node = self.ctx.arena.get(value_decl)?;
         if let Some(exported_ident) = self.ctx.arena.get_identifier(node)
             && exported_ident.escaped_text != escaped_name
-            && let Some(local_sym_id) = self
-                .ctx
-                .binder
-                .file_locals
-                .get(&exported_ident.escaped_text)
-            && local_sym_id != sym_id
         {
-            return Some(
-                self.merged_value_type_for_symbol_if_available(local_sym_id)
-                    .unwrap_or_else(|| self.get_type_of_symbol(local_sym_id)),
-            );
+            return self.local_export_identifier_value_type(sym_id, &exported_ident.escaped_text);
         }
 
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -1312,6 +1298,135 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(self.type_of_value_declaration_for_symbol(sym_id, value_decl))
+    }
+
+    fn local_export_identifier_value_type(
+        &mut self,
+        export_sym_id: SymbolId,
+        local_name: &str,
+    ) -> Option<TypeId> {
+        let mut candidates = Vec::new();
+        if let Some(local_sym_id) = self.ctx.binder.file_locals.get(local_name) {
+            candidates.push(local_sym_id);
+        }
+        candidates.extend_from_slice(self.ctx.binder.get_symbols().find_all_by_name(local_name));
+
+        let mut fallback = None;
+        for candidate_sym_id in candidates {
+            if candidate_sym_id == export_sym_id {
+                continue;
+            }
+            let Some(candidate) = self.get_symbol_globally(candidate_sym_id) else {
+                continue;
+            };
+            if candidate.escaped_name != local_name {
+                continue;
+            }
+            if fallback.is_none() {
+                fallback = Some(candidate_sym_id);
+            }
+            let is_value = candidate.has_any_flags(
+                symbol_flags::FUNCTION_SCOPED_VARIABLE
+                    | symbol_flags::BLOCK_SCOPED_VARIABLE
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::CLASS,
+            );
+            if is_value && candidate.value_declaration.is_some() {
+                return self.local_value_symbol_type(candidate_sym_id);
+            }
+        }
+
+        fallback.map(|local_sym_id| self.get_type_of_symbol(local_sym_id))
+    }
+
+    pub(crate) fn local_value_type_for_same_name_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        local_name: &str,
+    ) -> Option<TypeId> {
+        let mut candidates = Vec::new();
+        if let Some(local_sym_id) = self.ctx.binder.file_locals.get(local_name) {
+            candidates.push(local_sym_id);
+        }
+        candidates.extend_from_slice(self.ctx.binder.get_symbols().find_all_by_name(local_name));
+
+        for candidate_sym_id in candidates {
+            if candidate_sym_id == sym_id {
+                continue;
+            }
+            let Some(candidate) = self.get_symbol_globally(candidate_sym_id) else {
+                continue;
+            };
+            if candidate.escaped_name != local_name {
+                continue;
+            }
+            let is_value = candidate.has_any_flags(
+                symbol_flags::FUNCTION_SCOPED_VARIABLE
+                    | symbol_flags::BLOCK_SCOPED_VARIABLE
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::CLASS,
+            );
+            if is_value && candidate.value_declaration.is_some() {
+                return self.local_value_symbol_type(candidate_sym_id);
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn declaration_is_value_like(&self, decl_idx: NodeIndex) -> bool {
+        self.ctx.arena.get(decl_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_DECLARATION
+        })
+    }
+
+    pub(crate) fn cross_file_value_declaration_type(
+        &mut self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        arena.get(decl_idx)?;
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        let file_name = arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+            arena,
+            binder,
+            self.ctx.types,
+            file_name,
+            self.ctx.compiler_options.clone(),
+            self,
+            tsz_common::perf_counters::CheckerCreationReason::CallHelpers,
+        ));
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.current_file_idx = file_idx;
+        checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
+        checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
+        checker
+            .ctx
+            .symbol_resolution_depth
+            .set(self.ctx.symbol_resolution_depth.get());
+        Some(checker.type_of_value_declaration_for_symbol(sym_id, decl_idx))
+    }
+
+    fn local_value_symbol_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+        let symbol = self.get_symbol_globally(sym_id)?;
+        if symbol.value_declaration.is_none() {
+            return None;
+        }
+        Some(
+            self.merged_value_type_for_symbol_if_available(sym_id)
+                .unwrap_or_else(|| self.get_type_of_symbol(sym_id)),
+        )
     }
 
     /// Resolve the VALUE meaning of a `PropertyAccessExpression`.
