@@ -688,6 +688,12 @@ pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKe
 /// whose inner type is a union of members. Callers use it when same-enum members must
 /// remain distinct for subtype/discriminant logic.
 pub fn is_literal_enum_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic TypeIds are never `TypeData::Enum`. Skip the
+    // lookup. Same family as #2001 / #2005 / #2008 / #2009 / #2014 / #2019
+    // / #2025 / #2032 / #2033 / #2037.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::Enum(_, member_type))
@@ -717,6 +723,11 @@ pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> Typ
 ///
 /// Returns true only for `TypeData::ObjectWithIndex`, not for `TypeData::Object`.
 pub fn is_object_with_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic TypeIds are never `TypeData::ObjectWithIndex`.
+    // Same family as #2033 (sibling extended.rs predicates).
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::ObjectWithIndex(_)))
 }
 
