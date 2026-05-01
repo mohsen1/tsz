@@ -603,6 +603,9 @@ pub fn get_application_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<(TypeId, Vec<TypeId>)> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Application(app_id)) => {
             let app = db.type_application(app_id);
@@ -627,6 +630,9 @@ pub enum LazyTypeKind {
 
 /// Classify a type for Lazy resolution.
 pub fn classify_for_lazy_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> LazyTypeKind {
+    if type_id.is_intrinsic() {
+        return LazyTypeKind::NotLazy;
+    }
     let Some(key) = db.lookup(type_id) else {
         return LazyTypeKind::NotLazy;
     };
@@ -642,6 +648,9 @@ pub fn get_tuple_list_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::TupleListId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Tuple(list_id)) => Some(list_id),
         _ => None,
@@ -728,6 +737,9 @@ pub fn is_literal_enum_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Non-literal types are returned unchanged.
 pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(ref lit)) => lit.primitive_type_id(),
         _ => type_id,
