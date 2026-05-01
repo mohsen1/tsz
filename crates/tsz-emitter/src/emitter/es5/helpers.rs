@@ -30,6 +30,13 @@ impl<'a> Printer<'a> {
     /// Pattern: [1, ...a] -> __spreadArray([1], a, false)
     /// Pattern: [1, ...a, 2] -> __spreadArray([1], a, false).concat([2])
     pub(in crate::emitter) fn emit_array_literal_es5(&mut self, elements: &[NodeIndex]) {
+        if let Some(flattened) = self.flatten_single_spread_array_literal(elements) {
+            self.write("[");
+            self.emit_comma_separated(&flattened);
+            self.write("]");
+            return;
+        }
+
         if elements.is_empty() {
             self.write("[]");
             return;
@@ -134,6 +141,45 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    fn flatten_single_spread_array_literal(
+        &self,
+        elements: &[NodeIndex],
+    ) -> Option<Vec<NodeIndex>> {
+        let [spread_idx] = elements else {
+            return None;
+        };
+        let spread_node = self.arena.get(*spread_idx)?;
+        let spread = self.arena.get_spread(spread_node)?;
+        let expr_node = self.arena.get(spread.expression)?;
+        if expr_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let literal = self.arena.get_literal_expr(expr_node)?;
+        self.flatten_array_literal_elements(&literal.elements.nodes)
+    }
+
+    fn flatten_array_literal_elements(&self, elements: &[NodeIndex]) -> Option<Vec<NodeIndex>> {
+        let mut flattened = Vec::new();
+        for &elem_idx in elements {
+            if elem_idx == NodeIndex::NONE {
+                return None;
+            }
+            let elem_node = self.arena.get(elem_idx)?;
+            if emit_utils::is_spread_element(self.arena, elem_idx) {
+                let spread = self.arena.get_spread(elem_node)?;
+                let expr_node = self.arena.get(spread.expression)?;
+                if expr_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                    return None;
+                }
+                let literal = self.arena.get_literal_expr(expr_node)?;
+                flattened.extend(self.flatten_array_literal_elements(&literal.elements.nodes)?);
+            } else {
+                flattened.push(elem_idx);
+            }
+        }
+        Some(flattened)
     }
 
     pub(in crate::emitter) fn emit_spread_expression(&mut self, node: &Node) {
