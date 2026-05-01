@@ -624,8 +624,6 @@ impl<'a> Printer<'a> {
                     .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
                 {
                     true
-                } else if self.ctx.options.use_define_for_class_fields {
-                    false
                 } else {
                     let is_private = self
                         .arena
@@ -1481,10 +1479,12 @@ impl<'a> Printer<'a> {
                             {
                                 true
                             } else {
-                                // Type-only properties (no initializer, not private, not accessor): erased
-                                // But when useDefineForClassFields is true (ES2022+),
-                                // uninitialised properties are real class field declarations.
-                                if self.ctx.options.use_define_for_class_fields {
+                                // Type-only properties (no initializer, not private, not accessor): erased.
+                                // Native class-field emit keeps uninitialised properties only
+                                // when the target can represent class fields in the class body.
+                                if self.ctx.options.use_define_for_class_fields
+                                    && target_supports_native_fields
+                                {
                                     false
                                 } else {
                                     let is_private = self.arena.get(p.name).is_some_and(|n| {

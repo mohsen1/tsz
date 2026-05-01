@@ -1,6 +1,8 @@
 //! Integration tests for malformed class member emit recovery.
 
+use tsz_emitter::emitter::{Printer as EmitterPrinter, PrinterOptions, ScriptTarget};
 use tsz_emitter::output::printer::PrintOptions;
+use tsz_parser::ParserState;
 
 #[path = "test_support.rs"]
 mod test_support;
@@ -9,6 +11,15 @@ use test_support::parse_and_print_with_opts;
 
 fn print_es2015(source: &str) -> String {
     parse_and_print_with_opts(source, PrintOptions::es6())
+}
+
+fn print_with_printer_options(source: &str, opts: PrinterOptions) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
 }
 
 #[test]
@@ -23,5 +34,32 @@ fn public_index_signature_block_member_emits_recovered_block_statement() {
     assert_eq!(
         output,
         "class C {\n}\n{\n    [name, string];\n    VariableDeclaration;\n}\n;\n"
+    );
+}
+
+#[test]
+fn es2015_type_only_class_property_is_erased() {
+    let output = print_es2015("class C {\n    foo: string;\n}\n");
+    assert_eq!(output, "class C {\n}\n");
+}
+
+#[test]
+fn downlevel_define_type_only_computed_property_does_not_allocate_temp() {
+    let output = print_with_printer_options(
+        "class C {\n    [side.effect]: string;\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !output.contains("_a = side.effect"),
+        "Type-only computed property should not allocate an unused temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}\nside.effect;"),
+        "Side-effectful computed property expression should still be emitted.\nOutput:\n{output}"
     );
 }
