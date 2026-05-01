@@ -4503,3 +4503,40 @@ const fn = ({ x }: { x: number | string }) => {
          got TS2322 diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_ts2322_too_many_parameters_emits_chained_target_signature_elaboration() {
+    // When a function-typed source has more required parameters than the target
+    // accepts, tsc emits TS2322 with a chained sub-message:
+    //
+    //   error TS2322: Type '...' is not assignable to type '...'.
+    //     Target signature provides too few arguments. Expected N or more, but got M.
+    //
+    // The chained message has its own diagnostic code (TS2849), but is rendered
+    // as related-information on the parent TS2322 so the final output matches
+    // tsc's `messageText` chain. Without the elaboration the user only sees the
+    // top-level "Type X is not assignable to Y" message, which is harder to
+    // diagnose for callback / mapped-type contextual mismatches.
+    let source = r#"
+        type Selector<S, R> = (state: S) => R;
+        const f: Selector<string, number> = (state: string, props: string) => 1;
+    "#;
+
+    let diags = diagnostics_for_source(source);
+    let mismatch = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diags:#?}"));
+
+    assert!(
+        mismatch
+            .related_information
+            .iter()
+            .any(|r| r.code == diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT
+                && r.message_text.contains("Target signature provides too few arguments")
+                && r.message_text.contains("Expected 2 or more, but got 1")),
+        "expected chained TS2849 'Target signature provides too few arguments' \
+         elaboration with counts (2,1); got: {:#?}",
+        mismatch.related_information
+    );
+}
