@@ -1733,6 +1733,9 @@ impl<'a> EmptyObjectChecker<'a> {
     }
 
     fn check(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.db.lookup(type_id) {
             Some(TypeData::Object(shape_id)) => {
                 let shape = self.db.object_shape(shape_id);
