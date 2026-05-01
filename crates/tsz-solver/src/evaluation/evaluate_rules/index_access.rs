@@ -1300,6 +1300,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .any(|&member| self.index_type_overlaps_optional_props(member, optional_props));
         }
 
+        // Intrinsics never match TypeParameter/KeyOf/Intersection — skip lookup.
+        if index_type.is_intrinsic() {
+            return false;
+        }
         match self.interner().lookup(index_type) {
             Some(TypeData::TypeParameter(tp)) => tp.constraint.is_some_and(|constraint| {
                 self.index_type_overlaps_optional_props(constraint, optional_props)
@@ -1366,6 +1370,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     fn constrained_index_type(&mut self, index_type: TypeId) -> Option<TypeId> {
+        if index_type.is_intrinsic() {
+            return None;
+        }
         match self.interner().lookup(index_type) {
             Some(TypeData::TypeParameter(tp)) => tp.constraint.and_then(|constraint| {
                 let evaluated = self.evaluate(constraint);
