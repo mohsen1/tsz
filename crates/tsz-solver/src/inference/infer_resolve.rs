@@ -856,6 +856,9 @@ impl<'a> InferenceContext<'a> {
         if depth > 4 {
             return false;
         }
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::TypeParameter(info)) => info
                 .constraint
