@@ -424,6 +424,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             || type_id == TypeId::ANY
             || type_id == TypeId::UNKNOWN
             || type_id == TypeId::OBJECT
+            || type_id == TypeId::PROMISE_BASE
         {
             return true;
         }
