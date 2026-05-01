@@ -198,7 +198,7 @@ impl TypeInterner {
             } else if member == TypeId::OBJECT {
                 // The `object` intrinsic is itself an object type
                 has_object_type = true;
-            } else {
+            } else if !member.is_intrinsic() {
                 // Check if this is a structural object type
                 // Task #48: Empty objects ARE object types and are disjoint from null/undefined
                 // null & {} = never (null is not a non-nullish value)
