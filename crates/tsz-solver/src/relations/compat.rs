@@ -124,6 +124,17 @@ impl<'a, R: TypeResolver> TypeVisitor for ShapeExtractor<'a, R> {
         None
     }
 
+    // `NoInfer<T>` and `ReadonlyType<T>` are transparent wrappers — their shape
+    // is the shape of the inner type. Looking through them is required for
+    // weak-type detection (TS2559) when the target is e.g. `NoInfer<T> & {...}`.
+    fn visit_no_infer(&mut self, inner: TypeId) -> Self::Output {
+        self.extract(inner)
+    }
+
+    fn visit_readonly_type(&mut self, inner: TypeId) -> Self::Output {
+        self.extract(inner)
+    }
+
     // TSZ-4: Handle Intersection types for nominal checking
     // For private brands, we need to find object shapes within the intersection
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
