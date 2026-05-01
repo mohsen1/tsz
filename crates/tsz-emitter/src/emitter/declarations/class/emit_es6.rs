@@ -2393,6 +2393,10 @@ impl<'a> Printer<'a> {
                         && !trimmed.contains("()")))
             {
                 recovered.push(trimmed.replace("{}", "{ }"));
+            } else if depth == 1
+                && let Some(stmt) = self.recovered_public_class_block(trimmed)
+            {
+                recovered.push(stmt);
             }
             for ch in line.chars() {
                 match ch {
@@ -2433,5 +2437,27 @@ impl<'a> Printer<'a> {
                 start <= end && text.get(start..end).is_some_and(|raw| raw.trim() == "void")
             })
         })
+    }
+
+    fn recovered_public_class_block(&self, trimmed: &str) -> Option<String> {
+        let after_public = trimmed.strip_prefix("public")?.trim_start();
+        if !after_public.starts_with('{') {
+            return None;
+        }
+        let close = after_public.rfind('}')?;
+        let inner = after_public[1..close].trim();
+        if inner.is_empty() {
+            return Some("{ }".to_string());
+        }
+
+        if let Some(after_open_bracket) = inner.strip_prefix('[')
+            && let Some((index_params, value_type)) = after_open_bracket.split_once("]:")
+        {
+            let index_expr = index_params.replace(':', ", ");
+            let value_type = value_type.trim();
+            return Some(format!("{{\n    [{index_expr}];\n    {value_type};\n}}"));
+        }
+
+        Some(format!("{{\n    {inner};\n}}"))
     }
 }
