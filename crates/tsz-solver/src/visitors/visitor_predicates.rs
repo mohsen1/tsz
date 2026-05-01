@@ -794,20 +794,43 @@ where
             return cached;
         }
 
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
-
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
 
         if (self.predicate)(&key) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+
+        // Terminal-kind fast path: these `TypeData` variants have no children
+        // for `check_key` to descend into — its match returns `false`
+        // unconditionally for them. Short-circuit before the recursion-guard
+        // enter/leave dance so the common case of `Lazy(DefId)` /
+        // `TypeQuery` / unresolved leaves doesn't pay an `FxHashSet`
+        // insert + remove per call. Mirrors the same terminal-kind fast path
+        // used by `type_contains_infer` (see #1978).
+        if matches!(
+            &key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
 
         let result = self.check_key(&key);
