@@ -1012,6 +1012,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// to an Iterable-like interface, so Array/Tuple source element types can be
     /// constrained against the Application's type arguments.
     pub(super) fn is_iterable_like_evaluated_object(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);

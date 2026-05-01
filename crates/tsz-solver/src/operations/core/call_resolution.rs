@@ -322,6 +322,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     fn is_single_signature_callable_member(&self, member: TypeId) -> bool {
         let member = self.normalize_union_member(member);
+        if member.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(member) {
             Some(TypeData::Function(_)) => true,
             Some(TypeData::Callable(callable_id)) => {
