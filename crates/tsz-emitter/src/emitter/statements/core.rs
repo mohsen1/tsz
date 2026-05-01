@@ -1372,7 +1372,9 @@ impl<'a> Printer<'a> {
         }
         self.ctx.flags.in_statement_expression = prev_stmt_expr;
         self.map_trailing_semicolon(node);
-        self.write_semicolon();
+        if !self.output_ends_with_semicolon() {
+            self.write_semicolon();
+        }
         self.emit_trailing_comment_after_semicolon(node);
     }
 
