@@ -474,6 +474,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// unconstrained `T` could be instantiated with `null`, `undefined`, or `void`,
     /// none of which are assignable to `Object`.
     fn is_type_parameter_source(&self, source: TypeId) -> bool {
+        if source.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(source) {
             Some(TypeData::TypeParameter(_)) => true,
             Some(TypeData::Union(members_id)) => {

@@ -811,6 +811,9 @@ impl<'a> InferenceContext<'a> {
     /// Class types like `class A {}` have a symbol for nominal identity
     /// and should NOT be treated as `{}`.
     fn is_empty_object_type(&self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(ty) {
             Some(TypeData::Object(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);

@@ -987,6 +987,9 @@ impl<'a> InferenceContext<'a> {
     /// Check if a type is an object or array literal type (anonymous object or tuple).
     fn is_object_or_array_literal_type(&self, type_id: TypeId) -> bool {
         use crate::types::TypeData;
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
