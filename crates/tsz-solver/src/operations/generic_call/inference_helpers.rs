@@ -986,7 +986,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let has_generic_construct_sig = shape.call_signatures.is_empty()
                 && shape.construct_signatures.len() == 1
                 && !shape.construct_signatures[0].type_params.is_empty();
-            if !has_generic_call_sig && !has_generic_construct_sig {
+            let has_overloaded_call_sigs = shape.call_signatures.len() > 1;
+            if !has_generic_call_sig && !has_generic_construct_sig && !has_overloaded_call_sigs {
                 return source_ty;
             }
             // When the Callable has construct signatures AND properties (static
