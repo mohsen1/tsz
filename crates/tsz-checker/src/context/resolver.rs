@@ -122,6 +122,24 @@ impl<'a> CheckerContext<'a> {
                 .and_then(|params| self.declared_type_param_variances_for_list(params));
         }
         if let Some(alias) = self.arena.get_type_alias(node) {
+            // tsc rejects `in`/`out` annotations on type aliases whose body
+            // is not an object/function/constructor/mapped type (TS2637)
+            // and IGNORES the declared variance for assignability. We mirror
+            // that here: if the alias body is not one of the supported
+            // forms, report None so the relation checker falls back to the
+            // computed (default-covariant) variance instead of enforcing the
+            // user's `in out` annotation.
+            use tsz_parser::parser::syntax_kind_ext;
+            let body_kind = self.arena.kind_at(alias.type_node);
+            let variance_supported = body_kind.is_some_and(|kind| {
+                kind == syntax_kind_ext::TYPE_LITERAL
+                    || kind == syntax_kind_ext::FUNCTION_TYPE
+                    || kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                    || kind == syntax_kind_ext::MAPPED_TYPE
+            });
+            if !variance_supported {
+                return None;
+            }
             return alias
                 .type_parameters
                 .as_ref()
