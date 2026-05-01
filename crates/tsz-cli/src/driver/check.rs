@@ -2947,6 +2947,13 @@ fn build_lib_bound_file_for_interface_checks(
     let mut declaration_arenas: tsz::binder::state::DeclarationArenaMap =
         (*program.declaration_arenas).clone();
     add_user_global_interface_declaration_arenas(program, &mut declaration_arenas);
+    let sym_to_decl_indices = std::sync::Arc::new({
+        let mut index = tsz::binder::state::SymToDeclIndicesMap::default();
+        for &(sym_id, decl_idx) in declaration_arenas.keys() {
+            index.entry(sym_id).or_default().push(decl_idx);
+        }
+        index
+    });
 
     tsz::parallel::BoundFile {
         file_name: lib_file.file_name.clone(),
@@ -2955,6 +2962,7 @@ fn build_lib_bound_file_for_interface_checks(
         node_symbols: std::sync::Arc::new(node_symbols),
         symbol_arenas: std::sync::Arc::clone(&program.symbol_arenas),
         declaration_arenas: std::sync::Arc::new(declaration_arenas),
+        sym_to_decl_indices,
         module_declaration_exports_publicly: std::sync::Arc::new(FxHashMap::default()),
         scopes: std::sync::Arc::new(Vec::new()),
         node_scope_ids: std::sync::Arc::new(FxHashMap::default()),
