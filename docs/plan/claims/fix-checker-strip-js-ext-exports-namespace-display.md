@@ -3,7 +3,7 @@ name: Fix checker strip js ext from exports-namespace display
 description: Strip `.js` from `typeof import("…")` display when the receiver is the current file's `exports` namespace (preserve_js_extension=false), matching tsc.
 type: project
 branch: fix-checker-strip-js-ext-exports-namespace-display
-status: ready
+status: shipped (PR #1970 — `fix(checker): strip .js extension from exports namespace display`)
 scope: checker (TS7053 / TS2339 / commonjs namespace display)
 
 ## Summary
