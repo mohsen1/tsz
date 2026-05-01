@@ -1528,6 +1528,9 @@ pub enum ObjectTypeKind {
 /// This is used by the freshness tracking system to determine if a type
 /// is a fresh object literal that needs special handling.
 pub fn classify_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> ObjectTypeKind {
+    if type_id.is_intrinsic() {
+        return ObjectTypeKind::NotObject;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Object(shape_id)) => ObjectTypeKind::Object(shape_id),
         Some(TypeData::ObjectWithIndex(shape_id)) => ObjectTypeKind::ObjectWithIndex(shape_id),
@@ -1544,6 +1547,15 @@ struct LiteralTypeChecker;
 
 impl LiteralTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        // BOOLEAN_TRUE/FALSE intrinsics resolve to Literal(Boolean), so they
+        // count as literal types. Other intrinsics resolve to Intrinsic and
+        // fall through to the false arm — short-circuit those.
+        if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+            return true;
+        }
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match types.lookup(type_id) {
             Some(TypeData::Literal(_)) => true,
             Some(TypeData::Enum(_, structural_type)) => Self::check(types, structural_type),
@@ -1563,6 +1575,9 @@ struct FunctionTypeChecker;
 
 impl FunctionTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match types.lookup(type_id) {
             Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
             Some(TypeData::Intersection(members)) => {
