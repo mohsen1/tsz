@@ -2,7 +2,7 @@
 
 # fix(checker,binder): block type-only namespace members from leaking into value export resolution
 
-Status: claim
+Status: shipped (verified via conformance harness on 2026-05-01: `TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDefault.ts` PASSes; the original target fingerprint mismatch is gone)
 Branch: claude/exciting-keller-hIafr
 
 Goal: fix fingerprint mismatch for `TS2339 e.ts:2:11 Property 'A' does not exist on type 'typeof import("b")'.` in `TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDefault.ts`.
