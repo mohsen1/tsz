@@ -501,7 +501,11 @@ impl<'a> Printer<'a> {
             self.ctx.flags.optional_chain_needs_parens = true;
             self.ctx.flags.nullish_coalescing_needs_parens = true;
         }
-        self.emit(binary.left);
+        if self.assignment_left_is_recovered_super(binary.left, binary.operator_token) {
+            self.write("super.");
+        } else {
+            self.emit(binary.left);
+        }
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
 
@@ -654,6 +658,34 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.ctx.flags.in_binary_operand = prev_in_binary;
+    }
+
+    fn assignment_left_is_recovered_super(&self, left: NodeIndex, op: u16) -> bool {
+        if !self.is_assignment_operator(op) {
+            return false;
+        }
+        self.arena
+            .get(left)
+            .is_some_and(|node| node.kind == SyntaxKind::SuperKeyword as u16)
+    }
+
+    const fn is_assignment_operator(&self, op: u16) -> bool {
+        op == SyntaxKind::EqualsToken as u16
+            || op == SyntaxKind::PlusEqualsToken as u16
+            || op == SyntaxKind::MinusEqualsToken as u16
+            || op == SyntaxKind::AsteriskEqualsToken as u16
+            || op == SyntaxKind::SlashEqualsToken as u16
+            || op == SyntaxKind::PercentEqualsToken as u16
+            || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+            || op == SyntaxKind::LessThanLessThanEqualsToken as u16
+            || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+            || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+            || op == SyntaxKind::AmpersandEqualsToken as u16
+            || op == SyntaxKind::CaretEqualsToken as u16
+            || op == SyntaxKind::BarEqualsToken as u16
+            || op == SyntaxKind::BarBarEqualsToken as u16
+            || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || op == SyntaxKind::QuestionQuestionEqualsToken as u16
     }
 
     pub(in crate::emitter) fn emit_prefix_unary(&mut self, node: &Node) {

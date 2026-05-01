@@ -62,6 +62,20 @@ impl<'a> Printer<'a> {
         let is_element_access = left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
         let is_property_access = left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
 
+        if left_node.kind == SyntaxKind::SuperKeyword as u16 {
+            let base_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(original_left);
+            self.write("). = Math.pow(");
+            self.write(&base_temp);
+            self.write("., ");
+            self.emit(right);
+            self.write(")");
+            return;
+        }
+
         if !is_element_access && !is_property_access {
             // Simple identifier: `x **= y` → `x = Math.pow(x, y)`
             self.emit(original_left);
