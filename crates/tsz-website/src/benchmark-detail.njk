@@ -1,0 +1,115 @@
+---
+layout: layouts/base.njk
+page_class: benchmark-detail
+pagination:
+  data: benchmark_pages
+  size: 1
+  alias: benchmark
+permalink: "benchmarks/{{ benchmark.slug }}/index.html"
+eleventyComputed:
+  title: "{{ benchmark.display_name }} Benchmark"
+---
+
+<nav class="bench-breadcrumb" aria-label="Breadcrumb">
+  <a href="/benchmarks/">Benchmarks</a>
+  <span aria-hidden="true">/</span>
+  <span>{{ benchmark.display_name }}</span>
+</nav>
+
+<h1>{{ benchmark.display_name }}</h1>
+<p class="subtitle">{{ benchmark.focus }}</p>
+
+<div class="bench-detail-hero">
+  <div class="bench-detail-primary">
+    <span class="bench-pill">{{ benchmark.kind }}</span>
+    <span class="bench-pill">{{ benchmark.category }}</span>
+    {% if benchmark.is_aggregate %}
+      <span class="bench-pill">aggregate</span>
+    {% endif %}
+  </div>
+  <div class="bench-detail-result">
+    {% if benchmark.comparison.available %}
+      <strong>{{ benchmark.speedup_label or "equal" }}</strong>
+      <span>
+        {% if benchmark.comparison.winner == "tsz" %}
+          tsz leads this benchmark.
+        {% elif benchmark.comparison.winner == "tsgo" %}
+          tsgo leads this benchmark.
+        {% else %}
+          Both compilers are effectively tied.
+        {% endif %}
+      </span>
+    {% else %}
+      <strong>tsz unavailable</strong>
+      <span>{{ benchmark.status or "No timing was recorded for tsz." }}</span>
+    {% endif %}
+  </div>
+</div>
+
+<section class="bench-detail-grid" aria-label="Benchmark measurements">
+  <div class="bench-metric">
+    <span>tsz</span>
+    <strong>{% if benchmark.tsz_ms %}{{ benchmark.tsz_ms }}ms{% else %}n/a{% endif %}</strong>
+  </div>
+  <div class="bench-metric">
+    <span>tsgo</span>
+    <strong>{% if benchmark.tsgo_ms %}{{ benchmark.tsgo_ms }}ms{% else %}n/a{% endif %}</strong>
+  </div>
+  <div class="bench-metric">
+    <span>Lines</span>
+    <strong>{{ benchmark.lines or 0 }}</strong>
+  </div>
+  <div class="bench-metric">
+    <span>Size</span>
+    <strong>{{ benchmark.kb or 0 }} KB</strong>
+  </div>
+</section>
+
+<section>
+  <h2>Timing</h2>
+  <div class="bench-detail-bars">
+    <div class="bench-bar-row">
+      <span class="bench-bar-label">tsz</span>
+      <div class="bench-detail-meter">
+        <span class="bench-detail-fill tsz" style="width: {{ benchmark.tsz_width }}%"></span>
+      </div>
+      <span class="bench-detail-time">{% if benchmark.tsz_time %}{{ benchmark.tsz_time }}{% else %}failed{% endif %}</span>
+    </div>
+    <div class="bench-bar-row">
+      <span class="bench-bar-label">tsgo</span>
+      <div class="bench-detail-meter">
+        <span class="bench-detail-fill tsgo" style="width: {{ benchmark.tsgo_width }}%"></span>
+      </div>
+      <span class="bench-detail-time">{% if benchmark.tsgo_time %}{{ benchmark.tsgo_time }}{% else %}n/a{% endif %}</span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Details</h2>
+  <dl class="bench-detail-facts">
+    <div>
+      <dt>Category</dt>
+      <dd><a href="/benchmarks/#{{ benchmark.category_slug }}">{{ benchmark.category }}</a></dd>
+    </div>
+    <div>
+      <dt>Fixture</dt>
+      <dd><code>{{ benchmark.name }}</code></dd>
+    </div>
+    <div>
+      <dt>Status</dt>
+      <dd>{{ benchmark.status or "successful" }}</dd>
+    </div>
+    <div>
+      <dt>Run</dt>
+      <dd><code>{{ benchmark.tsz_command }}</code></dd>
+    </div>
+  </dl>
+</section>
+
+{% if benchmark.kind != "project" %}
+  <section>
+    <h2>Snippet</h2>
+    <pre class="bench-snippet"><code>{{ benchmark.snippet }}</code></pre>
+  </section>
+{% endif %}

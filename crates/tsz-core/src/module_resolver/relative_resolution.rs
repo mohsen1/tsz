@@ -128,12 +128,16 @@ impl ModuleResolver {
                         .is_some_and(|n| n == "index");
                     is_index_file && !candidate_has_index_filename
                 };
-                // Bare `./` and `../` specifiers (no path component to add an
-                // extension to) resolve via directory index but should emit TS2307
-                // (Cannot find module), not TS2834, because there is no filename
-                // to attach an extension to.
+                // Bare `.`, `./`, `..`, `../` specifiers (no path component to
+                // add an extension to) resolve via directory index but should
+                // emit TS2307 (Cannot find module), not TS2834, because there
+                // is no filename to attach an extension to. The bare-dot forms
+                // (`.`, `..`) reach the same directory-index resolution as
+                // their slash-suffixed siblings (`prefer_directory` at the top
+                // of this function recognises them) and must produce the same
+                // diagnostic.
                 let is_bare_directory_specifier =
-                    matches!(specifier, "./" | ".\\" | "../" | "..\\");
+                    matches!(specifier, "." | "./" | ".\\" | ".." | "../" | "..\\");
                 if resolved_via_index && is_bare_directory_specifier {
                     return Err(ResolutionFailure::NotFound {
                         specifier: specifier.to_string(),

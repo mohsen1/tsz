@@ -3072,9 +3072,15 @@ impl<'a> CheckerState<'a> {
             return Some(TypeId::ERROR);
         }
 
-        // TS7017: When noImplicitAny is enabled and `this` resolves to typeof globalThis
-        // and the property is not found, emit the index signature error.
-        if is_this_global
+        // TS7017: When noImplicitAny is enabled and the access target is
+        // `typeof globalThis` and the property is not found, emit the index
+        // signature error. Both `this.X` (when `this` resolves to global) and
+        // a direct `globalThis.X` access trigger this — tsc treats them
+        // identically because both bottom out in `typeof globalThis`, which
+        // has no index signature.
+        let access_targets_global_this =
+            is_this_global || self.is_global_this_expression(expression);
+        if access_targets_global_this
             && property_type == TypeId::ANY
             && self.ctx.no_implicit_any()
             && !self.is_js_file()

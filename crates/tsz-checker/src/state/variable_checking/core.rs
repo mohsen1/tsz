@@ -273,7 +273,13 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 self.ctx.register_symbol_file_index(sym_id, file_idx);
-                return Some(self.get_type_of_symbol(sym_id));
+                let base_type = self.get_type_of_symbol(sym_id);
+                // When a JS-file `const X = ...` merges with a TS-file
+                // `declare class X`, fold JS-side expando assignments
+                // (`X.prop = ...`) into the merged static type so the
+                // initializer assignability check sees every property tsc
+                // reports as missing (TS2739, not TS2741).
+                return Some(self.augment_callable_type_with_expandos(&name, sym_id, base_type));
             }
         }
 

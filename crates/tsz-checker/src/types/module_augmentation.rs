@@ -180,9 +180,15 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         let augs = self.get_module_augmentation_declarations(module_spec, interface_name);
         for aug in &augs {
-            if let Some(arena) = &aug.arena
-                && let Some(node) = arena.get(aug.node)
-            {
+            // Same-file augmentations have `aug.arena = None` (binder doesn't
+            // attach a per-augmentation arena when the augmentation lives in
+            // the file currently being checked). Fall back to `self.ctx.arena`
+            // so this same-file path is inspected — otherwise the suppression
+            // silently misses any `declare module '...' { type X<T> = … }`
+            // in the same file as the usage.
+            let arena: &tsz_parser::parser::NodeArena =
+                aug.arena.as_deref().unwrap_or(self.ctx.arena);
+            if let Some(node) = arena.get(aug.node) {
                 if let Some(ta) = arena.get_type_alias(node)
                     && ta
                         .type_parameters

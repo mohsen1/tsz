@@ -37,6 +37,9 @@ pub fn classify_for_predicate_signature(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> PredicateSignatureKind {
+    if type_id.is_intrinsic() {
+        return PredicateSignatureKind::None;
+    }
     let Some(key) = db.lookup(type_id) else {
         return PredicateSignatureKind::None;
     };
@@ -123,6 +126,9 @@ pub fn extract_predicate_signature(
 /// TypeScript spec: `(x: unknown) => x is string | (x: unknown) => false` IS valid,
 /// but `(x: unknown) => x is string | (x: unknown) => boolean` is NOT (unsound).
 pub fn is_valid_union_predicate(db: &dyn TypeDatabase, union_type_id: TypeId) -> bool {
+    if union_type_id.is_intrinsic() {
+        return false;
+    }
     let Some(TypeData::Union(list_id)) = db.lookup(union_type_id) else {
         return false;
     };
@@ -150,6 +156,9 @@ pub fn is_valid_union_predicate(db: &dyn TypeDatabase, union_type_id: TypeId) ->
 fn is_type_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::NEVER || type_id == TypeId::BOOLEAN_FALSE {
         return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
     }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::Boolean(false))) => true,
@@ -180,6 +189,9 @@ pub fn classify_for_constructor_instance(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> ConstructorInstanceKind {
+    if type_id.is_intrinsic() {
+        return ConstructorInstanceKind::None;
+    }
     let Some(key) = db.lookup(type_id) else {
         return ConstructorInstanceKind::None;
     };
@@ -288,6 +300,9 @@ pub fn classify_for_type_parameter_constraint(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> TypeParameterConstraintKind {
+    if type_id.is_intrinsic() {
+        return TypeParameterConstraintKind::None;
+    }
     let Some(key) = db.lookup(type_id) else {
         return TypeParameterConstraintKind::None;
     };
@@ -314,6 +329,9 @@ pub enum UnionMembersKind {
 
 /// Classify a type to check if it's a union and get its members.
 pub fn classify_for_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> UnionMembersKind {
+    if type_id.is_intrinsic() {
+        return UnionMembersKind::NotUnion;
+    }
     let Some(key) = db.lookup(type_id) else {
         return UnionMembersKind::NotUnion;
     };
@@ -341,6 +359,9 @@ pub enum LiteralValueKind {
 
 /// Classify a type to extract literal value (string or number).
 pub fn classify_for_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralValueKind {
+    if type_id.is_intrinsic() {
+        return LiteralValueKind::None;
+    }
     let Some(key) = db.lookup(type_id) else {
         return LiteralValueKind::None;
     };

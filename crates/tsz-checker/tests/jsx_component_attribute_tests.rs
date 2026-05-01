@@ -4717,6 +4717,70 @@ let err =
 }
 
 #[test]
+fn jsx_multi_children_property_mismatch_anchors_at_each_child_not_var_decl() {
+    // When a JSX element used as a variable initializer has children that
+    // fail structural assignability against the parent's children type, each
+    // diagnostic must anchor at the failing child element / JSX expression —
+    // not at the enclosing variable declaration that the assignment-anchor
+    // walker would otherwise pick.
+    //
+    // Regression test for the picked conformance failure
+    // `inlineJsxFactoryDeclarationsLocalTypes.tsx`: tsz used to emit one
+    // TS2741 per declaration anchored at the variable identifier (col 7 of
+    // `_brokenTree`/`_brokenTree2`) instead of one per child anchored at the
+    // child's `<` / `{`. tsc emits one diagnostic per failing child, anchored
+    // at the child.
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface OtherElem {{ __otherBrand: void; }}
+interface Prop {{
+    children: JSX.Element[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+declare const o: OtherElem;
+const _bad = <Comp>{{o}}{{o}}</Comp>;
+"#
+    );
+    let diags = jsx_diagnostics_with_pos(&source);
+    let ts2741: Vec<_> = diags
+        .iter()
+        .filter(|(code, _, _)| {
+            *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        })
+        .collect();
+    assert_eq!(
+        ts2741.len(),
+        2,
+        "expected one TS2741 per failing JSX child, got: {diags:?}"
+    );
+
+    // The diagnostics must anchor at distinct positions (each child) rather
+    // than collapse onto a single position (the variable declaration).
+    let positions: std::collections::HashSet<u32> =
+        ts2741.iter().map(|(_, start, _)| *start).collect();
+    assert_eq!(
+        positions.len(),
+        2,
+        "expected each TS2741 anchored at a distinct child position, got: {ts2741:?}"
+    );
+
+    // Each diagnostic must anchor inside the JSX body (after the `<Comp>`
+    // opening tag), proving the assignment-anchor walker did not rewrite it
+    // up to the `_bad` variable declaration.
+    let var_kw_pos = source.find("const _bad").expect("const present") as u32;
+    let comp_open_close =
+        source.find("<Comp>").expect("opening tag") as u32 + "<Comp>".len() as u32;
+    for (code, start, msg) in &ts2741 {
+        assert!(
+            *start >= comp_open_close,
+            "TS2741 {code} '{msg}' anchored at {start}, expected inside JSX body \
+             (>= {comp_open_close}, after `<Comp>`); var decl starts at {var_kw_pos}"
+        );
+    }
+}
+
+#[test]
 fn jsx_children_whitespace_only_text_ignored() {
     // Whitespace-only text children should not count as children
     let source = format!(

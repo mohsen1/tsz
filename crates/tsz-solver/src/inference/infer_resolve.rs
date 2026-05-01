@@ -310,6 +310,9 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn is_object_like_upper_bound(&self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(ty) {
             Some(
                 TypeData::Object(_)
@@ -817,6 +820,9 @@ impl<'a> InferenceContext<'a> {
         {
             return true;
         }
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Union(list_id)) => {
                 let members = self.interner.type_list(list_id);
@@ -854,6 +860,9 @@ impl<'a> InferenceContext<'a> {
         depth: u32,
     ) -> bool {
         if depth > 4 {
+            return false;
+        }
+        if type_id.is_intrinsic() {
             return false;
         }
         match self.interner.lookup(type_id) {

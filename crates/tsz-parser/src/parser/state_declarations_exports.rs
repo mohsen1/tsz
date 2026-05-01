@@ -2301,7 +2301,22 @@ impl ParserState {
     // Parse with statement
     pub(crate) fn parse_with_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        let with_end = self.token_end();
         self.parse_expected(SyntaxKind::WithKeyword);
+
+        // TS1101: 'with' statements are not allowed in strict mode.
+        // Class bodies and module top-level are auto-strict per the ECMA spec,
+        // so a `with` syntactically nested inside either is an error. tsc
+        // emits the diagnostic at the `with` keyword's span. Parsing continues
+        // unchanged so the rest of the construct still reaches downstream.
+        if self.in_strict_mode_context() {
+            self.parse_error_at(
+                start_pos,
+                with_end.saturating_sub(start_pos),
+                "'with' statements are not allowed in strict mode.",
+                diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+            );
+        }
 
         self.parse_expected(SyntaxKind::OpenParenToken);
 
@@ -2458,10 +2473,21 @@ impl ParserState {
                         | syntax_kind_ext::JSX_ELEMENT
                 )
             });
+            // When the expression statement holds an arrow or function expression with a
+            // block body and the next token is `=`, defer to the parent statement-list
+            // loop. tsc emits TS2809 ("Declaration or statement expected. This '=' follows
+            // a block of statements...") at the `=` and a separate TS1005 at the start
+            // of the recovered expression that follows. Emitting TS1005 here at the `=`
+            // would dedupe-suppress TS2809 and lose the second TS1005.
+            let arrow_or_func_block_followed_by_equals = self.is_token(SyntaxKind::EqualsToken)
+                && self
+                    .arena
+                    .get(expression)
+                    .is_some_and(|node| node.is_function_expression_or_arrow());
             let has_numeric_follow_error = self.current_token_has_numeric_literal_follow_error();
             if jsx_head_needs_semicolon && has_numeric_follow_error {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
-            } else if !has_numeric_follow_error {
+            } else if !has_numeric_follow_error && !arrow_or_func_block_followed_by_equals {
                 self.parse_error_for_missing_semicolon_after(expression);
             }
             // For malformed JSX heads like `<X -attr={...} />`, tsc reports `';' expected`

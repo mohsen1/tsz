@@ -195,7 +195,6 @@ CHECKS = [
             "exclude_test_files": True,
             # Inline #[cfg(test)] modules at the bottom of these files
             "exclude_files": {
-                "crates/tsz-solver/src/type_queries/data.rs",
                 "crates/tsz-solver/src/type_queries/flow.rs",
                 # Inline/adjacent test modules under src/
                 "crates/tsz-solver/src/type_queries/data/tests.rs",
@@ -384,124 +383,60 @@ LINE_LIMIT_CHECKS = [
         "Checker boundary: src files must stay under 2000 LOC",
         ROOT / "crates" / "tsz-checker" / "src",
         2000,
-        # Files removed from exclusion after dropping below 2000 lines:
-        # jsx_checker.rs (1985), complex.rs (1907→1123), type_resolution/core.rs (1018),
-        # variable_checking/core.rs (1689), dispatch.rs (1981), type_node.rs (1997),
-        # computed.rs (1925), property_access_type.rs (1808), duplicate_identifiers.rs (1911),
-        # type_analysis/core.rs (1816), error_reporter/core.rs (1766),
-        # statement_callback_bridge.rs (1965), type_node.rs (1699),
-        # assignment_checker.rs (1721), assignability_checker.rs (1223),
-        # enum_utils.rs (1695), helpers.rs (1475), class_type/core.rs (1729),
-        # object_literal.rs (1977), access.rs (1449), property.rs (1337),
-        # jsx_checker.rs (removed), state/state.rs (1787)
+        # Exclusion list pruned 2026-05-01: removed 15 entries for files
+        # that no longer exist (split or renamed) and 16 entries for files
+        # that have since dropped below 2000 lines. The set below is the
+        # actual current set of files at-or-above 2000 raw lines, audited
+        # against disk on the prune date.
         {
-            "crates/tsz-checker/src/types/function_type.rs",
-            "crates/tsz-checker/src/state/type_analysis/computed_helpers.rs",
-            "crates/tsz-checker/src/types/computation/call.rs",
-            "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
-            "crates/tsz-checker/src/types/type_checking/core.rs",
-            "crates/tsz-checker/src/dispatch.rs",
-            "crates/tsz-checker/src/tests/dispatch_tests.rs",
-            "crates/tsz-checker/src/checkers/call_checker.rs",
-            "crates/tsz-checker/src/checkers/jsx/props.rs",
-            "crates/tsz-checker/src/error_reporter/assignability.rs",
-            "crates/tsz-checker/src/flow/control_flow/assignment.rs",
-            "crates/tsz-checker/src/symbols/symbol_resolver.rs",
-            "crates/tsz-checker/src/state/type_environment/core.rs",
-            "crates/tsz-checker/src/types/computation/identifier.rs",
-            "crates/tsz-checker/src/types/queries/core.rs",
-            "crates/tsz-checker/src/flow/flow_analysis/usage.rs",
-            # Pre-existing: recently grew past 2000 lines
-            "crates/tsz-checker/src/types/interface_type.rs",
-            "crates/tsz-checker/src/state/state_checking_members/statement_callback_bridge.rs",
-            "crates/tsz-checker/src/context/mod.rs",
-            # Recently grew past 2000 lines (CI lint blocker on origin/main)
-            "crates/tsz-checker/src/context/core.rs",
-            "crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs",
-            "crates/tsz-checker/src/declarations/import/core/import_members.rs",
-            # Pre-existing oversized files captured as the current ratchet baseline.
-            "crates/tsz-checker/src/checkers/generic_checker.rs",
-            "crates/tsz-checker/src/types/property_access_helpers.rs",
-            "crates/tsz-checker/src/types/utilities/core.rs",
-            "crates/tsz-checker/src/types/computation/binary.rs",
-            "crates/tsz-checker/src/types/computation/object_literal.rs",
-            "crates/tsz-checker/src/classes/class_implements_checker.rs",
-            "crates/tsz-checker/src/declarations/import/core.rs",
-            "crates/tsz-checker/src/declarations/import/core/import_members.rs",
-            "crates/tsz-checker/src/state/variable_checking/core.rs",
-            "crates/tsz-checker/src/state/variable_checking/variable_helpers.rs",
-            "crates/tsz-checker/src/state/type_analysis/computed_commonjs.rs",
-            "crates/tsz-checker/src/state/type_analysis/computed.rs",
-            "crates/tsz-checker/src/jsdoc/resolution.rs",
-            "crates/tsz-checker/src/assignability/assignment_checker.rs",
-            "crates/tsz-checker/src/error_reporter/call_errors.rs",
-            "crates/tsz-checker/src/flow/control_flow/core.rs",
-            # Pre-existing oversized files captured as current ratchet baseline.
-            "crates/tsz-checker/src/classes/class_checker.rs",
-            "crates/tsz-checker/src/jsdoc/params.rs",
-            "crates/tsz-checker/src/symbols/scope_finder.rs",
+            # ≥2000 LOC, real files. When a file drops below the limit,
+            # delete it from this set in the same diff and the
+            # `test_excluded_files_actually_exceed_limit` test will catch
+            # any regression.
             "crates/tsz-checker/src/assignability/assignability_checker.rs",
-            "crates/tsz-checker/src/error_reporter/render_failure.rs",
-            "crates/tsz-checker/src/state/type_resolution/module.rs",
-            "crates/tsz-checker/src/state/variable_checking/destructuring.rs",
-            "crates/tsz-checker/src/state/state_checking/class.rs",
-            "crates/tsz-checker/src/state/type_analysis/core.rs",
+            "crates/tsz-checker/src/classes/class_checker.rs",
             "crates/tsz-checker/src/declarations/import/declaration.rs",
+            "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
+            "crates/tsz-checker/src/error_reporter/call_errors/elaboration.rs",
+            "crates/tsz-checker/src/error_reporter/properties.rs",
+            "crates/tsz-checker/src/error_reporter/render_failure.rs",
+            "crates/tsz-checker/src/flow/control_flow/core.rs",
+            "crates/tsz-checker/src/jsdoc/diagnostics.rs",
+            "crates/tsz-checker/src/jsdoc/params.rs",
+            "crates/tsz-checker/src/state/state_checking/class.rs",
+            "crates/tsz-checker/src/state/state_checking/property.rs",
+            "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs",
+            "crates/tsz-checker/src/state/type_analysis/computed_helpers.rs",
+            "crates/tsz-checker/src/state/type_analysis/core.rs",
+            "crates/tsz-checker/src/state/type_environment/core.rs",
+            "crates/tsz-checker/src/state/type_resolution/module.rs",
+            "crates/tsz-checker/src/state/variable_checking/core.rs",
+            "crates/tsz-checker/src/state/variable_checking/destructuring.rs",
+            "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
+            "crates/tsz-checker/src/tests/dispatch_tests.rs",
+            "crates/tsz-checker/src/types/class_type/constructor.rs",
+            "crates/tsz-checker/src/types/class_type/core.rs",
+            "crates/tsz-checker/src/types/computation/binary.rs",
+            "crates/tsz-checker/src/types/computation/call/inner.rs",
+            "crates/tsz-checker/src/types/computation/call_inference.rs",
+            "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
+            "crates/tsz-checker/src/types/function_type.rs",
+            "crates/tsz-checker/src/types/property_access_type/resolve.rs",
+            "crates/tsz-checker/src/types/queries/core.rs",
+            "crates/tsz-checker/src/types/queries/lib.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers_helpers.rs",
-            "crates/tsz-checker/src/types/property_access_type/resolve.rs",
-            "crates/tsz-checker/src/types/queries/lib.rs",
-            "crates/tsz-checker/src/types/computation/call_inference.rs",
-            "crates/tsz-checker/src/types/class_type/core.rs",
-            "crates/tsz-checker/src/types/class_type/constructor.rs",
-            "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
-            "crates/tsz-checker/src/types/computation/call/inner.rs",
-            # Pre-existing: grew past 2000 lines from assignment-ops refactor
-            "crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs",
-            # Pre-existing oversized files captured as current ratchet baseline.
-            "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs",
-            "crates/tsz-checker/src/jsdoc/diagnostics.rs",
-            "crates/tsz-checker/src/error_reporter/properties.rs",
-            "crates/tsz-checker/src/error_reporter/core/diagnostic_source.rs",
+            "crates/tsz-checker/src/types/utilities/core.rs",
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
-            # Pre-existing: checker context module aggregates project-wide state.
-            "crates/tsz-checker/src/context/mod.rs",
-            # Bumped by the LiteralKeyof inference fix: the keyof-display
-            # branch in `contextual_keyof_parameter_display` now consults
-            # `query_common::type_has_displayable_name` so anonymous shapes
-            # fall through to the printer's eager `keyof { ... }` evaluation.
-            "crates/tsz-checker/src/error_reporter/call_errors/elaboration.rs",
-            # Pre-existing: display_formatting.rs grew past 2000 raw lines
-            # (LOC ~1823, under the CI threshold; local raw-line guard catches it).
-            "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
-            # Pre-existing: context/core.rs is the project-wide state container; grew
-            # past 2000 raw lines through ongoing checker boundary work.
-            # Pre-existing: condition_narrowing.rs hosts the dispatch table for
-            # discriminant/literal/typeof narrowing arms; grew past 2000 raw lines.
-            # Pre-existing: import_members.rs grew past 2000 lines via main-side
-            # commit #1716 (elided import duplicate diagnostics). CI lint blocker
-            # on origin/main; track refactor as a follow-up.
-            "crates/tsz-checker/src/declarations/import/core/import_members.rs",
-            # Grew past 2000 lines via commit #1819 (suppress TS2749 for
-            # namespace type-only export merge). CI lint blocker on origin/main;
-            # ratchet baseline so downstream PRs aren't held hostage. Track a
-            # type_display split as a follow-up.
-            "crates/tsz-checker/src/error_reporter/core/type_display.rs",
-            # Grew past 2000 lines via the mapped-type-error fingerprint PR
-            # (#1832) — currently 2002 lines after collapsing a dead conditional
-            # and adding a one-line `let _ =` to discard the now-unused flag.
-            # Track a property.rs split as a follow-up; ratchet baseline so the
-            # PR isn't blocked.
-            "crates/tsz-checker/src/state/state_checking/property.rs",
         },
     ),
 ]
 
 FILE_LINE_LIMIT_CHECKS = [
     (
-        "Core boundary: tsz-core lib facade must stay under 2420 LOC",
+        "Core boundary: tsz-core lib facade must stay under 500 LOC",
         ROOT / "crates" / "tsz-core" / "src" / "lib.rs",
-        2420,
+        500,
     ),
 ]
 
@@ -632,7 +567,6 @@ LSP_FEATURE_METHOD_COUNT_CHECKS = [
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
-    "crates/tsz-solver/src/intern/core.rs",
     "crates/tsz-solver/src/intern/core/constructors.rs",
     "crates/tsz-solver/src/intern/intersection.rs",
     "crates/tsz-solver/src/intern/normalize.rs",

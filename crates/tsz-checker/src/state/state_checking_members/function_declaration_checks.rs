@@ -205,6 +205,9 @@ impl<'a> CheckerState<'a> {
 
         // TS1274: Variance modifiers (in/out) not allowed on function type parameters
         self.check_variance_on_function_type_parameters(func.type_parameters.as_ref());
+        if func.type_parameters.is_none() {
+            self.check_jsdoc_function_template_variance_modifiers(func_idx);
+        }
 
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&func.type_parameters, func_idx);

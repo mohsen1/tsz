@@ -24,12 +24,10 @@ tsz-lowering = { workspace = true }
 rustc-hash = { workspace = true }
 tracing = { workspace = true }
 smallvec = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 globset = { workspace = true }
 dashmap = { workspace = true }
 stacker = "0.1.23"
-web-time = { workspace = true }
 
 [[test]]
 name = "generic_alias_assignability_pollution_tests"
@@ -272,6 +270,10 @@ name = "keyof_naked_priority_tests"
 path = "tests/keyof_naked_priority_tests.rs"
 
 [[test]]
+name = "keyof_array_literal_diagnostic_tests"
+path = "tests/keyof_array_literal_diagnostic_tests.rs"
+
+[[test]]
 name = "commonjs_constructor_diagnostics_tests"
 path = "tests/commonjs_constructor_diagnostics_tests.rs"
 
@@ -410,6 +412,10 @@ path = "tests/ts2344_literal_type_message.rs"
 [[test]]
 name = "ts2344_keyof_bare_tparam_defer_tests"
 path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
+
+[[test]]
+name = "ts2344_widen_literal_arg_display_tests"
+path = "tests/ts2344_widen_literal_arg_display_tests.rs"
 
 [[test]]
 name = "promise_constructor_capability_tests"
@@ -556,6 +562,10 @@ name = "jsx_overload_anchor_literal_attr_tests"
 path = "tests/jsx_overload_anchor_literal_attr_tests.rs"
 
 [[test]]
+name = "jsx_spread_assignability_suppresses_ts2741"
+path = "tests/jsx_spread_assignability_suppresses_ts2741.rs"
+
+[[test]]
 name = "jsdoc_param_return_ts2314_tests"
 path = "tests/jsdoc_param_return_ts2314_tests.rs"
 
@@ -578,6 +588,30 @@ path = "tests/global_this_const_property_tests.rs"
 [[test]]
 name = "deferred_keyof_index_access_assignability_tests"
 path = "tests/deferred_keyof_index_access_assignability_tests.rs"
+
+[[test]]
+name = "cross_file_js_ts_class_merge_ts2451_suppression_tests"
+path = "tests/cross_file_js_ts_class_merge_ts2451_suppression_tests.rs"
+
+[[test]]
+name = "optional_tuple_element_undefined_assignability_tests"
+path = "tests/optional_tuple_element_undefined_assignability_tests.rs"
+
+[[test]]
+name = "variance_skip_type_param_default_tests"
+path = "tests/variance_skip_type_param_default_tests.rs"
+
+[[test]]
+name = "reserved_keyword_param_function_type_tests"
+path = "tests/reserved_keyword_param_function_type_tests.rs"
+
+[[test]]
+name = "global_this_property_access_diagnostics_tests"
+path = "tests/global_this_property_access_diagnostics_tests.rs"
+
+[[test]]
+name = "jsdoc_template_variance_function_tests"
+path = "tests/jsdoc_template_variance_function_tests.rs"
 
 [lints]
 workspace = true

@@ -749,6 +749,18 @@ impl<'a> CheckerState<'a> {
             {
                 return (t, Vec::new());
             }
+            // Nested destructure inside an annotated parameter
+            // (e.g. `c` in `function f({ a: { b, c } }: T)`). The single-level
+            // walker above only resolves Identifier → BindingElement → Pattern →
+            // Parameter; nested patterns add another BindingElement layer.
+            if resolved_value_decl.is_some()
+                && let Some(t) = self.resolve_nested_binding_element_from_annotated_param(
+                    resolved_value_decl,
+                    escaped_name,
+                )
+            {
+                return (t, Vec::new());
+            }
             // Variable without type annotation or initializer gets implicit 'any'
             // This prevents cascading TS2571 errors
             return (TypeId::ANY, Vec::new());
@@ -1806,20 +1818,33 @@ impl<'a> CheckerState<'a> {
                             if let Some(prop_type) = found_via_export_equals_type {
                                 return (prop_type, Vec::new());
                             }
+                            // When the alias is declared by an IMPORT_SPECIFIER
+                            // (`import { X } from "mod"`), `check_imported_members`
+                            // is the canonical site for TS2305 — it knows about
+                            // resolution-mode overrides and anchors at the imported
+                            // identifier. Skipping here avoids:
+                            //   1. False positives when the override resolves the
+                            //      name via the alternate condition (e.g. `import
+                            //      type { X } from "pkg" with { "resolution-mode":
+                            //      "require" }` finding `X` in the require branch).
+                            //   2. Duplicate diagnostics anchored on the IMPORT_SPECIFIER
+                            //      node (covering the `type` keyword + identifier)
+                            //      alongside the canonical anchor on the identifier.
+                            // ALIAS symbols don't carry `value_declaration`, so the
+                            // pre-existing `value_decl == IMPORT_SPECIFIER` guard
+                            // never fires for them. Inspect `declarations` instead.
                             let import_specifier_decl = declarations.iter().copied().find(|&decl| {
                                 self.ctx.arena.get(decl).is_some_and(|node| {
                                     node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
                                 })
                             });
-                            if self.ctx.arena.get(value_decl).is_some_and(|node| {
-                                node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
-                            }) {
+                            if import_specifier_decl.is_some() {
                                 return (TypeId::ERROR, Vec::new());
                             }
                             self.emit_no_exported_member_error(
                                 module_name,
                                 export_name,
-                                import_specifier_decl.unwrap_or(value_decl),
+                                value_decl,
                             );
                         }
                     }

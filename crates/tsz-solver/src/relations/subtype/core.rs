@@ -78,6 +78,16 @@ impl SubtypeResult {
 ///
 /// Only safe for primitives where identity implies structural equality.
 pub(crate) fn is_disjoint_unit_type(types: &dyn TypeDatabase, ty: TypeId) -> bool {
+    // BOOLEAN_TRUE / BOOLEAN_FALSE are reserved intrinsic TypeIds whose
+    // TypeData::lookup returns Literal(Boolean), so they ARE disjoint unit
+    // types. All other intrinsics lookup to Intrinsic(_) which falls
+    // through to `_ => false`.
+    if ty == TypeId::BOOLEAN_TRUE || ty == TypeId::BOOLEAN_FALSE {
+        return true;
+    }
+    if ty.is_intrinsic() {
+        return false;
+    }
     match types.lookup(ty) {
         Some(TypeData::Literal(_) | TypeData::UniqueSymbol(_)) => true,
         // Note: Tuples removed to avoid labeled tuple bug

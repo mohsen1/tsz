@@ -58,6 +58,13 @@ impl ParserState {
 
         // Skip parameter modifier keywords (public, private, protected, readonly)
         // before checking for parameter name. E.g., (public x: T) => U
+        // BUT only consume them as modifiers when followed by something that can
+        // act as a parameter name. `(private)` and `(private, public) => void`
+        // have those keywords AS the parameter names — they must not be eaten
+        // here, otherwise the lookahead concludes "not a function type" and
+        // the outer `parse_parenthesized_type_or_function_type` falls back to
+        // parenthesized-type parsing, where the keywords are not valid type
+        // identifiers.
         if matches!(
             self.token(),
             SyntaxKind::PublicKeyword
@@ -65,7 +72,17 @@ impl ParserState {
                 | SyntaxKind::ProtectedKeyword
                 | SyntaxKind::ReadonlyKeyword
         ) {
+            let saved_state = self.scanner.save_state();
+            let saved_token = self.current_token;
             self.next_token();
+            let next_can_be_param_name =
+                self.is_identifier_or_keyword() || self.is_token(SyntaxKind::ThisKeyword);
+            if !next_can_be_param_name {
+                // Modifier keyword is being used as the parameter name itself.
+                // Roll back so the unified parameter-start branch below sees it.
+                self.scanner.restore_state(saved_state);
+                self.current_token = saved_token;
+            }
         }
 
         // Try to skip a parameter start (identifier/keyword or `this`)

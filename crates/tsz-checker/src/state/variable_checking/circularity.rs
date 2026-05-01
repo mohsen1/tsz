@@ -13,7 +13,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
-    fn identifier_is_non_value_name_position(&self, node_idx: NodeIndex) -> bool {
+    pub(crate) fn identifier_is_non_value_name_position(&self, node_idx: NodeIndex) -> bool {
         if self.is_identifier_in_type_position(node_idx) {
             return true;
         }

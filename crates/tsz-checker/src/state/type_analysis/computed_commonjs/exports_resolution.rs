@@ -59,6 +59,17 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_symbol(sym_id);
         }
 
+        // Fast path: another worker may have already resolved this
+        // (sym_id, target_file_idx) pair. The canonical SYMBOL_TYPE bucket
+        // returns it without any child-checker construction or
+        // copy_symbol_file_targets_to_attributed work.
+        if let Some((cached_type, _)) = self
+            .ctx
+            .cached_cross_file_symbol_type(sym_id, target_file_idx as u32)
+        {
+            return cached_type;
+        }
+
         let Some(all_arenas) = self.ctx.all_arenas.clone() else {
             return TypeId::ANY;
         };

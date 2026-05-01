@@ -654,6 +654,13 @@ impl<'a> CheckerState<'a> {
 
     /// Ensure relation preconditions (lazy refs + application symbols) for one type.
     pub(crate) fn ensure_relation_input_ready(&mut self, type_id: TypeId) {
+        // Fast path: intrinsic types have no Lazy refs to resolve and no
+        // Application symbols to walk; both downstream calls are no-ops on
+        // intrinsics. Skip the global-fuel probe and both function calls.
+        // is_intrinsic() is a free TypeId-range check (no TypeData lookup).
+        if type_id.is_intrinsic() {
+            return;
+        }
         // Global fuel guard: bail when total resolution work across all top-level
         // calls has exceeded the budget. Prevents OOM on DOM-heavy React code
         // where many top-level calls each reset per-call fuel.

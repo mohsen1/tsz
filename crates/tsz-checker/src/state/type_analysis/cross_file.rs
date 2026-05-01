@@ -12,9 +12,10 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
-const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
-const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
+pub(crate) const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
+pub(crate) const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
+pub(crate) const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
+pub(crate) const CROSS_FILE_QUERY_SYMBOL_TYPE: u8 = 4;
 
 fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
@@ -347,13 +348,12 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.symbol_types.insert(sym_id, result);
-        if self.ctx.share_owner_symbol_type_results {
-            self.ctx.definition_store.cache_resolved_symbol_type(
-                sym_id.0,
-                alias_cache_file_idx as u32,
-                result,
-            );
-        }
+        self.ctx.cache_cross_file_symbol_type(
+            sym_id,
+            alias_cache_file_idx as u32,
+            result,
+            Vec::new(),
+        );
         tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(AliasOutcome::Success);
 
         Some(result)
@@ -638,25 +638,27 @@ impl<'a> CheckerState<'a> {
                 return Some((cached_type, Vec::new()));
             }
 
-            // Thread-safe fast path: check the global resolved_symbol_types cache.
-            // When parallel checking is enabled, another thread may have already
-            // resolved this symbol's type via cross-file delegation.
-            if needs_cross_file_delegation && self.ctx.share_owner_symbol_type_results {
-                let target_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
-                if let Some(cached_type) = self
-                    .ctx
-                    .definition_store
-                    .get_resolved_symbol_type(sym_id.0, target_file_idx as u32)
-                {
-                    tsz_common::perf_counters::inc(
-                        &perf.delegate_cross_arena_cache_hits_cross_file,
-                    );
-                    self.ctx.symbol_types.insert(sym_id, cached_type);
-                    return Some((cached_type, Vec::new()));
-                }
+            // Thread-safe fast path: check the global resolved cross-file query cache.
+            if needs_cross_file_delegation
+                && let Some((cached_type, cached_params)) = self.ctx.cached_cross_file_symbol_type(
+                    sym_id,
+                    cross_file_idx.unwrap_or(self.ctx.current_file_idx) as u32,
+                )
+            {
+                tsz_common::perf_counters::inc(&perf.delegate_cross_arena_cache_hits_cross_file);
+                self.ctx.symbol_types.insert(sym_id, cached_type);
+                return Some((cached_type, cached_params));
             }
 
             if let Some(result) = self.try_resolve_cross_arena_named_alias_without_child(sym_id) {
+                if needs_cross_file_delegation && let Some(file_idx) = cross_file_idx {
+                    self.ctx.cache_cross_file_symbol_type(
+                        sym_id,
+                        file_idx as u32,
+                        result,
+                        Vec::new(),
+                    );
+                }
                 return Some((result, Vec::new()));
             }
 
@@ -694,14 +696,12 @@ impl<'a> CheckerState<'a> {
                     )
             {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
-                if needs_cross_file_delegation
-                    && self.ctx.share_owner_symbol_type_results
-                    && let Some(file_idx) = delegate_file_idx
-                {
-                    self.ctx.definition_store.cache_resolved_symbol_type(
-                        sym_id.0,
+                if needs_cross_file_delegation && let Some(file_idx) = delegate_file_idx {
+                    self.ctx.cache_cross_file_symbol_type(
+                        sym_id,
                         file_idx as u32,
                         direct_type,
+                        direct_params.clone(),
                     );
                 }
                 if !needs_cross_file_delegation {
@@ -975,16 +975,16 @@ impl<'a> CheckerState<'a> {
                 self.ctx.lib_delegation_cache.insert(sym_id, result);
             }
 
-            // Write through to the global resolved_symbol_types cache for parallel threads.
-            if needs_cross_file_delegation
-                && self.ctx.share_owner_symbol_type_results
-                && result != TypeId::ERROR
-            {
+            // Write through to the canonical cross-file symbol-type cache so
+            // other parallel checkers can reuse this result without rebuilding
+            // a child checker.
+            if needs_cross_file_delegation {
                 let target_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
-                self.ctx.definition_store.cache_resolved_symbol_type(
-                    sym_id.0,
+                self.ctx.cache_cross_file_symbol_type(
+                    sym_id,
                     target_file_idx as u32,
                     result,
+                    Vec::new(),
                 );
             }
 
@@ -1015,16 +1015,10 @@ impl<'a> CheckerState<'a> {
 
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
         let query_file_idx = self.ctx.get_file_idx_for_arena(symbol_arena);
-        if self.ctx.share_owner_symbol_type_results
-            && let Some(file_idx) = query_file_idx
-            && let Some((cached_type, cached_params)) =
-                self.ctx.definition_store.get_resolved_cross_file_query(
-                    CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
-                    file_idx as u32,
-                    sym_id.0,
-                    0,
-                    0,
-                )
+        if let Some(file_idx) = query_file_idx
+            && let Some((cached_type, cached_params)) = self
+                .ctx
+                .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
         {
             return Some((cached_type, cached_params));
         }
@@ -1146,17 +1140,10 @@ impl<'a> CheckerState<'a> {
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
         let query_file_idx =
             delegate_file_idx.or_else(|| self.ctx.get_file_idx_for_arena(symbol_arena));
-        if self.ctx.share_owner_symbol_type_results
-            && let Some(file_idx) = query_file_idx
-            && let Some((cached_type, _)) = self.ctx.definition_store.get_resolved_cross_file_query(
-                CROSS_FILE_QUERY_INTERFACE_TYPE,
-                file_idx as u32,
-                sym_id.0,
-                0,
-                0,
-            )
-            && cached_type != TypeId::UNKNOWN
-            && cached_type != TypeId::ERROR
+        if let Some(file_idx) = query_file_idx
+            && let Some(cached_type) = self
+                .ctx
+                .cached_cross_file_interface_type(sym_id, file_idx as u32)
         {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
             self.ctx
@@ -1184,18 +1171,9 @@ impl<'a> CheckerState<'a> {
             if !direct_params.is_empty() {
                 self.ctx.insert_def_type_params(def_id, direct_params);
             }
-            if self.ctx.share_owner_symbol_type_results
-                && let Some(file_idx) = query_file_idx
-            {
-                self.ctx.definition_store.cache_resolved_cross_file_query(
-                    CROSS_FILE_QUERY_INTERFACE_TYPE,
-                    file_idx as u32,
-                    sym_id.0,
-                    0,
-                    0,
-                    direct_type,
-                    Vec::new(),
-                );
+            if let Some(file_idx) = query_file_idx {
+                self.ctx
+                    .cache_cross_file_interface_type(sym_id, file_idx as u32, direct_type);
             }
             return Some(direct_type);
         }
@@ -1311,18 +1289,9 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .definition_store
                 .register_type_to_def(result, def_id);
-            if self.ctx.share_owner_symbol_type_results
-                && let Some(file_idx) = query_file_idx
-            {
-                self.ctx.definition_store.cache_resolved_cross_file_query(
-                    CROSS_FILE_QUERY_INTERFACE_TYPE,
-                    file_idx as u32,
-                    sym_id.0,
-                    0,
-                    0,
-                    result,
-                    Vec::new(),
-                );
+            if let Some(file_idx) = query_file_idx {
+                self.ctx
+                    .cache_cross_file_interface_type(sym_id, file_idx as u32, result);
             }
             Some(result)
         } else {
@@ -1375,21 +1344,14 @@ impl<'a> CheckerState<'a> {
         let mut results = rustc_hash::FxHashMap::default();
         let mut misses = Vec::new();
         if type_args.is_none()
-            && self.ctx.share_owner_symbol_type_results
             && let Some(file_idx) = delegate_file_idx
         {
             for &member_idx in member_indices {
-                if let Some((cached_type, _)) =
-                    self.ctx.definition_store.get_resolved_cross_file_query(
-                        CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
-                        file_idx as u32,
-                        interface_idx.0,
-                        member_idx.0,
-                        0,
-                    )
-                    && cached_type != TypeId::UNKNOWN
-                    && cached_type != TypeId::ERROR
-                {
+                if let Some(cached_type) = self.ctx.cached_cross_file_interface_member_simple_type(
+                    interface_idx,
+                    member_idx,
+                    file_idx as u32,
+                ) {
                     results.insert(member_idx, cached_type);
                 } else {
                     misses.push(member_idx);
@@ -1411,18 +1373,14 @@ impl<'a> CheckerState<'a> {
             type_args,
         ) {
             if type_args.is_none()
-                && self.ctx.share_owner_symbol_type_results
                 && let Some(file_idx) = delegate_file_idx
             {
                 for (&member_idx, &member_type) in direct_results.iter() {
-                    self.ctx.definition_store.cache_resolved_cross_file_query(
-                        CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+                    self.ctx.cache_cross_file_interface_member_simple_type(
+                        interface_idx,
+                        member_idx,
                         file_idx as u32,
-                        interface_idx.0,
-                        member_idx.0,
-                        0,
                         member_type,
-                        Vec::new(),
                     );
                 }
             }
@@ -1522,17 +1480,13 @@ impl<'a> CheckerState<'a> {
             }
             if result != TypeId::UNKNOWN && result != TypeId::ERROR {
                 if type_args.is_none()
-                    && self.ctx.share_owner_symbol_type_results
                     && let Some(file_idx) = delegate_file_idx
                 {
-                    self.ctx.definition_store.cache_resolved_cross_file_query(
-                        CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+                    self.ctx.cache_cross_file_interface_member_simple_type(
+                        interface_idx,
+                        member_idx,
                         file_idx as u32,
-                        interface_idx.0,
-                        member_idx.0,
-                        0,
                         result,
-                        Vec::new(),
                     );
                 }
                 results.insert(member_idx, result);

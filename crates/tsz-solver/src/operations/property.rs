@@ -235,7 +235,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
         let new_receiver = self.nominalize_object_receiver(receiver);
         if crate::contains_this_type(self.interner(), type_id) {
-            crate::substitute_this_type(self.interner(), type_id, new_receiver)
+            // Use the shallow variant: at property-access binding, we want to
+            // substitute `this` references at structural positions but NOT
+            // walk into stored nominal Object/Function/Callable internals.
+            // Walking into Label's stored `extend` method here bakes
+            // `this -> Label` into Label's stored bodies, poisoning later
+            // intersection wrapping (chained `extend({a}).extend({b})`).
+            crate::substitute_this_type_at_return_position(
+                self.interner(),
+                None,
+                type_id,
+                new_receiver,
+            )
         } else {
             type_id
         }

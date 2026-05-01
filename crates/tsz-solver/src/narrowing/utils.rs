@@ -302,6 +302,11 @@ fn top_level_union_members(
     types: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<[TypeId]>> {
+    // Fast path: intrinsics are never `Union(_)`. Skip the `TypeData`
+    // lookup entirely on this hot narrowing path.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     // Inline the union check directly instead of going through the visitor pattern.
     // This avoids creating a TypeDataDataVisitor and virtual dispatch on the hot path.
     match types.lookup(type_id) {

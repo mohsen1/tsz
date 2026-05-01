@@ -850,7 +850,14 @@ impl<'a> CheckerState<'a> {
                     match (left_own, right_own) {
                         (true, false) => return std::cmp::Ordering::Less,
                         (false, true) => return std::cmp::Ordering::Greater,
-                        _ => {}
+                        // When both are own, tsc lists in symbol-table insertion
+                        // order. The shape's Vec position (`*_pos`) reflects that
+                        // order — including synthesized members like a class's
+                        // `prototype` (which is inserted first, even though its
+                        // `declaration_order` is 0) and JS-expando-augmented
+                        // members appended afterwards.
+                        (true, true) => return left_pos.cmp(&right_pos),
+                        (false, false) => {}
                     }
                     match (
                         left_order > 0,

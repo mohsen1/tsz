@@ -724,6 +724,24 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // SYMBOL_TYPE bucket fast-path: when applying module augmentations
+        // (the canonical resolution mode), if a parallel worker has already
+        // resolved (sym_id, file_idx) in the shared `DefinitionStore`, skip
+        // both the recursion guard and the boxed-CheckerState construction
+        // below. Gated on `apply_module_augmentations == true` because the
+        // bucket stores the canonical augmentations-applied type; the rarely
+        // used `without_module_augmentations` entry could produce a different
+        // type for the same key.
+        let delegate_file_idx = self.ctx.get_file_idx_for_arena(decl_arena.as_ref());
+        if apply_module_augmentations
+            && let Some(file_idx) = delegate_file_idx
+            && let Some((cached_type, _params)) = self
+                .ctx
+                .cached_cross_file_symbol_type(sym_id, file_idx as u32)
+        {
+            return cached_type;
+        }
+
         // Guard against deep cross-arena recursion (shared with all delegation points)
         if !Self::enter_cross_arena_delegation() {
             return TypeId::ERROR;
@@ -734,7 +752,6 @@ impl<'a> CheckerState<'a> {
             .first()
             .map(|sf| sf.file_name.clone())
             .unwrap_or_else(|| self.ctx.file_name.clone());
-        let delegate_file_idx = self.ctx.get_file_idx_for_arena(decl_arena.as_ref());
 
         // Use the target arena's binder so symbol lookups resolve in the
         // declaration's context. Critical for module augmentation, where the

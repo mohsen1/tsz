@@ -1671,6 +1671,19 @@ impl<'a> CheckerState<'a> {
         }
 
         if query_common::type_application(self.ctx.types, param_type).is_some() {
+            // tsc shows the resolved literal/primitive form (e.g. `'"b"'`) instead
+            // of the alias (e.g. `'KeysExtendedBy<M, number>'`) when a generic
+            // type-alias application reduces to a literal, primitive, or union of
+            // those. Object/interface results keep the alias form.
+            let evaluated = self.evaluate_type_with_env(param_type);
+            if evaluated != param_type
+                && query_common::is_literal_or_primitive_or_compound_of_those(
+                    self.ctx.types,
+                    evaluated,
+                )
+            {
+                return self.format_type_diagnostic(evaluated);
+            }
             return self.format_type_diagnostic(param_type);
         }
 

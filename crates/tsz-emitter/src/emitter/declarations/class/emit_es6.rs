@@ -900,6 +900,7 @@ impl<'a> Printer<'a> {
                     && let Some(prop) = self.arena.get_property_decl(member_node)
                 {
                     if prop.initializer.is_none()
+                        || !self.class_property_initializer_has_equals(member_node, prop)
                         || self
                             .arena
                             .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
@@ -1773,6 +1774,13 @@ impl<'a> Printer<'a> {
             self.write(";");
         }
 
+        if class_expr_temp.is_none() {
+            for stmt in self.recovered_class_body_statements(node) {
+                self.write_line();
+                self.write(&stmt);
+            }
+        }
+
         // Emit computed property name hoisting comma expression or standalone side effects.
         if !computed_prop_entries.is_empty() {
             if class_expr_temp.is_some() {
@@ -2331,5 +2339,65 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(class_name);
             }
         }
+    }
+
+    fn class_property_initializer_has_equals(
+        &self,
+        member_node: &Node,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return true;
+        };
+        let Some(init_node) = self.arena.get(prop.initializer) else {
+            return true;
+        };
+        if prop.type_annotation.is_none() {
+            return true;
+        }
+        let start = member_node.pos as usize;
+        let end = (init_node.pos as usize).min(text.len());
+        if start >= end {
+            return false;
+        }
+        let segment = &text.as_bytes()[start..end];
+        let search_from = segment
+            .iter()
+            .rposition(|&byte| byte == b':')
+            .map_or(0, |idx| idx + 1);
+        segment[search_from..].contains(&b'=')
+    }
+
+    fn recovered_class_body_statements(&self, node: &Node) -> Vec<String> {
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        let start = node.pos as usize;
+        let end = (node.end as usize).min(text.len());
+        let Some(source) = text.get(start..end) else {
+            return Vec::new();
+        };
+
+        let mut depth = 0_i32;
+        let mut recovered = Vec::new();
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if depth == 1
+                && (trimmed.starts_with("function ")
+                    || (trimmed.starts_with("var ")
+                        && !trimmed.contains("//")
+                        && !trimmed.contains("()")))
+            {
+                recovered.push(trimmed.replace("{}", "{ }"));
+            }
+            for ch in line.chars() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+        }
+        recovered
     }
 }

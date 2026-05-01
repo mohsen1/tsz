@@ -64,6 +64,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn is_iterable_like_call_target(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
@@ -234,6 +237,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn type_uses_inference_placeholders(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::TypeParameter(info)) => {
                 let name = self.interner.resolve_atom(info.name);
@@ -407,11 +413,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // site) rather than baking `| undefined` into the parameter type
             // at signature build time, because lib signatures are built without
             // strictNullChecks and would otherwise miss it.
-            if *arg_type == TypeId::UNDEFINED || *arg_type == TypeId::VOID {
-                let param_info = self.param_info_for_arg_index(params, i);
-                if param_info.is_some_and(|p| p.optional) {
-                    continue;
-                }
+            if (*arg_type == TypeId::UNDEFINED || *arg_type == TypeId::VOID)
+                && self.param_is_optional_for_arg_index(params, i)
+            {
+                continue;
             }
 
             // When the parameter is optional (`?`), its effective type includes `undefined`.
@@ -469,6 +474,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     param_type
                 }
             };
+            let mut conflicting_contextual_instantiation = false;
             let expanded_arg_type = if Self::get_contextual_signature(
                 self.interner.as_type_database(),
                 expanded_arg_type,
@@ -524,10 +530,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     } else {
                         expanded_arg_type
                     };
-                self.instantiate_generic_function_argument_against_target(
-                    arg_for_instantiation,
-                    effective_param_type,
-                )
+                conflicting_contextual_instantiation = self
+                    .has_conflicting_contextual_signature_instantiation(
+                        arg_for_instantiation,
+                        effective_param_type,
+                    );
+                if conflicting_contextual_instantiation {
+                    arg_for_instantiation
+                } else {
+                    self.instantiate_generic_function_argument_against_target(
+                        arg_for_instantiation,
+                        effective_param_type,
+                    )
+                }
             } else {
                 expanded_arg_type
             };
@@ -546,6 +561,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 expanded_arg_type,
                 effective_param_type,
             ) {
+                return Some(CallResult::ArgumentTypeMismatch {
+                    index: i,
+                    expected: param_type,
+                    actual: *arg_type,
+                    fallback_return: TypeId::ERROR,
+                });
+            }
+            if conflicting_contextual_instantiation {
                 return Some(CallResult::ArgumentTypeMismatch {
                     index: i,
                     expected: param_type,
@@ -692,6 +715,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             Some(&params[arg_index])
         } else {
             None
+        }
+    }
+
+    /// Returns true when the parameter slot for `arg_index` is optional —
+    /// covering both fixed `?`-marked params and optional elements inside a
+    /// tuple-typed rest parameter (e.g. `...args: [string, number?]`). The
+    /// `param_info_for_arg_index` helper only returns the fixed-position
+    /// `ParamInfo` and reports `None` past the rest start, so a separate
+    /// inspector is needed for trailing-arg optionality.
+    fn param_is_optional_for_arg_index(&mut self, params: &[ParamInfo], arg_index: usize) -> bool {
+        let rest_start = if params.last().is_some_and(|p| p.rest) {
+            params.len().saturating_sub(1)
+        } else {
+            params.len()
+        };
+        if arg_index < rest_start {
+            return params[arg_index].optional;
+        }
+        let Some(rest_param) = params.last().filter(|p| p.rest) else {
+            return false;
+        };
+        let rest_type = self.unwrap_readonly(rest_param.type_id);
+        let rest_type = self.evaluate_rest_param_type(rest_type);
+        let offset = arg_index - rest_start;
+        match self.interner.lookup(rest_type) {
+            Some(TypeData::Tuple(elements)) => {
+                let elements = self.interner.tuple_list(elements);
+                elements.get(offset).is_some_and(|e| e.optional && !e.rest)
+            }
+            // Plain array `T[]` rest param: every position is implicitly optional
+            // for length purposes, but `undefined` is only acceptable when `T`
+            // already includes it. Defer that to the assignability check.
+            _ => false,
         }
     }
 
@@ -1425,6 +1481,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// These types need deferred inference in Round 2 after non-contextual
     /// arguments have been processed and type variables have been fixed.
     pub(crate) fn is_contextually_sensitive(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         // Check memoization cache to avoid exponential re-traversal on deeply
         // nested type structures (e.g., Application chains where each level
         // references the previous type multiple times via keyof).

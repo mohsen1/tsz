@@ -640,6 +640,17 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or(NodeIndex::NONE);
 
+            // Fast path: if another checker (parallel worker, prior delegation)
+            // already resolved this cross-file value symbol's type, reuse the
+            // cached answer instead of building a fresh child checker.
+            if let Some((cached_type, _)) = self
+                .ctx
+                .cached_cross_file_symbol_type(sym_id, file_idx as u32)
+                && cached_type != TypeId::ANY
+            {
+                return Some(cached_type);
+            }
+
             if !Self::enter_cross_arena_delegation() {
                 continue;
             }

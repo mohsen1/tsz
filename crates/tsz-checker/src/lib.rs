@@ -147,6 +147,9 @@ mod jsdoc_prototype_assignment_target_display;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "../tests/literal_application_alias_display_tests.rs"]
+mod literal_application_alias_display_tests;
+#[cfg(test)]
 #[path = "../tests/merged_symbol_tests.rs"]
 mod merged_symbol_tests;
 #[cfg(test)]
@@ -313,6 +316,9 @@ mod value_usage_tests;
 mod yield_star_return_type_tests;
 // Tests kept in root test harness where shared fixtures live.
 #[cfg(test)]
+#[path = "tests/application_arg_concrete_index_access_display_tests.rs"]
+mod application_arg_concrete_index_access_display_tests;
+#[cfg(test)]
 #[path = "../tests/architecture_contract_tests.rs"]
 mod architecture_contract_tests;
 #[cfg(test)]
@@ -397,6 +403,9 @@ mod jsdoc_type_expression_tests;
 #[path = "../tests/jsdoc_type_tag_tests.rs"]
 mod jsdoc_type_tag_tests;
 #[cfg(test)]
+#[path = "tests/jsx_element_type_constraint_tests.rs"]
+mod jsx_element_type_constraint_tests;
+#[cfg(test)]
 #[path = "tests/jsx_excess_attr_with_spread_display_tests.rs"]
 mod jsx_excess_attr_with_spread_display_tests;
 #[cfg(test)]
@@ -412,6 +421,9 @@ mod logical_operator_literal_preservation_tests;
 #[path = "../tests/mapped_indexed_access_diagnostic_tests.rs"]
 mod mapped_indexed_access_diagnostic_tests;
 #[cfg(test)]
+#[path = "tests/mapped_infer_with_substitution_tests.rs"]
+mod mapped_infer_with_substitution_tests;
+#[cfg(test)]
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
 #[cfg(test)]
@@ -423,6 +435,9 @@ mod never_returning_narrowing_tests;
 #[cfg(test)]
 #[path = "../tests/new_typeof_property_tests.rs"]
 mod new_typeof_property_tests;
+#[cfg(test)]
+#[path = "tests/object_spread_optional_merge_tests.rs"]
+mod object_spread_optional_merge_tests;
 #[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
@@ -441,6 +456,12 @@ mod reverse_mapped_inference_tests;
 #[cfg(test)]
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
+#[cfg(test)]
+#[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
+mod ts1101_with_in_strict_mode_tests;
+#[cfg(test)]
+#[path = "tests/ts2739_alias_unfold_display_tests.rs"]
+mod ts2739_alias_unfold_display_tests;
 #[cfg(test)]
 #[path = "tests/union_call_resolution_tests.rs"]
 mod union_call_resolution_tests;

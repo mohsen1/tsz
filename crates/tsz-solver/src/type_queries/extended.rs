@@ -42,6 +42,9 @@ pub enum LiteralTypeKind {
 /// - Extracting literal values
 /// - Literal type comparison
 pub fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralTypeKind {
+    if type_id.is_intrinsic() {
+        return LiteralTypeKind::NotLiteral;
+    }
     let Some(key) = db.lookup(type_id) else {
         return LiteralTypeKind::NotLiteral;
     };
@@ -292,6 +295,9 @@ pub enum PromiseTypeKind {
 /// This function examines a type and returns information about how to handle it
 /// when checking for promise-like types.
 pub fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseTypeKind {
+    if type_id.is_intrinsic() {
+        return PromiseTypeKind::NotPromise;
+    }
     let Some(key) = db.lookup(type_id) else {
         return PromiseTypeKind::NotPromise;
     };
@@ -336,6 +342,9 @@ pub fn classify_for_string_literal_keys(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> StringLiteralKeyKind {
+    if type_id.is_intrinsic() {
+        return StringLiteralKeyKind::NotStringLiteral;
+    }
     let Some(key) = db.lookup(type_id) else {
         return StringLiteralKeyKind::NotStringLiteral;
     };
@@ -358,6 +367,9 @@ pub fn get_string_literal_value(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<tsz_common::interner::Atom> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(name))) => Some(name),
         _ => None,
@@ -366,6 +378,15 @@ pub fn get_string_literal_value(
 
 /// Check if a type contains string literal types (directly or as union members).
 pub fn type_contains_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types (`string`, `number`, `any`, …) are not
+    // `Literal(String(_))` and cannot contain one. The match below would
+    // fall through to `_ => false`. Skip the `TypeData` lookup and match
+    // dispatch entirely. Same pattern as the open intrinsic-fast-path
+    // family (#2001 / #2005 / #2008 / #2009 / #2014 / #2019 / #2026 /
+    // #2030).
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(_))) => true,
         Some(TypeData::Union(members)) => {
@@ -400,6 +421,9 @@ pub fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     if type_id == TypeId::BOOLEAN_FALSE {
         return Some("false".to_string());
     }
+    if type_id.is_intrinsic() {
+        return None;
+    }
 
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(atom)))
@@ -426,6 +450,9 @@ pub fn get_literal_property_name(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<tsz_common::interner::Atom> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(name))) => Some(name),
         Some(TypeData::Literal(crate::types::LiteralValue::Number(num))) => {
@@ -464,6 +491,9 @@ pub enum CallSignaturesKind {
 
 /// Classify a type for call signature extraction.
 pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> CallSignaturesKind {
+    if type_id.is_intrinsic() {
+        return CallSignaturesKind::NoSignatures;
+    }
     let Some(key) = db.lookup(type_id) else {
         return CallSignaturesKind::NoSignatures;
     };
@@ -579,6 +609,9 @@ pub fn get_application_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<(TypeId, Vec<TypeId>)> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Application(app_id)) => {
             let app = db.type_application(app_id);
@@ -603,6 +636,9 @@ pub enum LazyTypeKind {
 
 /// Classify a type for Lazy resolution.
 pub fn classify_for_lazy_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> LazyTypeKind {
+    if type_id.is_intrinsic() {
+        return LazyTypeKind::NotLazy;
+    }
     let Some(key) = db.lookup(type_id) else {
         return LazyTypeKind::NotLazy;
     };
@@ -618,6 +654,9 @@ pub fn get_tuple_list_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::TupleListId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Tuple(list_id)) => Some(list_id),
         _ => None,
@@ -626,6 +665,10 @@ pub fn get_tuple_list_id(
 
 /// Get the base type of an application type.
 pub fn get_application_base(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // Fast path: intrinsics are never `Application(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Application(app_id)) => Some(db.type_application(app_id).base),
         _ => None,
@@ -647,6 +690,12 @@ pub enum LiteralKeyKind {
 
 /// Classify a type for literal key extraction.
 pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKeyKind {
+    // Fast path: intrinsics (`string`, `number`, `any`, …) are not
+    // `Literal(_)` / `Union(_)` and the match below already returns
+    // `LiteralKeyKind::Other` for them via the `_` arm.
+    if type_id.is_intrinsic() {
+        return LiteralKeyKind::Other;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::LiteralValue::String(atom))) => {
             LiteralKeyKind::StringLiteral(atom)
@@ -669,6 +718,12 @@ pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKe
 /// whose inner type is a union of members. Callers use it when same-enum members must
 /// remain distinct for subtype/discriminant logic.
 pub fn is_literal_enum_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic TypeIds are never `TypeData::Enum`. Skip the
+    // lookup. Same family as #2001 / #2005 / #2008 / #2009 / #2014 / #2019
+    // / #2025 / #2032 / #2033 / #2037.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::Enum(_, member_type))
@@ -688,6 +743,9 @@ pub fn is_literal_enum_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Non-literal types are returned unchanged.
 pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(ref lit)) => lit.primitive_type_id(),
         _ => type_id,
@@ -698,6 +756,11 @@ pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> Typ
 ///
 /// Returns true only for `TypeData::ObjectWithIndex`, not for `TypeData::Object`.
 pub fn is_object_with_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic TypeIds are never `TypeData::ObjectWithIndex`.
+    // Same family as #2033 (sibling extended.rs predicates).
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::ObjectWithIndex(_)))
 }
 
@@ -718,6 +781,13 @@ pub enum ArrayLikeKind {
 
 /// Classify a type for array-like checking.
 pub fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeKind {
+    // Fast path: intrinsics (`string`, `number`, `any`, `never`, …) are
+    // never Array/Tuple/ReadonlyType/TypeParameter/Infer/Union/Intersection/
+    // Application/Conditional/Mapped, so the match below would fall
+    // through to `_ => ArrayLikeKind::Other`.
+    if type_id.is_intrinsic() {
+        return ArrayLikeKind::Other;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Array(elem)) => ArrayLikeKind::Array(elem),
         Some(TypeData::Tuple(_)) => ArrayLikeKind::Tuple,

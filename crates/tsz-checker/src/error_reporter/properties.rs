@@ -389,6 +389,23 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
             return name;
         }
+        // When the receiver has a declared type annotation, prefer the source-text
+        // annotation for the property-receiver display in cases where tsz's
+        // type representation has evaluated past the user-written form:
+        //   - generic instantiations (`Bar<Foo>`),
+        //   - simple aliases (`Bar` where `type Bar = Omit<Foo, "c">`),
+        //   - intersection annotations like `Window & typeof globalThis`
+        //     (which tsz collapses to a single member during property-access
+        //     evaluation; the source text faithfully preserves all members).
+        // Skip annotations containing `{` (inline object literals need the
+        // proper type formatter to add `| undefined` for optional members).
+        // Also skip reduced intersections: tsc displays `never` for impossible
+        // intersections like `A & B` with conflicting private fields or
+        // discriminants, not the unreduced source annotation.
+        // We deliberately do NOT trigger on `|` annotations because flow
+        // narrowing legitimately replaces a union receiver with its picked
+        // member, and the narrowed display is what tsc shows.
+        let receiver_reduces_to_never = self.evaluate_type_for_assignability(type_id).is_never();
         if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
             && let Some(annotation) = self.declared_type_annotation_text_for_expression(receiver)
             && annotation
@@ -396,8 +413,10 @@ impl<'a> CheckerState<'a> {
                 .next()
                 .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
             && !annotation.contains('{')
+            && !receiver_reduces_to_never
             && (crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
-                || self.ctx.types.get_display_alias(type_id).is_some())
+                || self.ctx.types.get_display_alias(type_id).is_some()
+                || annotation.contains('&'))
         {
             // Use the source-text annotation for both generic instantiations
             // (`bar: Bar<Foo>` → `Bar<Foo>`) and simple-alias instantiations
@@ -563,6 +582,38 @@ impl<'a> CheckerState<'a> {
         }
 
         self.format_type_for_diagnostic_role(type_id, DiagnosticTypeDisplayRole::PropertyReceiver)
+    }
+
+    /// Build a copy of a Callable's shape with ERROR property types replaced
+    /// by ANY for diagnostic display. tsc renders apparent-type properties
+    /// whose resolution failed (e.g. `exports.blah = exports.someProp` where
+    /// `someProp` doesn't exist) as `any`, not as the internal error sentinel.
+    ///
+    /// Returns None when the input doesn't have a callable shape or contains
+    /// no ERROR-typed properties (no rebuild needed).
+    pub(crate) fn substitute_error_with_any_in_callable_shape(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::callable_shape_for_type_extended;
+        let shape = callable_shape_for_type_extended(self.ctx.types, type_id)?;
+        let needs_rewrite = shape
+            .properties
+            .iter()
+            .any(|p| p.type_id == TypeId::ERROR || p.write_type == TypeId::ERROR);
+        if !needs_rewrite {
+            return None;
+        }
+        let mut rewritten: tsz_solver::CallableShape = shape.as_ref().clone();
+        for prop in rewritten.properties.iter_mut() {
+            if prop.type_id == TypeId::ERROR {
+                prop.type_id = TypeId::ANY;
+            }
+            if prop.write_type == TypeId::ERROR {
+                prop.write_type = TypeId::ANY;
+            }
+        }
+        Some(self.ctx.types.factory().callable(rewritten))
     }
 
     // =========================================================================
@@ -1014,6 +1065,67 @@ impl<'a> CheckerState<'a> {
 
             // For namespace types, override the type display to match TSC's
             // `typeof import("module")` format instead of the literal object shape.
+            //
+            // Exception: when the receiver is a CJS module whose
+            // `module.exports = <callable>` produces a merged-callable apparent
+            // type, tsc displays the structural form (`{ (): void; blah: any; }`)
+            // rather than the namespace alias. The receiver Object cached in
+            // `namespace_module_names` may be a stale snapshot from an early-call
+            // race in `infer_commonjs_export_rhs_type` (returned UNDEFINED before
+            // the function expression was typed). Force a fresh recompute of
+            // the file's JS export surface — bypassing the resolution-set guard
+            // and the cache — and, when it now yields a different callable
+            // type, format that structural shape (with ERROR properties
+            // rewritten to ANY for parity with tsc's display policy) instead
+            // of the alias.
+            //
+            // See `compiler/pushTypeGetTypeOfAlias.ts` for the symptom and
+            // `memory/project_pushTypeGetTypeOfAlias_modulenamespace_display.md`
+            // for the iter-20/22/24/28/30/32 investigation trail.
+            if self.ctx.namespace_module_names.contains_key(&type_id) {
+                let recomputed_surface_type = {
+                    let current_file_idx = self.ctx.current_file_idx;
+                    self.ctx.js_export_surface_cache.remove(&current_file_idx);
+                    let was_in_resolution = self
+                        .ctx
+                        .js_export_surface_resolution_set
+                        .remove(&current_file_idx);
+                    let result = self.js_export_surface_namespace_type(current_file_idx);
+                    if was_in_resolution {
+                        self.ctx
+                            .js_export_surface_resolution_set
+                            .insert(current_file_idx);
+                    }
+                    result
+                };
+                if let Some(merged_ty) = recomputed_surface_type
+                    && merged_ty != type_id
+                    && crate::query_boundaries::common::has_call_signatures(
+                        self.ctx.types.as_type_database(),
+                        merged_ty,
+                    )
+                {
+                    let merged_for_display = self
+                        .substitute_error_with_any_in_callable_shape(merged_ty)
+                        .unwrap_or(merged_ty);
+                    let type_str = self.format_type(merged_for_display);
+                    let (code, message) = if let Some(ref suggestion) = suggestion {
+                        (
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                            format!(
+                                "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+                            ),
+                        )
+                    } else {
+                        (
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                            format!("Property '{prop_name}' does not exist on type '{type_str}'."),
+                        )
+                    };
+                    self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
+                    return;
+                }
+            }
             if let Some(module_name) = self.ctx.namespace_module_names.get(&type_id).cloned() {
                 if let Some(members) =
                     crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)

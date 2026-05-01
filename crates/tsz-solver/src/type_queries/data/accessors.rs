@@ -17,6 +17,10 @@ use tsz_common::Atom;
 /// Function or Callable. Also includes the string index signature value type
 /// if it's callable. Used for contextual typing of callback-bearing objects.
 pub fn collect_callable_property_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    // Fast path: intrinsics are never `Object`/`ObjectWithIndex`.
+    if type_id.is_intrinsic() {
+        return Vec::new();
+    }
     let shape_id = match db.lookup(type_id) {
         Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
         _ => return Vec::new(),
@@ -43,6 +47,9 @@ pub fn collect_callable_property_types(db: &dyn TypeDatabase, type_id: TypeId) -
 
 /// Check if a type is a callable type (Function or Callable with call signatures).
 fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(_)) => true,
         Some(TypeData::Callable(id)) => !db.callable_shape(id).call_signatures.is_empty(),
@@ -56,6 +63,9 @@ fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// `construct_signatures`) or is a constructor Function (`is_constructor`).
 /// For union types, returns true if ANY member is constructor-like.
 pub fn is_constructor_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     if let Some(shape_id) = crate::visitor::callable_shape_id(db, type_id)
         && !db.callable_shape(shape_id).construct_signatures.is_empty()
     {
@@ -131,6 +141,10 @@ pub fn extract_type_params_for_call(
 /// only one signature. Used by the checker to emit TS2743 when no overload matches
 /// the provided type argument count.
 pub fn overload_type_param_counts(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<usize>> {
+    // Fast path: intrinsics are never `Callable(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
@@ -260,12 +274,15 @@ fn signature_has_literal_types(db: &dyn TypeDatabase, sig: &crate::types::CallSi
 /// Get the symbol associated with an object type's shape.
 ///
 /// Returns the `SymbolId` from the `ObjectShape` for Object or `ObjectWithIndex`
-/// types. Returns None for non-object types or objects without a symbol.
+/// types, or from the `CallableShape` for Callable types (e.g. a class
+/// constructor type's `typeof X` view, including expando-augmented variants).
+/// Returns None for non-object types or types without a recorded symbol.
 pub fn get_object_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             db.object_shape(shape_id).symbol
         }
+        Some(TypeData::Callable(shape_id)) => db.callable_shape(shape_id).symbol,
         _ => None,
     }
 }
@@ -346,6 +363,9 @@ pub fn intersect_constructor_returns(
 /// as tuples: homomorphic mapped types preserve array/tuple structure, so the
 /// array literal input should maintain per-element type information.
 pub fn is_homomorphic_mapped_type_context(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Mapped(mapped_id)) => {
             let mapped = db.mapped_type(mapped_id);
@@ -364,6 +384,9 @@ pub fn is_homomorphic_mapped_type_context(db: &dyn TypeDatabase, type_id: TypeId
 
 /// Check if a type is `keyof T` where T is a type parameter (possibly intersected).
 fn is_keyof_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::KeyOf(target)) => {
             matches!(db.lookup(target), Some(TypeData::TypeParameter(_)))
@@ -529,6 +552,12 @@ pub fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: Type
 /// If the type is a union, filters to only tuple/array members and returns their union.
 /// Returns None if no array/tuple constituents are found.
 pub fn get_array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // Fast path: intrinsics are never Tuple/Array/ReadonlyType/Application/
+    // Mapped/Conditional/Lazy/Union — the match below would fall through to
+    // the trailing `_` arm.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => Some(type_id),
         // `readonly T[]` and `readonly [A, B]` are wrapped in ReadonlyType — unwrap and retry.
@@ -844,6 +873,9 @@ pub fn find_property_in_object_by_str(
 /// property named `"0"`. This is used by array literal contextual typing
 /// to decide whether to create a tuple type instead of an array type.
 pub fn is_tuple_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => true,
         Some(TypeData::ReadonlyType(inner)) => is_tuple_like_type(db, inner),

@@ -420,12 +420,13 @@ impl<'a> CheckerState<'a> {
             if property_type == TypeId::ERROR {
                 return TypeId::ERROR;
             }
-            // TS7053: When noImplicitAny is enabled and `this` (resolving to typeof
-            // globalThis) is used with bracket access and the property is not found,
-            // emit the can't-index diagnostic. Only for `this` — the `globalThis`
-            // identifier path may return ANY for unresolved properties that exist
-            // in lib declarations.
-            if is_this_global
+            // TS7053: When noImplicitAny is enabled and the access target is
+            // `typeof globalThis` (via `this` resolving to global, or a direct
+            // `globalThis['x']`), and the property is not found, emit the
+            // can't-index diagnostic.
+            let access_targets_global_this =
+                is_this_global || self.is_global_this_expression(access.expression);
+            if access_targets_global_this
                 && property_type == TypeId::ANY
                 && self.ctx.no_implicit_any()
                 && !self.is_js_file()

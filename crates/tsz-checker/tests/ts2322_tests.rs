@@ -4381,6 +4381,55 @@ logFirstLength([42]);
 }
 
 #[test]
+fn no_infer_wrapped_weak_type_in_intersection_target_emits_ts2559() {
+    // `NoInfer<T>` is a transparent wrapper for shape extraction. An
+    // intersection like `NoInfer<W> & { prop?: unknown }` where `W` is a
+    // weak type must still trigger TS2559 when the source has no
+    // overlapping properties.
+    let source = r#"
+        type W = { alpha?: unknown; beta?: unknown };
+        declare const weakObj: W;
+        declare const someObj: { x: string };
+        declare function callee<T>(a: T, b: NoInfer<T> & { prop?: unknown }): void;
+        callee(weakObj, someObj);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for {{ x: string }} against NoInfer<T> & {{ prop?: unknown }} target. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn no_infer_intersection_of_two_no_infers_emits_ts2559() {
+    // `NoInfer<U> & NoInfer<V>` is weak when both inner types are weak.
+    // Use distinct generic parameter names to confirm the rule is
+    // structural, not name-based.
+    let source = r#"
+        type WA = { alpha?: unknown; beta?: unknown };
+        type WB = { gamma?: unknown; delta?: unknown };
+        declare const weakA: WA;
+        declare const weakB: WB;
+        declare const someObj: { x: string };
+        declare function callee<U, V>(
+            a: U,
+            b: V,
+            c: NoInfer<U> & NoInfer<V>,
+        ): void;
+        callee(weakA, weakB, someObj);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for {{ x: string }} against NoInfer<U> & NoInfer<V> target. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_const_destructured_computed_property_not_narrowed_by_flow() {
     // Const destructured bindings with computed property keys should keep
     // their full declared type (union of all possible values) and not be
@@ -4420,5 +4469,74 @@ const bb: 0 | 8 = b;
         ts2322_msgs[0].contains("0 | 8"),
         "Expected target type '0 | 8', got: {}",
         ts2322_msgs[0],
+    );
+}
+
+#[test]
+fn test_destructured_parameter_in_const_fn_is_not_treated_as_const() {
+    // Regression: `is_const_symbol` walked past PARAMETER/ARROW_FUNCTION
+    // boundaries to the enclosing `const fn = …` VARIABLE_DECLARATION,
+    // wrongly classifying the parameter as const. This caused
+    // `analyze_loop_fixed_point` to skip the iteration and emit stale
+    // narrowed types for parameters reassigned inside loops.
+    //
+    // The walk must terminate when it encounters PARAMETER, FUNCTION_*,
+    // CLASS_*, or SOURCE_FILE — those are scope boundaries past which the
+    // symbol is no longer the variable being declared.
+    let source = r#"
+const fn = ({ x }: { x: number | string }) => {
+    while (Math.random() < 0.5) {
+        x = "next";
+    }
+    const y: number | string = x;
+    return y;
+};
+"#;
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    assert_eq!(
+        ts2322, 0,
+        "Destructured parameter in const-fn must not be skipped by fixed-point iteration; \
+         got TS2322 diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2322_too_many_parameters_emits_chained_target_signature_elaboration() {
+    // When a function-typed source has more required parameters than the target
+    // accepts, tsc emits TS2322 with a chained sub-message:
+    //
+    //   error TS2322: Type '...' is not assignable to type '...'.
+    //     Target signature provides too few arguments. Expected N or more, but got M.
+    //
+    // The chained message has its own diagnostic code (TS2849), but is rendered
+    // as related-information on the parent TS2322 so the final output matches
+    // tsc's `messageText` chain. Without the elaboration the user only sees the
+    // top-level "Type X is not assignable to Y" message, which is harder to
+    // diagnose for callback / mapped-type contextual mismatches.
+    let source = r#"
+        type Selector<S, R> = (state: S) => R;
+        const f: Selector<string, number> = (state: string, props: string) => 1;
+    "#;
+
+    let diags = diagnostics_for_source(source);
+    let mismatch = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diags:#?}"));
+
+    assert!(
+        mismatch
+            .related_information
+            .iter()
+            .any(|r| r.code == diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT
+                && r.message_text.contains("Target signature provides too few arguments")
+                && r.message_text.contains("Expected 2 or more, but got 1")),
+        "expected chained TS2849 'Target signature provides too few arguments' \
+         elaboration with counts (2,1); got: {:#?}",
+        mismatch.related_information
     );
 }

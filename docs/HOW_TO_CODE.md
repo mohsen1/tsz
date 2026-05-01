@@ -28,7 +28,9 @@ match db.classify_iterable(type_id) {
 }
 ```
 
-See: `docs/architecture/SOLVER_REFACTORING_PROPOSAL.md` §2.4, Phase 4.
+See: `docs/architecture/BOUNDARIES.md` for the canonical Solver/Checker
+boundary policy (the `SOLVER_REFACTORING_PROPOSAL.md` referenced here
+historically was deleted in the docs cleanup; BOUNDARIES.md now subsumes it).
 
 ### Solver owns all type logic
 
@@ -240,7 +242,8 @@ When multiple `TypeVisitor` implementors differ only in which field they extract
 
 Likewise, if two visitors share identical helper logic (e.g. extracting a parameter type from a `&[ParamInfo]`), extract that logic into a free function rather than duplicating it.
 
-Full list of abstraction opportunities: `docs/todo/abstraction-opportunities.md`
+Full list of abstraction opportunities: `docs/DRY_AUDIT_2026-04-21.md` (the
+DRY audit doubles as the abstraction-opportunity backlog).
 
 ---
 
@@ -377,7 +380,7 @@ const MAX_SIMPLIFICATION_SIZE: usize = 25;
 if members.len() > MAX_SIMPLIFICATION_SIZE { return; }
 ```
 
-For solver/checker recursion limits, use `RecursionProfile` (see Recursion Safety above). For capacity constants shared across crates, add them to `crates/tsz-common/src/limits.rs`.
+For solver/checker recursion limits, use `RecursionProfile` (see Recursion Safety above). For capacity constants shared across crates, add them under `crates/tsz-common/src/limits/` (the file was split into a module).
 
 ---
 

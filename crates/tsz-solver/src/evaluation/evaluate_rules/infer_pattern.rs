@@ -47,15 +47,47 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if type_id.is_intrinsic() {
             return false;
         }
-        // Fast path: direct Infer check before allocating visited set
-        if matches!(self.interner().lookup(type_id), Some(TypeData::Infer(_))) {
+        // Single TypeData lookup feeds both the direct-Infer check and the
+        // terminal-kind fast path. Prevents the redundant lookup that would
+        // happen if these checks ran independently before falling into the
+        // recursive walker.
+        let key = match self.interner().lookup(type_id) {
+            Some(key) => key,
+            None => return false,
+        };
+        // Direct Infer: short-circuit before allocating the visited set.
+        if matches!(key, TypeData::Infer(_)) {
             return true;
         }
+        // Terminal kinds that the recursive walker treats as not-containing-
+        // infer (see `type_contains_infer_inner`'s leaf arm). Skipping the
+        // visited-set allocation for these types eliminates the per-call
+        // `FxHashSet::default()` for a large fraction of conditional-type
+        // evaluation calls — `extends_type` is frequently `Lazy(DefId)` for
+        // generic interface references like `Promise<T>` before evaluation.
+        if matches!(
+            key,
+            TypeData::Literal(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::BoundParameter(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ThisType
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+                | TypeData::Error
+        ) {
+            return false;
+        }
         let mut visited = FxHashSet::default();
-        self.type_contains_infer_inner(type_id, &mut visited)
+        self.type_contains_infer_inner_with_key(type_id, key, &mut visited)
     }
 
     fn type_contains_infer_inner(&self, type_id: TypeId, visited: &mut FxHashSet<TypeId>) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         if !visited.insert(type_id) {
             return false;
         }
@@ -64,6 +96,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return false;
         };
 
+        self.match_contains_infer(type_id, key, visited)
+    }
+
+    /// Walk one already-fetched `TypeData` for the contains-infer check.
+    ///
+    /// Splitting the walk from the `lookup`/`visited.insert` bookkeeping
+    /// lets `type_contains_infer` reuse a `TypeData` it already fetched
+    /// for the entry-point fast paths, without performing a second
+    /// interner lookup.
+    fn type_contains_infer_inner_with_key(
+        &self,
+        type_id: TypeId,
+        key: TypeData,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if !visited.insert(type_id) {
+            return false;
+        }
+        self.match_contains_infer(type_id, key, visited)
+    }
+
+    fn match_contains_infer(
+        &self,
+        _type_id: TypeId,
+        key: TypeData,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
         match key {
             TypeData::Infer(_) => true,
             TypeData::Array(elem) => self.type_contains_infer_inner(elem, visited),

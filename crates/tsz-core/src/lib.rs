@@ -345,7 +345,9 @@ mod function_bivariance;
 #[cfg(test)]
 #[path = "../../tsz-checker/tests/global_type_tests.rs"]
 mod global_type_tests;
-// symbol_resolution_tests: disabled (rustfmt parsing error with Rust 2024 edition via #[path] include)
+#[cfg(test)]
+#[path = "../../tsz-checker/tests/symbol_resolution_tests.rs"]
+mod symbol_resolution_tests;
 #[cfg(test)]
 #[path = "../../tsz-checker/tests/ts2304_tests.rs"]
 mod ts2304_tests;

@@ -75,6 +75,11 @@ pub(crate) fn collect_from_intersection(
 /// `...string[]`). When used as a contextual type for individual element positions,
 /// we need the element type (e.g., `string`), not the array type.
 fn rest_element_contextual_type(db: &dyn TypeDatabase, rest_type: TypeId) -> TypeId {
+    // Fast path: intrinsics aren't `ReadonlyType(_)` / `Array(_)` / `Tuple(_)`,
+    // so the function would fall through and return `rest_type` unchanged.
+    if rest_type.is_intrinsic() {
+        return rest_type;
+    }
     // PERF: Single lookup for ReadonlyType/Array/Tuple checks
     match db.lookup(rest_type) {
         Some(TypeData::ReadonlyType(inner)) => {
@@ -875,6 +880,9 @@ pub(crate) fn extract_rest_param_type_at(
 }
 
 fn evaluate_rest_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => Some(inner),
         Some(

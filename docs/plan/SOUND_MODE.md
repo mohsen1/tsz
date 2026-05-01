@@ -41,7 +41,7 @@ Per-file pragmas and broader `sound*` option families are still not wired, and t
 
 Today, sound mode is a project-wide boolean exposed through both CLI (`--sound`) and tsconfig (`compilerOptions.sound`). Per-file pragmas and server/LSP exposure are not wired yet. The live implementation works by tightening the existing Lawyer (`CompatChecker`) with `strict_subtype_checking` and `strict_any_propagation` flags on `RelationPolicy`. Errors are still emitted as standard TS diagnostic codes (TS2322, TS2345, etc.), not dedicated TSZ-family sound diagnostics yet.
 
-**Note on diagnostic codes:** The codebase defines `SoundDiagnosticCode` with codes TS9001–TS9005 in `crates/tsz-solver/src/sound.rs`. Those should be treated as temporary implementation placeholders, not the public contract. This doc uses the target **family-based TSZNNNN taxonomy** (`TSZ1000`, `TSZ2000`, etc.), which has not yet been applied to the implementation. A `DiagnosticDomain::Sound` infrastructure exists but is not yet used by the checker.
+**Note on diagnostic codes:** The codebase defines `SoundDiagnosticCode` with codes TS9001–TS9005 in `crates/tsz-solver/src/sound_prototype.rs`. Those should be treated as temporary implementation placeholders, not the public contract. This doc uses the target **family-based TSZNNNN taxonomy** (`TSZ1000`, `TSZ2000`, etc.), which has not yet been applied to the implementation. A `DiagnosticDomain::Sound` infrastructure exists but is not yet used by the checker.
 
 | Feature | Target Code | Impl Code | Status | Mechanism |
 |---------|------------|-----------|--------|-----------|
@@ -62,7 +62,7 @@ Today, sound mode is a project-wide boolean exposed through both CLI (`--sound`)
 - `tsz-server` / LSP currently hardcodes `sound_mode: false`
 - CLI help / dead prototype code still reference older `TS900x` semantics and should not be treated as the product contract
 
-See `crates/tsz-solver/src/sound.rs` for sound mode definitions and `crates/tsz-checker/src/query_boundaries/assignability.rs` for the live integration.
+See `crates/tsz-solver/src/sound_prototype.rs` for sound mode definitions and `crates/tsz-checker/src/query_boundaries/assignability.rs` for the live integration.
 
 ---
 
@@ -1181,7 +1181,7 @@ If tsz rewrites or overlays declarations internally, trust and reproducibility s
 
 The object store should be **shared** between external packages and referenced-project emitted declarations. They should use the same `objects/<entry_hash>/` layout, the same manifest schema, and the same atomic commit protocol. The thing that differs is the tagged `subject` identity and the lock scope, not the storage backend. This keeps cache GC, debug tooling, and correctness rules unified while still preventing package/project collisions.
 
-See `docs/plan/SOUND_OVERLAY_CACHE_NOTE.md` for the exact `resolution_profile_hash` canonical payload, the package-vs-project subject split, and a minimal Rust schema prototype.
+(`docs/plan/SOUND_OVERLAY_CACHE_NOTE.md` was referenced here historically as the source of the canonical `resolution_profile_hash` payload, the package-vs-project subject split, and a minimal Rust schema prototype, but it was never landed; treat the placeholder shape below as the only durable artifact until the note is written.)
 
 The current placeholder shape (`react@18.3.1` + `transform_version` + one `output_hash`) is not strong enough for real reuse. It can alias patched installs, stale `exports` maps, different module-resolution contexts, and partial writes.
 
@@ -1362,27 +1362,27 @@ This plan has been checked against the current codebase rather than written as a
 ### Feasibility Snapshot
 
 1. **High feasibility: explicit `any` ban in user-authored TS source**
-   Evidence: `crates/tsz-checker/src/types/type_node.rs`, `crates/tsz-checker/src/flow/control_flow/assignment_fallback.rs`, `crates/tsz-checker/src/context/compiler_options.rs`, `crates/tsz-core/src/diagnostics.rs`.
+   Evidence: `crates/tsz-checker/src/types/type_node.rs`, `crates/tsz-checker/src/flow/control_flow/assignment_fallback.rs`, `crates/tsz-checker/src/context/compiler_options.rs`, `crates/tsz-core/src/diagnostics/mod.rs`.
    Why: the checker already recognizes `AnyKeyword`, can already tell whether the current file is a declaration file, and already has `tsz-sound` diagnostics infrastructure.
    Main caveat: the implementation must gate on **user-authored non-declaration TypeScript source**, not accidentally flag `.d.ts`, generated libs, JavaScript/JSDoc surfaces, or unrelated fallback resolution paths.
 
 2. **High feasibility: make sound mode imply existing TypeScript safety flags**
-   Evidence: `useUnknownInCatchVariables`, `exactOptionalPropertyTypes`, and `noUncheckedIndexedAccess` already exist in `crates/tsz-core/src/config.rs`, `crates/tsz-cli/src/driver/core.rs`, `crates/tsz-solver/src/evaluation/evaluate.rs`, and `crates/tsz-solver/src/relations/subtype/rules/objects.rs`.
+   Evidence: `useUnknownInCatchVariables`, `exactOptionalPropertyTypes`, and `noUncheckedIndexedAccess` already exist in `crates/tsz-core/src/config/mod.rs`, `crates/tsz-cli/src/driver/core.rs`, `crates/tsz-solver/src/evaluation/evaluate.rs`, and `crates/tsz-solver/src/relations/subtype/rules/objects.rs`.
    Why: this is largely existing plumbing, not new semantics.
    Main caveat: decide whether `sound: true` hard-forces these flags or sets them as sound defaults that can later be overridden by more granular config.
 
 3. **High feasibility: tsconfig parsing for `sound`**
-   Evidence: CLI `--sound` already exists in `crates/tsz-cli/src/args.rs` and `crates/tsz-cli/src/driver/core.rs`, but `CompilerOptions` in `crates/tsz-core/src/config.rs` does not parse `sound`.
+   Evidence: CLI `--sound` already exists in `crates/tsz-cli/src/commands/args.rs` and `crates/tsz-cli/src/driver/core.rs`, but `CompilerOptions` in `crates/tsz-core/src/config/mod.rs` does not parse `sound`.
    Why: this is straightforward config plumbing.
    Main caveat: the product question is not technical feasibility; it is whether we want to expose tsconfig support before semantics settle.
 
 4. **Medium feasibility: dedicated TSZ sound diagnostics**
-   Evidence: `DiagnosticDomain::Sound` plus `DiagnosticBag::sound_error` already exist in `crates/tsz-core/src/diagnostics.rs`; temporary `SoundDiagnosticCode` definitions exist in `crates/tsz-solver/src/sound.rs`.
+   Evidence: `DiagnosticDomain::Sound` plus `DiagnosticBag::sound_error` already exist in `crates/tsz-core/src/diagnostics/mod.rs`; temporary `SoundDiagnosticCode` definitions exist in `crates/tsz-solver/src/sound_prototype.rs`.
    Why: the diagnostic substrate exists.
    Main caveat: assignability failures are still emitted through standard TypeScript-style diagnostic paths in the checker, so surfacing TSZ codes means touching real checker call sites, not just flipping a global switch.
 
 5. **Medium-to-high feasibility: true sound `any` semantics**
-   Evidence: `SoundLawyer::is_assignable()` already models the stricter `any` rule in `crates/tsz-solver/src/sound.rs`; `RelationPolicy`, `AnyPropagationMode`, and `RelationCacheKey.any_mode` already exist in `crates/tsz-solver/src/relations/relation_queries.rs`, `crates/tsz-solver/src/relations/subtype/helpers.rs`, and `crates/tsz-solver/src/types.rs`.
+   Evidence: `SoundLawyer::is_assignable()` already models the stricter `any` rule in `crates/tsz-solver/src/sound_prototype.rs`; `RelationPolicy`, `AnyPropagationMode`, and `RelationCacheKey.any_mode` already exist in `crates/tsz-solver/src/relations/relation_queries.rs`, `crates/tsz-solver/src/relations/subtype/helpers.rs`, and `crates/tsz-solver/src/types.rs`.
    Why: the system already has most of the knobs needed.
    Main caveat: `RelationPolicy::from_flags()` still infers "strict any" from `FLAG_STRICT_FUNCTION_TYPES`, which is the wrong abstraction boundary for long-term sound mode correctness.
 
@@ -1403,12 +1403,12 @@ This plan has been checked against the current codebase rather than written as a
    Main caveat: the current implementation is **line-targeted**, while `@tsz-unsound` wants **code-aware** suppression with a required reason, so this is an adaptation of existing machinery rather than a free toggle.
 
 9. **Medium-to-high feasibility: sound core libraries**
-   Evidence: lib loading and replacement already exist in `crates/tsz-core/src/config.rs` and `crates/tsz-cli/src/driver/core.rs`, including `libReplacement` and compiler-lib path resolution.
+   Evidence: lib loading and replacement already exist in `crates/tsz-core/src/config/mod.rs` and `crates/tsz-cli/src/driver/core.rs`, including `libReplacement` and compiler-lib path resolution.
    Why: a first version can likely reuse existing lib-selection paths instead of inventing a parallel loader.
    Main caveat: the first step should probably be a small pilot set of replacement libs, not an immediate full alternate standard library surface, and the current replacement path is geared toward `@typescript/lib-*` package layouts.
 
 10. **Medium feasibility: `reportOnly` migrations**
-    Evidence: diagnostics already flow through one reporter path and one exit-code decision path in `crates/tsz-cli/src/reporter.rs` and `crates/tsz-cli/src/bin/tsz.rs`.
+    Evidence: diagnostics already flow through one reporter path and one exit-code decision path in `crates/tsz-cli/src/reporting/reporter.rs` and `crates/tsz-cli/src/bin/tsz.rs`.
     Why: the feature is operationally straightforward once sound diagnostics exist.
     Main caveat: `reportOnly` is not merely "show errors but return 0" — it needs a deliberate policy for severity, summary lines, emit gating, and exit codes, and the CLI layer may need to preserve sound-domain metadata more explicitly. The good news is that the current reporter summary already keys off `DiagnosticCategory::Error`, which makes a reporting-boundary downgrade strategy mechanically plausible.
 
@@ -1578,7 +1578,7 @@ Implementation sketch:
 
 Primary touchpoints:
 
-1. `crates/tsz-core/src/config.rs`
+1. `crates/tsz-core/src/config/mod.rs`
 2. `crates/tsz-cli/src/driver/core.rs`
 3. `crates/tsz-cli/src/driver/check.rs`
 4. `crates/tsz-solver/src/evaluation/evaluate.rs`
@@ -1621,7 +1621,7 @@ Primary touchpoints:
 1. `crates/tsz-solver/src/relations/relation_queries.rs`
 2. `crates/tsz-solver/src/relations/subtype/helpers.rs`
 3. `crates/tsz-solver/src/types.rs`
-4. `crates/tsz-solver/src/sound.rs`
+4. `crates/tsz-solver/src/sound_prototype.rs`
 5. `crates/tsz-solver/src/caches/query_cache.rs`
 
 Tests:

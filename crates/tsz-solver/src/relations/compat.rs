@@ -36,6 +36,15 @@ impl<'a, R: TypeResolver> ShapeExtractor<'a, R> {
 
     /// Extract shape from a type, returning None if not an object type.
     pub(crate) fn extract(&mut self, type_id: TypeId) -> Option<u32> {
+        // Fast path: intrinsic types (primitives, any, never, void, etc.)
+        // never have an object shape — `visit_intrinsic` always returns
+        // `None`. Short-circuit before paying the recursion-guard
+        // enter/leave `FxHashSet` round-trip. `is_intrinsic()` is a free
+        // TypeId-range check. Mirrors the same pattern as #1988 (visitor
+        // predicates) and #1996 (`RecursiveTypeCollector`).
+        if type_id.is_intrinsic() {
+            return None;
+        }
         match self.guard.enter(type_id) {
             crate::recursion::RecursionResult::Entered => {}
             _ => return None, // Cycle or limits exceeded
@@ -122,6 +131,17 @@ impl<'a, R: TypeResolver> TypeVisitor for ShapeExtractor<'a, R> {
             return self.extract(resolved);
         }
         None
+    }
+
+    // `NoInfer<T>` and `ReadonlyType<T>` are transparent wrappers — their shape
+    // is the shape of the inner type. Looking through them is required for
+    // weak-type detection (TS2559) when the target is e.g. `NoInfer<T> & {...}`.
+    fn visit_no_infer(&mut self, inner: TypeId) -> Self::Output {
+        self.extract(inner)
+    }
+
+    fn visit_readonly_type(&mut self, inner: TypeId) -> Self::Output {
+        self.extract(inner)
     }
 
     // TSZ-4: Handle Intersection types for nominal checking
@@ -479,6 +499,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source: TypeId,
         object_target: TypeId,
     ) -> bool {
+        if source.is_intrinsic() || object_target.is_intrinsic() {
+            return false;
+        }
         let source_shape_id = match self.interner.lookup(source) {
             Some(TypeData::Object(s) | TypeData::ObjectWithIndex(s)) => s,
             _ => return false,

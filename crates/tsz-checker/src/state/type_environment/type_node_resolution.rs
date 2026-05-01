@@ -670,7 +670,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         base_type: TypeId,
     ) -> TypeId {
-        use rustc_hash::FxHashMap;
+        use rustc_hash::FxHashSet;
         use tsz_solver::PropertyInfo;
 
         let expando_props = self.collect_expando_properties_for_root(root_name);
@@ -717,47 +717,46 @@ impl<'a> CheckerState<'a> {
             return base_type;
         };
 
-        let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> = callable_shape
-            .properties
-            .iter()
-            .map(|prop| (prop.name, prop.clone()))
-            .collect();
-        let mut changed = false;
+        // Append expando members to the existing properties Vec so the resulting
+        // shape preserves insertion order (synthesized members like a class's
+        // `prototype` first, JS-side expandos last). The previous HashMap-based
+        // implementation lost insertion order, which surfaced as wrong property
+        // listings in TS2739/TS2740 messages.
+        let existing: FxHashSet<tsz_common::interner::Atom> =
+            callable_shape.properties.iter().map(|p| p.name).collect();
+        let mut new_props: Vec<PropertyInfo> = Vec::new();
+        let mut seen: FxHashSet<tsz_common::interner::Atom> = FxHashSet::default();
 
         for prop_name in expando_props {
             let prop_atom = self.ctx.types.intern_string(&prop_name);
-            if properties.contains_key(&prop_atom) {
+            if existing.contains(&prop_atom) || !seen.insert(prop_atom) {
                 continue;
             }
 
             let prop_type =
                 self.declared_expando_property_type_for_root(sym_id, root_name, &prop_name);
 
-            properties.insert(
-                prop_atom,
-                PropertyInfo {
-                    name: prop_atom,
-                    type_id: prop_type,
-                    write_type: prop_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: Some(sym_id),
-                    declaration_order: property_count as u32,
-                    is_string_named: false,
-                },
-            );
+            new_props.push(PropertyInfo {
+                name: prop_atom,
+                type_id: prop_type,
+                write_type: prop_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: Some(sym_id),
+                declaration_order: property_count as u32,
+                is_string_named: false,
+            });
             property_count += 1;
-            changed = true;
         }
 
-        if !changed {
+        if new_props.is_empty() {
             return base_type;
         }
 
-        callable_shape.properties = properties.into_values().collect();
+        callable_shape.properties.extend(new_props);
         self.ctx.types.factory().callable(callable_shape)
     }
 

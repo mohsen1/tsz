@@ -57,16 +57,12 @@ pub(crate) use tsz_solver::TypeSubstitution;
 /// This is the result enum returned by call/new expression resolution.
 pub(crate) use tsz_solver::CallResult;
 
-/// Thin wrapper around `tsz_solver::instantiate_type`.
-///
-/// Applies a `TypeSubstitution` to a type, producing a new type with type
-/// parameters replaced by their corresponding type arguments.
 pub(crate) fn instantiate_type(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     type_id: TypeId,
     substitution: &tsz_solver::TypeSubstitution,
 ) -> TypeId {
-    tsz_solver::instantiate_type(db, type_id, substitution)
+    tsz_solver::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
 }
 
 /// If `ty` is `Lazy(def_id)` for a non-generic `TypeAlias` whose body is the
@@ -743,13 +739,29 @@ pub(crate) fn instantiate_type_with_depth_status(
     tsz_solver::instantiate_type_with_depth_status(db, type_id, substitution)
 }
 
-/// Substitute `this` type references in `type_id` with `this_type`.
 pub(crate) fn substitute_this_type(
+    db: &dyn QueryDatabase,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> TypeId {
+    tsz_solver::substitute_this_type_cached(db.as_type_database(), Some(db), type_id, this_type)
+}
+
+/// Shallow `this` substitution for call-return-position use.
+///
+/// Replaces `ThisType` at structural positions (Intersection, Union,
+/// IndexAccess, KeyOf, Conditional, Application, etc.) but does NOT recurse
+/// into named Object/ObjectWithIndex internals. Use this from
+/// `apply_this_substitution_to_call_return` and similar paths where the
+/// substitution should leave stored interface/class method bodies'
+/// polymorphic `this` references intact for later property-access-time
+/// rebinding.
+pub(crate) fn substitute_this_type_at_return_position(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     this_type: TypeId,
 ) -> TypeId {
-    tsz_solver::substitute_this_type(db, type_id, this_type)
+    tsz_solver::substitute_this_type_at_return_position(db, None, type_id, this_type)
 }
 
 /// Get the enum `DefId` for an enum type.
@@ -870,32 +882,31 @@ pub(crate) fn collect_all_types(
 /// Replaces type parameter references in parameter types, return type, this-type,
 /// and type predicate type. Clears `type_params` since they are now resolved.
 pub(crate) fn instantiate_function_shape(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     func: &FunctionShape,
     substitution: &tsz_solver::TypeSubstitution,
 ) -> FunctionShape {
+    let instantiate = |type_id| {
+        tsz_solver::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
+    };
     FunctionShape {
         params: func
             .params
             .iter()
             .map(|param| ParamInfo {
                 name: param.name,
-                type_id: instantiate_type(db, param.type_id, substitution),
+                type_id: instantiate(param.type_id),
                 optional: param.optional,
                 rest: param.rest,
             })
             .collect(),
-        return_type: instantiate_type(db, func.return_type, substitution),
-        this_type: func
-            .this_type
-            .map(|this_type| instantiate_type(db, this_type, substitution)),
+        return_type: instantiate(func.return_type),
+        this_type: func.this_type.map(instantiate),
         type_params: vec![],
         type_predicate: func.type_predicate.as_ref().map(|predicate| TypePredicate {
             asserts: predicate.asserts,
             target: predicate.target,
-            type_id: predicate
-                .type_id
-                .map(|tid| instantiate_type(db, tid, substitution)),
+            type_id: predicate.type_id.map(instantiate),
             parameter_index: predicate.parameter_index,
         }),
         is_constructor: func.is_constructor,
@@ -910,7 +921,7 @@ pub(crate) fn instantiate_function_shape(
 /// Returns the shape unchanged if it has no type parameters or no
 /// defaults/constraints to apply.
 pub(crate) fn instantiate_shape_to_defaults(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     func: &FunctionShape,
 ) -> FunctionShape {
     if func.type_params.is_empty() {
@@ -1292,6 +1303,20 @@ pub(crate) fn get_merged_object_shape_for_type(
 /// all primitive intrinsics or literal types.
 pub(crate) fn is_primitive_or_literal_compound(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_primitive_or_literal_compound(db, type_id)
+}
+
+/// Returns `true` if `type_id` is itself a literal/primitive, or a union or
+/// intersection composed entirely of literal/primitive members.
+///
+/// Used for diagnostic display: when a generic type-alias application reduces
+/// to such a "terminal" form (e.g. `KeysExtendedBy<M, number>` reducing to
+/// `"b"`), tsc drops the alias name and shows the resolved literal/primitive
+/// in error messages. Object/interface results keep the alias form.
+pub(crate) fn is_literal_or_primitive_or_compound_of_those(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::is_literal_or_primitive_or_compound_of_those(db, type_id)
 }
 
 pub(crate) fn is_array_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -1913,11 +1938,16 @@ pub(crate) fn split_nullish_type(
 }
 
 pub(crate) fn instantiate_type_preserving_meta(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
-    tsz_solver::instantiate_type_preserving_meta(db, type_id, substitution)
+    tsz_solver::instantiate_type_preserving_meta_cached(
+        db.as_type_database(),
+        Some(db),
+        type_id,
+        substitution,
+    )
 }
 
 pub(crate) fn get_base_type_for_comparison(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {

@@ -41,6 +41,14 @@ pub fn rest_argument_element_type(db: &dyn crate::TypeDatabase, type_id: TypeId)
             return type_id;
         }
 
+        // Fast path: intrinsics aren't `ReadonlyType` / `NoInfer` /
+        // `TypeParameter` / `Infer` / `Union` / `Array` / `Tuple` /
+        // `Application` / `Conditional` / `Mapped` / `Lazy` / `IndexAccess`,
+        // so the function falls through to `_ => type_id` for them.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
         match db.lookup(type_id) {
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 rest_argument_element_type_inner(db, inner, depth - 1)
@@ -956,6 +964,10 @@ impl<'a> ContextualTypeContext<'a> {
     fn is_iterable_like_object(&self, type_id: TypeId) -> bool {
         use crate::types::TypeData;
 
+        // Fast path: intrinsics are never `Object(_)` / `Intersection(_)`.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         // Check if type is an object with properties suggesting iterable/array-like behavior
         match self.interner.lookup(type_id) {
             Some(TypeData::Object(shape_id)) => {
@@ -1488,6 +1500,10 @@ impl<'a> ContextualTypeContext<'a> {
     /// This distinguishes "no param at this index" (arity gap) from "params disagree."
     fn callable_has_param_at_index(&self, type_id: TypeId, index: usize) -> bool {
         use crate::types::TypeData;
+        // Fast path: intrinsics are never `Function(_)` / `Callable(_)`.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Function(func_id)) => {
                 let shape = self.interner.function_shape(func_id);
@@ -1534,6 +1550,9 @@ impl<'a> ContextualTypeContext<'a> {
         cond: &crate::types::ConditionalType,
     ) -> TypeId {
         use crate::types::TypeData;
+        if ty.is_intrinsic() {
+            return ty;
+        }
         match self.interner.lookup(ty) {
             Some(TypeData::Function(func_id)) => {
                 let mut shape = (*self.interner.function_shape(func_id)).clone();

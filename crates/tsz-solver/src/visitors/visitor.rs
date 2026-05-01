@@ -552,6 +552,13 @@ pub fn for_each_child_by_id<F>(db: &dyn TypeDatabase, type_id: TypeId, f: F)
 where
     F: FnMut(TypeId),
 {
+    // Fast path: intrinsic types have no children. `is_intrinsic()` is a
+    // free `TypeId`-range check; skipping the `TypeData` lookup and
+    // `for_each_child` match dispatch saves wasted work on every leaf
+    // visit. Mirrors #2001 / #2005 / #2008.
+    if type_id.is_intrinsic() {
+        return;
+    }
     if let Some(type_data) = db.lookup(type_id) {
         for_each_child(db, &type_data, f);
     }
@@ -570,6 +577,15 @@ where
             continue;
         }
         f(current);
+
+        // Fast path: intrinsic types have no children. `is_intrinsic()`
+        // is a free `TypeId`-range check, so skip the `TypeData` lookup
+        // and the `for_each_child` match dispatch when we already know
+        // there is nothing to push onto the stack. Mirrors #2001's
+        // pattern for `ShapeExtractor::extract`.
+        if current.is_intrinsic() {
+            continue;
+        }
 
         let Some(key) = types.lookup(current) else {
             continue;
@@ -915,18 +931,45 @@ impl<'a> RecursiveTypeCollector<'a> {
             return;
         }
 
-        // Unified enter: checks depth, cycle, iterations
+        // Look up before entering the guard so we can short-circuit
+        // terminal kinds without paying the guard's HashSet round-trip.
+        let Some(key) = self.types.lookup(type_id) else {
+            self.collected.insert(type_id);
+            return;
+        };
+
+        // Terminal-kind fast path: these `TypeData` variants have no
+        // children, so `visit_key` is a no-op for them. Skip the recursion
+        // guard's enter/leave HashSet bookkeeping — there is no recursion,
+        // no cycle, and no depth growth. Mirrors the same fast path used in
+        // `ContainsTypeChecker` (#1988) and the sibling visitor predicates.
+        if matches!(
+            &key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.collected.insert(type_id);
+            return;
+        }
+
+        // Non-terminal: enter the guard for cycle/depth/iteration safety
+        // and recurse via `visit_key`.
         match self.guard.enter(type_id) {
             crate::recursion::RecursionResult::Entered => {}
             _ => return,
         }
 
         self.collected.insert(type_id);
-
-        if let Some(key) = self.types.lookup(type_id) {
-            self.visit_key(&key);
-        }
-
+        self.visit_key(&key);
         self.guard.leave(type_id);
     }
 
@@ -1161,13 +1204,37 @@ impl<'a> ConstAssertionVisitor<'a> {
 
     /// Apply const assertion to a type, returning the transformed type ID.
     pub fn apply_const_assertion(&mut self, type_id: TypeId) -> TypeId {
+        // Terminal-kind fast path: kinds that hit the `_ => type_id` arm
+        // below have nothing to recurse into and produce the input type
+        // unchanged. Skip the `RecursionGuard::enter`/`leave` `FxHashSet`
+        // round-trip for those — the guard only matters when there are
+        // children to walk. Mirrors #1988 (ContainsTypeChecker), #1993
+        // (FreeTypeParamChecker / FreeInferChecker / ShallowContainsTypeChecker),
+        // and #1996 (RecursiveTypeCollector).
+        let lookup = self.db.lookup(type_id);
+        let needs_recursion = matches!(
+            lookup,
+            Some(
+                TypeData::Array(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::ReadonlyType(_)
+                    | TypeData::Union(_)
+                    | TypeData::Intersection(_)
+            )
+        );
+        if !needs_recursion {
+            return type_id;
+        }
+
         // Prevent infinite recursion
         match self.guard.enter(type_id) {
             crate::recursion::RecursionResult::Entered => {}
             _ => return type_id,
         }
 
-        let result = match self.db.lookup(type_id) {
+        let result = match lookup {
             // Arrays: Convert to readonly tuple
             Some(TypeData::Array(element_type)) => {
                 let const_element = self.apply_const_assertion(element_type);

@@ -37,6 +37,9 @@ fn constraint_is_primitive_type(interner: &dyn crate::QueryDatabase, type_id: Ty
     {
         return true;
     }
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match interner.lookup(type_id) {
         Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
@@ -72,6 +75,9 @@ fn constraint_contains_primitive_constrained_type_param(
     depth: u32,
 ) -> bool {
     if depth > 4 {
+        return false;
+    }
+    if type_id.is_intrinsic() {
         return false;
     }
 
@@ -172,6 +178,14 @@ fn type_references_placeholder(
 ) -> bool {
     if type_id == placeholder {
         return true;
+    }
+    // Fast path: after the `==` placeholder check above, intrinsics cannot
+    // match any of the composite arms below (Union, Intersection, Object,
+    // ObjectWithIndex, Array, Tuple, Function, Application, Conditional,
+    // IndexAccess, KeyOf, Mapped) — they fall through to `_ => false`.
+    // `TypeId::is_intrinsic` is a free `TypeId`-range check.
+    if type_id.is_intrinsic() {
+        return false;
     }
     match db.lookup(type_id) {
         Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {

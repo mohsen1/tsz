@@ -82,6 +82,7 @@ impl<'a> Printer<'a> {
             self.commonjs_named_import_substitutions.clear();
         }
         self.generated_temp_names.clear();
+        self.ctx.arguments_capture_counter = 0;
         self.first_for_of_emitted = false;
 
         // Pre-pass: collect const enum values for inlining at usage sites.
@@ -1105,10 +1106,48 @@ impl<'a> Printer<'a> {
         let mut has_runtime_module_syntax = has_synthesized_esm_import;
         let mut has_non_empty_runtime_export = has_synthesized_esm_import;
         let mut has_deferred_empty_export = false;
+        let mut skip_recovered_yield_operand_statement = false;
+        let mut skip_recovered_debugger_namespace_until: Option<u32> = None;
         for (stmt_i, &stmt_idx) in source.statements.nodes.iter().enumerate() {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
+
+            if skip_recovered_yield_operand_statement {
+                skip_recovered_yield_operand_statement = false;
+                if self.is_recovered_yield_operand_statement(stmt_node) {
+                    continue;
+                }
+            }
+
+            if let Some(skip_until) = skip_recovered_debugger_namespace_until {
+                if stmt_node.pos < skip_until {
+                    continue;
+                }
+                skip_recovered_debugger_namespace_until = None;
+            }
+
+            if let Some((line_end, trailing_comment)) =
+                self.recovered_debugger_namespace_line(stmt_node)
+            {
+                if !self.writer.is_at_line_start() {
+                    self.write_line();
+                }
+                self.write("declare;");
+                self.write_line();
+                self.write("namespace;");
+                self.write_line();
+                self.write("debugger;");
+                self.write_line();
+                self.write("{ }");
+                if let Some(comment) = trailing_comment {
+                    self.write(" ");
+                    self.write(comment);
+                }
+                self.write_line();
+                skip_recovered_debugger_namespace_until = Some(line_end);
+                continue;
+            }
 
             if has_top_level_using
                 && stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
@@ -1395,7 +1434,13 @@ impl<'a> Printer<'a> {
                 .map(|next_node| next_node.pos);
 
             let before_len = self.writer.len();
-            self.emit(stmt_idx);
+            if let Some(recovered_yield_call) = self.recovered_yield_call_statement_text(stmt_node)
+            {
+                self.write(&recovered_yield_call);
+                skip_recovered_yield_operand_statement = true;
+            } else {
+                self.emit(stmt_idx);
+            }
             let emitted_output = self.writer.len() > before_len;
             let mut handled_legacy_decorated_deferred_export = false;
 
@@ -1678,5 +1723,87 @@ impl<'a> Printer<'a> {
 
         // Exit root scope for block-scoped variable tracking
         self.ctx.block_scope_state.exit_scope();
+    }
+
+    fn recovered_yield_call_statement_text(&self, node: &Node) -> Option<String> {
+        let expr_stmt = self.arena.get_expression_statement(node)?;
+        let expr_node = self.arena.get(expr_stmt.expression)?;
+        let is_recovered_yield = if expr_node.kind == syntax_kind_ext::YIELD_EXPRESSION {
+            let yield_expr = self.arena.get_unary_expr_ex(expr_node)?;
+            yield_expr.expression.is_none()
+        } else {
+            self.arena
+                .get_identifier(expr_node)
+                .is_some_and(|ident| ident.escaped_text == "yield")
+        };
+        if !is_recovered_yield {
+            return None;
+        }
+
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let mut pos = start.checked_add("yield".len())?;
+        while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t') {
+            pos += 1;
+        }
+        if bytes.get(pos) != Some(&b'(') {
+            return None;
+        }
+
+        let mut depth = 0_i32;
+        let mut end = pos;
+        while end < bytes.len() {
+            match bytes[end] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end += 1;
+                        break;
+                    }
+                }
+                b'\n' | b'\r' => return None,
+                _ => {}
+            }
+            end += 1;
+        }
+        if depth != 0 {
+            return None;
+        }
+
+        let recovered = crate::safe_slice::slice(text, start, end).ok()?.trim_end();
+        Some(format!("{recovered};"))
+    }
+
+    fn is_recovered_yield_operand_statement(&self, node: &Node) -> bool {
+        if node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        text.as_bytes().get(start) == Some(&b'(')
+    }
+
+    fn recovered_debugger_namespace_line(&self, node: &Node) -> Option<(u32, Option<&'a str>)> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let mut line_end = start;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let line = crate::safe_slice::slice(text, start, line_end).ok()?;
+        if !line.trim_start().starts_with("declare namespace debugger") {
+            return None;
+        }
+
+        let trailing_comment = line
+            .find("//")
+            .map(|comment_start| line[comment_start..].trim());
+        Some((line_end as u32, trailing_comment))
     }
 }

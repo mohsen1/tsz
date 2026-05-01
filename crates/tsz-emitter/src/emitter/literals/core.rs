@@ -16,10 +16,15 @@ impl<'a> Printer<'a> {
         let original_text = &ident.escaped_text;
 
         // In async function lowering (ES2015+), `arguments` inside the
-        // generator body must be rewritten to `arguments_1` because the
-        // outer wrapper captures it: `var arguments_1 = arguments;`
+        // generator body must be rewritten because the outer wrapper captures it.
         if self.ctx.rewrite_arguments_to_arguments_1 && original_text == "arguments" {
-            self.write("arguments_1");
+            let capture_name = self
+                .ctx
+                .arguments_capture_name
+                .as_deref()
+                .unwrap_or("arguments_1")
+                .to_string();
+            self.write(&capture_name);
             return;
         }
 

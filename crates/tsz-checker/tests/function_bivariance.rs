@@ -347,7 +347,6 @@ fn test_ts2328_emitted_for_callback_parameter_mismatch() {
 /// callable.  tsc reports such failures via type-argument elaboration, not
 /// TS2328.
 #[test]
-#[ignore = "type alias function bivariance behavior is still tracked as checker debt"]
 fn test_ts2328_not_emitted_for_type_alias_applications() {
     let codes = collect_error_codes(
         r#"

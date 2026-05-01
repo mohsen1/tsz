@@ -611,6 +611,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_recovered_ambiguous_generic_assertion_variable_statement(node) {
+            return;
+        }
+
         let is_exported = self.ctx.is_commonjs()
             && self
                 .arena
@@ -770,6 +774,7 @@ impl<'a> Printer<'a> {
         // not find semicolons inside the erased type annotation.
         let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
         self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
+        self.emit_recovered_malformed_arrow_block_after_variable_statement(node);
 
         // CommonJS: emit exports.X = X; after the declaration
         if is_exported && !export_names.is_empty() {
@@ -834,6 +839,140 @@ impl<'a> Printer<'a> {
                 self.write_export_binding_end();
             }
         }
+    }
+
+    fn emit_recovered_malformed_arrow_block_after_variable_statement(&mut self, node: &Node) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        if start >= bytes.len() {
+            return;
+        }
+
+        let mut line_end = start;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let Ok(line) = std::str::from_utf8(&bytes[start..line_end]) else {
+            return;
+        };
+        let Some(arrow_rel) = line.find("): =>").or_else(|| line.find("):=>")) else {
+            return;
+        };
+
+        // Parser recovery for `var v = (a): => { }` ends the variable statement
+        // before the recovered empty block. TSC still emits that block as a
+        // separate statement after the `var`.
+        let after_arrow = start + arrow_rel + line[arrow_rel..].find("=>").unwrap_or(0) + 2;
+        let Some(open_rel) = bytes[after_arrow..line_end].iter().position(|&b| b == b'{') else {
+            return;
+        };
+        let open = after_arrow + open_rel;
+        let mut pos = open + 1;
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if bytes.get(pos) != Some(&b'}') {
+            return;
+        }
+
+        self.write_line();
+        self.write("{");
+        self.write_line();
+        self.write("}");
+        self.write_line();
+        self.write_semicolon();
+    }
+
+    fn emit_recovered_ambiguous_generic_assertion_variable_statement(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        if start >= bytes.len() {
+            return false;
+        }
+
+        let mut line_end = start;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let Ok(line) = std::str::from_utf8(&bytes[start..line_end]) else {
+            return false;
+        };
+        let Some((head, recovered)) = Self::recovered_ambiguous_generic_assertion_parts(line)
+        else {
+            return false;
+        };
+
+        self.write(&head);
+        self.write_line();
+        self.write(&recovered);
+        true
+    }
+
+    fn recovered_ambiguous_generic_assertion_parts(line: &str) -> Option<(String, String)> {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("var ") || !trimmed.contains("= <<") {
+            return None;
+        }
+
+        let eq = line.find('=')?;
+        let before_eq = line[..eq].trim_end();
+        let mut rest = line[eq + 1..].trim_start();
+        if !rest.starts_with("<<") {
+            return None;
+        }
+        rest = &rest[2..];
+
+        let type_param_end = rest.find('>')?;
+        let type_param = rest[..type_param_end].trim();
+        rest = rest[type_param_end + 1..].trim_start();
+        if !rest.starts_with('(') {
+            return None;
+        }
+        rest = &rest[1..];
+
+        let param_end = rest.find(')')?;
+        let param = rest[..param_end].split(':').next()?.trim();
+        rest = rest[param_end + 1..].trim_start();
+        if !rest.starts_with("=>") {
+            return None;
+        }
+        rest = rest[2..].trim_start();
+
+        let return_type_end = rest.find('>')?;
+        let return_type = rest[..return_type_end].trim();
+        rest = rest[return_type_end + 1..].trim_start();
+
+        let (callee, trailing_comment) = if let Some(comment_start) = rest.find("//") {
+            (
+                rest[..comment_start].trim().trim_end_matches(';').trim(),
+                Some(rest[comment_start..].trim()),
+            )
+        } else {
+            (rest.trim().trim_end_matches(';').trim(), None)
+        };
+        if type_param.is_empty() || param.is_empty() || return_type.is_empty() || callee.is_empty()
+        {
+            return None;
+        }
+
+        let head = format!("{before_eq} =  << {type_param} > ({param}), {return_type};");
+        let recovered = if let Some(comment) = trailing_comment {
+            format!("{return_type} > {callee}; {comment}")
+        } else {
+            format!("{return_type} > {callee};")
+        };
+        Some((head, recovered))
     }
 
     /// Lower `using`/`await using` declarations for non-ES5 targets (ES2015+).
@@ -1174,6 +1313,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_invalid_prefix_await_expression_statement(node, expr_stmt.expression) {
+            return;
+        }
+
         // When a function/object expression appears at the start of a statement, it needs
         // wrapping parentheses: `function` would be parsed as a declaration, and `{` as a
         // block. We use a leftmost-expression walker that follows the left chain through
@@ -1231,6 +1374,47 @@ impl<'a> Printer<'a> {
         self.map_trailing_semicolon(node);
         self.write_semicolon();
         self.emit_trailing_comment_after_semicolon(node);
+    }
+
+    fn emit_invalid_prefix_await_expression_statement(
+        &mut self,
+        statement: &Node,
+        expression: NodeIndex,
+    ) -> bool {
+        let Some(expr_node) = self.arena.get(expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return false;
+        }
+        let Some(unary) = self.arena.get_unary_expr(expr_node) else {
+            return false;
+        };
+        if unary.operator != SyntaxKind::PlusPlusToken as u16
+            && unary.operator != SyntaxKind::MinusMinusToken as u16
+        {
+            return false;
+        }
+        let Some(operand_node) = self.arena.get(unary.operand) else {
+            return false;
+        };
+        if operand_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
+            return false;
+        }
+
+        self.write(super::super::get_operator_text(unary.operator));
+        self.write_semicolon();
+        self.write_line();
+
+        let prev_stmt_expr = self.ctx.flags.in_statement_expression;
+        self.ctx.flags.in_statement_expression = true;
+        self.emit(unary.operand);
+        self.ctx.flags.in_statement_expression = prev_stmt_expr;
+
+        self.map_trailing_semicolon(statement);
+        self.write_semicolon();
+        self.emit_trailing_comment_after_semicolon(statement);
+        true
     }
 
     /// Check if an expression (after skipping type assertions) is a `CallExpression`

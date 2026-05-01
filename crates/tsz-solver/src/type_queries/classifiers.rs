@@ -36,6 +36,9 @@ pub fn classify_for_excess_properties(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> ExcessPropertiesKind {
+    if type_id.is_intrinsic() {
+        return ExcessPropertiesKind::NotObject;
+    }
     let Some(key) = db.lookup(type_id) else {
         return ExcessPropertiesKind::NotObject;
     };
@@ -75,6 +78,9 @@ pub fn classify_for_constructor_access(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> ConstructorAccessKind {
+    if type_id.is_intrinsic() {
+        return ConstructorAccessKind::Other;
+    }
     let Some(key) = db.lookup(type_id) else {
         return ConstructorAccessKind::Other;
     };
@@ -106,6 +112,9 @@ pub fn classify_for_assignability_eval(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> AssignabilityEvalKind {
+    if type_id.is_intrinsic() {
+        return AssignabilityEvalKind::Resolved;
+    }
     let Some(key) = db.lookup(type_id) else {
         return AssignabilityEvalKind::Resolved;
     };
@@ -154,6 +163,10 @@ pub fn classify_for_assignability_eval(
 
 /// Get the `DefId` from a Lazy type.
 pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
+    // Fast path: intrinsics are never `Lazy(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Lazy(def_id)) => Some(def_id),
         _ => None,
@@ -167,6 +180,10 @@ pub fn get_application_lazy_def_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::def::DefId> {
+    // Fast path: intrinsics are never `Application(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     if let Some(TypeData::Application(app_id)) = db.lookup(type_id) {
         let app = db.type_application(app_id);
         if let Some(TypeData::Lazy(def_id)) = db.lookup(app.base) {
@@ -181,6 +198,10 @@ pub fn get_type_query_symbol_ref(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::SymbolRef> {
+    // Fast path: intrinsics are never `TypeQuery(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::TypeQuery(sym_ref)) => Some(sym_ref),
         _ => None,
@@ -192,6 +213,10 @@ pub fn get_mapped_type_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::MappedTypeId> {
+    // Fast path: intrinsics are never `Mapped(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Mapped(mapped_id)) => Some(mapped_id),
         _ => None,
@@ -203,6 +228,10 @@ pub fn get_conditional_type_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::ConditionalTypeId> {
+    // Fast path: intrinsics are never `Conditional(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Conditional(cond_id)) => Some(cond_id),
         _ => None,
@@ -211,6 +240,9 @@ pub fn get_conditional_type_id(
 
 /// Returns true if `type_id` is an `IndexAccess(_, _)` type.
 pub fn is_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
 }
 
@@ -224,6 +256,10 @@ pub fn is_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// indexed-access aliases (which, when prematurely evaluated, can blow up
 /// recursion fuel and emit spurious TS2589s).
 pub fn indexed_access_self_keyof(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // Fast path: intrinsics are never `IndexAccess(_, _)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     let TypeData::IndexAccess(obj, idx) = db.lookup(type_id)? else {
         return None;
     };
@@ -237,6 +273,9 @@ pub fn indexed_access_self_keyof(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
 /// that the solver could not reduce. Useful when deciding whether to keep an
 /// alias display or substitute the resolved form.
 pub fn is_deferred_lazy_or_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::IndexAccess(_, _) | TypeData::Lazy(_))
@@ -245,6 +284,10 @@ pub fn is_deferred_lazy_or_indexed_access(db: &dyn TypeDatabase, type_id: TypeId
 
 /// Get the keyof inner type if the type is a `KeyOf` type.
 pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // Fast path: intrinsics are never `KeyOf(_)`.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::KeyOf(inner)) => Some(inner),
         _ => None,
@@ -320,6 +363,9 @@ impl InterfaceMergeKind {
 /// }
 /// ```
 pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> InterfaceMergeKind {
+    if type_id.is_intrinsic() {
+        return InterfaceMergeKind::Other;
+    }
     let Some(key) = db.lookup(type_id) else {
         return InterfaceMergeKind::Other;
     };
@@ -385,6 +431,9 @@ pub enum AugmentationTargetKind {
 /// This function examines a type and returns information about how to handle it
 /// when applying module augmentations. Used by `apply_module_augmentations`.
 pub fn classify_for_augmentation(db: &dyn TypeDatabase, type_id: TypeId) -> AugmentationTargetKind {
+    if type_id.is_intrinsic() {
+        return AugmentationTargetKind::Other;
+    }
     let Some(key) = db.lookup(type_id) else {
         return AugmentationTargetKind::Other;
     };
@@ -407,6 +456,9 @@ pub fn is_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::NEVER || type_id == TypeId::BOOLEAN_FALSE {
         return true;
     }
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::LiteralValue::Boolean(false))) => true,
         Some(TypeData::Union(list_id)) => {
@@ -423,6 +475,9 @@ pub fn is_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// deferred computation that should not be eagerly displayed by its alias
 /// name (tsc shows the expanded form for these).
 pub fn is_deferred_type_operation(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::IndexAccess(_, _) | TypeData::Conditional(_))

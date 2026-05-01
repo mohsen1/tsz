@@ -1,6 +1,6 @@
 # Implementation Claim: JSX multiple function children diagnostics
 
-Status: ready
+Status: shipped (PR #1605 — `fix(checker): align JSX multiple function children diagnostics`, merged 2026-04-28)
 
 Branch: `fix/jsx-multiple-function-children-diagnostics`
 

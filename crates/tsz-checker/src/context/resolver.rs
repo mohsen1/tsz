@@ -122,6 +122,24 @@ impl<'a> CheckerContext<'a> {
                 .and_then(|params| self.declared_type_param_variances_for_list(params));
         }
         if let Some(alias) = self.arena.get_type_alias(node) {
+            // tsc rejects `in`/`out` annotations on type aliases whose body
+            // is not an object/function/constructor/mapped type (TS2637)
+            // and IGNORES the declared variance for assignability. We mirror
+            // that here: if the alias body is not one of the supported
+            // forms, report None so the relation checker falls back to the
+            // computed (default-covariant) variance instead of enforcing the
+            // user's `in out` annotation.
+            use tsz_parser::parser::syntax_kind_ext;
+            let body_kind = self.arena.kind_at(alias.type_node);
+            let variance_supported = body_kind.is_some_and(|kind| {
+                kind == syntax_kind_ext::TYPE_LITERAL
+                    || kind == syntax_kind_ext::FUNCTION_TYPE
+                    || kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                    || kind == syntax_kind_ext::MAPPED_TYPE
+            });
+            if !variance_supported {
+                return None;
+            }
             return alias
                 .type_parameters
                 .as_ref()
@@ -380,25 +398,39 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             return Some(ty);
         }
 
-        // Fallback: check the shared cross-file resolved symbol types cache.
+        // Fallback: check the canonical cross-file query cache (SYMBOL_TYPE bucket).
         // When a symbol from another file (e.g., an interface referenced in a
         // property type) was resolved by that file's checker, the result is
-        // written to the DefinitionStore's resolved_symbol_types cache. This
-        // enables cross-module Lazy type resolution for types that aren't
-        // directly imported (e.g., `Foo.server?: IServer` where `IServer` is
-        // defined in the same file as `Foo` but not imported by the consumer).
+        // written here. This enables cross-module Lazy type resolution for types
+        // that aren't directly imported (e.g., `Foo.server?: IServer` where
+        // `IServer` is defined in the same file as `Foo` but not imported by
+        // the consumer).
         //
         // Restrict this fallback to genuine cross-file scenarios (symbol's
         // definition file differs from the current file) to avoid interfering
         // with same-file name resolution, where the formatter relies on the
         // DefId-based display of types declared in the current scope.
+        // Note: this site intentionally does NOT use the
+        // `cached_cross_file_symbol_type` helper. The helper filters out
+        // both `TypeId::ERROR` and `TypeId::UNKNOWN`, but `resolve_lazy`
+        // historically returned `Some(TypeId::UNKNOWN)` when the cache
+        // contained that value (only `ERROR` was rejected). Forwarding
+        // `UNKNOWN` lets callers distinguish "lazy reference resolved but
+        // the symbol's type is genuinely unknown" from "lazy reference not
+        // resolved" (`None`), which the helper collapses. The other three
+        // call sites of the helper (exports_resolution, computed helpers)
+        // do want `UNKNOWN` filtered — keep the inlined block here.
         if let Some(sym_id) = sym_id
             && let Some(file_idx) = definition_file_idx
             && file_idx != self.current_file_idx
             && self.share_owner_symbol_type_results
-            && let Some(resolved) = self
-                .definition_store
-                .get_resolved_symbol_type(sym_id.0, file_idx as u32)
+            && let Some((resolved, _)) = self.definition_store.get_resolved_cross_file_query(
+                crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
+                file_idx as u32,
+                sym_id.0,
+                0,
+                0,
+            )
             && resolved != tsz_solver::TypeId::ERROR
         {
             tracing::trace!(
@@ -406,7 +438,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 sym_id = sym_id.0,
                 file_idx = file_idx,
                 type_id = resolved.0,
-                "resolve_lazy: found in shared resolved_symbol_types cache"
+                "resolve_lazy: found in SYMBOL_TYPE bucket"
             );
             return Some(resolved);
         }

@@ -26,6 +26,20 @@ impl<'a> CheckerState<'a> {
         } else {
             self.ctx.get_file_idx_for_arena(decl_arena)
         };
+
+        // Fast path: if the canonical SYMBOL_TYPE bucket already has a result
+        // for this (sym_id, file_idx) pair, reuse it instead of building a
+        // child checker just to recompute the alias body. This fires when an
+        // earlier delegation path (parallel worker, cross-file lazy
+        // resolution) cached the alias's resolved type.
+        if let Some(file_idx) = delegate_file_idx
+            && let Some((cached_type, _params)) = self
+                .ctx
+                .cached_cross_file_symbol_type(sym_id, file_idx as u32)
+        {
+            return Some(cached_type);
+        }
+
         let delegate_file_name = decl_arena
             .source_files
             .first()

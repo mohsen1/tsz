@@ -153,6 +153,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn is_fresh_direct_object_or_array_literal_candidate(&self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(ty) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => self
                 .interner
@@ -201,6 +204,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn type_includes_nullish_member(&self, ty: TypeId) -> bool {
         if ty.is_nullish() {
             return true;
+        }
+        if ty.is_intrinsic() {
+            return false;
         }
 
         match self.interner.lookup(ty) {
@@ -986,7 +992,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let has_generic_construct_sig = shape.call_signatures.is_empty()
                 && shape.construct_signatures.len() == 1
                 && !shape.construct_signatures[0].type_params.is_empty();
-            if !has_generic_call_sig && !has_generic_construct_sig {
+            let has_overloaded_call_sigs = shape.call_signatures.len() > 1;
+            if !has_generic_call_sig && !has_generic_construct_sig && !has_overloaded_call_sigs {
                 return source_ty;
             }
             // When the Callable has construct signatures AND properties (static
@@ -1130,6 +1137,52 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(TypeData::TypeParameter(_))
             )
         });
+
+        // Conflicting-candidate substitution applies only when target params
+        // are concrete (post-inference) types. When *any* target param is
+        // still an inference placeholder from an outer generic call (e.g.,
+        // `apply<A,B,C>(fn: (a: A, b: B) => C, ...)` invoking `g<T>(x:T,y:T)`),
+        // the existing Case 1/2/3 placeholder-aware logic below is the
+        // correct path: two distinct unconstrained TypeParameters mapped to
+        // the same source param look "conflicting" by `is_assignable_to`,
+        // which would short-circuit erasure and produce a partially-
+        // instantiated function.
+        if !any_target_param_is_type_param
+            && let Some(substitution) =
+                self.conflicting_contextual_param_candidate_substitution(&source_fn, &target_fn)
+        {
+            return self.interner.function(FunctionShape {
+                params: source_fn
+                    .params
+                    .iter()
+                    .map(|param| ParamInfo {
+                        name: param.name,
+                        type_id: instantiate_type(self.interner, param.type_id, &substitution),
+                        optional: param.optional,
+                        rest: param.rest,
+                    })
+                    .collect(),
+                return_type: instantiate_type(self.interner, source_fn.return_type, &substitution),
+                this_type: source_fn
+                    .this_type
+                    .map(|this_type| instantiate_type(self.interner, this_type, &substitution)),
+                type_params: vec![],
+                type_predicate: source_fn
+                    .type_predicate
+                    .as_ref()
+                    .map(|predicate| TypePredicate {
+                        asserts: predicate.asserts,
+                        target: predicate.target,
+                        type_id: predicate
+                            .type_id
+                            .map(|tid| instantiate_type(self.interner, tid, &substitution)),
+                        parameter_index: predicate.parameter_index,
+                    }),
+                is_constructor: source_fn.is_constructor,
+                is_method: source_fn.is_method,
+            });
+        }
+
         let source_type_params_are_naked = source_fn.type_params.iter().all(|tp| {
             source_fn.params.iter().any(|param| {
                 matches!(
@@ -1306,6 +1359,111 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         result
     }
 
+    pub(crate) fn has_conflicting_contextual_signature_instantiation(
+        &mut self,
+        source_ty: TypeId,
+        target_ty: TypeId,
+    ) -> bool {
+        let Some(source_fn) =
+            Self::get_contextual_signature(self.interner.as_type_database(), source_ty)
+        else {
+            return false;
+        };
+        let Some(target_fn) =
+            Self::get_contextual_signature(self.interner.as_type_database(), target_ty)
+        else {
+            return false;
+        };
+
+        self.conflicting_contextual_param_candidate_substitution(&source_fn, &target_fn)
+            .is_some()
+    }
+
+    fn conflicting_contextual_param_candidate_substitution(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> Option<TypeSubstitution> {
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        let tracked_type_params: FxHashSet<_> =
+            source.type_params.iter().map(|tp| tp.name).collect();
+        if tracked_type_params.is_empty() {
+            return None;
+        }
+
+        let source_params: Vec<_> = source
+            .params
+            .iter()
+            .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
+            .collect();
+        let target_params: Vec<_> = target
+            .params
+            .iter()
+            .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
+            .collect();
+
+        let mut contextual_candidates: FxHashMap<_, Vec<TypeId>> = FxHashMap::default();
+        for (source_param, target_param) in source_params.iter().zip(target_params.iter()) {
+            let source_effective = if source_param.optional {
+                self.interner
+                    .union2(source_param.type_id, TypeId::UNDEFINED)
+            } else {
+                source_param.type_id
+            };
+            let target_effective = if target_param.optional {
+                self.interner
+                    .union2(target_param.type_id, TypeId::UNDEFINED)
+            } else {
+                target_param.type_id
+            };
+            if target_effective.is_any_unknown_or_error() {
+                continue;
+            }
+
+            if let Some(info) =
+                crate::type_param_info(self.interner.as_type_database(), source_effective)
+                && tracked_type_params.contains(&info.name)
+            {
+                contextual_candidates
+                    .entry(info.name)
+                    .or_default()
+                    .push(target_effective);
+            }
+        }
+
+        let has_conflict = contextual_candidates.values().any(|candidates| {
+            for (idx, &left) in candidates.iter().enumerate() {
+                for &right in candidates.iter().skip(idx + 1) {
+                    if left == right {
+                        continue;
+                    }
+                    if !self.checker.is_assignable_to(left, right)
+                        && !self.checker.is_assignable_to(right, left)
+                    {
+                        return true;
+                    }
+                }
+            }
+            false
+        });
+
+        if !has_conflict {
+            return None;
+        }
+
+        let mut substitution = TypeSubstitution::new();
+        for tp in &source.type_params {
+            let replacement = contextual_candidates
+                .get(&tp.name)
+                .and_then(|candidates| candidates.first().copied())
+                .or(tp.constraint)
+                .unwrap_or(TypeId::UNKNOWN);
+            substitution.insert(tp.name, replacement);
+        }
+        Some(substitution)
+    }
+
     pub(super) fn single_concrete_upper_bound(
         &self,
         infer_ctx: &mut InferenceContext<'_>,
@@ -1413,6 +1571,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     pub(super) fn inference_type_contains_fresh_object_or_array(&self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(ty) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => self
                 .interner
@@ -1430,6 +1591,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn is_structural_return_inference_candidate(&self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(ty) {
             Some(
                 TypeData::Object(_)

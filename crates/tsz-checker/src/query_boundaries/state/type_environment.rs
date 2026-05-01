@@ -1,6 +1,6 @@
 use crate::state::CheckerState;
 use tsz_common::interner::Atom;
-use tsz_solver::{MappedTypeId, TypeDatabase, TypeId};
+use tsz_solver::{MappedTypeId, QueryDatabase, TypeDatabase, TypeId};
 
 pub(crate) use super::super::common::{
     collect_enum_def_ids, collect_referenced_types, is_generic_type, lazy_def_id,
@@ -269,11 +269,11 @@ pub(crate) fn contains_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool
 
 /// Substitute `this` type references in a type with a concrete type.
 pub(crate) fn substitute_this_type(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     type_id: TypeId,
     this_type: TypeId,
 ) -> TypeId {
-    tsz_solver::substitute_this_type(db, type_id, this_type)
+    tsz_solver::substitute_this_type_cached(db.as_type_database(), Some(db), type_id, this_type)
 }
 
 /// Get the intersection members of a type (if it is an intersection).

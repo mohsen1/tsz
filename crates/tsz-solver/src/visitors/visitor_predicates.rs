@@ -25,6 +25,14 @@ use tsz_common::Atom;
 ///
 /// Matches: `TypeData::Literal`(_)
 pub fn is_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // BOOLEAN_TRUE / BOOLEAN_FALSE are reserved intrinsic TypeIds whose
+    // TypeData::lookup returns Literal(Boolean), so they ARE literal types.
+    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Literal(_)))
 }
 
@@ -32,6 +40,9 @@ pub fn is_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Matches: `TypeData::ModuleNamespace`(_)
 pub fn is_module_namespace_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::ModuleNamespace(_)))
 }
 
@@ -44,6 +55,9 @@ pub fn is_module_namespace_type(types: &dyn TypeDatabase, type_id: TypeId) -> bo
 /// numeric from string enums. When it's still `Lazy`, the checker may need to
 /// use symbol-based fallback checks.
 pub fn is_lazy_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Lazy(_)))
 }
 
@@ -55,6 +69,14 @@ pub fn is_function_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 fn is_function_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types are never `Function` / `Callable` /
+    // `Intersection` — the existing match falls through to `_ => false`
+    // for them. `is_intrinsic()` is a free `TypeId`-range check; skip the
+    // `TypeData` lookup and match dispatch entirely. Same pattern as
+    // #2001 / #2005 / #2008 / #2009 / #2014.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
         Some(TypeData::Intersection(members)) => {
@@ -75,6 +97,11 @@ pub fn is_object_like_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 fn is_object_like_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsics are object-like ONLY for OBJECT and FUNCTION.
+    // All other intrinsics fall through the match to `_ => false`.
+    if type_id.is_intrinsic() {
+        return type_id == TypeId::OBJECT || type_id == TypeId::FUNCTION;
+    }
     match types.lookup(type_id) {
         Some(
             TypeData::Object(_)
@@ -116,6 +143,17 @@ pub fn has_late_bound_members(types: &dyn TypeDatabase, type_id: TypeId) -> bool
 }
 
 fn has_late_bound_members_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types (`number`, `string`, `any`, `never`, etc.)
+    // are not Object/ObjectWithIndex/Intersection, so the existing match
+    // falls through to the `_` arm. Calling `evaluate_type` on an intrinsic
+    // returns the same TypeId, which then short-circuits to `false` — but
+    // only after a `TypeData` lookup, an eight-arm match dispatch, and an
+    // `evaluate_type` call. `TypeId::is_intrinsic` is a free range check;
+    // skip the rest entirely. Same pattern as #2001 / #2005 / #2008 / #2009 /
+    // #2014 / #2015 / #2017 / #2019.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(TypeData::ObjectWithIndex(shape_id)) | Some(TypeData::Object(shape_id)) => {
             let shape = types.object_shape(shape_id);
@@ -143,6 +181,9 @@ fn has_late_bound_members_impl(types: &dyn TypeDatabase, type_id: TypeId) -> boo
 
 /// Check if a type is an empty object type (no properties, no index signatures).
 pub fn is_empty_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Object(shape_id)) => {
             let shape = types.object_shape(shape_id);
@@ -186,21 +227,33 @@ pub fn is_primitive_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is a union type.
 pub fn is_union_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Union(_)))
 }
 
 /// Check if a type is an intersection type.
 pub fn is_intersection_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Intersection(_)))
 }
 
 /// Check if a type is an array type.
 pub fn is_array_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Array(_)))
 }
 
 /// Check if a type is a tuple type (including readonly tuples wrapped in `ReadonlyType`).
 pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Tuple(_)) => true,
         Some(TypeData::ReadonlyType(inner)) => is_tuple_type(types, inner),
@@ -222,6 +275,9 @@ pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// For union types the body is considered deferred only when **every** member
 /// is itself deferred (e.g., `JsonValue[] | readonly JsonValue[]`).
 pub fn is_structurally_deferred_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(
             TypeData::Array(_)
@@ -247,6 +303,9 @@ pub fn is_structurally_deferred_type(types: &dyn TypeDatabase, type_id: TypeId) 
 
 /// Check if a type is a type parameter.
 pub fn is_type_parameter(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         types.lookup(type_id),
         Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
@@ -255,6 +314,9 @@ pub fn is_type_parameter(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is a conditional type.
 pub fn is_conditional_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Conditional(_)))
 }
 
@@ -264,6 +326,9 @@ pub fn is_conditional_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// (TS2322) since the deferred conditional makes the assignment incompatible
 /// regardless of excess properties.
 pub fn has_deferred_conditional_member(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Conditional(_)) => true,
         Some(TypeData::Intersection(list_id)) => {
@@ -278,26 +343,41 @@ pub fn has_deferred_conditional_member(types: &dyn TypeDatabase, type_id: TypeId
 
 /// Check if a type is a mapped type.
 pub fn is_mapped_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Mapped(_)))
 }
 
 /// Check if a type is an index access type.
 pub fn is_index_access_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
 }
 
 /// Check if a type is a type query (typeof) type.
 pub fn is_type_query_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::TypeQuery(_)))
 }
 
 /// Check if a type is a template literal type.
 pub fn is_template_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::TemplateLiteral(_)))
 }
 
 /// Check if a type is a type reference (Lazy/DefId).
 pub fn is_type_reference(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         types.lookup(type_id),
         Some(TypeData::Lazy(_) | TypeData::Recursive(_))
@@ -306,6 +386,9 @@ pub fn is_type_reference(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is a generic type application.
 pub fn is_generic_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Application(_)))
 }
 
@@ -349,6 +432,12 @@ fn is_identity_comparable_type_impl(types: &dyn TypeDatabase, type_id: TypeId, d
         || type_id == TypeId::NEVER
     {
         return true;
+    }
+    // Fast path: BOOLEAN_TRUE / BOOLEAN_FALSE are reserved intrinsic TypeIds
+    // whose TypeData::lookup returns Literal(Boolean) — identity-comparable.
+    // All other intrinsics lookup to Intrinsic(_) which falls to `_ => false`.
+    if type_id.is_intrinsic() {
+        return type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE;
     }
 
     match types.lookup(type_id) {
@@ -467,6 +556,26 @@ fn contains_error_type_recursive(
     if matches!(key, TypeData::Error | TypeData::UnresolvedTypeName(_)) {
         memo.insert(type_id, true);
         return true;
+    }
+
+    // Terminal-kind fast path. These variants have no children to recurse
+    // into and fall through the match below to `_ => false`. Short-circuiting
+    // here skips the eight-arm dispatch and the trailing memo write (we
+    // already inserted `false` at line 462 for cycle prevention, and the
+    // match's `_ => false` would just rewrite the same value).
+    if matches!(
+        key,
+        TypeData::Literal(_)
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Intrinsic(_)
+    ) {
+        return false;
     }
 
     let result = match key {
@@ -639,6 +748,28 @@ pub fn contains_type_parameter_named_shallow(
         if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
             continue;
         }
+        // Terminal kinds have no children to enumerate. Skipping
+        // `for_each_child_by_id` (which would iterate an empty child set)
+        // saves the closure setup and visitor dispatch on the very common
+        // input shape where the predicate is the entry-point lookup result.
+        // The kinds listed here match the leaf arms of every other walker
+        // that returns `false` for them — see `ContainsTypeChecker.check_key`,
+        // `FreeTypeParamChecker.check_key`, and `FreeInferChecker.check_key`.
+        if matches!(
+            &data,
+            TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            continue;
+        }
         // For all other types, use the generic child visitor.
         super::visitor::for_each_child_by_id(types, current, |child| {
             if !visited.contains(&child) {
@@ -794,20 +925,45 @@ where
             return cached;
         }
 
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
-
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
 
         if (self.predicate)(&key) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+
+        // Terminal-kind fast path: types with no children to walk and no
+        // cycle risk. The recursive `check_key` below would dispatch to its
+        // leaf arm and immediately return `false` for these kinds, so
+        // skipping the `guard.enter`/`guard.leave` HashSet round-trip is a
+        // pure win. Memo is still updated so repeat visits of the same
+        // type within one `contains_type_matching` call stay O(1).
+        //
+        // `Intrinsic` is already handled by the entry-level `is_intrinsic`
+        // check above. The remaining terminal kinds match the recursive
+        // walker's leaf arm in `check_key`.
+        if matches!(
+            key,
+            TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
 
         let result = self.check_key(&key);
@@ -936,12 +1092,7 @@ impl<'a> FreeTypeParamChecker<'a> {
         if let Some(&cached) = self.memo.get(&type_id) {
             return cached;
         }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
         if matches!(
@@ -951,9 +1102,31 @@ impl<'a> FreeTypeParamChecker<'a> {
                 | TypeData::ThisType
                 | TypeData::BoundParameter(_)
         ) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+        // Terminal-kind fast path: same set that `check_key` returns `false`
+        // for unconditionally. Short-circuit before the recursion-guard
+        // enter/leave so common terminals (`Lazy(DefId)`, `TypeQuery`, etc.)
+        // skip the per-call `FxHashSet` insert + remove. Mirrors #1978/#1990.
+        if matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
         let result = self.check_key(&key);
         self.guard.leave(type_id);
@@ -1085,18 +1258,39 @@ impl<'a> FreeInferChecker<'a> {
         if let Some(&cached) = self.memo.get(&type_id) {
             return cached;
         }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
         if matches!(key, TypeData::Infer(_)) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+        // Terminal-kind fast path: same set that `check_key` returns `false`
+        // for unconditionally (TypeParameter is included here because this
+        // walker, by design, does not descend into TypeParameter
+        // constraints/defaults). Short-circuit before the recursion-guard
+        // enter/leave dance. Mirrors #1978/#1990.
+        if matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
         let result = self.check_key(&key);
         self.guard.leave(type_id);
@@ -1223,19 +1417,42 @@ impl<'a> ShallowContainsTypeChecker<'a> {
         if let Some(&cached) = self.memo.get(&type_id) {
             return cached;
         }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
         let Some(key) = self.types.lookup(type_id) else {
-            self.guard.leave(type_id);
             return false;
         };
         // Direct match: is this type parameter the one we're looking for?
         if matches!(&key, TypeData::TypeParameter(info) if info.name == self.name) {
-            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
+        }
+        // Terminal-kind fast path: same set that `check_key` returns `false`
+        // for unconditionally. Note: `TypeParameter(_)` is also a terminal
+        // here — by design "shallow" does not descend into constraints —
+        // but we exclude it from this short-circuit because the positive
+        // match above already drained the matching name. Any remaining
+        // `TypeParameter` is a non-match terminal. Mirrors #1978/#1990.
+        if matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
         let result = self.check_key(&key);
         self.guard.leave(type_id);
@@ -1392,6 +1609,9 @@ pub enum ObjectTypeKind {
 /// This is used by the freshness tracking system to determine if a type
 /// is a fresh object literal that needs special handling.
 pub fn classify_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> ObjectTypeKind {
+    if type_id.is_intrinsic() {
+        return ObjectTypeKind::NotObject;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Object(shape_id)) => ObjectTypeKind::Object(shape_id),
         Some(TypeData::ObjectWithIndex(shape_id)) => ObjectTypeKind::ObjectWithIndex(shape_id),
@@ -1408,6 +1628,17 @@ struct LiteralTypeChecker;
 
 impl LiteralTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        // Fast path: intrinsic types are never literal types EXCEPT for
+        // `BOOLEAN_TRUE` (14) and `BOOLEAN_FALSE` (15) which are reserved
+        // intrinsic IDs for the `true` / `false` literal types. All other
+        // intrinsic IDs match no arm and fall through to `_ => false`.
+        // `is_intrinsic()` is a free `TypeId`-range check; the explicit
+        // exception preserves slow-path behaviour without `TypeData`
+        // lookup. Same family as #2001 / #2005 / #2008 / #2009 / #2014
+        // / #2019 / #2025.
+        if type_id.is_intrinsic() {
+            return type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE;
+        }
         match types.lookup(type_id) {
             Some(TypeData::Literal(_)) => true,
             Some(TypeData::Enum(_, structural_type)) => Self::check(types, structural_type),
@@ -1427,6 +1658,11 @@ struct FunctionTypeChecker;
 
 impl FunctionTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        // Fast path: intrinsic types match no arm. Skip lookup + dispatch.
+        // Same family as #2001 / #2005 / #2008 / #2009 / #2014 / #2019 / #2025 / #2032.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match types.lookup(type_id) {
             Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
             Some(TypeData::Intersection(members)) => {
@@ -1451,6 +1687,10 @@ struct ObjectTypeChecker;
 
 impl ObjectTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        // Fast path: intrinsic types match no arm. Skip lookup + dispatch.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match types.lookup(type_id) {
             Some(
                 TypeData::Object(_)
@@ -1493,6 +1733,9 @@ impl<'a> EmptyObjectChecker<'a> {
     }
 
     fn check(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.db.lookup(type_id) {
             Some(TypeData::Object(shape_id)) => {
                 let shape = self.db.object_shape(shape_id);

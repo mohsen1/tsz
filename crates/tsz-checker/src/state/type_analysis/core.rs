@@ -22,13 +22,6 @@ type TypeParamPushResult = (
 
 impl<'a> CheckerState<'a> {
     fn cache_resolved_symbol_type_for_owner(&self, sym_id: SymbolId, type_id: TypeId) {
-        if !self.ctx.share_owner_symbol_type_results {
-            return;
-        }
-        if type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
-            return;
-        }
-
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return;
         };
@@ -39,11 +32,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        self.ctx.definition_store.cache_resolved_symbol_type(
-            sym_id.0,
-            symbol.decl_file_idx,
-            type_id,
-        );
+        self.ctx
+            .cache_cross_file_symbol_type(sym_id, symbol.decl_file_idx, type_id, Vec::new());
     }
 
     fn can_register_evaluated_alias_form(
@@ -1483,7 +1473,8 @@ impl<'a> CheckerState<'a> {
             return Some(TypeId::ERROR);
         }
 
-        if is_this_global
+        let access_targets_global_this = is_this_global || self.is_global_this_expression(left_idx);
+        if access_targets_global_this
             && property_type == TypeId::ANY
             && self.ctx.no_implicit_any()
             && !self.is_js_file()

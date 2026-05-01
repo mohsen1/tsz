@@ -76,6 +76,9 @@ pub enum TypeTraversalKind {
 /// This function examines a type and returns information about how to
 /// traverse into its nested types. Used by `ensure_application_symbols_resolved_inner`.
 pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTraversalKind {
+    if type_id.is_intrinsic() {
+        return TypeTraversalKind::Terminal;
+    }
     let Some(key) = db.lookup(type_id) else {
         return TypeTraversalKind::Terminal;
     };
@@ -618,6 +621,9 @@ pub fn collect_accessible_property_names_for_suggestion(
 pub fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
         return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
     }
     match db.lookup(type_id) {
         Some(TypeData::Intrinsic(IntrinsicKind::Null | IntrinsicKind::Undefined)) => true,

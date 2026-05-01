@@ -28,11 +28,16 @@ pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::F
 /// Returns true for `TypeData::Callable`, `TypeData::Function`, and the
 /// intrinsic `TypeId::FUNCTION` (the global `Function` interface).
 pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::FUNCTION
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Callable(_) | TypeData::Function(_))
-        )
+    if type_id == TypeId::FUNCTION {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::Callable(_) | TypeData::Function(_))
+    )
 }
 
 /// Check if a type has call signatures (not just construct signatures).
@@ -47,6 +52,9 @@ pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 pub fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::FUNCTION {
         return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
     }
     match db.lookup(type_id) {
         Some(TypeData::Function(_)) => true,
@@ -64,6 +72,9 @@ pub fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// due to cross-arena declaration splitting. This detects it by checking for the
 /// characteristic properties: `apply`, `call`, and `bind`.
 pub fn is_function_interface_structural(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     use crate::visitor::{object_shape_id, object_with_index_shape_id};
     let shape_id = object_shape_id(db, type_id).or_else(|| object_with_index_shape_id(db, type_id));
     let Some(shape_id) = shape_id else {
@@ -169,6 +180,9 @@ pub fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 /// assert!(!is_invokable_type(&db, class_constructor_only));
 /// ```
 pub fn is_invokable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(_)) => true,
         Some(TypeData::Callable(shape_id)) => {
@@ -189,6 +203,9 @@ pub fn is_invokable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::Object` and `TypeData::ObjectWithIndex`.
 pub fn is_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
@@ -201,6 +218,9 @@ pub fn is_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Used to determine if a contextual type can provide property-level
 /// type information for class expressions.
 pub fn has_properties(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             !db.object_shape(shape_id).properties.is_empty()
@@ -222,6 +242,9 @@ pub fn has_properties(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// non-None `symbol` field, indicating it was created from a named class
 /// or interface declaration.
 pub fn has_nominal_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             db.object_shape(shape_id).symbol.is_some()
@@ -234,6 +257,9 @@ pub fn has_nominal_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::Application`.
 pub fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::Application(_)))
 }
 
@@ -241,6 +267,9 @@ pub fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::Lazy(DefId)` (interfaces, classes, type aliases).
 pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::Lazy(_) | TypeData::Recursive(_) | TypeData::BoundParameter(_))
@@ -256,6 +285,13 @@ pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Use this instead of `visitor_predicates::is_type_parameter` when you need
 /// to treat bound (de Bruijn indexed) parameters as type-parameter-like.
 pub fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic kinds (any / unknown / never / void / null /
+    // undefined plus the reserved PrimitiveX kinds) cannot be a
+    // TypeParameter / BoundParameter / Infer. Skip the `db.lookup` virtual
+    // call for them. is_intrinsic() is a free TypeId-range check.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::TypeParameter(_) | TypeData::BoundParameter(_) | TypeData::Infer(_))
@@ -266,6 +302,9 @@ pub fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::KeyOf`.
 pub fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::KeyOf(_)))
 }
 
@@ -273,6 +312,9 @@ pub fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::ReadonlyType`.
 pub fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::ReadonlyType(_)))
 }
 
@@ -282,6 +324,9 @@ pub fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// with at least one readonly property. Used to detect types derived from
 /// `const` type parameters, which always produce readonly members.
 pub fn type_has_readonly_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::ReadonlyType(_)) => true,
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
@@ -301,6 +346,9 @@ pub fn type_has_readonly_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool
 /// `ThisType` represents `this` in class methods and needs to be resolved
 /// to the concrete class type before property access.
 pub fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::ThisType))
 }
 
@@ -312,12 +360,18 @@ pub fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Returns true only for `TypeData::UniqueSymbol` types, which represent
 /// individual `typeof sym` types created for const symbol declarations.
 pub fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::UniqueSymbol(_)))
 }
 
 pub fn is_symbol_or_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::SYMBOL {
         return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
     }
     matches!(
         db.lookup(type_id),
@@ -330,6 +384,9 @@ pub fn is_symbol_or_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -
 /// Returns true for string literals, number literals, and unique symbol types.
 /// This corresponds to TypeScript's `isTypeUsableAsPropertyName` check.
 pub fn is_type_usable_as_property_name(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(
@@ -347,6 +404,9 @@ pub fn is_type_usable_as_property_name(db: &dyn TypeDatabase, type_id: TypeId) -
 /// `classify_for_interface_merge` to ensure that type-alias-based heritage
 /// (e.g., `interface X extends TypeAlias<T>`) is properly resolved.
 pub fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::Application(_) | TypeData::Lazy(_))
@@ -357,6 +417,9 @@ pub fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 ///
 /// Returns `TypeId::ERROR` if the type is not a Function.
 pub fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return TypeId::ERROR;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => db.function_shape(shape_id).return_type,
         _ => TypeId::ERROR,
@@ -367,6 +430,9 @@ pub fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeI
 ///
 /// Returns an empty vector if the type is not a Function.
 pub fn get_function_parameter_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    if type_id.is_intrinsic() {
+        return Vec::new();
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => db
             .function_shape(shape_id)
@@ -442,6 +508,9 @@ define_intrinsic_check!(is_symbol_type, SYMBOL, Symbol);
 pub fn is_symbol_or_unique_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::SYMBOL {
         return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
     }
     matches!(
         db.lookup(type_id),

@@ -176,6 +176,69 @@ fn export_default_function_missing_open_paren_recovers_into_body() {
 }
 
 #[test]
+fn arrow_with_block_body_followed_by_equals_emits_ts2809_and_ts1005() {
+    // `() => { } = value;` — tsc parses `() => { }` as an expression statement,
+    // detects `=` after a block-bodied arrow, emits TS2809 at the `=`, then
+    // emits TS1005 at the start of the recovered token (because the prior
+    // expression statement still requires a `;`). Two distinct identifier names
+    // (`thing`, `other`) confirm the rule is structural.
+    let (parser, _root) = parse_source(
+        r#"
+() => { } = thing;
+(function () { }) = other;
+"#,
+    );
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let ts2809_count = codes
+        .iter()
+        .filter(|&&code| {
+            code
+                == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I
+        })
+        .count();
+    assert!(
+        ts2809_count >= 1,
+        "expected at least one TS2809 for arrow/function-expr block followed by `=`, got {diags:?}"
+    );
+    let ts1005_count = codes
+        .iter()
+        .filter(|&&code| code == diagnostic_codes::EXPECTED)
+        .count();
+    assert!(
+        ts1005_count >= 1,
+        "expected TS1005 at the recovered token after `=`, got {diags:?}"
+    );
+}
+
+#[test]
+fn function_decl_followed_by_equals_emits_ts2809_only() {
+    // `function foo() { } = value;` and `function bar() { } = thing;` —
+    // function declarations don't require a trailing `;`, so tsc emits
+    // TS2809 at the `=` but no follow-up TS1005. Multiple identifier
+    // choices confirm the rule isn't tied to a particular spelling.
+    let (parser, _root) = parse_source(
+        r#"
+function foo() { } = value;
+function bar() { } = thing;
+"#,
+    );
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let ts2809_count = codes
+        .iter()
+        .filter(|&&code| {
+            code
+                == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I
+        })
+        .count();
+    assert_eq!(
+        ts2809_count, 2,
+        "expected two TS2809 diagnostics for function-decl block followed by `=`, got {diags:?}"
+    );
+}
+
+#[test]
 fn parse_block_followed_by_equals_emits_ts2809_instead_of_ts1128() {
     let (parser, _root) = parse_source(
         r#"
