@@ -2354,7 +2354,12 @@ impl<'a> Printer<'a> {
         let mut recovered = Vec::new();
         for line in source.lines() {
             let trimmed = line.trim();
-            if depth == 1 && (trimmed.starts_with("var ") || trimmed.starts_with("function ")) {
+            if depth == 1
+                && (trimmed.starts_with("function ")
+                    || (trimmed.starts_with("var ")
+                        && !trimmed.contains("//")
+                        && !trimmed.contains("()")))
+            {
                 recovered.push(trimmed.replace("{}", "{ }"));
             }
             for ch in line.chars() {
