@@ -241,6 +241,9 @@ pub fn recursive_index(types: &dyn TypeDatabase, type_id: TypeId) -> Option<u32>
 
 /// Check if this is an Enum type.
 pub fn is_enum_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(types.lookup(type_id), Some(TypeData::Enum(_, _)))
 }
 
