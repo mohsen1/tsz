@@ -502,14 +502,15 @@ Large-repo priorities:
 4. Treat Arc-sharing as Phase 0 plumbing, not the final architecture.
 5. Move toward bounded user arena residency only after stable identity and skeleton consumers are proven.
 
-Status snapshot 2026-04-25 (large-ts-repo, 6086 files, 39MB):
+Status snapshot 2026-05-01 (large-ts-repo, 6086 files, 39MB):
 
 1. Pre-#1202 baseline: peak RSS ~67 GB virtual, exit 137 (SIGKILL by macOS jetsam) at ~75s. Bench reports as TIMEOUT.
 2. Post-#1202 (`perf(binder,checker,cli,core): Arc-share per-file semantic_defs`): peak RSS dropped to ~10 GB resident, exit 137 still hits at ~47s. **6.7× memory reduction**, but system memory ceiling still exceeded on this 32 GB host.
 3. Post-Arc-share-`node_symbols` (#1227): peak RSS dropped further to **~6.2 GB** resident, exit 137 still hits at ~45s. Additional **~38% reduction** on top of #1202. Cumulative: 67 GB virtual → 6.2 GB resident (~10× from baseline).
 4. Post-Arc-share-`node_flow` (this PR): peak RSS measured at ~7.0 GB resident, still exit 137 at ~50s. Same-machine before/after (sampled at 2s intervals on a busy 32 GB host) showed run-to-run variation in the noise band (~6.9-7.5 GB), so the direct measurable savings are within noise. The change is structurally correct (same template as #1202/#1227, no `Arc::make_mut` post-binding hot path) and unblocks the remaining template migrations.
-5. Implication: continue Arc-sharing the remaining per-binder maps (`node_scope_ids`, `top_level_flow`, `switch_clause_to_switch`) to push further toward stable completion. The next likely high-leverage target is `node_scope_ids` (parallels `node_symbols` shape).
-6. Bench harness caveat: `tsz: TIMEOUT` in the table can mean either timer-kill (124) or OS-kill (137). The 137 case ("OOM-by-paging") is the dominant failure mode here. Inspect exit codes when investigating.
+5. Post-#2141 and the follow-on `main` batch (local 2026-05-01, 16 GB host, 75% physical-footprint guard): `scripts/safe-run.sh --limit 75% --interval 2 --verbose -- .target-bench/dist/tsz --extendedDiagnostics --noEmit -p ~/code/large-ts-repo/tsconfig.flat.bench.json` ran past the prior non-total sort panic and plateaued below the 12.29 GB guard. Manual stop after the sample window returned exit 143; peak sampled physical footprint was ~11.97 GB. This is now a bounded-RSS/runtime-completion problem rather than the previous immediate sort-panic failure.
+6. Implication: the first-pass Arc-sharing of the known binder maps (`node_symbols`, `node_flow`, `node_scope_ids`, `top_level_flow`, `switch_clause_to_switch`) has landed; continue measuring remaining large-repo work as targeted residency/runtime slices, and prefer stable-identity/skeleton consumers over more per-file binder state.
+7. Bench harness caveat: `tsz: TIMEOUT` in the table can mean either timer-kill (124), manual stop (143), or OS-kill (137). The 137 case ("OOM-by-paging") was the dominant historical failure mode. Inspect exit codes when investigating.
 
 Exit criteria:
 
