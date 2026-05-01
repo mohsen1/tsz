@@ -1646,7 +1646,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Use the raw (unevaluated) check_type — it may still be an Application
         // which enables Application-vs-Application matching in match_infer_pattern.
-        let check_type = cond.check_type;
+        // When the raw form is *not* an Application (e.g. an IndexAccess inside a
+        // mapped-type per-key conditional like `S[K] extends Pattern<infer T>`),
+        // evaluate it once: if evaluation yields an Application, that Application
+        // is what we want to feed to `match_infer_pattern` so the
+        // Application-vs-Application path can bind the infer arguments. Without
+        // this, downstream `try_expand_application_for_conditional_check`
+        // unfolds the evaluated Application into its structural Object form and
+        // the Application-level match is irretrievably lost.
+        // The raw `cond.check_type` may not be an Application (e.g. an
+        // `IndexAccess` like `S[K]` inside a mapped-type per-key conditional).
+        // Try to recover an Application form so the Application-vs-Application
+        // path in `match_infer_pattern` can bind the infer arguments:
+        //   1. Evaluate the raw type once. If that yields an Application,
+        //      use it directly.
+        //   2. Otherwise, the raw type may have evaluated to the *body* of
+        //      an Application (the structural Object the body interned to).
+        //      The interner records `display_alias[body] = Application` for
+        //      every evaluated Application; consult it to recover the
+        //      original Application form when the evaluated check_type is
+        //      not itself an Application but came from one.
+        let mut check_type = cond.check_type;
+        if !matches!(
+            self.interner().lookup(check_type),
+            Some(TypeData::Application(_))
+        ) {
+            let evaluated = self.evaluate(check_type);
+            if matches!(
+                self.interner().lookup(evaluated),
+                Some(TypeData::Application(_))
+            ) {
+                check_type = evaluated;
+            } else if let Some(application_origin) = self.interner().get_display_alias(evaluated)
+                && matches!(
+                    self.interner().lookup(application_origin),
+                    Some(TypeData::Application(_))
+                )
+            {
+                check_type = application_origin;
+            }
+        }
 
         // Skip for special types
         if check_type == TypeId::ANY || check_type == TypeId::NEVER {
@@ -1666,14 +1705,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker.allow_bivariant_rest = true;
         let mut bindings = FxHashMap::default();
         let mut visited = FxHashSet::default();
-        if self.match_infer_pattern(
+        let matched = self.match_infer_pattern(
             check_type,
             cond.extends_type,
             &mut bindings,
             &mut visited,
             &mut checker,
-        ) && !bindings.is_empty()
-        {
+        );
+        if matched && !bindings.is_empty() {
             let substituted_true = self.substitute_infer(cond.true_type, &bindings);
             return Some(self.evaluate(substituted_true));
         }
