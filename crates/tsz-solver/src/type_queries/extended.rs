@@ -292,6 +292,9 @@ pub enum PromiseTypeKind {
 /// This function examines a type and returns information about how to handle it
 /// when checking for promise-like types.
 pub fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseTypeKind {
+    if type_id.is_intrinsic() {
+        return PromiseTypeKind::NotPromise;
+    }
     let Some(key) = db.lookup(type_id) else {
         return PromiseTypeKind::NotPromise;
     };
@@ -336,6 +339,9 @@ pub fn classify_for_string_literal_keys(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> StringLiteralKeyKind {
+    if type_id.is_intrinsic() {
+        return StringLiteralKeyKind::NotStringLiteral;
+    }
     let Some(key) = db.lookup(type_id) else {
         return StringLiteralKeyKind::NotStringLiteral;
     };
@@ -358,6 +364,9 @@ pub fn get_string_literal_value(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<tsz_common::interner::Atom> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(name))) => Some(name),
         _ => None,
@@ -579,6 +588,9 @@ pub fn get_application_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<(TypeId, Vec<TypeId>)> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Application(app_id)) => {
             let app = db.type_application(app_id);
@@ -603,6 +615,9 @@ pub enum LazyTypeKind {
 
 /// Classify a type for Lazy resolution.
 pub fn classify_for_lazy_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> LazyTypeKind {
+    if type_id.is_intrinsic() {
+        return LazyTypeKind::NotLazy;
+    }
     let Some(key) = db.lookup(type_id) else {
         return LazyTypeKind::NotLazy;
     };
@@ -618,6 +633,9 @@ pub fn get_tuple_list_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::TupleListId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Tuple(list_id)) => Some(list_id),
         _ => None,
@@ -626,6 +644,9 @@ pub fn get_tuple_list_id(
 
 /// Get the base type of an application type.
 pub fn get_application_base(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Application(app_id)) => Some(db.type_application(app_id).base),
         _ => None,
