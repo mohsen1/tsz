@@ -477,6 +477,26 @@ fn contains_error_type_recursive(
         return true;
     }
 
+    // Terminal-kind fast path. These variants have no children to recurse
+    // into and fall through the match below to `_ => false`. Short-circuiting
+    // here skips the eight-arm dispatch and the trailing memo write (we
+    // already inserted `false` at line 462 for cycle prevention, and the
+    // match's `_ => false` would just rewrite the same value).
+    if matches!(
+        key,
+        TypeData::Literal(_)
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Intrinsic(_)
+    ) {
+        return false;
+    }
+
     let result = match key {
         TypeData::Application(app_id) => {
             let app = types.type_application(app_id);
