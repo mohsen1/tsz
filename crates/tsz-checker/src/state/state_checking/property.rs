@@ -1083,9 +1083,7 @@ impl<'a> CheckerState<'a> {
                     full_members_with_prop
                         .iter()
                         .find(|(idx, _)| *idx == i)
-                        .is_none_or(|(_, target_ty)| {
-                            self.is_subtype_of(prop_type, *target_ty)
-                        })
+                        .is_none_or(|(_, target_ty)| self.is_subtype_of(prop_type, *target_ty))
                 })
                 .collect();
 
