@@ -743,6 +743,12 @@ pub fn is_literal_enum_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Non-literal types are returned unchanged.
 pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean),
+    // so they must widen to BOOLEAN. Other intrinsics resolve to Intrinsic
+    // and fall through to `_ => type_id`; short-circuit them.
+    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        return TypeId::BOOLEAN;
+    }
     if type_id.is_intrinsic() {
         return type_id;
     }
