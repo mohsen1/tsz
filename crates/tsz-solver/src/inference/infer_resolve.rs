@@ -310,6 +310,9 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn is_object_like_upper_bound(&self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(ty) {
             Some(
                 TypeData::Object(_)
