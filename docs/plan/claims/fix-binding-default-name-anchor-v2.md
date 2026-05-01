@@ -2,7 +2,7 @@
 
 # fix(checker): anchor binding-default TS2322 on the binding name
 
-Status: claim
+Status: shipped (PR #1433 — `fix(checker): anchor binding-default TS2322 on the binding name`, merged 2026-04-26)
 Branch: fix/binding-default-name-anchor-v2
 
 Goal: align tsc fingerprint for `function h({ prop = "baz" }: StringUnion)`-style
