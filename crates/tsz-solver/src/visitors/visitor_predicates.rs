@@ -333,9 +333,9 @@ pub fn has_deferred_conditional_member(types: &dyn TypeDatabase, type_id: TypeId
         Some(TypeData::Conditional(_)) => true,
         Some(TypeData::Intersection(list_id)) => {
             let members = types.type_list(list_id);
-            members
-                .iter()
-                .any(|m| matches!(types.lookup(*m), Some(TypeData::Conditional(_))))
+            members.iter().any(|m| {
+                !m.is_intrinsic() && matches!(types.lookup(*m), Some(TypeData::Conditional(_)))
+            })
         }
         _ => false,
     }

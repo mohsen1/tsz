@@ -287,9 +287,9 @@ impl TypeInterner {
         // remaining intersection types in the result). This matches tsc:
         // `(string|boolean) & (boolean|null)` → `boolean`, but
         // `(A|B) & (C|D)` with interfaces stays as intersection.
-        let has_non_union = flat
-            .iter()
-            .any(|&id| !matches!(self.lookup(id), Some(TypeData::Union(_))));
+        let has_non_union = flat.iter().any(|&id| {
+            id.is_intrinsic() || !matches!(self.lookup(id), Some(TypeData::Union(_)))
+        });
         if has_non_union {
             if let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
                 return distributed;
@@ -310,9 +310,10 @@ impl TypeInterner {
                 let is_simpler = match self.lookup(distributed) {
                     Some(TypeData::Union(members)) => {
                         let list = self.type_list(members);
-                        !list
-                            .iter()
-                            .any(|&m| matches!(self.lookup(m), Some(TypeData::Intersection(_))))
+                        !list.iter().any(|&m| {
+                            !m.is_intrinsic()
+                                && matches!(self.lookup(m), Some(TypeData::Intersection(_)))
+                        })
                     }
                     _ => true,
                 };
