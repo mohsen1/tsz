@@ -1147,6 +1147,9 @@ impl TypeInterner {
         if type_id == TypeId::UNDEFINED {
             return true;
         }
+        if type_id.is_intrinsic() {
+            return false;
+        }
         if let Some(TypeData::Union(members)) = self.lookup(type_id) {
             let members = self.type_list(members);
             return members.contains(&TypeId::UNDEFINED);
