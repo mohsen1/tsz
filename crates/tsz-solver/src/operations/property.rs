@@ -297,6 +297,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     pub(crate) fn is_deferred_any_fallback_member(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         matches!(
             self.interner().lookup(type_id),
             Some(

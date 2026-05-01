@@ -15,6 +15,9 @@ pub(crate) fn property_is_readonly(
     type_id: TypeId,
     prop_name: &str,
 ) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match interner.lookup(type_id) {
         Some(TypeData::Lazy(_)) => {
             // Resolve lazy types (interfaces, classes, type aliases) before checking readonly.
