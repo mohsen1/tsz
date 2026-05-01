@@ -203,20 +203,36 @@ impl<'a> CheckerState<'a> {
                 *target_return,
                 nested_reason.as_deref(),
             ),
-            SubtypeFailureReason::TooManyParameters { .. } => {
+            SubtypeFailureReason::TooManyParameters {
+                source_count,
+                target_count,
+            } => {
                 let (source_str, target_str) =
                     self.format_top_level_assignability_message_types_at(source, target, idx);
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
-                Diagnostic::error(
-                    file_name,
+                let mut diag = Diagnostic::error(
+                    file_name.clone(),
                     start,
                     length,
                     message,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                )
+                );
+                let elaboration = format_message(
+                    diagnostic_messages::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
+                    &[&source_count.to_string(), &target_count.to_string()],
+                );
+                diag.related_information.push(DiagnosticRelatedInformation {
+                    file: file_name,
+                    start,
+                    length,
+                    message_text: elaboration,
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
+                });
+                diag
             }
             SubtypeFailureReason::TupleElementMismatch {
                 source_count,
