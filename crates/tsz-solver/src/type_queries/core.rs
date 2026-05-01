@@ -488,11 +488,19 @@ pub fn get_function_parameter_types(db: &dyn TypeDatabase, type_id: TypeId) -> V
 macro_rules! define_intrinsic_check {
     ($fn_name:ident, $type_id:ident, $kind:ident) => {
         pub fn $fn_name(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-            type_id == TypeId::$type_id
-                || matches!(
-                    db.lookup(type_id),
-                    Some(TypeData::Intrinsic(IntrinsicKind::$kind))
-                )
+            if type_id == TypeId::$type_id {
+                return true;
+            }
+            // Other intrinsic TypeIds resolve to a different IntrinsicKind
+            // (or Literal for BOOLEAN_TRUE/FALSE), so they cannot match this
+            // checker. Skip the dyn-dispatched lookup for them.
+            if type_id.is_intrinsic() {
+                return false;
+            }
+            matches!(
+                db.lookup(type_id),
+                Some(TypeData::Intrinsic(IntrinsicKind::$kind))
+            )
         }
     };
 }
@@ -513,6 +521,9 @@ define_intrinsic_check!(is_symbol_type, SYMBOL, Symbol);
 pub fn is_symbol_or_unique_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::SYMBOL {
         return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
     }
     matches!(
         db.lookup(type_id),
