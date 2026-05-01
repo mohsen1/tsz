@@ -41,6 +41,14 @@ pub fn deep_reduce_for_display<R: TypeResolver>(
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
+    // Fast path: intrinsics reduce to themselves; `reduce_inner` already
+    // returns `type_id` immediately for them. Skip the `FxHashSet`
+    // allocation and the `TypeEvaluator::with_resolver` setup entirely.
+    // `is_intrinsic()` is a free `TypeId`-range check (no `TypeData`
+    // lookup needed).
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     let mut visited = FxHashSet::default();
     let mut evaluator = TypeEvaluator::with_resolver(db, resolver);
     reduce_inner(db, &mut evaluator, type_id, &mut visited)
