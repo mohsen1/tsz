@@ -223,6 +223,13 @@ impl ParserState {
         let mut statements = Vec::new();
         let mut skip_after_binary_payload = false;
         let mut previous_statement_was_block = false;
+        // True only when the previous statement was an ExpressionStatement whose
+        // expression is an arrow/function-expression with a block body. tsc emits
+        // an extra TS1005 (";' expected") at the start of the recovered token after
+        // the `=` is consumed for this case (because the prior expression statement
+        // still required a semicolon). Function/class declarations and other block
+        // statements do NOT require a trailing `;`, so they skip the extra TS1005.
+        let mut prev_block_needs_post_equals_semi = false;
 
         while !self.is_token(SyntaxKind::EndOfFileToken) {
             let pos_before = self.token_pos();
@@ -237,6 +244,7 @@ impl ParserState {
                     self.recover_invalid_shebang_token();
                 }
                 previous_statement_was_block = false;
+                prev_block_needs_post_equals_semi = false;
                 continue;
             }
 
@@ -246,6 +254,10 @@ impl ParserState {
                     diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
                 );
                 self.next_token();
+                if prev_block_needs_post_equals_semi && !self.is_token(SyntaxKind::EndOfFileToken) {
+                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                }
+                prev_block_needs_post_equals_semi = false;
                 previous_statement_was_block = false;
                 continue;
             }
@@ -414,7 +426,9 @@ impl ParserState {
                 };
                 self.resync_after_error_with_statement_starts(allow_statement_starts);
                 previous_statement_was_block = false;
+                prev_block_needs_post_equals_semi = false;
             } else {
+                let mut needs_semi_after_equals = false;
                 previous_statement_was_block = self.arena.get(stmt).is_some_and(|node| {
                     let kind = node.kind;
                     if kind == syntax_kind_ext::BLOCK
@@ -436,15 +450,22 @@ impl ParserState {
                     // function or function expression with a block body —
                     // tsc treats `() => { } = value;` and
                     // `(function () { }) = value;` like a block-following-`=`
-                    // and emits TS2809 instead of TS1005.
+                    // and emits TS2809 instead of TS1005. Unlike function/class
+                    // declarations these still need a semicolon, so tsc emits
+                    // TS1005 at the recovered token after consuming the `=`.
                     if kind == syntax_kind_ext::EXPRESSION_STATEMENT
                         && let Some(expr_stmt) = self.arena.get_expression_statement(node)
                         && let Some(inner) = self.arena.get(expr_stmt.expression)
                     {
-                        return inner.is_function_expression_or_arrow();
+                        let is_arrow_or_func = inner.is_function_expression_or_arrow();
+                        if is_arrow_or_func {
+                            needs_semi_after_equals = true;
+                        }
+                        return is_arrow_or_func;
                     }
                     false
                 });
+                prev_block_needs_post_equals_semi = needs_semi_after_equals;
                 statements.push(stmt);
             }
 
