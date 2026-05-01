@@ -1325,18 +1325,31 @@ impl<'a> CheckerState<'a> {
                         if this_is_local {
                             return false;
                         }
+                        // Precise lookup: when `declaration_arenas` has an
+                        // entry for this declaration, its arenas are the
+                        // authoritative source — return whether any of them
+                        // is a JS file. The fallback below MUST NOT run in
+                        // that case: previously, a present-but-non-JS entry
+                        // would fall through to a project-wide JS-file scan
+                        // that returned `true` for any unrelated `*.js`,
+                        // suppressing TS2451 between two unrelated `.d.ts`
+                        // declarations whenever any JS file existed in the
+                        // project.
                         if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, idx))
-                            && arenas
+                        {
+                            return arenas
                                 .iter()
                                 .filter(|a| !std::ptr::eq(&***a, self.ctx.arena))
                                 .any(|a| {
                                     a.source_files.first().is_some_and(|sf| {
                                         crate::context::is_js_file_name(&sf.file_name)
                                     })
-                                })
-                        {
-                            return true;
+                                });
                         }
+                        // Fallback only when `declaration_arenas` has no
+                        // entry at all (cross-file decls surfaced via
+                        // `top_level_script_declarations_in_arena` carry the
+                        // remote decl_idx but not its arena).
                         self.ctx.all_arenas.as_ref().is_some_and(|arenas| {
                             arenas.iter().any(|a| {
                                 !std::ptr::eq(a.as_ref(), self.ctx.arena)

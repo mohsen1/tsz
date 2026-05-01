@@ -13,7 +13,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
-const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
+pub(crate) const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
 const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
 pub(crate) const CROSS_FILE_QUERY_SYMBOL_TYPE: u8 = 4;
 
