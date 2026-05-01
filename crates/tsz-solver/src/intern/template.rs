@@ -26,6 +26,12 @@ impl TypeInterner {
             return Some(1);
         }
 
+        // Other intrinsics (NUMBER, STRING, ANY, etc.) never resolve to
+        // Literal/Union/TemplateLiteral, so they cannot be enumerated.
+        if type_id.is_intrinsic() {
+            return None;
+        }
+
         match self.lookup(type_id) {
             // Accept all literal types (String, Number, Boolean, BigInt) - they all stringify
             Some(TypeData::Literal(_)) => Some(1),
