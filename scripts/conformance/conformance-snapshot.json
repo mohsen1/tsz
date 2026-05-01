@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-05-01T01:07:17Z",
-  "git_sha": "6b86b69e2095e20e69fd6516ac6a3f2dc6e0aab0",
+  "timestamp": "2026-05-01T03:30:53Z",
+  "git_sha": "105234ea100faf82ee749393389e6a6e433f9c0f",
   "summary": {
     "total_tests": 12582,
     "passed": 12298,
@@ -1112,10 +1112,6 @@
     {
       "code": "TS2538",
       "count": 1
-    },
-    {
-      "code": "TS7023",
-      "count": 1
     }
   ],
   "false_positive_codes": [
@@ -1480,24 +1476,24 @@
       "count": 1
     },
     {
-      "code": "TS18046",
-      "count": 1
-    },
-    {
       "code": "TS1463",
       "count": 1
     },
     {
       "code": "TS2614",
       "count": 1
+    },
+    {
+      "code": "TS18046",
+      "count": 1
     }
   ],
   "categories": {
     "false_positive": 19,
     "all_missing": 11,
-    "wrong_code": 74,
-    "fingerprint_only": 180,
+    "wrong_code": 73,
+    "fingerprint_only": 181,
     "same_code_count_drift": 0,
-    "close_to_passing": 53
+    "close_to_passing": 52
   }
 }
