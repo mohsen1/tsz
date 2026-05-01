@@ -150,6 +150,12 @@ impl TypeInterner {
             return Some(vec![val]);
         }
 
+        // Fast path: intrinsics that aren't BOOLEAN/BOOLEAN_TRUE/BOOLEAN_FALSE/NULL/UNDEFINED/VOID
+        // resolve to TypeData::Intrinsic and never match Union/TemplateLiteral. Skip the lookup.
+        if type_id.is_intrinsic() {
+            return None;
+        }
+
         match self.lookup(type_id) {
             Some(TypeData::Union(list_id)) => {
                 let members = self.type_list(list_id);
