@@ -32,17 +32,10 @@ impl<'a> CheckerState<'a> {
         // child checker just to recompute the alias body. This fires when an
         // earlier delegation path (parallel worker, cross-file lazy
         // resolution) cached the alias's resolved type.
-        if self.ctx.share_owner_symbol_type_results
-            && let Some(file_idx) = delegate_file_idx
-            && let Some((cached_type, _params)) =
-                self.ctx.definition_store.get_resolved_cross_file_query(
-                    super::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
-                    file_idx as u32,
-                    sym_id.0,
-                    0,
-                    0,
-                )
-            && !matches!(cached_type, TypeId::ERROR | TypeId::UNKNOWN)
+        if let Some(file_idx) = delegate_file_idx
+            && let Some((cached_type, _params)) = self
+                .ctx
+                .cached_cross_file_symbol_type(sym_id, file_idx as u32)
         {
             return Some(cached_type);
         }
