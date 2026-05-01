@@ -639,25 +639,15 @@ impl<'a> CheckerState<'a> {
             }
 
             // Thread-safe fast path: check the global resolved cross-file query cache.
-            if needs_cross_file_delegation && self.ctx.share_owner_symbol_type_results {
-                let target_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
-                if let Some((cached_type, cached_params)) =
-                    self.ctx.definition_store.get_resolved_cross_file_query(
-                        CROSS_FILE_QUERY_SYMBOL_TYPE,
-                        target_file_idx as u32,
-                        sym_id.0,
-                        0,
-                        0,
-                    )
-                    && cached_type != TypeId::UNKNOWN
-                    && cached_type != TypeId::ERROR
-                {
-                    tsz_common::perf_counters::inc(
-                        &perf.delegate_cross_arena_cache_hits_cross_file,
-                    );
-                    self.ctx.symbol_types.insert(sym_id, cached_type);
-                    return Some((cached_type, cached_params));
-                }
+            if needs_cross_file_delegation
+                && let Some((cached_type, cached_params)) = self.ctx.cached_cross_file_symbol_type(
+                    sym_id,
+                    cross_file_idx.unwrap_or(self.ctx.current_file_idx) as u32,
+                )
+            {
+                tsz_common::perf_counters::inc(&perf.delegate_cross_arena_cache_hits_cross_file);
+                self.ctx.symbol_types.insert(sym_id, cached_type);
+                return Some((cached_type, cached_params));
             }
 
             if let Some(result) = self.try_resolve_cross_arena_named_alias_without_child(sym_id) {
