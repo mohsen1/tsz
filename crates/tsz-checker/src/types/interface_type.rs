@@ -838,11 +838,22 @@ impl<'a> CheckerState<'a> {
                             &type_args,
                             current_sym,
                         );
-                        derived_type = self.merge_interface_types(derived_type, base_type);
+                        derived_type = if heritage.types.nodes.len() == 1 {
+                            self.merge_interface_types(derived_type, base_type)
+                        } else {
+                            self.merge_interface_types_preserve_empty_interface(
+                                derived_type,
+                                base_type,
+                            )
+                        };
                         continue;
                     }
 
-                    derived_type = self.merge_interface_types(derived_type, base_type);
+                    derived_type = if heritage.types.nodes.len() == 1 {
+                        self.merge_interface_types(derived_type, base_type)
+                    } else {
+                        self.merge_interface_types_preserve_empty_interface(derived_type, base_type)
+                    };
                 }
             }
         }
@@ -868,6 +879,23 @@ impl<'a> CheckerState<'a> {
     /// # Returns
     /// The merged `TypeId`
     pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
+        self.merge_interface_types_with_options(derived, base, true)
+    }
+
+    fn merge_interface_types_preserve_empty_interface(
+        &mut self,
+        derived: TypeId,
+        base: TypeId,
+    ) -> TypeId {
+        self.merge_interface_types_with_options(derived, base, false)
+    }
+
+    fn merge_interface_types_with_options(
+        &mut self,
+        derived: TypeId,
+        base: TypeId,
+        allow_empty_interface_passthrough: bool,
+    ) -> TypeId {
         if derived == base {
             return derived;
         }
@@ -876,12 +904,18 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.enter_recursion() {
             return derived;
         }
-        let result = self.merge_interface_types_impl(derived, base);
+        let result =
+            self.merge_interface_types_impl(derived, base, allow_empty_interface_passthrough);
         self.ctx.leave_recursion();
         result
     }
 
-    fn merge_interface_types_impl(&mut self, derived: TypeId, base: TypeId) -> TypeId {
+    fn merge_interface_types_impl(
+        &mut self,
+        derived: TypeId,
+        base: TypeId,
+        allow_empty_interface_passthrough: bool,
+    ) -> TypeId {
         use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
         use tracing::trace;
         use tsz_solver::{CallableShape, ObjectShape};
@@ -908,8 +942,8 @@ impl<'a> CheckerState<'a> {
         // comes from the base), use the base type directly so the display name
         // matches tsc. An interface like `A2 extends A1 { }` that adds nothing
         // to the base class should display as the base class name in errors.
-        if self.is_empty_interface_type(derived_resolved) {
-            return base_resolved;
+        if allow_empty_interface_passthrough && self.is_empty_interface_type(derived_resolved) {
+            return base;
         }
 
         let derived_kind = classify_for_interface_merge(self.ctx.types, derived_resolved);

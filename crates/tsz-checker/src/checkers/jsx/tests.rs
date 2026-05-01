@@ -969,7 +969,6 @@ fn jsx_single_child_mismatch_uses_react_element_display_and_child_anchors() {
         2,
         "Expected exactly two JSX child mismatch diagnostics, got: {diagnostics:?}"
     );
-
     let react_element_diag = child_mismatch_diags
         .iter()
         .copied()

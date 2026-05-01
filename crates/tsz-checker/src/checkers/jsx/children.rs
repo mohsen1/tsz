@@ -1040,9 +1040,11 @@ impl<'a> CheckerState<'a> {
                 diag_node,
                 diag_node,
             );
+        let actual_child_display = self.format_type(actual_child_type);
         if !assignable
             && child_is_jsx_element_like
-            && self.format_type(actual_child_type) == "Element"
+            && (actual_child_display == "Element"
+                || actual_child_display.starts_with("ReactElement<"))
         {
             self.rewrite_recent_jsx_element_source_display(diagnostics_before);
         }
@@ -1068,6 +1070,13 @@ impl<'a> CheckerState<'a> {
                     "Type 'ReactElement<any>'",
                     1,
                 );
+            } else if diagnostic.message_text.starts_with("Type 'ReactElement<")
+                && let Some(end) = diagnostic.message_text.find(">'")
+            {
+                let replacement = "Type 'ReactElement<any>'";
+                diagnostic
+                    .message_text
+                    .replace_range(0..end + 2, replacement);
             }
         }
     }
