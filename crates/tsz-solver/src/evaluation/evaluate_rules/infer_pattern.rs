@@ -85,6 +85,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     fn type_contains_infer_inner(&self, type_id: TypeId, visited: &mut FxHashSet<TypeId>) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         if !visited.insert(type_id) {
             return false;
         }
