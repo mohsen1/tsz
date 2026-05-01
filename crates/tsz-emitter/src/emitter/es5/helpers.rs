@@ -30,6 +30,13 @@ impl<'a> Printer<'a> {
     /// Pattern: [1, ...a] -> __spreadArray([1], a, false)
     /// Pattern: [1, ...a, 2] -> __spreadArray([1], a, false).concat([2])
     pub(in crate::emitter) fn emit_array_literal_es5(&mut self, elements: &[NodeIndex]) {
+        if let Some(flattened) = self.flatten_array_literal_spreads(elements, true) {
+            self.write("[");
+            self.emit_comma_separated(&flattened);
+            self.write("]");
+            return;
+        }
+
         if elements.is_empty() {
             self.write("[]");
             return;
@@ -134,6 +141,37 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    fn flatten_array_literal_spreads(
+        &self,
+        elements: &[NodeIndex],
+        require_spread: bool,
+    ) -> Option<Vec<NodeIndex>> {
+        let mut flattened = Vec::new();
+        let mut saw_spread = false;
+        for &element_idx in elements {
+            if element_idx.is_none() {
+                return None;
+            }
+            let element_node = self.arena.get(element_idx)?;
+            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                saw_spread = true;
+                let spread = self.arena.get_spread(element_node)?;
+                let spread_expr = self.arena.get(spread.expression)?;
+                if spread_expr.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                    return None;
+                }
+                let spread_array = self.arena.get_literal_expr(spread_expr)?;
+                let nested =
+                    self.flatten_array_literal_spreads(&spread_array.elements.nodes, false)?;
+                flattened.extend(nested);
+            } else {
+                flattened.push(element_idx);
+            }
+        }
+
+        (!require_spread || saw_spread).then_some(flattened)
     }
 
     pub(in crate::emitter) fn emit_spread_expression(&mut self, node: &Node) {
