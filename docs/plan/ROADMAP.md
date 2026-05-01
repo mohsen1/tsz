@@ -222,14 +222,14 @@ Rules:
 
 ## Current Public Metrics
 
-Source: `README.md` on 2026-04-25.
+Source: `README.md` on 2026-05-01.
 
 | Surface | Current |
 | --- | ---: |
-| Diagnostic conformance | `96.4%` (`12,129 / 12,582`) |
-| JavaScript emit | `91.1%` (`12,325 / 13,526`) |
-| Declaration emit | `76.5%` (`1,276 / 1,668`) |
-| Fourslash / language service | `100.0%` rounded (`6,561 / 6,562`) |
+| Diagnostic conformance | `97.9%` (`12,316 / 12,582`) |
+| JavaScript emit | `91.5%` (`12,378 / 13,526`) |
+| Declaration emit | `78.9%` (`1,318 / 1,670`) |
+| Fourslash / language service | `100.0%` rounded (`6,562 / 6,562`) |
 
 Primary project goal: match `tsc` behavior closely enough to serve as a drop-in checker, emitter, and language service while becoming faster and more scalable on real repositories.
 
