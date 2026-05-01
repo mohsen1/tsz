@@ -156,13 +156,25 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_id = resolved_type.type_id;
                 let printed_type_text = resolved_type.canonical_type_text;
                 let emitted_type_text = has_initializer.then_some(resolved_type.emitted_type_text);
+                let selected_type_text = if has_initializer
+                    && let Some(emitted_text) = emitted_type_text.as_deref()
+                    && self
+                        .find_unexported_import_type_reference_in_printed_type(emitted_text)
+                        .is_some()
+                    && self
+                        .find_unexported_import_type_reference_in_printed_type(&printed_type_text)
+                        .is_none()
+                {
+                    printed_type_text.as_str()
+                } else {
+                    emitted_type_text.as_deref().unwrap_or(&printed_type_text)
+                };
 
                 if has_initializer && printed_type_text.contains("any") {
                     self.maybe_emit_non_portable_function_return_diagnostic(decl_name, initializer);
                 }
 
-                let directly_nameable_type_text = emitted_type_text
-                    .as_deref()
+                let directly_nameable_type_text = Some(selected_type_text)
                     .filter(|text| self.type_text_is_directly_nameable_reference(text))
                     .or_else(|| {
                         let printed_is_safe_fallback = printed_type_text.starts_with("import(\"")
@@ -187,11 +199,9 @@ impl<'a> DeclarationEmitter<'a> {
                             name_node.end - name_node.pos,
                         );
                     }
-                    if self.diagnostics.len() == diagnostics_before
-                        && let Some(type_text) = emitted_type_text.as_deref()
-                    {
+                    if self.diagnostics.len() == diagnostics_before {
                         let _ = self.emit_serialized_type_text_truncation_diagnostic_if_needed(
-                            type_text,
+                            selected_type_text,
                             &file_path,
                             name_node.pos,
                             name_node.end - name_node.pos,
@@ -217,7 +227,11 @@ impl<'a> DeclarationEmitter<'a> {
                         // the type text is not an explicit `import("…")` form.
                         let is_safe_import_type =
                             directly_nameable_type_text.is_some_and(|t| t.starts_with("import(\""));
-                        if !preferred_type_is_directly_nameable || !is_safe_import_type {
+                        let is_safe_reused_surface_type =
+                            directly_nameable_type_text.is_some_and(|t| {
+                                is_safe_import_type || t.contains('<') || t.contains('.')
+                            });
+                        if !preferred_type_is_directly_nameable || !is_safe_reused_surface_type {
                             ran_symbol_check = true;
                             self.check_non_portable_type_references(
                                 type_id,
@@ -266,23 +280,28 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     if self.diagnostics.len() == diagnostics_before {
                         let _ = self.emit_non_serializable_local_alias_diagnostic(
-                            emitted_type_text.as_deref().unwrap_or(&printed_type_text),
+                            selected_type_text,
                             &file_path,
                             name_node.pos,
                             name_node.end - name_node.pos,
                         );
                     }
                     if self.diagnostics.len() == diagnostics_before {
-                        let _ = self.emit_non_serializable_import_type_diagnostic(
-                            emitted_type_text.as_deref().unwrap_or(&printed_type_text),
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
+                        let trimmed_type_text = selected_type_text.trim_start();
+                        if trimmed_type_text.starts_with("import(\"")
+                            && !trimmed_type_text.contains('<')
+                        {
+                            let _ = self.emit_non_serializable_import_type_diagnostic(
+                                trimmed_type_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
                     }
                     if self.diagnostics.len() == diagnostics_before {
                         let _ = self.emit_non_serializable_property_diagnostic(
-                            emitted_type_text.as_deref().unwrap_or(&printed_type_text),
+                            selected_type_text,
                             &file_path,
                             name_node.pos,
                             name_node.end - name_node.pos,
@@ -338,15 +357,10 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
-                if let Some(type_text) = emitted_type_text.as_deref() {
-                    self.write(": ");
-                    self.write(&Self::strip_synthetic_anonymous_object_members(type_text));
-                } else {
-                    self.write(": ");
-                    self.write(&Self::strip_synthetic_anonymous_object_members(
-                        &printed_type_text,
-                    ));
-                }
+                self.write(": ");
+                self.write(&Self::strip_synthetic_anonymous_object_members(
+                    selected_type_text,
+                ));
             } else if let Some(typeof_text) =
                 self.typeof_prefix_for_value_entity(initializer, has_initializer, None)
             {
