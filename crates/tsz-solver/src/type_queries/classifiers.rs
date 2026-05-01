@@ -154,6 +154,10 @@ pub fn classify_for_assignability_eval(
 
 /// Get the `DefId` from a Lazy type.
 pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
+    // Fast path: intrinsics are never Lazy. Skip the virtual lookup.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Lazy(def_id)) => Some(def_id),
         _ => None,
@@ -167,6 +171,10 @@ pub fn get_application_lazy_def_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::def::DefId> {
+    // Fast path: intrinsics are never Application. Skip the virtual lookup.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     if let Some(TypeData::Application(app_id)) = db.lookup(type_id) {
         let app = db.type_application(app_id);
         if let Some(TypeData::Lazy(def_id)) = db.lookup(app.base) {
