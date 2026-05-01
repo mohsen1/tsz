@@ -234,6 +234,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn type_uses_inference_placeholders(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::TypeParameter(info)) => {
                 let name = self.interner.resolve_atom(info.name);
@@ -1475,6 +1478,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// These types need deferred inference in Round 2 after non-contextual
     /// arguments have been processed and type variables have been fixed.
     pub(crate) fn is_contextually_sensitive(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         // Check memoization cache to avoid exponential re-traversal on deeply
         // nested type structures (e.g., Application chains where each level
         // references the previous type multiple times via keyof).
