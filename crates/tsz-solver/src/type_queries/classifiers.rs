@@ -231,6 +231,9 @@ pub fn get_conditional_type_id(
 
 /// Returns true if `type_id` is an `IndexAccess(_, _)` type.
 pub fn is_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
 }
 
@@ -261,6 +264,9 @@ pub fn indexed_access_self_keyof(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
 /// that the solver could not reduce. Useful when deciding whether to keep an
 /// alias display or substitute the resolved form.
 pub fn is_deferred_lazy_or_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::IndexAccess(_, _) | TypeData::Lazy(_))
@@ -348,6 +354,9 @@ impl InterfaceMergeKind {
 /// }
 /// ```
 pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> InterfaceMergeKind {
+    if type_id.is_intrinsic() {
+        return InterfaceMergeKind::Other;
+    }
     let Some(key) = db.lookup(type_id) else {
         return InterfaceMergeKind::Other;
     };
@@ -413,6 +422,9 @@ pub enum AugmentationTargetKind {
 /// This function examines a type and returns information about how to handle it
 /// when applying module augmentations. Used by `apply_module_augmentations`.
 pub fn classify_for_augmentation(db: &dyn TypeDatabase, type_id: TypeId) -> AugmentationTargetKind {
+    if type_id.is_intrinsic() {
+        return AugmentationTargetKind::Other;
+    }
     let Some(key) = db.lookup(type_id) else {
         return AugmentationTargetKind::Other;
     };
@@ -435,6 +447,9 @@ pub fn is_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::NEVER || type_id == TypeId::BOOLEAN_FALSE {
         return true;
     }
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::LiteralValue::Boolean(false))) => true,
         Some(TypeData::Union(list_id)) => {
@@ -451,6 +466,9 @@ pub fn is_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// deferred computation that should not be eagerly displayed by its alias
 /// name (tsc shows the expanded form for these).
 pub fn is_deferred_type_operation(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::IndexAccess(_, _) | TypeData::Conditional(_))
