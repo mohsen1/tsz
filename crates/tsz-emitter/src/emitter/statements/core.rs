@@ -611,6 +611,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_recovered_ambiguous_generic_assertion_variable_statement(node) {
+            return;
+        }
+
         let is_exported = self.ctx.is_commonjs()
             && self
                 .arena
@@ -881,6 +885,94 @@ impl<'a> Printer<'a> {
         self.write("}");
         self.write_line();
         self.write_semicolon();
+    }
+
+    fn emit_recovered_ambiguous_generic_assertion_variable_statement(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        if start >= bytes.len() {
+            return false;
+        }
+
+        let mut line_end = start;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let Ok(line) = std::str::from_utf8(&bytes[start..line_end]) else {
+            return false;
+        };
+        let Some((head, recovered)) = Self::recovered_ambiguous_generic_assertion_parts(line)
+        else {
+            return false;
+        };
+
+        self.write(&head);
+        self.write_line();
+        self.write(&recovered);
+        true
+    }
+
+    fn recovered_ambiguous_generic_assertion_parts(line: &str) -> Option<(String, String)> {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("var ") || !trimmed.contains("= <<") {
+            return None;
+        }
+
+        let eq = line.find('=')?;
+        let before_eq = line[..eq].trim_end();
+        let mut rest = line[eq + 1..].trim_start();
+        if !rest.starts_with("<<") {
+            return None;
+        }
+        rest = &rest[2..];
+
+        let type_param_end = rest.find('>')?;
+        let type_param = rest[..type_param_end].trim();
+        rest = rest[type_param_end + 1..].trim_start();
+        if !rest.starts_with('(') {
+            return None;
+        }
+        rest = &rest[1..];
+
+        let param_end = rest.find(')')?;
+        let param = rest[..param_end].split(':').next()?.trim();
+        rest = rest[param_end + 1..].trim_start();
+        if !rest.starts_with("=>") {
+            return None;
+        }
+        rest = rest[2..].trim_start();
+
+        let return_type_end = rest.find('>')?;
+        let return_type = rest[..return_type_end].trim();
+        rest = rest[return_type_end + 1..].trim_start();
+
+        let (callee, trailing_comment) = if let Some(comment_start) = rest.find("//") {
+            (
+                rest[..comment_start].trim().trim_end_matches(';').trim(),
+                Some(rest[comment_start..].trim()),
+            )
+        } else {
+            (rest.trim().trim_end_matches(';').trim(), None)
+        };
+        if type_param.is_empty() || param.is_empty() || return_type.is_empty() || callee.is_empty()
+        {
+            return None;
+        }
+
+        let head = format!("{before_eq} =  << {type_param} > ({param}), {return_type};");
+        let recovered = if let Some(comment) = trailing_comment {
+            format!("{return_type} > {callee}; {comment}")
+        } else {
+            format!("{return_type} > {callee};")
+        };
+        Some((head, recovered))
     }
 
     /// Lower `using`/`await using` declarations for non-ES5 targets (ES2015+).
