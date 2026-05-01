@@ -226,8 +226,21 @@ impl<'a> CheckerState<'a> {
                 self.missing_required_properties_from_index_signature_source(source, target)
             && missing_props.len() > 1
         {
-            let evaluated_source = self.evaluate_type_for_assignability(source);
-            let src_str = self.format_type_diagnostic(evaluated_source);
+            // For TS2739 missing-properties source display, when the source is
+            // a non-generic type alias whose body is a generic Application
+            // (`type B = A<X1, X2, ...>`), tsc unfolds one level to display
+            // `A<X1, X2, ...>` rather than the wrapper alias name `B`. See
+            // `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
+            // line 91. Falls through to the previous behavior for any other
+            // shape so direct Application sources, primitive aliases, etc.
+            // continue to format as before.
+            let src_str =
+                if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+                    self.format_type_diagnostic(unfolded)
+                } else {
+                    let evaluated_source = self.evaluate_type_for_assignability(source);
+                    self.format_type_diagnostic(evaluated_source)
+                };
             let tgt_str = self.format_type_diagnostic(target);
             let prop_list: Vec<String> = missing_props
                 .iter()

@@ -1018,10 +1018,25 @@ impl<'a> CheckerState<'a> {
                     && let Some(missing_props) =
                         self.missing_required_properties_from_index_signature_source(source, target)
                 {
-                    let src_str = self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
-                    );
+                    // For TS2739, when the source is a non-generic type alias
+                    // whose body is a generic Application (`type B = A<X1, X2, ...>`),
+                    // tsc unfolds one level to display the application form
+                    // `A<X1, X2, ...>` rather than the wrapper alias name `B`.
+                    // See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
+                    // line 91, which expects `Type 'NumberTo<number>'` for
+                    // `type NumberToNumber = NumberTo<number>` source. The unfold
+                    // is scoped to the missing-properties source only — TS2322
+                    // target context and TS2339 receiver keep the alias name.
+                    let src_str = if let Some(unfolded) =
+                        self.ts2739_alias_of_application_source_display(source)
+                    {
+                        self.format_type_diagnostic(unfolded)
+                    } else {
+                        self.format_type_for_diagnostic_role(
+                            source,
+                            DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+                        )
+                    };
                     let tgt_str = self.format_type_for_diagnostic_role(
                         target,
                         DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
@@ -1620,10 +1635,24 @@ impl<'a> CheckerState<'a> {
             if let Some(missing_props) =
                 self.missing_required_properties_from_index_signature_source(source, target)
             {
-                let src_str = self.format_type_for_diagnostic_role(
-                    source,
-                    DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
-                );
+                // For TS2739 (and the TS2741 single-missing variant), when
+                // the source is a non-generic type alias whose body is a
+                // generic Application (`type B = A<X1, X2, ...>`), tsc
+                // unfolds one level to display the application form
+                // `A<X1, X2, ...>` rather than the wrapper alias name `B`.
+                // See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
+                // line 91. Falls through to the normal source role formatter
+                // when no unfold candidate exists.
+                let src_str = if let Some(unfolded) =
+                    self.ts2739_alias_of_application_source_display(source)
+                {
+                    self.format_type_diagnostic(unfolded)
+                } else {
+                    self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+                    )
+                };
                 let tgt_str = self.format_type_for_diagnostic_role(
                     target,
                     DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
