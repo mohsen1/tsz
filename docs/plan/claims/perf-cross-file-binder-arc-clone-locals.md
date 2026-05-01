@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-01
 - **Branch**: `perf/cross-file-binder-arc-clone-locals`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2149
+- **Status**: ready
 - **Workstream**: 5 (large-repo residency)
 
 ## Intent
@@ -31,5 +31,7 @@ plus per-entry inserts. That path is a separate follow-up.
 
 ## Verification
 
-- `cargo nextest run -p tsz-cli`
-- `cargo nextest run -p tsz-binder`
+- `cargo nextest run -p tsz-binder` — 452 passed
+- `cargo nextest run -p tsz-core` — 3038 passed
+- `cargo nextest run -p tsz-cli` — 1050 passed; 18 pre-existing failures
+  also fail on `main` (verified by stashing and re-running on `main`).
