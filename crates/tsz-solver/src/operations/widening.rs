@@ -770,16 +770,9 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
     if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
         return TypeId::BOOLEAN;
     }
-    if type_id.is_intrinsic() {
-        return type_id;
-    }
-
-    // Fast path: all other intrinsics (`number`, `string`, `boolean`, `any`,
-    // …) are neither `Literal(_)` nor `Union(_)`. The match below would
-    // fall through to `_ => type_id`. Skip the lookup and three-arm
-    // dispatch entirely; `is_intrinsic()` is a free `TypeId`-range check.
-    // BOOLEAN_TRUE / BOOLEAN_FALSE are also intrinsic but were widened
-    // above, so they don't reach here.
+    // Other intrinsics resolve to TypeData::Intrinsic; the match below would
+    // fall through to `_ => type_id`. `is_intrinsic()` is a free TypeId-range
+    // check — skip the dyn lookup.
     if type_id.is_intrinsic() {
         return type_id;
     }
