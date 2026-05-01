@@ -380,13 +380,13 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             return Some(ty);
         }
 
-        // Fallback: check the shared cross-file resolved symbol types cache.
+        // Fallback: check the canonical cross-file query cache (SYMBOL_TYPE bucket).
         // When a symbol from another file (e.g., an interface referenced in a
         // property type) was resolved by that file's checker, the result is
-        // written to the DefinitionStore's resolved_symbol_types cache. This
-        // enables cross-module Lazy type resolution for types that aren't
-        // directly imported (e.g., `Foo.server?: IServer` where `IServer` is
-        // defined in the same file as `Foo` but not imported by the consumer).
+        // written here. This enables cross-module Lazy type resolution for types
+        // that aren't directly imported (e.g., `Foo.server?: IServer` where
+        // `IServer` is defined in the same file as `Foo` but not imported by
+        // the consumer).
         //
         // Restrict this fallback to genuine cross-file scenarios (symbol's
         // definition file differs from the current file) to avoid interfering
@@ -396,41 +396,23 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             && let Some(file_idx) = definition_file_idx
             && file_idx != self.current_file_idx
             && self.share_owner_symbol_type_results
-        {
-            // Prefer the canonical cross-file query cache (SYMBOL_TYPE bucket).
-            if let Some((resolved, _params)) = self.definition_store.get_resolved_cross_file_query(
+            && let Some((resolved, _params)) = self.definition_store.get_resolved_cross_file_query(
                 crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
                 file_idx as u32,
                 sym_id.0,
                 0,
                 0,
-            ) && resolved != tsz_solver::TypeId::ERROR
-            {
-                tracing::trace!(
-                    def_id = def_id.0,
-                    sym_id = sym_id.0,
-                    file_idx = file_idx,
-                    type_id = resolved.0,
-                    "resolve_lazy: found in shared SYMBOL_TYPE bucket"
-                );
-                return Some(resolved);
-            }
-            // Backward-compat fallback for callers that haven't migrated to the
-            // new bucket yet.
-            if let Some(resolved) = self
-                .definition_store
-                .get_resolved_symbol_type(sym_id.0, file_idx as u32)
-                && resolved != tsz_solver::TypeId::ERROR
-            {
-                tracing::trace!(
-                    def_id = def_id.0,
-                    sym_id = sym_id.0,
-                    file_idx = file_idx,
-                    type_id = resolved.0,
-                    "resolve_lazy: found in legacy resolved_symbol_types cache"
-                );
-                return Some(resolved);
-            }
+            )
+            && resolved != tsz_solver::TypeId::ERROR
+        {
+            tracing::trace!(
+                def_id = def_id.0,
+                sym_id = sym_id.0,
+                file_idx = file_idx,
+                type_id = resolved.0,
+                "resolve_lazy: found in SYMBOL_TYPE bucket"
+            );
+            return Some(resolved);
         }
 
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");

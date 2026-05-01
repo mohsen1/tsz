@@ -529,13 +529,11 @@ pub struct DefinitionStore {
     /// or same-named types in different files), so the value is a `Vec<DefId>`.
     name_to_defs: DashMap<Atom, Vec<DefId>>,
 
-    /// Thread-safe cache of resolved symbol types for cross-file delegation.
-    /// Key: `(SymbolId.0, file_idx)` -- Value: resolved `TypeId`.
-    /// Prevents duplicate cross-file delegation in parallel checking.
-    resolved_symbol_types: DashMap<(u32, u32), TypeId>,
-
-    /// Thread-safe cache for cross-file checker queries that are not the plain
-    /// `type_of_symbol` path, keyed by `(kind, file_idx, primary, secondary, args_hash)`.
+    /// Thread-safe cache for cross-file checker queries (interface lowering,
+    /// class instance type, interface member simple types, symbol type),
+    /// keyed by `(kind, file_idx, primary, secondary, args_hash)`. The
+    /// `SYMBOL_TYPE` bucket replaces the previous standalone
+    /// `resolved_symbol_types` map.
     resolved_cross_file_queries: DashMap<CrossFileQueryCacheKey, CrossFileQueryCacheValue>,
 
     /// Per-file mutual exclusion locks for cross-file type delegation.
@@ -717,7 +715,6 @@ impl DefinitionStore {
             file_to_defs: DashMap::with_capacity(file_capacity),
             class_to_constructor: DashMap::with_capacity(id_capacity / 2),
             name_to_defs: DashMap::with_capacity(id_capacity),
-            resolved_symbol_types: DashMap::new(),
             resolved_cross_file_queries: DashMap::new(),
             file_delegation_locks: DashMap::new(),
             fully_populated: std::sync::atomic::AtomicBool::new(false),
@@ -937,20 +934,6 @@ impl DefinitionStore {
         self.file_delegation_locks
             .get(&file_idx)
             .map(|r| Arc::clone(r.value()))
-    }
-
-    /// Look up a previously resolved cross-file symbol type.
-    pub fn get_resolved_symbol_type(&self, symbol_id: u32, file_idx: u32) -> Option<TypeId> {
-        self.resolved_symbol_types
-            .get(&(symbol_id, file_idx))
-            .map(|r| *r)
-    }
-
-    /// Cache a resolved cross-file symbol type (first-writer-wins).
-    pub fn cache_resolved_symbol_type(&self, symbol_id: u32, file_idx: u32, type_id: TypeId) {
-        self.resolved_symbol_types
-            .entry((symbol_id, file_idx))
-            .or_insert(type_id);
     }
 
     /// Look up a previously resolved cross-file query result.

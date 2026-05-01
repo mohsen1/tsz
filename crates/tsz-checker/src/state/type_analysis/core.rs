@@ -39,11 +39,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        self.ctx.definition_store.cache_resolved_symbol_type(
-            sym_id.0,
-            symbol.decl_file_idx,
-            type_id,
-        );
         self.ctx.definition_store.cache_resolved_cross_file_query(
             super::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
             symbol.decl_file_idx,

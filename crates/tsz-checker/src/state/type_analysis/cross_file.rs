@@ -349,11 +349,6 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.symbol_types.insert(sym_id, result);
         if self.ctx.share_owner_symbol_type_results {
-            self.ctx.definition_store.cache_resolved_symbol_type(
-                sym_id.0,
-                alias_cache_file_idx as u32,
-                result,
-            );
             self.ctx.definition_store.cache_resolved_cross_file_query(
                 CROSS_FILE_QUERY_SYMBOL_TYPE,
                 alias_cache_file_idx as u32,
@@ -668,20 +663,6 @@ impl<'a> CheckerState<'a> {
                     self.ctx.symbol_types.insert(sym_id, cached_type);
                     return Some((cached_type, cached_params));
                 }
-
-                // Backward-compatible fallback for pre-migration cached symbol types.
-                // Kept until all call sites exclusively use the new cross-file query cache.
-                if let Some(cached_type) = self
-                    .ctx
-                    .definition_store
-                    .get_resolved_symbol_type(sym_id.0, target_file_idx as u32)
-                {
-                    tsz_common::perf_counters::inc(
-                        &perf.delegate_cross_arena_cache_hits_cross_file,
-                    );
-                    self.ctx.symbol_types.insert(sym_id, cached_type);
-                    return Some((cached_type, Vec::new()));
-                }
             }
 
             if let Some(result) = self.try_resolve_cross_arena_named_alias_without_child(sym_id) {
@@ -740,11 +721,6 @@ impl<'a> CheckerState<'a> {
                     && self.ctx.share_owner_symbol_type_results
                     && let Some(file_idx) = delegate_file_idx
                 {
-                    self.ctx.definition_store.cache_resolved_symbol_type(
-                        sym_id.0,
-                        file_idx as u32,
-                        direct_type,
-                    );
                     self.ctx.definition_store.cache_resolved_cross_file_query(
                         CROSS_FILE_QUERY_SYMBOL_TYPE,
                         file_idx as u32,
@@ -1026,17 +1002,14 @@ impl<'a> CheckerState<'a> {
                 self.ctx.lib_delegation_cache.insert(sym_id, result);
             }
 
-            // Write through to the global resolved_symbol_types cache for parallel threads.
+            // Write through to the canonical cross-file symbol-type cache so
+            // other parallel checkers can reuse this result without rebuilding
+            // a child checker.
             if needs_cross_file_delegation
                 && self.ctx.share_owner_symbol_type_results
                 && result != TypeId::ERROR
             {
                 let target_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
-                self.ctx.definition_store.cache_resolved_symbol_type(
-                    sym_id.0,
-                    target_file_idx as u32,
-                    result,
-                );
                 self.ctx.definition_store.cache_resolved_cross_file_query(
                     CROSS_FILE_QUERY_SYMBOL_TYPE,
                     target_file_idx as u32,
