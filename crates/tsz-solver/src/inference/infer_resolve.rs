@@ -914,6 +914,13 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn type_implies_literals(&self, type_id: TypeId) -> bool {
+        // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean).
+        if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+            return true;
+        }
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Literal(_)) => true,
             Some(TypeData::Union(list_id)) => {
@@ -1159,6 +1166,10 @@ impl<'a> InferenceContext<'a> {
         if depth > MAX_TYPE_RECURSION_DEPTH {
             return false;
         }
+        // Intrinsics are leaf types that never contain inference variables.
+        if ty.is_intrinsic() {
+            return false;
+        }
         // Prevent infinite loops on cyclic types
         if !visited.insert(ty) {
             return false;
@@ -1289,6 +1300,10 @@ impl<'a> InferenceContext<'a> {
         polarity: bool, // true = covariant, false = contravariant
         state: &mut VarianceState<'_>,
     ) {
+        // Intrinsics never reference any type parameter — skip the dyn lookup.
+        if ty.is_intrinsic() {
+            return;
+        }
         match self.interner.lookup(ty) {
             Some(TypeData::TypeParameter(info)) if info.name == state.target_param => {
                 if polarity {
