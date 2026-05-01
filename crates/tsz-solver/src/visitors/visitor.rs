@@ -571,6 +571,15 @@ where
         }
         f(current);
 
+        // Fast path: intrinsic types have no children. `is_intrinsic()`
+        // is a free `TypeId`-range check, so skip the `TypeData` lookup
+        // and the `for_each_child` match dispatch when we already know
+        // there is nothing to push onto the stack. Mirrors #2001's
+        // pattern for `ShapeExtractor::extract`.
+        if current.is_intrinsic() {
+            continue;
+        }
+
         let Some(key) = types.lookup(current) else {
             continue;
         };
