@@ -36,6 +36,9 @@ pub fn classify_for_excess_properties(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> ExcessPropertiesKind {
+    if type_id.is_intrinsic() {
+        return ExcessPropertiesKind::NotObject;
+    }
     let Some(key) = db.lookup(type_id) else {
         return ExcessPropertiesKind::NotObject;
     };
@@ -75,6 +78,9 @@ pub fn classify_for_constructor_access(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> ConstructorAccessKind {
+    if type_id.is_intrinsic() {
+        return ConstructorAccessKind::Other;
+    }
     let Some(key) = db.lookup(type_id) else {
         return ConstructorAccessKind::Other;
     };
@@ -106,6 +112,9 @@ pub fn classify_for_assignability_eval(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> AssignabilityEvalKind {
+    if type_id.is_intrinsic() {
+        return AssignabilityEvalKind::Resolved;
+    }
     let Some(key) = db.lookup(type_id) else {
         return AssignabilityEvalKind::Resolved;
     };
