@@ -470,9 +470,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             tracing::trace_span!("evaluate_type", ty = type_id.0, depth = self.guard.depth(),)
                 .entered();
 
-        if let Some(&cached) = self.cache.get(&type_id) {
-            return cached;
-        }
+        // The entry-point `evaluate` already consulted `self.cache` and only
+        // dispatched here on a miss. `evaluate_guarded_inner` is reached
+        // exclusively through `evaluate_guarded`, which is itself only
+        // called from `evaluate` (lines 438 and 443) — both call sites sit
+        // *after* the cache check at line 411. `&mut self` is held
+        // exclusively across the call, so the cache cannot have been
+        // mutated in the interim and `stacker::maybe_grow` runs the
+        // closure synchronously on a grown stack frame. A second
+        // `cache.get` here would always miss; skip it.
 
         // Unified enter: checks iterations, depth, cycle detection, and visiting set size
         match self.guard.enter(type_id) {
