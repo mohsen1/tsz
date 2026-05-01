@@ -1602,6 +1602,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// signatures, and no index signatures. For intersections, ALL members must be
     /// weak types. Non-object types (primitives, etc.) are never weak.
     fn is_weak_type(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         // Intersections are weak only if ALL members are weak
         if let Some(TypeData::Intersection(list_id)) = self.interner.lookup(type_id) {
             let members = self.interner.type_list(list_id);
@@ -1920,6 +1923,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Check if a type is a string enum member.
     fn is_string_enum_member(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
             matches!(
                 self.interner.lookup(member_type),
@@ -1932,6 +1938,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Check if a type is a numeric enum member.
     fn is_numeric_enum_member(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
             matches!(
                 self.interner.lookup(member_type),
