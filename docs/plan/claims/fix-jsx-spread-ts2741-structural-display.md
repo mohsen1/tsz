@@ -2,7 +2,7 @@
 
 - Date: 2026-04-30
 - Branch: claude/exciting-keller-L4bfQ
-- Status: ready
+- Status: shipped (PR #1860 — `fix(checker): JSX spread TS2741 shows structural type form, not alias name`, merged 2026-04-30)
 
 ## Problem
 
