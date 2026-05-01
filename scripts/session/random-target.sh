@@ -123,7 +123,8 @@ ACTUAL="$(echo "$PICK_JSON"   | python3 -c 'import json,sys; print(",".join(json
 MISSING="$(echo "$PICK_JSON"  | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["missing"])  or "-")')"
 EXTRA="$(echo "$PICK_JSON"    | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["extra"])    or "-")')"
 POOL="$(echo "$PICK_JSON"     | python3 -c 'import json,sys; print(json.load(sys.stdin)["pool"])')"
-NAME="$(basename "$PATH_VAL" .ts)"
+NAME="$(basename "$PATH_VAL" .tsx)"
+NAME="$(basename "$NAME" .ts)"
 
 echo "==================== random pick ===================="
 echo "path:     $PATH_VAL"
