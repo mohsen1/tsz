@@ -1,6 +1,6 @@
 ---
 branch: fix/ts2315-module-augmentation-generic-params
-status: ready
+status: shipped (PR #1911 — `fix(checker): suppress TS2315 for module-augmentation generic type params`)
 scope: checker (TS2315 / module augmentation)
 
 ## Summary
