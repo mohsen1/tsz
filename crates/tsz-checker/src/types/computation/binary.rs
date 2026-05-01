@@ -1406,6 +1406,30 @@ impl<'a> CheckerState<'a> {
                             right_narrow,
                         )
                         && n.abs() >= 32.0
+                        // tsc only surfaces TS6807 ("This operation can be simplified")
+                        // for shifts that participate in compile-time constant
+                        // evaluation, which in practice means enum member
+                        // initializers. Plain expression statements like
+                        // `1 << 32;` do not get the suggestion. Walk to the
+                        // nearest enum-member ancestor; only emit when one is
+                        // found.
+                        && {
+                            let mut ancestor = self.ctx.arena.get_extended(node_idx).map(|e| e.parent);
+                            let mut in_enum_member = false;
+                            while let Some(idx) = ancestor {
+                                if idx.is_none() {
+                                    break;
+                                }
+                                if let Some(node) = self.ctx.arena.get(idx)
+                                    && node.kind == tsz_parser::parser::syntax_kind_ext::ENUM_MEMBER
+                                {
+                                    in_enum_member = true;
+                                    break;
+                                }
+                                ancestor = self.ctx.arena.get_extended(idx).map(|e| e.parent);
+                            }
+                            in_enum_member
+                        }
                     {
                         let left_text = if let Some(left_node) = self.ctx.arena.get(left_idx) {
                             if let Some(src) = self.ctx.arena.source_files.first() {
