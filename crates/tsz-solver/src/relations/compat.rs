@@ -445,6 +445,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }) {
             return true;
         }
+        // Intrinsic OBJECT was already caught by the boxed-type checks above;
+        // other intrinsics never resolve to Object/ObjectWithIndex shapes.
+        if target.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(target) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
