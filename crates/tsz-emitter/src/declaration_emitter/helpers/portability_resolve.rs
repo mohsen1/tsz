@@ -1248,6 +1248,16 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(result);
         }
 
+        if self.type_has_public_surface_reference_with_portable_arguments(
+            type_id,
+            visited_types,
+            visited_symbols,
+            visited_declaration_symbols,
+            visited_nodes,
+        ) {
+            return None;
+        }
+
         if let Some(alias_type_id) = interner.get_display_alias(type_id)
             && alias_type_id != type_id
         {
@@ -1281,6 +1291,16 @@ impl<'a> DeclarationEmitter<'a> {
                 ) {
                     return Some(result);
                 }
+                if self.type_application_has_public_surface_reference_with_portable_arguments(
+                    app.base,
+                    &app.args,
+                    visited_types,
+                    visited_symbols,
+                    visited_declaration_symbols,
+                    visited_nodes,
+                ) {
+                    return None;
+                }
             }
         }
 
@@ -1299,6 +1319,16 @@ impl<'a> DeclarationEmitter<'a> {
                 visited_nodes,
             ) {
                 return Some(result);
+            }
+            if self.type_application_has_public_surface_reference_with_portable_arguments(
+                app.base,
+                &app.args,
+                visited_types,
+                visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
+            ) {
+                return None;
             }
         }
 
@@ -1428,6 +1458,87 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn type_has_public_surface_reference_with_portable_arguments(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
+        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+    ) -> bool {
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+        if let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) {
+            let app = interner.type_application(app_id);
+            return self.type_application_has_public_surface_reference_with_portable_arguments(
+                app.base,
+                &app.args,
+                visited_types,
+                visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
+            );
+        }
+        false
+    }
+
+    fn type_application_has_public_surface_reference_with_portable_arguments(
+        &self,
+        base: tsz_solver::types::TypeId,
+        args: &[tsz_solver::types::TypeId],
+        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
+        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+    ) -> bool {
+        if !self.type_id_is_public_package_export(base) {
+            return false;
+        }
+        args.iter().copied().all(|arg| {
+            self.find_non_portable_type_reference_inner(
+                arg,
+                visited_types,
+                visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
+            )
+            .is_none()
+        })
+    }
+
+    fn type_id_is_public_package_export(&self, type_id: tsz_solver::types::TypeId) -> bool {
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+        let Some(cache) = self.type_cache.as_ref() else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(current_file_path) = self.current_file_path.as_deref() else {
+            return false;
+        };
+        let Some(def_id) = tsz_solver::lazy_def_id(interner, type_id) else {
+            return false;
+        };
+        let Some(&sym_id) = cache.def_to_symbol.get(&def_id) else {
+            return false;
+        };
+        let resolved = self.resolve_portability_symbol(sym_id, binder);
+        let Some(symbol) = binder.symbols.get(resolved) else {
+            return false;
+        };
+        self.package_root_export_reference_path(
+            resolved,
+            symbol.escaped_name.as_str(),
+            binder,
+            current_file_path,
+        )
+        .is_some()
     }
 
     /// Check if a symbol comes from a non-portable module path.
