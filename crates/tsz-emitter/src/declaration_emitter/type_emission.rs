@@ -5,7 +5,7 @@
 //! and entity names (qualified names, property access expressions).
 
 use super::DeclarationEmitter;
-use super::helpers::escape_string_for_double_quote;
+use super::helpers::{escape_string_for_double_quote, escape_string_for_single_quote};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -963,9 +963,15 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn emit_string_literal_type(&mut self, node: &tsz_parser::parser::node::Node) {
         if let Some(lit) = self.arena.get_literal(node) {
-            self.write("\"");
-            self.write(&escape_string_for_double_quote(&lit.text));
-            self.write("\"");
+            if lit.text.contains('"') && !lit.text.contains('\'') {
+                self.write("'");
+                self.write(&escape_string_for_single_quote(&lit.text));
+                self.write("'");
+            } else {
+                self.write("\"");
+                self.write(&escape_string_for_double_quote(&lit.text));
+                self.write("\"");
+            }
         }
     }
 
