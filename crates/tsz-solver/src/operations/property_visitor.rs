@@ -632,12 +632,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 self.interner(),
                 self.interner().union_from_slice(&non_unknown_members),
             );
-            match self.interner().lookup(pruned_union) {
-                Some(TypeData::Union(pruned_members)) => {
-                    non_unknown_members = self.interner().type_list(pruned_members).to_vec();
-                }
-                _ => {
-                    non_unknown_members = vec![pruned_union];
+            // Intrinsics are never Union — skip the dyn lookup.
+            if pruned_union.is_intrinsic() {
+                non_unknown_members = vec![pruned_union];
+            } else {
+                match self.interner().lookup(pruned_union) {
+                    Some(TypeData::Union(pruned_members)) => {
+                        non_unknown_members = self.interner().type_list(pruned_members).to_vec();
+                    }
+                    _ => {
+                        non_unknown_members = vec![pruned_union];
+                    }
                 }
             }
         }

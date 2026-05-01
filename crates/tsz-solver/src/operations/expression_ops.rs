@@ -89,6 +89,9 @@ pub fn normalize_object_union_members_for_write_target(
     let mut saw_fresh_member = false;
 
     for &member in members {
+        if member.is_intrinsic() {
+            return None;
+        }
         let shape = fresh_literal_shape(interner, member).or_else(|| {
             let shape_id = match interner.lookup(member)? {
                 TypeData::Object(id) | TypeData::ObjectWithIndex(id) => id,
@@ -180,6 +183,9 @@ fn fresh_literal_shape(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::ObjectShape> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     let shape_id = match interner.lookup(type_id)? {
         TypeData::Object(id) | TypeData::ObjectWithIndex(id) => id,
         _ => return None,
