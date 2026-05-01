@@ -22,7 +22,7 @@ extra_scripts: '<script src="/home.js" defer></script>'
 
 ## Progress
 
-We run TypeScript's own test suite to ensure tsz can serve as a drop-in replacement - comparing diagnostics, JavaScript emit, declaration emit, and language service behavior against `tsc`.
+tsz runs TypeScript's own test suite to prove it can serve as a drop-in replacement - comparing diagnostics, JavaScript emit, declaration emit, and language service behavior against `tsc`.
 
 Currently targeting **TypeScript `{{ metrics.ts_version }}`**
 

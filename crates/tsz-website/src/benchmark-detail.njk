@@ -1,6 +1,7 @@
 ---
 layout: layouts/base.njk
 page_class: benchmark-detail
+extra_scripts: <script src="/benchmark-source-viewer.js" defer></script>
 pagination:
   data: benchmark_pages
   size: 1
@@ -29,7 +30,13 @@ eleventyComputed:
   </div>
   <div class="bench-detail-result">
     {% if benchmark.comparison.available %}
-      <strong>{{ benchmark.speedup_label or "equal" }}</strong>
+      <strong>
+        {% if benchmark.speedup_label == "equal" %}
+          equal
+        {% else %}
+          {{ benchmark.speedup_label | replace("tsz ", "tsz is ") | replace("tsgo ", "tsgo is ") }}
+        {% endif %}
+      </strong>
       <span>
         {% if benchmark.comparison.winner == "tsz" %}
           tsz leads this benchmark.
@@ -107,9 +114,14 @@ eleventyComputed:
   </dl>
 </section>
 
-{% if benchmark.kind != "project" %}
-  <section>
-    <h2>Snippet</h2>
-    <pre class="bench-snippet"><code>{{ benchmark.snippet }}</code></pre>
+{% if benchmark.source_files.length %}
+  <section id="benchmark-files">
+    <h2>Files</h2>
+    <div class="benchmark-source-viewer" data-files="{{ benchmark.source_files_json | safe }}">
+      <div class="benchmark-source-tabs" role="tablist" aria-label="Benchmark files"></div>
+      <div class="benchmark-source-editor" aria-label="Benchmark source viewer">
+        <pre class="bench-snippet"><code>{{ benchmark.snippet }}</code></pre>
+      </div>
+    </div>
   </section>
 {% endif %}
