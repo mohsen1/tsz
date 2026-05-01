@@ -1880,14 +1880,25 @@ impl<'a> CheckerState<'a> {
             // to match tsc and to avoid replacing a binding-anchored message
             // with a leaf message that hides the structural context
             // (typeSatisfaction_vacuousIntersectionOfContextualTypes).
-            let outer_is_structural =
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)
+            // Evaluate before querying the shape: a Lazy/Application type
+            // (e.g. a generic instantiation `Foo<Bar>`) returns `None` from
+            // `object_shape_for_type` even when its evaluated form is an
+            // object, which would let the nested LiteralTypeMismatch leak
+            // through and replace the binding-anchored message. Mirror the
+            // pattern used elsewhere in this codebase
+            // (`target_preserves_literal_surface`,
+            // `target_has_literal_typed_properties`).
+            let outer_is_structural = {
+                let eval_source = self.evaluate_type_for_assignability(source);
+                let eval_target = self.evaluate_type_for_assignability(target);
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, eval_source)
                     .is_some()
                     || crate::query_boundaries::common::object_shape_for_type(
                         self.ctx.types,
-                        target,
+                        eval_target,
                     )
-                    .is_some();
+                    .is_some()
+            };
             if !outer_is_structural
                 && let Some(tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }) =
                     nested_reason

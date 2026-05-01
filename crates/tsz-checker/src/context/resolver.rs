@@ -392,10 +392,28 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // definition file differs from the current file) to avoid interfering
         // with same-file name resolution, where the formatter relies on the
         // DefId-based display of types declared in the current scope.
+        // Note: this site intentionally does NOT use the
+        // `cached_cross_file_symbol_type` helper. The helper filters out
+        // both `TypeId::ERROR` and `TypeId::UNKNOWN`, but `resolve_lazy`
+        // historically returned `Some(TypeId::UNKNOWN)` when the cache
+        // contained that value (only `ERROR` was rejected). Forwarding
+        // `UNKNOWN` lets callers distinguish "lazy reference resolved but
+        // the symbol's type is genuinely unknown" from "lazy reference not
+        // resolved" (`None`), which the helper collapses. The other three
+        // call sites of the helper (exports_resolution, computed helpers)
+        // do want `UNKNOWN` filtered — keep the inlined block here.
         if let Some(sym_id) = sym_id
             && let Some(file_idx) = definition_file_idx
             && file_idx != self.current_file_idx
-            && let Some((resolved, _)) = self.cached_cross_file_symbol_type(sym_id, file_idx as u32)
+            && self.share_owner_symbol_type_results
+            && let Some((resolved, _)) = self.definition_store.get_resolved_cross_file_query(
+                crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
+                file_idx as u32,
+                sym_id.0,
+                0,
+                0,
+            )
+            && resolved != tsz_solver::TypeId::ERROR
         {
             tracing::trace!(
                 def_id = def_id.0,

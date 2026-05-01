@@ -351,11 +351,24 @@ pub(crate) fn parse_semver(value: &str) -> Option<SemVer> {
     })
 }
 
-/// Apply wildcard substitution to a target path
-pub(crate) fn apply_wildcard_substitution(target: &str, wildcard: &str) -> String {
+/// Apply wildcard substitution to a target path.
+///
+/// `is_directory_match` distinguishes the two pattern-key shapes:
+/// - `false` for `*`-pattern keys (e.g. `"./*"` matched against `"./foo"`):
+///   only replace `*` in the target. If the target has no `*`, leave it
+///   unchanged — Node.js does NOT append the wildcard to a `/`-ending
+///   target when the key was a `*` pattern.
+/// - `true` for `/`-suffix directory keys (e.g. `"./lib/"`): also append
+///   the wildcard to a target ending in `/`, matching Node's directory
+///   prefix resolution.
+pub(crate) fn apply_wildcard_substitution(
+    target: &str,
+    wildcard: &str,
+    is_directory_match: bool,
+) -> String {
     if target.contains('*') {
         target.replace('*', wildcard)
-    } else if target.ends_with('/') {
+    } else if is_directory_match && target.ends_with('/') {
         format!("{target}{wildcard}")
     } else {
         target.to_string()
@@ -365,15 +378,18 @@ pub(crate) fn apply_wildcard_substitution(target: &str, wildcard: &str) -> Strin
 /// Apply wildcard substitution recursively to all String variants in a `PackageExports` value.
 /// Used for pattern exports where `*` in the target must be replaced with the matched
 /// portion before path resolution (per Node.js `PACKAGE_TARGET_RESOLVE` spec).
+///
+/// See [`apply_wildcard_substitution`] for the `is_directory_match` semantics.
 pub(crate) fn substitute_wildcard_in_exports(
     value: &PackageExports,
     wildcard: &str,
+    is_directory_match: bool,
 ) -> PackageExports {
     match value {
         PackageExports::String(s) => {
             if s.contains('*') {
                 PackageExports::String(s.replace('*', wildcard))
-            } else if s.ends_with('/') {
+            } else if is_directory_match && s.ends_with('/') {
                 PackageExports::String(format!("{s}{wildcard}"))
             } else {
                 PackageExports::String(s.clone())
@@ -382,18 +398,28 @@ pub(crate) fn substitute_wildcard_in_exports(
         PackageExports::Conditional(entries) => PackageExports::Conditional(
             entries
                 .iter()
-                .map(|(k, v)| (k.clone(), substitute_wildcard_in_exports(v, wildcard)))
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        substitute_wildcard_in_exports(v, wildcard, is_directory_match),
+                    )
+                })
                 .collect(),
         ),
         PackageExports::Map(map) => PackageExports::Map(
             map.iter()
-                .map(|(k, v)| (k.clone(), substitute_wildcard_in_exports(v, wildcard)))
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        substitute_wildcard_in_exports(v, wildcard, is_directory_match),
+                    )
+                })
                 .collect(),
         ),
         PackageExports::Array(elements) => PackageExports::Array(
             elements
                 .iter()
-                .map(|v| substitute_wildcard_in_exports(v, wildcard))
+                .map(|v| substitute_wildcard_in_exports(v, wildcard, is_directory_match))
                 .collect(),
         ),
         PackageExports::Null => PackageExports::Null,

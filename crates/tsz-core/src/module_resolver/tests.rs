@@ -267,12 +267,14 @@ fn test_match_types_versions_pattern() {
 
 #[test]
 fn test_apply_wildcard_substitution() {
+    // `*`-pattern key (is_directory_match = false): replace `*` in target.
     assert_eq!(
-        apply_wildcard_substitution("./lib/*.js", "utils"),
+        apply_wildcard_substitution("./lib/*.js", "utils", false),
         "./lib/utils.js"
     );
+    // No `*` and not a directory match: target unchanged.
     assert_eq!(
-        apply_wildcard_substitution("./dist/index.js", "ignored"),
+        apply_wildcard_substitution("./dist/index.js", "ignored", false),
         "./dist/index.js"
     );
 }
@@ -280,7 +282,7 @@ fn test_apply_wildcard_substitution() {
 #[test]
 fn test_substitute_wildcard_in_exports_string() {
     let value = PackageExports::String("./*.cjs".to_string());
-    let result = substitute_wildcard_in_exports(&value, "index");
+    let result = substitute_wildcard_in_exports(&value, "index", false);
     assert!(matches!(result, PackageExports::String(s) if s == "./index.cjs"));
 }
 
@@ -296,7 +298,7 @@ fn test_substitute_wildcard_in_exports_conditional() {
             PackageExports::String("./*.cjs".to_string()),
         ),
     ]);
-    let result = substitute_wildcard_in_exports(&value, "foo");
+    let result = substitute_wildcard_in_exports(&value, "foo", false);
     match result {
         PackageExports::Conditional(entries) => {
             assert_eq!(entries.len(), 2);
@@ -310,32 +312,45 @@ fn test_substitute_wildcard_in_exports_conditional() {
 #[test]
 fn test_substitute_wildcard_in_exports_no_wildcard() {
     let value = PackageExports::String("./index.js".to_string());
-    let result = substitute_wildcard_in_exports(&value, "anything");
+    let result = substitute_wildcard_in_exports(&value, "anything", false);
     assert!(matches!(result, PackageExports::String(s) if s == "./index.js"));
 }
 
 #[test]
 fn test_substitute_wildcard_in_exports_directory_target() {
-    // "./": "./" with subpath "./index.js" → target should be "./index.js"
+    // Directory match: "./" target with "./index.js" wildcard → "./index.js".
     let value = PackageExports::String("./".to_string());
-    let result = substitute_wildcard_in_exports(&value, "index.js");
+    let result = substitute_wildcard_in_exports(&value, "index.js", true);
     assert!(matches!(result, PackageExports::String(s) if s == "./index.js"));
 }
 
 #[test]
 fn test_substitute_wildcard_in_exports_directory_empty_wildcard() {
-    // "./": "./" with subpath "./" → target should be "./" (empty wildcard)
+    // Directory match with empty wildcard preserves the trailing slash.
     let value = PackageExports::String("./".to_string());
-    let result = substitute_wildcard_in_exports(&value, "");
+    let result = substitute_wildcard_in_exports(&value, "", true);
     assert!(matches!(result, PackageExports::String(s) if s == "./"));
 }
 
 #[test]
 fn test_apply_wildcard_substitution_directory_target() {
-    // Directory target appends wildcard
+    // Directory match: target ending in `/` gets the wildcard appended.
     assert_eq!(
-        apply_wildcard_substitution("./lib/", "utils"),
+        apply_wildcard_substitution("./lib/", "utils", true),
         "./lib/utils"
+    );
+}
+
+#[test]
+fn test_apply_wildcard_substitution_star_pattern_with_dir_target() {
+    // `*`-pattern key (is_directory_match = false) mapping to a `/`-ending
+    // target without `*`: target must remain unchanged. Without this, a
+    // package like `{ \"./*\": { \"types\": \"./types/\" } }` would resolve
+    // `pkg/foo` to `./types/foo` instead of `./types/`, diverging from
+    // Node.js (Devin review on #1915).
+    assert_eq!(
+        apply_wildcard_substitution("./types/", "foo", false),
+        "./types/"
     );
 }
 
