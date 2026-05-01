@@ -1,4 +1,4 @@
-Status: claim
+Status: ready
 Branch: perf/arc-share-top-level-flow
 Owner: Codex
 Created: 2026-05-01T17:19:15Z
@@ -18,4 +18,5 @@ Workstream 5 large-repo residency: Arc-share `BinderState.top_level_flow` so
 
 - `cargo fmt --check`
 - `cargo check -p tsz-binder`
-- targeted binder tests around incremental binding if available
+- `cargo test -p tsz-binder rebind`
+- `scripts/bench/perf-hotspots.sh --quick`
