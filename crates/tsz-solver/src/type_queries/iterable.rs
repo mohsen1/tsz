@@ -46,6 +46,9 @@ pub enum FullIterableTypeKind {
 ///
 /// This is used by `is_iterable_type` and related functions.
 pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> FullIterableTypeKind {
+    if type_id.is_intrinsic() {
+        return FullIterableTypeKind::NotIterable;
+    }
     let Some(key) = db.lookup(type_id) else {
         return FullIterableTypeKind::NotIterable;
     };
@@ -121,6 +124,9 @@ pub fn classify_async_iterable_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> AsyncIterableTypeKind {
+    if type_id.is_intrinsic() {
+        return AsyncIterableTypeKind::NotAsyncIterable;
+    }
     let Some(key) = db.lookup(type_id) else {
         return AsyncIterableTypeKind::NotAsyncIterable;
     };
@@ -159,6 +165,9 @@ pub enum ForOfElementKind {
 
 /// Classify a type for for-of element type computation.
 pub fn classify_for_of_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> ForOfElementKind {
+    if type_id.is_intrinsic() {
+        return ForOfElementKind::Other;
+    }
     let Some(key) = db.lookup(type_id) else {
         return ForOfElementKind::Other;
     };
