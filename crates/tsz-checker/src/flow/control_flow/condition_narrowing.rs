@@ -1156,6 +1156,12 @@ impl<'a> FlowAnalyzer<'a> {
         // Walk up the parent chain to find the enclosing VARIABLE_DECLARATION.
         // Destructured bindings have value_declaration set to BINDING_ELEMENT or
         // Identifier inside a BINDING_ELEMENT, not the VARIABLE_DECLARATION itself.
+        //
+        // The walk must stop at scope-creating nodes (parameters, functions,
+        // accessors, classes, source file). Otherwise a destructured parameter
+        // inside a `const`-declared function — e.g.
+        // `const fn = ({x}) => …` — walks past PARAMETER → ARROW_FUNCTION up
+        // to VARIABLE_DECLARATION(fn) and reports the parameter as const.
         loop {
             let Some(decl_node) = self.arena.get(decl_idx) else {
                 return false;
@@ -1173,6 +1179,22 @@ impl<'a> FlowAnalyzer<'a> {
             }
             if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
                 return self.arena.is_const_variable_declaration(decl_idx);
+            }
+            if matches!(
+                decl_node.kind,
+                syntax_kind_ext::PARAMETER
+                    | syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::CONSTRUCTOR
+                    | syntax_kind_ext::GET_ACCESSOR
+                    | syntax_kind_ext::SET_ACCESSOR
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::SOURCE_FILE
+            ) {
+                return false;
             }
             // BINDING_ELEMENT, BINDING_PATTERN, etc. — walk up
             let Some(ext) = self.arena.get_extended(decl_idx) else {

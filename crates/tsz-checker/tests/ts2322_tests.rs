@@ -4471,3 +4471,35 @@ const bb: 0 | 8 = b;
         ts2322_msgs[0],
     );
 }
+
+#[test]
+fn test_destructured_parameter_in_const_fn_is_not_treated_as_const() {
+    // Regression: `is_const_symbol` walked past PARAMETER/ARROW_FUNCTION
+    // boundaries to the enclosing `const fn = …` VARIABLE_DECLARATION,
+    // wrongly classifying the parameter as const. This caused
+    // `analyze_loop_fixed_point` to skip the iteration and emit stale
+    // narrowed types for parameters reassigned inside loops.
+    //
+    // The walk must terminate when it encounters PARAMETER, FUNCTION_*,
+    // CLASS_*, or SOURCE_FILE — those are scope boundaries past which the
+    // symbol is no longer the variable being declared.
+    let source = r#"
+const fn = ({ x }: { x: number | string }) => {
+    while (Math.random() < 0.5) {
+        x = "next";
+    }
+    const y: number | string = x;
+    return y;
+};
+"#;
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    assert_eq!(
+        ts2322, 0,
+        "Destructured parameter in const-fn must not be skipped by fixed-point iteration; \
+         got TS2322 diagnostics: {diagnostics:#?}"
+    );
+}
