@@ -192,6 +192,77 @@ let v: AB = { x: 1, w: true }
 }
 
 #[test]
+fn discriminated_union_narrows_when_partial_member_lacks_discriminator_property() {
+    // Regression test: when a target union has multi-discriminator overlap and
+    // some members lack one of the discriminator properties, the source's
+    // unit-typed discriminator values should still narrow to the unique member
+    // that satisfies all discriminators. Mirrors tsc's
+    // `discriminateTypeByDiscriminableItems`, which drops members where
+    // `getTypeOfPropertyOfType` returns undefined for the discriminator.
+    //
+    // Conformance reference: `excessPropertyCheckWithUnions.ts` lines 47/48.
+    let source = r#"
+type Overlapping =
+    | { a: 1, b: 1, first: string }
+    | { a: 2, second: string }
+    | { b: 3, third: string }
+let over: Overlapping
+over = { a: 1, b: 1, first: "ok", second: "error" }
+over = { a: 1, b: 1, first: "ok", third: "error" }
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<&(u32, String)> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        2,
+        "Expected exactly two TS2353 (one per assignment), got: {diags:?}",
+    );
+    assert!(
+        ts2353.iter().any(|(_, msg)| msg.contains("'second'")),
+        "Expected TS2353 reporting excess 'second', got: {diags:?}",
+    );
+    assert!(
+        ts2353.iter().any(|(_, msg)| msg.contains("'third'")),
+        "Expected TS2353 reporting excess 'third', got: {diags:?}",
+    );
+    // Narrowed to the single matching member, so the message should mention
+    // that member's properties (a, b, first) and not the constituent that
+    // owns the excess key.
+    for (_, msg) in &ts2353 {
+        assert!(
+            msg.contains("first"),
+            "Excess message should mention narrowed member's 'first' property, got: {msg}",
+        );
+    }
+    assert!(
+        !diags.iter().any(|d| d.0 == 2322),
+        "Should not emit TS2322 alongside TS2353 for narrowed members, got: {diags:?}",
+    );
+}
+
+#[test]
+fn discriminated_union_narrows_with_renamed_discriminators() {
+    // The fix must not depend on the specific discriminator names. Same shape
+    // with renamed properties should narrow identically. Locks the structural
+    // (rather than name-based) interpretation of the discriminator rule.
+    let source = r#"
+type Overlap =
+    | { p: 1, q: 1, first: string }
+    | { p: 2, second: string }
+    | { q: 3, third: string }
+let v: Overlap
+v = { p: 1, q: 1, first: "ok", second: "error" }
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.0 == 2353 && d.1.contains("'second'")),
+        "Expected TS2353 reporting excess 'second', got: {diags:?}",
+    );
+}
+
+#[test]
 fn indirect_discriminant_variable_does_not_trigger_excess_property_narrowing() {
     let source = r#"
 type Blah =
