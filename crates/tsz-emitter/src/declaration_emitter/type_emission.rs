@@ -5,6 +5,7 @@
 //! and entity names (qualified names, property access expressions).
 
 use super::DeclarationEmitter;
+use super::helpers::escape_string_for_double_quote;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -406,8 +407,7 @@ impl<'a> DeclarationEmitter<'a> {
 
             // Literal types
             k if k == SyntaxKind::StringLiteral as u16 => {
-                // Delegate to emit_node which handles string escape sequences
-                self.emit_node(type_idx);
+                self.emit_string_literal_type(type_node);
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(type_node) {
@@ -472,7 +472,7 @@ impl<'a> DeclarationEmitter<'a> {
                     }
 
                     self.write("[");
-                    self.emit_type(indexed_access.index_type);
+                    self.emit_indexed_access_index_type(indexed_access.index_type, false);
                     self.write("]");
                 }
             }
@@ -518,14 +518,14 @@ impl<'a> DeclarationEmitter<'a> {
 
                         // Emit the constraint (e.g., "keyof T")
                         if type_param.constraint.is_some() {
-                            self.emit_type(type_param.constraint);
+                            self.emit_mapped_type_constraint(type_param.constraint);
                         }
                     }
 
                     // Handle the optional 'as' clause (key remapping)
                     if mapped_type.name_type.is_some() {
                         self.write(" as ");
-                        self.emit_type(mapped_type.name_type);
+                        self.emit_mapped_type_name_type(mapped_type.name_type);
                     }
 
                     self.write("]");
@@ -549,7 +549,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
 
                     // Emit type annotation
-                    self.emit_type(mapped_type.type_node);
+                    self.emit_mapped_type_value_type(mapped_type.type_node);
 
                     self.write(";");
                     self.write_line();
@@ -915,6 +915,9 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         match inner_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16 => {
+                self.emit_string_literal_type(inner_node);
+            }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(inner_node) {
                     if lit.text.contains('_') {
@@ -956,5 +959,82 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_node(inner_idx);
             }
         }
+    }
+
+    fn emit_string_literal_type(&mut self, node: &tsz_parser::parser::node::Node) {
+        if let Some(lit) = self.arena.get_literal(node) {
+            self.write("\"");
+            self.write(&escape_string_for_double_quote(&lit.text));
+            self.write("\"");
+        }
+    }
+
+    fn emit_indexed_access_index_type(
+        &mut self,
+        index_type_idx: NodeIndex,
+        preserve_source_quote: bool,
+    ) {
+        if preserve_source_quote
+            && let Some(node) = self.arena.get(index_type_idx)
+            && let Some(text) = self.get_source_slice(node.pos, node.end)
+            && (text.starts_with('"') || text.starts_with('\''))
+        {
+            let text = text.strip_suffix(']').unwrap_or(&text).trim_end();
+            self.write(text);
+            return;
+        }
+
+        self.emit_type(index_type_idx);
+    }
+
+    fn emit_mapped_type_value_type(&mut self, type_idx: NodeIndex) {
+        let Some(type_node) = self.arena.get(type_idx) else {
+            return;
+        };
+
+        if type_node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+            && let Some(indexed_access) = self.arena.get_indexed_access_type(type_node)
+        {
+            self.emit_type(indexed_access.object_type);
+            self.write("[");
+            self.emit_indexed_access_index_type(indexed_access.index_type, true);
+            self.write("]");
+            return;
+        }
+
+        self.emit_type(type_idx);
+    }
+
+    fn emit_mapped_type_constraint(&mut self, constraint_idx: NodeIndex) {
+        if let Some(node) = self.arena.get(constraint_idx)
+            && let Some(text) = self.get_source_slice(node.pos, node.end)
+        {
+            let text = text.trim();
+            let text = text.split_once(" as ").map_or(text, |(before, _)| before);
+            let text = text.strip_suffix(" as").unwrap_or(text).trim_end();
+            let text = text.strip_suffix(']').unwrap_or(text).trim_end();
+            if !text.is_empty() {
+                self.write(text);
+                return;
+            }
+        }
+
+        self.emit_type(constraint_idx);
+    }
+
+    fn emit_mapped_type_name_type(&mut self, name_type_idx: NodeIndex) {
+        if let Some(node) = self.arena.get(name_type_idx)
+            && let Some(text) = self.get_source_slice(node.pos, node.end)
+        {
+            let text = text.trim();
+            let text = text.strip_prefix("as ").unwrap_or(text).trim_start();
+            let text = text.strip_suffix(']').unwrap_or(text).trim_end();
+            if !text.is_empty() {
+                self.write(text);
+                return;
+            }
+        }
+
+        self.emit_type(name_type_idx);
     }
 }
