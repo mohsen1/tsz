@@ -409,8 +409,8 @@ fn fix_string_literal_single_quote_escape() {
     let output = emit_dts("export declare const a: 'it\\'s';");
     println!("FIX single quote escape:\n{output}");
     assert!(
-        output.contains("'it\\'s'"),
-        "Missing escaped single quote: {output}"
+        output.contains(r#""it's""#),
+        "Expected string literal type to normalize to double quotes: {output}"
     );
 }
 
