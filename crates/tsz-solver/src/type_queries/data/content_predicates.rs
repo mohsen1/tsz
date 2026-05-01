@@ -536,6 +536,9 @@ pub fn map_compound_members(
     type_id: TypeId,
     mut f: impl FnMut(TypeId) -> TypeId,
 ) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
@@ -561,6 +564,9 @@ pub fn map_compound_members_if_changed(
     type_id: TypeId,
     mut f: impl FnMut(TypeId) -> TypeId,
 ) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
