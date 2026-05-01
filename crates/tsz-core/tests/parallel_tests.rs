@@ -8494,7 +8494,7 @@ var e: Date = c.b();
             symbol_arenas: std::sync::Arc::clone(&file1_bound.symbol_arenas),
             declaration_arenas,
             sym_to_decl_indices,
-            cross_file_node_symbols: (*program.cross_file_node_symbols).clone(),
+            cross_file_node_symbols: Arc::clone(&program.cross_file_node_symbols),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: Default::default(),
             flow_nodes: file1_bound.flow_nodes.clone(),

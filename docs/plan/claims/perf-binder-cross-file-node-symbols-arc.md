@@ -1,6 +1,6 @@
 # perf(binder): Arc-share binder cross-file node symbols
 
-Status: claim
+Status: ready
 Owner: Codex
 Branch: `perf/binder-cross-file-node-symbols-arc`
 Created: 2026-05-01 18:35:04 UTC
