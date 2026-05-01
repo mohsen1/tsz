@@ -2109,6 +2109,18 @@ impl<'a> CheckerState<'a> {
             } else {
                 continue;
             };
+            // For diagnostic display, prefer the un-evaluated array element type
+            // when the parameter is a plain array `(keyof T)[]`. Evaluating
+            // `keyof T` for a free type parameter collapses it to the constraint's
+            // keys union (e.g., `"a" | "b"`); tsc preserves the abstract `keyof T`
+            // form in TS2322 messages, so we anchor the diagnostic on the
+            // original element type whenever it differs from the evaluated form.
+            let display_target_element_type = if tuple_target_elements.is_none() {
+                crate::query_boundaries::common::array_element_type(self.ctx.types, param_type)
+                    .unwrap_or(target_element_type)
+            } else {
+                target_element_type
+            };
 
             let elem_type = self.elaboration_source_expression_type(elem_idx);
             let contextual_request =
@@ -2208,7 +2220,7 @@ impl<'a> CheckerState<'a> {
                 );
                 self.error_type_not_assignable_at_with_anchor(
                     elem_type,
-                    target_element_type,
+                    display_target_element_type,
                     elem_idx,
                 );
                 elaborated = true;
