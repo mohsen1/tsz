@@ -562,6 +562,10 @@ name = "jsx_overload_anchor_literal_attr_tests"
 path = "tests/jsx_overload_anchor_literal_attr_tests.rs"
 
 [[test]]
+name = "jsx_spread_assignability_suppresses_ts2741"
+path = "tests/jsx_spread_assignability_suppresses_ts2741.rs"
+
+[[test]]
 name = "jsdoc_param_return_ts2314_tests"
 path = "tests/jsdoc_param_return_ts2314_tests.rs"
 

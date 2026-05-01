@@ -1210,6 +1210,18 @@ impl<'a> CheckerState<'a> {
                     spread_type,
                 ) {
                     spread_covers_all = true;
+                } else if !skip_prop_checks && self.is_assignable_to(spread_type, props_type) {
+                    // The solver reports the spread is structurally assignable to the
+                    // whole props type, so all required members are satisfied — including
+                    // ones inherited from Object.prototype (toString, valueOf, …) that
+                    // wouldn't appear in the spread's declared property shape. The
+                    // property-by-property missing check (TS2741) only walks declared
+                    // shapes, so it would otherwise emit a false positive when a spread
+                    // like `{...{}}` is fed into a target that requires only inherited
+                    // members. Defer to the solver here. Per-property type-mismatch
+                    // checking still runs via the deferred `check_spread_property_types`
+                    // below.
+                    spread_covers_all = true;
                 }
 
                 // Defer TS2322 spread checking until after attribute override tracking.
