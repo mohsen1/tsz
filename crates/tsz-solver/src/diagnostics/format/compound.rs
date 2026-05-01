@@ -1300,8 +1300,8 @@ impl<'a> TypeFormatter<'a> {
         )
     }
 
-    /// Format an intersection member, parenthesizing union types.
-    /// `(A | B) & (C | D)` is semantically different from `A | B & C | D`.
+    /// Format an intersection member, parenthesizing types that contain infix
+    /// operators (`|`, `=>`) to maintain correct precedence in `A & B` display.
     fn format_intersection_member(&mut self, id: TypeId) -> String {
         // tsc displays primitive members of intersection types using their apparent
         // (boxed) names: `number` → `Number`, `string` → `String`, `boolean` → `Boolean`.
@@ -1317,12 +1317,15 @@ impl<'a> TypeFormatter<'a> {
             }
         }
         let formatted = self.format(id);
-        // Only parenthesize if the type is a union AND the formatted result
-        // actually contains `|` (i.e., wasn't collapsed to a named alias).
-        // Type aliases like `type T1 = "a" | "b"` display as `T1`, not
-        // `"a" | "b"`, so they don't need parentheses in intersections.
-        if matches!(self.interner.lookup(id), Some(TypeData::Union(_))) && formatted.contains(" | ")
-        {
+        let needs_parens = match self.interner.lookup(id) {
+            // Unions: `A | B & C` is ambiguous
+            Some(TypeData::Union(_)) => formatted.contains(" | "),
+            // Function/callable types: `(a: T) => R & S` is ambiguous —
+            // `&` would parse as part of the return type
+            Some(TypeData::Function(_) | TypeData::Callable(_)) => formatted.contains(" => "),
+            _ => false,
+        };
+        if needs_parens {
             format!("({formatted})")
         } else {
             formatted.into_owned()

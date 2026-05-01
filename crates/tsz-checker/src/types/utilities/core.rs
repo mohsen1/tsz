@@ -1293,6 +1293,49 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::widen_type(self.ctx.types, type_id)
     }
 
+    /// Widen property types of object literal attrs for JSX generic inference.
+    ///
+    /// Only recurses into object types — top-level primitive literals
+    /// (`"button"`, `12`, `true`) are preserved so string-literal JSX attrs
+    /// keep precise types for conditional type matching.  Object property
+    /// types are widened via `widen_literal_type` (e.g. `{ x: "y" }` becomes
+    /// `{ x: string }`).
+    pub(crate) fn widen_jsx_object_attr_type(&self, type_id: TypeId) -> TypeId {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+
+        let mut new_props = Vec::with_capacity(shape.properties.len());
+        let mut changed = false;
+        for prop in &shape.properties {
+            let widened_type = if prop.readonly {
+                prop.type_id
+            } else {
+                crate::query_boundaries::common::widen_type(self.ctx.types, prop.type_id)
+            };
+            let widened_write_type = if prop.readonly {
+                prop.write_type
+            } else {
+                crate::query_boundaries::common::widen_type(self.ctx.types, prop.write_type)
+            };
+            if widened_type != prop.type_id || widened_write_type != prop.write_type {
+                changed = true;
+            }
+            let mut new_prop = prop.clone();
+            new_prop.type_id = widened_type;
+            new_prop.write_type = widened_write_type;
+            new_props.push(new_prop);
+        }
+
+        if changed {
+            self.ctx.types.factory().object(new_props)
+        } else {
+            type_id
+        }
+    }
+
     /// Widen a type for diagnostic display purposes.
     ///
     /// Like `widen_literal_type` but preserves boolean literal intrinsics
