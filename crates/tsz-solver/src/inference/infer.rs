@@ -514,6 +514,9 @@ impl<'a> InferenceContext<'a> {
         candidates: &mut Vec<InferenceCandidate>,
         upper_bounds: &mut Vec<TypeId>,
     ) {
+        if bound.is_intrinsic() {
+            return;
+        }
         let name = match self.interner.lookup(bound) {
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.name,
             _ => return,
