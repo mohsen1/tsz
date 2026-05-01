@@ -1575,6 +1575,8 @@ run_build() {
 #   - lint runs only `cargo clippy`, no build/test.
 #   - dist-binaries and unit-archive only compile Rust artifacts.
 #   - unit-shard runs nextest from a pre-built archive, no compilation.
+#   - fourslash-shard gets built/local and tests/cases/fourslash from the
+#     node-harness artifact.
 # Aggregate suites bypass run_common_setup() entirely (see main()).
 suite_needs_typescript_source() {
   local suite="$1"
@@ -1582,6 +1584,7 @@ suite_needs_typescript_source() {
     lint) return 1 ;;
     dist-binaries|unit-archive) return 1 ;;
     unit-shard) return 1 ;;
+    fourslash-shard) return 1 ;;
     # Aggregate suites only download per-shard JSONs from GCS, jq-sum
     # them, and compare to a snapshot file. They never read TypeScript/.
     conformance-aggregate|emit-aggregate|fourslash-aggregate) return 1 ;;
