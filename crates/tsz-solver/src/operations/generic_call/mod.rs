@@ -173,6 +173,14 @@ fn type_references_placeholder(
     if type_id == placeholder {
         return true;
     }
+    // Fast path: after the `==` placeholder check above, intrinsics cannot
+    // match any of the composite arms below (Union, Intersection, Object,
+    // ObjectWithIndex, Array, Tuple, Function, Application, Conditional,
+    // IndexAccess, KeyOf, Mapped) — they fall through to `_ => false`.
+    // `TypeId::is_intrinsic` is a free `TypeId`-range check.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
             let members = db.type_list(list_id);
