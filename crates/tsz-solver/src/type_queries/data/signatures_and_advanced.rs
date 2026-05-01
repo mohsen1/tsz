@@ -204,6 +204,10 @@ pub fn get_callable_shape(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::CallableShape>> {
+    // Fast path: intrinsics are never Callable. Skip the virtual lookup.
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Callable(shape_id)) => Some(db.callable_shape(shape_id)),
         _ => None,
