@@ -478,6 +478,11 @@ tr:nth-child(even) { background: var(--table-stripe); }
   color: var(--text);
 }
 
+.bench-project-category .bench-name,
+.bench-project-category .bench-focus {
+  display: none;
+}
+
 .bench-meta {
   font-size: 0.8rem;
   color: var(--text-tertiary);
@@ -664,43 +669,13 @@ tr:nth-child(even) { background: var(--table-stripe); }
 }
 
 .bench-detail-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(16rem, 0.72fr);
-  gap: 1.5rem;
-  align-items: start;
+  display: block;
   margin: 1.5rem 0 2rem;
   padding: 0;
 }
 
-.bench-detail-primary,
 .bench-detail-result {
   padding: 0;
-}
-
-.bench-detail-primary {
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 0.5rem;
-}
-
-.bench-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.75rem;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.bench-pill + .bench-pill::before {
-  content: "/";
-  margin: 0 0.5rem 0 0;
-  color: var(--text-tertiary);
-  font-weight: 400;
 }
 
 .bench-detail-result strong,
@@ -784,32 +759,6 @@ tr:nth-child(even) { background: var(--table-stripe); }
   color: var(--text-secondary);
   font-size: 0.82rem;
   text-align: right;
-}
-
-.bench-detail-facts {
-  display: grid;
-  gap: 0;
-  margin: 1rem 0 2.25rem;
-}
-
-.bench-detail-facts div {
-  display: grid;
-  grid-template-columns: 7rem minmax(0, 1fr);
-  gap: 0.75rem;
-  padding-top: 0.25rem;
-}
-
-.bench-detail-facts dt {
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-.bench-detail-facts dd {
-  min-width: 0;
-}
-
-.bench-detail-facts code {
-  overflow-wrap: anywhere;
 }
 
 .benchmark-source-viewer {
@@ -956,10 +905,6 @@ tr:nth-child(even) { background: var(--table-stripe); }
   .bench-detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .bench-detail-hero {
-    grid-template-columns: 1fr;
-    gap: 0.75rem;
-  }
   .bench-detail-bars .bench-bar-row {
     grid-template-columns: 2.5rem minmax(0, 1fr);
     grid-template-rows: auto auto;
@@ -979,10 +924,6 @@ tr:nth-child(even) { background: var(--table-stripe); }
     grid-row: 1;
     text-align: right;
     margin-top: 0;
-  }
-  .bench-detail-facts div {
-    grid-template-columns: 1fr;
-    gap: 0.25rem;
   }
   .benchmark-source-tabs {
     gap: 0.85rem;
