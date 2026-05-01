@@ -1426,6 +1426,10 @@ pub fn has_type_query_for_symbol(
             continue;
         }
 
+        if ty.is_intrinsic() {
+            continue;
+        }
+
         let resolved = resolve_lazy(ty);
         if resolved != ty {
             worklist.push(resolved);
@@ -1502,6 +1506,9 @@ fn extract_contextual_type_params_inner(
     depth: u32,
 ) -> Option<Vec<crate::types::TypeParamInfo>> {
     if depth > 20 {
+        return None;
+    }
+    if type_id.is_intrinsic() {
         return None;
     }
 
