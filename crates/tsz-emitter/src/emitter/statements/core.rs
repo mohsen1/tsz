@@ -770,6 +770,7 @@ impl<'a> Printer<'a> {
         // not find semicolons inside the erased type annotation.
         let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
         self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
+        self.emit_recovered_malformed_arrow_block_after_variable_statement(node);
 
         // CommonJS: emit exports.X = X; after the declaration
         if is_exported && !export_names.is_empty() {
@@ -834,6 +835,52 @@ impl<'a> Printer<'a> {
                 self.write_export_binding_end();
             }
         }
+    }
+
+    fn emit_recovered_malformed_arrow_block_after_variable_statement(&mut self, node: &Node) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        if start >= bytes.len() {
+            return;
+        }
+
+        let mut line_end = start;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let Ok(line) = std::str::from_utf8(&bytes[start..line_end]) else {
+            return;
+        };
+        let Some(arrow_rel) = line.find("): =>").or_else(|| line.find("):=>")) else {
+            return;
+        };
+
+        // Parser recovery for `var v = (a): => { }` ends the variable statement
+        // before the recovered empty block. TSC still emits that block as a
+        // separate statement after the `var`.
+        let after_arrow = start + arrow_rel + line[arrow_rel..].find("=>").unwrap_or(0) + 2;
+        let Some(open_rel) = bytes[after_arrow..line_end].iter().position(|&b| b == b'{') else {
+            return;
+        };
+        let open = after_arrow + open_rel;
+        let mut pos = open + 1;
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if bytes.get(pos) != Some(&b'}') {
+            return;
+        }
+
+        self.write_line();
+        self.write("{");
+        self.write_line();
+        self.write("}");
+        self.write_line();
+        self.write_semicolon();
     }
 
     /// Lower `using`/`await using` declarations for non-ES5 targets (ES2015+).
