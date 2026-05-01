@@ -347,6 +347,89 @@ fn test_merge_multiple_files() {
 }
 
 #[test]
+fn test_build_merged_file_locals_includes_globals_and_locals() {
+    // Construct a multi-file program where each file's top-level symbols are
+    // visible cross-file. The post-merge per-file checker binders read globals
+    // through `binder.file_locals`, so `build_merged_file_locals` must fold
+    // `program.globals` into the per-file table for every file.
+    let files = vec![
+        ("a.ts".to_string(), "let alpha = 1;".to_string()),
+        ("b.ts".to_string(), "let beta = 2;".to_string()),
+    ];
+    let program = compile_files(files);
+
+    assert!(program.globals.has("alpha"));
+    assert!(program.globals.has("beta"));
+
+    for file_idx in 0..program.files.len() {
+        let merged = program.build_merged_file_locals(file_idx);
+        // Every per-file merged table sees both globals (cross-file refs).
+        assert!(
+            merged.has("alpha"),
+            "file {file_idx} merged locals missing global `alpha`"
+        );
+        assert!(
+            merged.has("beta"),
+            "file {file_idx} merged locals missing global `beta`"
+        );
+        // And whatever per-file locals existed.
+        if let Some(locals) = program.file_locals.get(file_idx) {
+            for (name, sym_id) in locals.iter() {
+                assert_eq!(
+                    merged.get(name),
+                    Some(*sym_id),
+                    "file {file_idx} merged locals dropped per-file local `{name}`"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_build_merged_file_locals_locals_win_on_conflict() {
+    // When a per-file local shadows a global name, the merged table must keep
+    // the local's `SymbolId`. The previous in-place merge inserted file-locals
+    // first and then skipped already-present global names, so the merged
+    // result preferred the local; the fast-path helper must preserve that.
+    let mut program = compile_files(vec![("a.ts".to_string(), String::new())]);
+
+    // Synthesize an overlap manually: install `shared` in globals as one
+    // SymbolId and in file 0's per-file locals as a different SymbolId,
+    // then assert the merged table reports the local's SymbolId.
+    let global_id = tsz_binder::SymbolId(9999);
+    let local_id = tsz_binder::SymbolId(1111);
+    program.globals.set("shared".to_string(), global_id);
+    if program.file_locals.is_empty() {
+        program.file_locals.push(SymbolTable::new());
+    }
+    program.file_locals[0].set("shared".to_string(), local_id);
+
+    let merged = program.build_merged_file_locals(0);
+    assert_eq!(merged.get("shared"), Some(local_id));
+}
+
+#[test]
+fn test_build_merged_file_locals_empty_locals_returns_globals() {
+    // Files with no top-level local entries are common (pure re-export
+    // shims, declaration files). The helper must short-circuit to an
+    // O(1) Arc::clone of `program.globals` instead of allocating a fresh
+    // map and copying every key.
+    let mut program = compile_files(vec![("a.ts".to_string(), String::new())]);
+    program
+        .globals
+        .set("hello".to_string(), tsz_binder::SymbolId(7));
+    if program.file_locals.is_empty() {
+        program.file_locals.push(SymbolTable::new());
+    }
+    // Force file 0 to have empty per-file locals.
+    program.file_locals[0] = SymbolTable::new();
+
+    let merged = program.build_merged_file_locals(0);
+    assert_eq!(merged.get("hello"), Some(tsz_binder::SymbolId(7)));
+    assert_eq!(merged.len(), program.globals.len());
+}
+
+#[test]
 fn test_merge_symbol_id_remapping() {
     let files = vec![
         ("a.ts".to_string(), "let x = 1;".to_string()),
