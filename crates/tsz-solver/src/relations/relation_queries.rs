@@ -409,6 +409,9 @@ pub fn check_application_variance<R: TypeResolver>(
     use crate::types::TypeData;
     use crate::visitor::lazy_def_id;
 
+    if source.is_intrinsic() || target.is_intrinsic() {
+        return None;
+    }
     let (s_app_id, t_app_id) = match (db.lookup(source), db.lookup(target)) {
         (Some(TypeData::Application(s)), Some(TypeData::Application(t))) => (s, t),
         _ => return None,
