@@ -1198,7 +1198,9 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // which lookup as `Literal(Boolean)` and don't match the `Literal` arm)
     // fall through to `_ => false`. Skip `lookup` for these.
     if type_id.is_intrinsic() {
-        return type_id == TypeId::ANY || type_id == TypeId::OBJECT || type_id == TypeId::PROMISE_BASE;
+        return type_id == TypeId::ANY
+            || type_id == TypeId::OBJECT
+            || type_id == TypeId::PROMISE_BASE;
     }
     match db.lookup(type_id) {
         Some(TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)) => true,
