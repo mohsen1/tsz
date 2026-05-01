@@ -433,6 +433,12 @@ fn is_identity_comparable_type_impl(types: &dyn TypeDatabase, type_id: TypeId, d
     {
         return true;
     }
+    // Fast path: BOOLEAN_TRUE / BOOLEAN_FALSE are reserved intrinsic TypeIds
+    // whose TypeData::lookup returns Literal(Boolean) — identity-comparable.
+    // All other intrinsics lookup to Intrinsic(_) which falls to `_ => false`.
+    if type_id.is_intrinsic() {
+        return type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE;
+    }
 
     match types.lookup(type_id) {
         // Identity-comparable scalar types.
@@ -1603,6 +1609,9 @@ pub enum ObjectTypeKind {
 /// This is used by the freshness tracking system to determine if a type
 /// is a fresh object literal that needs special handling.
 pub fn classify_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> ObjectTypeKind {
+    if type_id.is_intrinsic() {
+        return ObjectTypeKind::NotObject;
+    }
     match types.lookup(type_id) {
         Some(TypeData::Object(shape_id)) => ObjectTypeKind::Object(shape_id),
         Some(TypeData::ObjectWithIndex(shape_id)) => ObjectTypeKind::ObjectWithIndex(shape_id),
