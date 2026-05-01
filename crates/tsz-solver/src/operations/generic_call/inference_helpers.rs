@@ -153,6 +153,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn is_fresh_direct_object_or_array_literal_candidate(&self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(ty) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => self
                 .interner
@@ -201,6 +204,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn type_includes_nullish_member(&self, ty: TypeId) -> bool {
         if ty.is_nullish() {
             return true;
+        }
+        if ty.is_intrinsic() {
+            return false;
         }
 
         match self.interner.lookup(ty) {
@@ -1565,6 +1571,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     pub(super) fn inference_type_contains_fresh_object_or_array(&self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(ty) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => self
                 .interner
@@ -1582,6 +1591,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn is_structural_return_inference_candidate(&self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(ty) {
             Some(
                 TypeData::Object(_)
