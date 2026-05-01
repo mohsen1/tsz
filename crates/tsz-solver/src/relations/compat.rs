@@ -979,6 +979,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return (true, false);
         }
 
+        // Other intrinsics (STRING/NUMBER/BOOLEAN/...) resolve to TypeData::Intrinsic
+        // and never have index signatures — skip both dyn lookups below.
+        if type_id.is_intrinsic() {
+            return (false, false);
+        }
+
         let type_id = match self.interner.lookup(type_id) {
             Some(TypeData::Lazy(def_id)) => self
                 .subtype
@@ -1027,6 +1033,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn collect_target_properties(&mut self, type_id: TypeId) -> rustc_hash::FxHashSet<Atom> {
+        // Intrinsics never have named properties to collect.
+        if type_id.is_intrinsic() {
+            return rustc_hash::FxHashSet::default();
+        }
         // Handle Mapped, Application, Lazy, and Conditional types by evaluating/resolving
         // them to concrete types before property collection.
         let type_id = match self.interner.lookup(type_id) {
