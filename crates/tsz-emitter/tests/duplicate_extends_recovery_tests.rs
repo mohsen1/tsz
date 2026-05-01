@@ -70,3 +70,9 @@ fn class_duplicate_implements_does_not_appear_in_js() {
         "expected `class D` to be emitted; got:\n{output}"
     );
 }
+
+#[test]
+fn class_extends_void_emits_recovered_void_statement() {
+    let output = print_es2015("class C extends void {}\n");
+    assert_eq!(output, "class C extends  {\n}\nvoid {};\n");
+}

@@ -7,9 +7,9 @@ use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo, collect_private_accessors,
     collect_private_fields, collect_private_methods, get_private_field_name, is_private_identifier,
 };
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::{contains_super_reference, contains_this_reference};
 use tsz_scanner::SyntaxKind;
 
@@ -1779,6 +1779,10 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.write(&stmt);
             }
+            if self.class_has_recovered_void_extends(&class.heritage_clauses) {
+                self.write_line();
+                self.write("void {};");
+            }
         }
 
         // Emit computed property name hoisting comma expression or standalone side effects.
@@ -2399,5 +2403,35 @@ impl<'a> Printer<'a> {
             }
         }
         recovered
+    }
+
+    fn class_has_recovered_void_extends(&self, heritage_clauses: &Option<NodeList>) -> bool {
+        let (Some(text), Some(clauses)) = (self.source_text, heritage_clauses.as_ref()) else {
+            return false;
+        };
+
+        clauses.nodes.iter().any(|&clause_idx| {
+            let Some(clause_node) = self.arena.get(clause_idx) else {
+                return false;
+            };
+            let Some(heritage) = self.arena.get_heritage(clause_node) else {
+                return false;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                return false;
+            }
+
+            heritage.types.nodes.iter().any(|&type_idx| {
+                let Some(type_node) = self.arena.get(type_idx) else {
+                    return false;
+                };
+                if type_node.kind != SyntaxKind::Unknown as u16 {
+                    return false;
+                }
+                let start = (type_node.pos as usize).min(text.len());
+                let end = (type_node.end as usize).min(text.len());
+                start <= end && text.get(start..end).is_some_and(|raw| raw.trim() == "void")
+            })
+        })
     }
 }
