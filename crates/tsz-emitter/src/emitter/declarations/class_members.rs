@@ -185,6 +185,59 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn emit_recovered_object_method_without_body(&mut self, node: &Node) {
+        let Some(method) = self.arena.get_method_decl(node) else {
+            return;
+        };
+
+        self.emit_method_modifiers_js(&method.modifiers);
+
+        if method.asterisk_token {
+            self.write("*");
+        }
+
+        if method.name.is_some() {
+            self.emit(method.name);
+        }
+
+        let open_paren_pos = {
+            let search_start = if let Some(ref tp) = method.type_parameters {
+                tp.nodes
+                    .last()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map_or(node.pos, |n| n.end)
+            } else if method.name.is_some() {
+                self.arena.get(method.name).map_or(node.pos, |n| n.end)
+            } else {
+                node.pos
+            };
+            self.map_token_after(search_start, node.end, b'(');
+            self.pending_source_pos
+                .map(|source_pos| source_pos.pos)
+                .unwrap_or(search_start)
+        };
+
+        if !self.ctx.flags.in_declaration_emit && method.type_parameters.is_some() {
+            let tp_skip_start = if method.name.is_some() {
+                self.arena.get(method.name).map_or(node.pos, |n| n.end)
+            } else {
+                node.pos
+            };
+            self.skip_comments_in_range(tp_skip_start, open_paren_pos);
+        }
+
+        self.write("(");
+        self.emit_comma_separated(&method.parameters.nodes);
+        self.write(") { }");
+
+        if !self.ctx.flags.in_declaration_emit
+            && method.type_annotation.is_some()
+            && let Some(type_node) = self.arena.get(method.type_annotation)
+        {
+            self.skip_comments_in_range(type_node.pos, type_node.end);
+        }
+    }
+
     /// Emit async method body lowered to __awaiter + function* for ES2015 target
     fn emit_method_async_lowered_body(&mut self, body: NodeIndex, params: &[NodeIndex]) {
         let params_have_top_level_await = params
