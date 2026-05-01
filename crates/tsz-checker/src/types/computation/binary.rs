@@ -2081,6 +2081,15 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        // Boolean literal intrinsics (`true` / `false`) belong to the boolean
+        // family. classify_literal_type below short-circuits on intrinsics,
+        // so we'd otherwise miss them and TS2367 cross-family widening
+        // would skip — leaving messages like `'symbol' and 'true'` instead
+        // of tsc's `'symbol' and 'boolean'`.
+        if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+            return TypeId::BOOLEAN;
+        }
+
         // Check literal types via query boundary
         match classify_literal_type(self.ctx.types, type_id) {
             LiteralTypeKind::String(_) => return TypeId::STRING,
