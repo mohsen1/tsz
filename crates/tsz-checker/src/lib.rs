@@ -415,6 +415,9 @@ mod logical_operator_literal_preservation_tests;
 #[path = "../tests/mapped_indexed_access_diagnostic_tests.rs"]
 mod mapped_indexed_access_diagnostic_tests;
 #[cfg(test)]
+#[path = "tests/mapped_infer_with_substitution_tests.rs"]
+mod mapped_infer_with_substitution_tests;
+#[cfg(test)]
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
 #[cfg(test)]
