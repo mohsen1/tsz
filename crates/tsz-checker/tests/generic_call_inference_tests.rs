@@ -151,6 +151,26 @@ g("", 3, a => a);
     );
 }
 
+#[test]
+fn contextual_signature_instantiation_rejects_conflicting_generic_params() {
+    let source = r#"
+declare function foo<T>(cb: (x: number, y: string) => T): T;
+declare function g<T>(x: T, y: T): T;
+
+var b: number | string;
+var b = foo(g);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2345),
+        "Expected TS2345 when one generic source parameter gets incompatible contextual candidates. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2403),
+        "Expected downstream TS2403 from the failed call's unknown return. Diagnostics: {diags:#?}"
+    );
+}
+
 // TODO: higher-order generic inference for compose/map/filter chains doesn't
 // correctly propagate type parameters to emit TS2339 for the invalid pipeline.
 #[test]

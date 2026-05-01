@@ -468,6 +468,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     param_type
                 }
             };
+            let mut conflicting_contextual_instantiation = false;
             let expanded_arg_type = if Self::get_contextual_signature(
                 self.interner.as_type_database(),
                 expanded_arg_type,
@@ -523,10 +524,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     } else {
                         expanded_arg_type
                     };
-                self.instantiate_generic_function_argument_against_target(
-                    arg_for_instantiation,
-                    effective_param_type,
-                )
+                conflicting_contextual_instantiation = self
+                    .has_conflicting_contextual_signature_instantiation(
+                        arg_for_instantiation,
+                        effective_param_type,
+                    );
+                if conflicting_contextual_instantiation {
+                    arg_for_instantiation
+                } else {
+                    self.instantiate_generic_function_argument_against_target(
+                        arg_for_instantiation,
+                        effective_param_type,
+                    )
+                }
             } else {
                 expanded_arg_type
             };
@@ -545,6 +555,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 expanded_arg_type,
                 effective_param_type,
             ) {
+                return Some(CallResult::ArgumentTypeMismatch {
+                    index: i,
+                    expected: param_type,
+                    actual: *arg_type,
+                    fallback_return: TypeId::ERROR,
+                });
+            }
+            if conflicting_contextual_instantiation {
                 return Some(CallResult::ArgumentTypeMismatch {
                     index: i,
                     expected: param_type,
