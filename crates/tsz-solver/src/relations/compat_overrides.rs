@@ -83,6 +83,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return None;
         }
 
+        // Fast path: intrinsics never resolve to Union/Intersection/Lazy/Object,
+        // so there's no nominal brand to enforce. Skip the cascade of dyn-
+        // dispatched lookups and let the regular path decide.
+        if source.is_intrinsic() && target.is_intrinsic() {
+            return None;
+        }
+
         // 1. Handle Source Union (AND logic) — MUST run before target union.
         // (A | B) -> T : Valid if A -> T AND B -> T
         // When both source and target are unions, decomposing the source first
@@ -794,6 +801,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Collect constraint pairs from type parameter lists.
         // Applies to Object types (properties with callable signatures),
         // Callable types (direct call signatures), and Function types.
+        if a.is_intrinsic() || b.is_intrinsic() {
+            return true;
+        }
         let constraint_pairs = match (self.interner.lookup(a), self.interner.lookup(b)) {
             (
                 Some(TypeData::Object(a_id) | TypeData::ObjectWithIndex(a_id)),

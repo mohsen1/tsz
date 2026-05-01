@@ -115,6 +115,9 @@ impl<'a> ObjectLiteralBuilder<'a> {
     ///
     /// Returns an empty vec for types that don't have properties.
     fn extract_properties(&self, type_id: TypeId) -> Vec<PropertyInfo> {
+        if type_id.is_intrinsic() {
+            return Vec::new();
+        }
         let Some(key) = self.db.lookup(type_id) else {
             return Vec::new();
         };

@@ -709,6 +709,9 @@ pub enum ConstructorTypeKind {
 /// - Resolving symbol references for `TypeQuery`
 /// - Recursing into members/inner types
 pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> ConstructorTypeKind {
+    if type_id.is_intrinsic() {
+        return ConstructorTypeKind::NotConstructor;
+    }
     let Some(key) = db.lookup(type_id) else {
         return ConstructorTypeKind::NotConstructor;
     };
@@ -786,6 +789,9 @@ pub enum StaticPropertySource {
 /// - Evaluating types for `NeedsEvaluation` and `NeedsApplicationEvaluation` cases
 /// - Tracking visited types to prevent infinite loops
 pub fn get_static_property_source(db: &dyn TypeDatabase, type_id: TypeId) -> StaticPropertySource {
+    if type_id.is_intrinsic() {
+        return StaticPropertySource::None;
+    }
     let Some(key) = db.lookup(type_id) else {
         return StaticPropertySource::None;
     };
@@ -829,6 +835,9 @@ pub fn get_static_property_source(db: &dyn TypeDatabase, type_id: TypeId) -> Sta
 /// Returns true only for Callable types that have non-empty `construct_signatures`.
 /// This is a direct check and does not resolve through Ref or `TypeQuery` types.
 pub fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
@@ -871,6 +880,11 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
     }
     if type_id == TypeId::ANY {
         // any is callable but has no concrete signatures
+        return SignatureTypeKind::NoSignatures;
+    }
+    // Other intrinsics resolve to TypeData::Intrinsic / Literal, which the
+    // match below classifies as NoSignatures. Skip the dyn-dispatched lookup.
+    if type_id.is_intrinsic() {
         return SignatureTypeKind::NoSignatures;
     }
 

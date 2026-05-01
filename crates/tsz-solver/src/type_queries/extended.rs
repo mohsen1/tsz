@@ -743,6 +743,12 @@ pub fn is_literal_enum_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Non-literal types are returned unchanged.
 pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean),
+    // so they must widen to BOOLEAN. Other intrinsics resolve to Intrinsic
+    // and fall through to `_ => type_id`; short-circuit them.
+    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        return TypeId::BOOLEAN;
+    }
     if type_id.is_intrinsic() {
         return type_id;
     }
@@ -1515,5 +1521,30 @@ mod tests {
         let mut sigs = vec![sig1, sig2];
         dedup_alpha_equivalent_signatures(&mut sigs);
         assert_eq!(sigs.len(), 2, "Non-generic signatures should be preserved");
+    }
+
+    /// Regression: an earlier intrinsic fast path returned `type_id` for any
+    /// intrinsic, but `BOOLEAN_TRUE` / `BOOLEAN_FALSE` are intrinsic IDs that
+    /// resolve to `Literal(Boolean)` and must widen to BOOLEAN.
+    #[test]
+    fn widen_literal_to_primitive_widens_boolean_intrinsics() {
+        let interner = crate::TypeInterner::new();
+        assert_eq!(
+            widen_literal_to_primitive(&interner, TypeId::BOOLEAN_TRUE),
+            TypeId::BOOLEAN
+        );
+        assert_eq!(
+            widen_literal_to_primitive(&interner, TypeId::BOOLEAN_FALSE),
+            TypeId::BOOLEAN
+        );
+        // Other intrinsics are returned unchanged.
+        assert_eq!(
+            widen_literal_to_primitive(&interner, TypeId::NUMBER),
+            TypeId::NUMBER
+        );
+        assert_eq!(
+            widen_literal_to_primitive(&interner, TypeId::ANY),
+            TypeId::ANY
+        );
     }
 }

@@ -600,6 +600,9 @@ pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     let mut seen = FxHashSet::default();
 
     walk_referenced_types(types, root, |type_id| {
+        if type_id.is_intrinsic() {
+            return;
+        }
         if let Some(TypeData::Lazy(def_id)) = types.lookup(type_id)
             && seen.insert(def_id)
         {
@@ -648,6 +651,9 @@ pub fn collect_enum_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     let mut seen = FxHashSet::default();
 
     walk_referenced_types(types, root, |type_id| {
+        if type_id.is_intrinsic() {
+            return;
+        }
         if let Some(TypeData::Enum(def_id, _)) = types.lookup(type_id)
             && seen.insert(def_id)
         {
@@ -664,6 +670,9 @@ pub fn collect_type_queries(types: &dyn TypeDatabase, root: TypeId) -> Vec<Symbo
     let mut seen = FxHashSet::default();
 
     walk_referenced_types(types, root, |type_id| {
+        if type_id.is_intrinsic() {
+            return;
+        }
         if let Some(TypeData::TypeQuery(symbol_ref)) = types.lookup(type_id)
             && seen.insert(symbol_ref)
         {

@@ -443,6 +443,9 @@ fn get_type_constituents(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> smallvec::SmallVec<[TypeId; 4]> {
+    if type_id.is_intrinsic() {
+        return smallvec::smallvec![type_id];
+    }
     if let Some(list_id) = union_list_id(db, type_id) {
         let members = db.type_list(list_id);
         members.iter().copied().collect()

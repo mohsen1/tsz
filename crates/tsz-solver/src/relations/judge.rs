@@ -732,6 +732,9 @@ impl<'a> Judge for DefaultJudge<'a> {
     }
 
     fn apparent_type(&self, type_id: TypeId) -> TypeId {
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         let Some(key) = self.db.lookup(type_id) else {
             return type_id;
         };

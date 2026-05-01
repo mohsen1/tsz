@@ -646,6 +646,9 @@ pub(crate) fn widen_object_literal_properties(
     db: &dyn crate::TypeDatabase,
     type_id: TypeId,
 ) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     match db.lookup(type_id) {
         // Objects: recursively widen mutable property types
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
@@ -708,6 +711,13 @@ pub(crate) fn widen_object_literal_properties(
 /// before comparability checks. This is distinct from general widening because
 /// it also handles enum types and template literals.
 pub fn get_base_type_for_comparison(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    // BOOLEAN_TRUE/FALSE are intrinsic IDs that look up as `Literal(Boolean)`,
+    // which the match below widens to `BOOLEAN`. All other intrinsics fall
+    // through to `_ => type_id`, so they can short-circuit the lookup.
+    if type_id.is_intrinsic() && type_id != TypeId::BOOLEAN_TRUE && type_id != TypeId::BOOLEAN_FALSE
+    {
+        return type_id;
+    }
     match db.lookup(type_id) {
         // String/Number/Boolean/BigInt literals widen to their primitives
         Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
@@ -760,6 +770,9 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
     if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
         return TypeId::BOOLEAN;
     }
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
 
     // Fast path: all other intrinsics (`number`, `string`, `boolean`, `any`,
     // …) are neither `Literal(_)` nor `Union(_)`. The match below would
@@ -794,6 +807,12 @@ pub(crate) fn widen_non_string_bigint_literal(
     db: &dyn crate::TypeDatabase,
     type_id: TypeId,
 ) -> TypeId {
+    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        return TypeId::BOOLEAN;
+    }
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(ref value)) => match value {
             crate::LiteralValue::Number(_) => TypeId::NUMBER,

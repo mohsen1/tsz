@@ -493,6 +493,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if type_id == TypeId::UNDEFINED {
             return TypeId::NEVER;
         }
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
             let members = self.interner.type_list(list_id);
             if members.contains(&TypeId::UNDEFINED) {
@@ -518,6 +521,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn param_type_contains_void(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::VOID {
             return true;
+        }
+        if type_id.is_intrinsic() {
+            return false;
         }
         if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
             let members = self.interner.type_list(list_id);

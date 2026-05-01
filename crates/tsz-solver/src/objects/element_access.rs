@@ -136,6 +136,16 @@ impl<'a> ElementAccessEvaluator<'a> {
     }
 
     fn is_indexable(&self, type_id: TypeId) -> bool {
+        // STRING and ANY are explicitly indexable; other intrinsics aren't.
+        // BOOLEAN_TRUE/FALSE intrinsics resolve to Literal(Boolean), which the
+        // match below doesn't catch (only Literal(String) is indexable), so
+        // they correctly fall to false.
+        if type_id == TypeId::STRING || type_id == TypeId::ANY {
+            return true;
+        }
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(
                 TypeData::Array(_)
@@ -152,12 +162,7 @@ impl<'a> ElementAccessEvaluator<'a> {
                 let members = self.interner.type_list(members);
                 members.iter().all(|&m| self.is_indexable(m))
             }
-            _ => {
-                if type_id == TypeId::STRING || type_id == TypeId::ANY {
-                    return true;
-                }
-                false
-            }
+            _ => false,
         }
     }
 

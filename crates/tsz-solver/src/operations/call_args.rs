@@ -943,6 +943,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     pub(crate) fn rest_element_type(&self, type_id: TypeId) -> TypeId {
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Array(elem)) => elem,
             _ => type_id,
@@ -962,6 +965,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Uses the checker's `evaluate_type` which has access to the full `TypeResolver`,
     /// unlike `QueryDatabase::evaluate_type` which uses a `NoopResolver`.
     fn evaluate_rest_param_type(&mut self, type_id: TypeId) -> TypeId {
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         match self.interner.lookup(type_id) {
             // Application, Mapped, Intersection, or Conditional types may evaluate to Array/Tuple
             Some(

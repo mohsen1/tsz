@@ -1201,6 +1201,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     pub(crate) fn array_element_type(&self, array_type: TypeId) -> TypeId {
+        if array_type.is_intrinsic() {
+            return TypeId::ERROR;
+        }
         match self.interner().lookup(array_type) {
             Some(TypeData::Array(elem)) => elem,
             Some(TypeData::Tuple(elements)) => {
@@ -1236,6 +1239,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
     fn compute_tuple_fixed_length(&self, type_id: TypeId) -> Option<usize> {
         const MAX_FIXED_LENGTH: usize = 1000;
 
+        if type_id.is_intrinsic() {
+            return None;
+        }
         let list_id = match self.interner().lookup(type_id) {
             Some(TypeData::Tuple(id)) => id,
             _ => return None,

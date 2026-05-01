@@ -70,6 +70,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
+        if base.is_intrinsic() {
+            return None;
+        }
         match self.interner.lookup(base) {
             Some(TypeData::Lazy(def_id)) => Some(def_id),
             Some(TypeData::TypeQuery(sym_ref)) => {
