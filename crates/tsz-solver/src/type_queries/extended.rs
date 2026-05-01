@@ -42,6 +42,9 @@ pub enum LiteralTypeKind {
 /// - Extracting literal values
 /// - Literal type comparison
 pub fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralTypeKind {
+    if type_id.is_intrinsic() {
+        return LiteralTypeKind::NotLiteral;
+    }
     let Some(key) = db.lookup(type_id) else {
         return LiteralTypeKind::NotLiteral;
     };
@@ -336,6 +339,9 @@ pub fn classify_for_string_literal_keys(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> StringLiteralKeyKind {
+    if type_id.is_intrinsic() {
+        return StringLiteralKeyKind::NotStringLiteral;
+    }
     let Some(key) = db.lookup(type_id) else {
         return StringLiteralKeyKind::NotStringLiteral;
     };
@@ -358,6 +364,9 @@ pub fn get_string_literal_value(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<tsz_common::interner::Atom> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(name))) => Some(name),
         _ => None,
@@ -435,6 +444,9 @@ pub fn get_literal_property_name(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<tsz_common::interner::Atom> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(name))) => Some(name),
         Some(TypeData::Literal(crate::types::LiteralValue::Number(num))) => {
@@ -473,6 +485,9 @@ pub enum CallSignaturesKind {
 
 /// Classify a type for call signature extraction.
 pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> CallSignaturesKind {
+    if type_id.is_intrinsic() {
+        return CallSignaturesKind::NoSignatures;
+    }
     let Some(key) = db.lookup(type_id) else {
         return CallSignaturesKind::NoSignatures;
     };
