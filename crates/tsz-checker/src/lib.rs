@@ -147,6 +147,9 @@ mod jsdoc_prototype_assignment_target_display;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "../tests/literal_application_alias_display_tests.rs"]
+mod literal_application_alias_display_tests;
+#[cfg(test)]
 #[path = "../tests/merged_symbol_tests.rs"]
 mod merged_symbol_tests;
 #[cfg(test)]
