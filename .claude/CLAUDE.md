@@ -194,6 +194,13 @@ Skill usage rules:
   source of truth for how to pick, diagnose, fix, test, and ship conformance work.
 - **Pick a random failure** with `scripts/session/quick-pick.sh` and work on
   what it gives you. Do not reroll to avoid hard targets.
+- **DO NOT create a new picker script.** `scripts/session/quick-pick.sh`
+  (delegating to `scripts/session/pick.py`) is the canonical entry point.
+  If you think it lacks a feature, add a flag to `pick.py` — never fork a
+  new `random-*.sh` / `pick-*.sh` wrapper. PR #1957 had to delete 11
+  orphan session scripts that accumulated this way; do not start the
+  cycle again. See `scripts/session/conformance-agent-prompt.md` for the
+  full rationale and the list of past duplicates.
 - **Fix the root cause, not the symptom.** Multi-crate changes are expected.
   Checker symptoms often have solver or boundary-helper root causes.
 - **Every fix ships with a unit test** in the owning crate (`tsz-solver`,
