@@ -264,6 +264,9 @@ fn signature_has_literal_types(db: &dyn TypeDatabase, sig: &crate::types::CallSi
 /// constructor type's `typeof X` view, including expando-augmented variants).
 /// Returns None for non-object types or types without a recorded symbol.
 pub fn get_object_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             db.object_shape(shape_id).symbol
@@ -784,6 +787,9 @@ pub fn get_object_shape_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::ObjectShapeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
         _ => None,
@@ -797,6 +803,9 @@ pub fn get_object_shape(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::ObjectShape>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             Some(db.object_shape(shape_id))
@@ -1053,6 +1062,9 @@ pub fn has_nonpublic_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str
 ///
 /// Returns `Some(inner)` if the type is `ReadonlyType(inner)`, otherwise `None`.
 pub fn get_readonly_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::ReadonlyType(inner)) => Some(inner),
         _ => None,
@@ -1063,6 +1075,9 @@ pub fn get_readonly_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Type
 ///
 /// Returns `Some(inner)` if the type is `NoInfer(inner)`, otherwise `None`.
 pub fn get_noinfer_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::NoInfer(inner)) => Some(inner),
         _ => None,
