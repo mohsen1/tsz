@@ -1259,6 +1259,9 @@ impl<'a> InferenceContext<'a> {
     /// inference. For example, `Foo<U>` and `Foo<V>` share outer structure (both
     /// are applications of `Foo`), but `U` and `Foo<V>` do not.
     fn types_share_outer_structure(&self, source: TypeId, target: TypeId) -> bool {
+        if source.is_intrinsic() || target.is_intrinsic() {
+            return false;
+        }
         let application_outer = |type_id| {
             let app_id = match self.interner.lookup(type_id) {
                 Some(TypeData::Application(app_id)) => Some(app_id),
@@ -1325,6 +1328,9 @@ impl<'a> InferenceContext<'a> {
         target: TypeId,
         visited: &mut std::collections::HashSet<TypeId>,
     ) -> bool {
+        if target.is_intrinsic() {
+            return false;
+        }
         if !visited.insert(target) {
             return false;
         }
