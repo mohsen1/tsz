@@ -485,6 +485,18 @@ impl TypeInterner {
     }
 
     fn get_unit_value_key(&self, type_id: TypeId) -> Option<UnitValueKey> {
+        // Fast path: intrinsic IDs are unit values only for null/undefined/void/true/false.
+        // Other intrinsics (string, number, boolean, bigint, symbol, object, any, unknown,
+        // never, error, ...) have no unit value; skip the dyn-dispatched lookup.
+        if type_id.is_intrinsic() {
+            return match type_id {
+                TypeId::NULL => Some(UnitValueKey::Null),
+                TypeId::UNDEFINED | TypeId::VOID => Some(UnitValueKey::Undefined),
+                TypeId::BOOLEAN_TRUE => Some(UnitValueKey::Boolean(true)),
+                TypeId::BOOLEAN_FALSE => Some(UnitValueKey::Boolean(false)),
+                _ => None,
+            };
+        }
         match self.lookup(type_id) {
             Some(TypeData::Literal(LiteralValue::String(atom))) => Some(UnitValueKey::String(atom)),
             Some(TypeData::Literal(LiteralValue::Number(num))) => {
