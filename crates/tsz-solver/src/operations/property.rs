@@ -253,6 +253,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     fn nominalize_object_receiver(&self, receiver: TypeId) -> TypeId {
+        // Fast path: intrinsics aren't `Object(_)` / `ObjectWithIndex(_)`;
+        // the match falls through to `_ => receiver`.
+        if receiver.is_intrinsic() {
+            return receiver;
+        }
         match self.interner().lookup(receiver) {
             Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
