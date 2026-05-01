@@ -40,6 +40,9 @@ pub fn rest_argument_element_type(db: &dyn crate::TypeDatabase, type_id: TypeId)
         if depth == 0 {
             return type_id;
         }
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
 
         match db.lookup(type_id) {
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
