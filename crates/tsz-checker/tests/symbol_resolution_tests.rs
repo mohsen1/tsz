@@ -95,11 +95,17 @@ class C {
     let diagnostics = collect_diagnostics(source);
     // Filter out TS2318 (Cannot find global type) which is expected when no lib files are loaded
     let filtered: Vec<_> = diagnostics.iter().filter(|d| d.code != 2318).collect();
-    let ts2304_count = filtered.iter().filter(|d| d.code == 2304).count();
+    // tsc reports TS2663 ("Did you mean the instance member 'this.foo'?") for an
+    // unqualified reference to an instance field — strictly more specific than
+    // the bare TS2304 ("Cannot find name") this test originally expected. tsz
+    // matches that behavior; lock both as the accepted outcomes (TS2304 stays
+    // for parity with older lib configurations that may not surface the
+    // spelling suggestion).
+    let has_unresolved_diag = filtered.iter().any(|d| d.code == 2304 || d.code == 2663);
 
     assert!(
-        ts2304_count >= 1,
-        "Expected TS2304 for unqualified class member reference, got: {filtered:?}"
+        has_unresolved_diag,
+        "Expected TS2304 or TS2663 for unqualified class member reference, got: {filtered:?}"
     );
 }
 
