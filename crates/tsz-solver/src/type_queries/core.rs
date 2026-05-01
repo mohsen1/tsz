@@ -256,6 +256,13 @@ pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Use this instead of `visitor_predicates::is_type_parameter` when you need
 /// to treat bound (de Bruijn indexed) parameters as type-parameter-like.
 pub fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic kinds (any / unknown / never / void / null /
+    // undefined plus the reserved PrimitiveX kinds) cannot be a
+    // TypeParameter / BoundParameter / Infer. Skip the `db.lookup` virtual
+    // call for them. is_intrinsic() is a free TypeId-range check.
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::TypeParameter(_) | TypeData::BoundParameter(_) | TypeData::Infer(_))
