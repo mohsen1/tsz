@@ -943,7 +943,11 @@ pub fn numeric_literal_index_valid_for_object(
         return false;
     }
     for &member in &members {
-        // Each member must be a numeric literal.
+        // Each member must be a numeric literal. Intrinsics that resolve to
+        // Literal (BOOLEAN_TRUE/FALSE) are Boolean, never Number — skip lookup.
+        if member.is_intrinsic() {
+            return false;
+        }
         let num_val = match db.lookup(member) {
             Some(TypeData::Literal(LiteralValue::Number(n))) => n.0,
             _ => return false,
@@ -1011,6 +1015,9 @@ pub fn find_property_in_type_by_str(
 /// For intersection types, returns `true` if ANY member has the property.
 pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
     fn member_has_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match db.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = db.object_shape(shape_id);
@@ -1027,6 +1034,9 @@ pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &s
         }
     }
 
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
@@ -1084,6 +1094,9 @@ pub fn has_nonpublic_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str
         })
     }
 
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
