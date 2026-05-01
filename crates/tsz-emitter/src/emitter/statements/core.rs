@@ -1313,6 +1313,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_invalid_prefix_await_expression_statement(node, expr_stmt.expression) {
+            return;
+        }
+
         // When a function/object expression appears at the start of a statement, it needs
         // wrapping parentheses: `function` would be parsed as a declaration, and `{` as a
         // block. We use a leftmost-expression walker that follows the left chain through
@@ -1370,6 +1374,47 @@ impl<'a> Printer<'a> {
         self.map_trailing_semicolon(node);
         self.write_semicolon();
         self.emit_trailing_comment_after_semicolon(node);
+    }
+
+    fn emit_invalid_prefix_await_expression_statement(
+        &mut self,
+        statement: &Node,
+        expression: NodeIndex,
+    ) -> bool {
+        let Some(expr_node) = self.arena.get(expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return false;
+        }
+        let Some(unary) = self.arena.get_unary_expr(expr_node) else {
+            return false;
+        };
+        if unary.operator != SyntaxKind::PlusPlusToken as u16
+            && unary.operator != SyntaxKind::MinusMinusToken as u16
+        {
+            return false;
+        }
+        let Some(operand_node) = self.arena.get(unary.operand) else {
+            return false;
+        };
+        if operand_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
+            return false;
+        }
+
+        self.write(super::super::get_operator_text(unary.operator));
+        self.write_semicolon();
+        self.write_line();
+
+        let prev_stmt_expr = self.ctx.flags.in_statement_expression;
+        self.ctx.flags.in_statement_expression = true;
+        self.emit(unary.operand);
+        self.ctx.flags.in_statement_expression = prev_stmt_expr;
+
+        self.map_trailing_semicolon(statement);
+        self.write_semicolon();
+        self.emit_trailing_comment_after_semicolon(statement);
+        true
     }
 
     /// Check if an expression (after skipping type assertions) is a `CallExpression`
