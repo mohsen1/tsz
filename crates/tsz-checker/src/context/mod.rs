@@ -1600,23 +1600,18 @@ impl ProjectEnv {
     /// so drivers can compute it once and share via `Arc` across all checkers.
     /// When these fields are `Some`, `set_all_binders` skips re-computing them.
     pub fn build_global_indices(&mut self) {
-        let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
-        let mut module_exports_index: ModuleExportsIndexMap = FxHashMap::default();
         // Phase 2 step 2: when the driver pre-built
         // `skeleton_module_augmentations_index` from `SkeletonIndex`, skip the
         // per-binder `module_augmentations` loop entirely and reuse the
         // pre-built map. This unblocks Phase 5 — the merged augmentations
         // index no longer needs per-file binder state.
         let has_skeleton_module_augmentations = self.skeleton_module_augmentations_index.is_some();
-        let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
-            FxHashMap::default();
         // Phase 2 step 3: when the driver pre-built
         // `skeleton_augmentation_targets_index` from `SkeletonIndex`, skip the
         // per-binder `augmentation_target_modules` loop entirely and reuse the
         // pre-built map. This unblocks Phase 5 — the merged augmentation-targets
         // index no longer needs per-file binder state.
         let has_skeleton_aug_targets = self.skeleton_augmentation_targets_index.is_some();
-        let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> = FxHashMap::default();
         // Phase 2 step 4: when the driver pre-built
         // `skeleton_module_binder_index` from `SkeletonIndex`, skip the
         // module-binder-index push lines inside the per-binder
@@ -1624,7 +1619,6 @@ impl ProjectEnv {
         // unblocks Phase 5 — the merged module-binder index no longer needs
         // per-file binder state.
         let has_skeleton_module_binders = self.skeleton_module_binder_index.is_some();
-        let mut module_binder_index: FxHashMap<String, Vec<usize>> = FxHashMap::default();
         // Phase 2 step 6: when the driver pre-built
         // `skeleton_module_exports_index` from `SkeletonIndex` +
         // `program.module_exports`, skip the inner `for (export_name, sym_id)
@@ -1633,11 +1627,60 @@ impl ProjectEnv {
         // per-file binder state.
         let has_skeleton_module_exports = self.skeleton_module_exports_index.is_some();
 
+        let mut file_locals_name_counts: FxHashMap<&str, usize> = FxHashMap::default();
+        let mut module_exports_capacity = 0usize;
+        let mut module_binder_capacity = 0usize;
+        let mut module_augs_capacity = 0usize;
+        let mut aug_targets_capacity = 0usize;
+        let mut declared_modules_capacity = 0usize;
+        let mut expando_capacity = 0usize;
+        for binder in self.all_binders.iter() {
+            for (name, _) in binder.file_locals.iter() {
+                *file_locals_name_counts.entry(name.as_str()).or_default() += 1;
+            }
+            if !has_skeleton_module_exports {
+                module_exports_capacity += binder.module_exports.len();
+            }
+            if !has_skeleton_module_binders {
+                module_binder_capacity += binder.module_exports.len().saturating_mul(2);
+            }
+            if !has_skeleton_module_augmentations {
+                module_augs_capacity += binder.module_augmentations.len();
+            }
+            if !has_skeleton_aug_targets {
+                aug_targets_capacity += binder.augmentation_target_modules.len();
+            }
+            if self.skeleton_declared_modules.is_none() {
+                declared_modules_capacity += binder.module_exports.len();
+                declared_modules_capacity += binder.declared_modules.len();
+                declared_modules_capacity += binder.shorthand_ambient_modules.len();
+            }
+            if self.skeleton_expando_index.is_none() {
+                expando_capacity += binder.expando_properties.len();
+            }
+        }
+
+        let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> =
+            FxHashMap::with_capacity_and_hasher(file_locals_name_counts.len(), Default::default());
+        let mut module_exports_index: ModuleExportsIndexMap =
+            FxHashMap::with_capacity_and_hasher(module_exports_capacity, Default::default());
+        let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
+            FxHashMap::with_capacity_and_hasher(module_augs_capacity, Default::default());
+        let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> =
+            FxHashMap::with_capacity_and_hasher(aug_targets_capacity, Default::default());
+        let mut module_binder_index: FxHashMap<String, Vec<usize>> =
+            FxHashMap::with_capacity_and_hasher(module_binder_capacity, Default::default());
         // Also build declared_modules if not already from skeleton.
         let mut declared_modules = if self.skeleton_declared_modules.is_some() {
             None
         } else {
-            Some(GlobalDeclaredModules::default())
+            Some(GlobalDeclaredModules {
+                exact: FxHashSet::with_capacity_and_hasher(
+                    declared_modules_capacity,
+                    Default::default(),
+                ),
+                patterns: Vec::new(),
+            })
         };
         let arena_to_file_idx: FxHashMap<usize, usize> = self
             .all_arenas
@@ -1650,7 +1693,14 @@ impl ProjectEnv {
             for (name, &sym_id) in binder.file_locals.iter() {
                 file_locals_index
                     .entry(name.to_string())
-                    .or_default()
+                    .or_insert_with(|| {
+                        Vec::with_capacity(
+                            file_locals_name_counts
+                                .get(name.as_str())
+                                .copied()
+                                .unwrap_or(1),
+                        )
+                    })
                     .push((file_idx, sym_id));
             }
             for (module_spec, exports) in binder.module_exports.iter() {
@@ -1680,7 +1730,12 @@ impl ProjectEnv {
                     for (export_name, &sym_id) in exports.iter() {
                         module_exports_index
                             .entry(module_spec.clone())
-                            .or_default()
+                            .or_insert_with(|| {
+                                FxHashMap::with_capacity_and_hasher(
+                                    exports.len(),
+                                    Default::default(),
+                                )
+                            })
                             .entry(export_name.to_string())
                             .or_default()
                             .push((file_idx, sym_id));
@@ -1746,7 +1801,8 @@ impl ProjectEnv {
 
         // Build expando index if not already from skeleton.
         if self.skeleton_expando_index.is_none() {
-            let mut expando_index: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
+            let mut expando_index: FxHashMap<String, FxHashSet<String>> =
+                FxHashMap::with_capacity_and_hasher(expando_capacity, Default::default());
             for binder in self.all_binders.iter() {
                 for (obj_key, props) in binder.expando_properties.iter() {
                     expando_index
@@ -1795,7 +1851,8 @@ impl ProjectEnv {
             .or_else(|| Some(Arc::new(module_binder_index)));
 
         // Build arena-pointer → file-index map
-        let mut arena_idx: FxHashMap<usize, usize> = FxHashMap::default();
+        let mut arena_idx: FxHashMap<usize, usize> =
+            FxHashMap::with_capacity_and_hasher(self.all_arenas.len(), Default::default());
         for (file_idx, arena) in self.all_arenas.iter().enumerate() {
             arena_idx.insert(Arc::as_ptr(arena) as usize, file_idx);
         }
