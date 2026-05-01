@@ -451,6 +451,9 @@ mod reverse_mapped_inference_tests;
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
 #[cfg(test)]
+#[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
+mod ts1101_with_in_strict_mode_tests;
+#[cfg(test)]
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
 #[cfg(test)]

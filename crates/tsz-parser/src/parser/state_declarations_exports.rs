@@ -2301,7 +2301,22 @@ impl ParserState {
     // Parse with statement
     pub(crate) fn parse_with_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        let with_end = self.token_end();
         self.parse_expected(SyntaxKind::WithKeyword);
+
+        // TS1101: 'with' statements are not allowed in strict mode.
+        // Class bodies and module top-level are auto-strict per the ECMA spec,
+        // so a `with` syntactically nested inside either is an error. tsc
+        // emits the diagnostic at the `with` keyword's span. Parsing continues
+        // unchanged so the rest of the construct still reaches downstream.
+        if self.in_strict_mode_context() {
+            self.parse_error_at(
+                start_pos,
+                with_end.saturating_sub(start_pos),
+                "'with' statements are not allowed in strict mode.",
+                diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+            );
+        }
 
         self.parse_expected(SyntaxKind::OpenParenToken);
 
