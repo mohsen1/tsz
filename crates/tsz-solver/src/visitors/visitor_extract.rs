@@ -66,6 +66,9 @@ where
 /// Extract the union list id if this is a union type.
 #[inline]
 pub fn union_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeListId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Union(list_id) => Some(*list_id),
         _ => None,
@@ -75,6 +78,9 @@ pub fn union_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeLi
 /// Extract the intersection list id if this is an intersection type.
 #[inline]
 pub fn intersection_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeListId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Intersection(list_id) => Some(*list_id),
         _ => None,
@@ -84,6 +90,9 @@ pub fn intersection_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option
 /// Extract the object shape id if this is an object type.
 #[inline]
 pub fn object_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<ObjectShapeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Object(shape_id) => Some(*shape_id),
         _ => None,
@@ -96,6 +105,9 @@ pub fn object_with_index_shape_id(
     types: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<ObjectShapeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::ObjectWithIndex(shape_id) => Some(*shape_id),
         _ => None,
@@ -105,6 +117,9 @@ pub fn object_with_index_shape_id(
 /// Extract the array element type if this is an array type.
 #[inline]
 pub fn array_element_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Array(element) => Some(*element),
         _ => None,
@@ -114,6 +129,9 @@ pub fn array_element_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<T
 /// Extract the tuple list id if this is a tuple type.
 #[inline]
 pub fn tuple_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TupleListId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Tuple(list_id) => Some(*list_id),
         _ => None,
@@ -121,11 +139,15 @@ pub fn tuple_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TupleL
 }
 
 /// Extract the intrinsic kind if this is an intrinsic type.
+///
+/// This bypasses the shared `extract_type_data` helper because that helper
+/// short-circuits on intrinsic inputs (every other extractor in this module
+/// rejects intrinsics); for this caller we explicitly want the kind.
 pub fn intrinsic_kind(types: &dyn TypeDatabase, type_id: TypeId) -> Option<IntrinsicKind> {
-    extract_type_data(types, type_id, |key| match key {
-        TypeData::Intrinsic(kind) => Some(*kind),
+    match types.lookup(type_id) {
+        Some(TypeData::Intrinsic(kind)) => Some(kind),
         _ => None,
-    })
+    }
 }
 
 /// Extract the literal value if this is a literal type.
@@ -157,6 +179,9 @@ pub fn literal_number(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Order
 
 /// Extract the template literal list id if this is a template literal type.
 pub fn template_literal_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TemplateLiteralId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::TemplateLiteral(list_id) => Some(*list_id),
         _ => None,
@@ -165,6 +190,9 @@ pub fn template_literal_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<
 
 /// Extract the type parameter info if this is a type parameter or infer type.
 pub fn type_param_info(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeParamInfo> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::TypeParameter(info) | TypeData::Infer(info) => Some(*info),
         _ => None,
@@ -178,6 +206,9 @@ pub fn type_param_info(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Type
 /// to print `infer T` instead of just `T` for unbound infer placeholders that
 /// survive into emitted conditional types.
 pub fn is_infer_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Infer(_) => Some(true),
         _ => None,
@@ -217,6 +248,9 @@ pub fn resolve_default_type_args(
 
 /// Extract the lazy `DefId` if this is a Lazy type.
 pub fn lazy_def_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<DefId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Lazy(def_id) => Some(*def_id),
         _ => None,
@@ -225,6 +259,9 @@ pub fn lazy_def_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<DefId> {
 
 /// Extract the De Bruijn index if this is a bound type parameter.
 pub fn bound_parameter_index(types: &dyn TypeDatabase, type_id: TypeId) -> Option<u32> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::BoundParameter(index) => Some(*index),
         _ => None,
@@ -233,6 +270,9 @@ pub fn bound_parameter_index(types: &dyn TypeDatabase, type_id: TypeId) -> Optio
 
 /// Extract the De Bruijn index if this is a recursive type reference.
 pub fn recursive_index(types: &dyn TypeDatabase, type_id: TypeId) -> Option<u32> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Recursive(index) => Some(*index),
         _ => None,
@@ -250,6 +290,9 @@ pub fn is_enum_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// - `def_id` is the unique identity of the enum for nominal checking
 /// - `member_type` is the structural union of member types (e.g., 0 | 1)
 pub fn enum_components(types: &dyn TypeDatabase, type_id: TypeId) -> Option<(DefId, TypeId)> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Enum(def_id, member_type) => Some((*def_id, *member_type)),
         _ => None,
@@ -259,6 +302,9 @@ pub fn enum_components(types: &dyn TypeDatabase, type_id: TypeId) -> Option<(Def
 /// Extract the application id if this is a generic application type.
 #[inline]
 pub fn application_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeApplicationId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Application(app_id) => Some(*app_id),
         _ => None,
@@ -267,6 +313,9 @@ pub fn application_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeA
 
 /// Extract the mapped type id if this is a mapped type.
 pub fn mapped_type_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<MappedTypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Mapped(mapped_id) => Some(*mapped_id),
         _ => None,
@@ -275,6 +324,9 @@ pub fn mapped_type_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Mappe
 
 /// Extract the conditional type id if this is a conditional type.
 pub fn conditional_type_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<ConditionalTypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::Conditional(cond_id) => Some(*cond_id),
         _ => None,
@@ -283,6 +335,9 @@ pub fn conditional_type_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<
 
 /// Extract index access components if this is an index access type.
 pub fn index_access_parts(types: &dyn TypeDatabase, type_id: TypeId) -> Option<(TypeId, TypeId)> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::IndexAccess(object_type, index_type) => Some((*object_type, *index_type)),
         _ => None,
@@ -291,6 +346,9 @@ pub fn index_access_parts(types: &dyn TypeDatabase, type_id: TypeId) -> Option<(
 
 /// Extract the type query symbol if this is a `TypeQuery`.
 pub fn type_query_symbol(types: &dyn TypeDatabase, type_id: TypeId) -> Option<SymbolRef> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::TypeQuery(sym_ref) => Some(*sym_ref),
         _ => None,
@@ -299,6 +357,9 @@ pub fn type_query_symbol(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Sy
 
 /// Extract the inner type if this is a keyof type.
 pub fn keyof_inner_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::KeyOf(inner) => Some(*inner),
         _ => None,
@@ -307,6 +368,9 @@ pub fn keyof_inner_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Typ
 
 /// Extract the inner type if this is a readonly type.
 pub fn readonly_inner_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::ReadonlyType(inner) => Some(*inner),
         _ => None,
@@ -315,6 +379,9 @@ pub fn readonly_inner_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<
 
 /// Extract the inner type if this is a `NoInfer` type.
 pub fn no_infer_inner_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     extract_type_data(types, type_id, |key| match key {
         TypeData::NoInfer(inner) => Some(*inner),
         _ => None,
