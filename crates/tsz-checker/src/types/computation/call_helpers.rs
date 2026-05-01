@@ -638,6 +638,68 @@ impl<'a> CheckerState<'a> {
         self.type_of_value_declaration_for_symbol_with_mode(sym_id, decl_idx, true)
     }
 
+    /// Resolve a value declaration type for a `(sym_id, decl_idx)` pair that the
+    /// caller already knows lives in a *different* file's binder/arena.
+    /// Bypasses `current_arena_value_declaration_belongs_to_symbol` — that check
+    /// would mis-claim ownership when the local file happens to have a symbol
+    /// with the same numeric `SymbolId` or a node at the same `NodeIndex`
+    /// (cross-binder collision). Always delegates through a child checker on
+    /// `target_file_idx`'s arena.
+    ///
+    /// Skips the `cached_cross_file_symbol_type` fast path: that bucket stores
+    /// the canonical "type for the symbol", which for merged INTERFACE+VALUE
+    /// symbols is the INTERFACE-side type. The whole point of this delegation
+    /// is to surface the VALUE-side declaration type, so consulting that
+    /// cache would short-circuit to the wrong result.
+    pub(crate) fn type_of_value_declaration_for_cross_file_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+        target_file_idx: usize,
+    ) -> TypeId {
+        if decl_idx.is_none() {
+            return TypeId::ERROR;
+        }
+
+        if !Self::enter_cross_arena_delegation() {
+            return TypeId::ERROR;
+        }
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let delegate_file_name = target_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+        let delegate_binder = self
+            .ctx
+            .get_binder_for_arena(target_arena)
+            .unwrap_or(self.ctx.binder);
+
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+            target_arena,
+            delegate_binder,
+            self.ctx.types,
+            delegate_file_name,
+            self.ctx.compiler_options.clone(),
+            self,
+            tsz_common::perf_counters::CheckerCreationReason::CallHelpers,
+        ));
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.current_file_idx = target_file_idx;
+        checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
+        checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
+        checker
+            .ctx
+            .symbol_resolution_depth
+            .set(self.ctx.symbol_resolution_depth.get());
+        let result = checker.type_of_value_declaration_with_mode(decl_idx, true);
+        let _ = sym_id;
+        Self::leave_cross_arena_delegation();
+        result
+    }
+
     pub(crate) fn type_of_value_declaration_for_symbol_without_module_augmentations(
         &mut self,
         sym_id: SymbolId,

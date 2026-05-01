@@ -856,8 +856,39 @@ impl<'a> CheckerState<'a> {
             // Merged interface+value symbols (e.g. Symbol interface + declare var Symbol: SymbolConstructor)
             // must use the VALUE side in value position. The *Constructor lookup below
             // handles finding the right type (SymbolConstructor, PromiseConstructor, etc.)
+            //
+            // Cross-file ALIAS to a merged INTERFACE+VALUE symbol: when an
+            // ImportSpecifier resolves through a re-export chain to a target
+            // that has both INTERFACE and value flags (e.g.
+            // `interface MyFunction { ... }` merged with
+            // `export const MyFunction = (..) => ..`), the local alias's
+            // flags carry only ALIAS — `has_type` and `has_value` are false,
+            // so the standard merged path is skipped. Surface the target's
+            // value-declaration via cross-file delegation so the call-site
+            // sees the value-side type instead of the interface type that
+            // `compute_type_of_symbol` returns by default.
+            let alias_target_merged_value_info: Option<(tsz_binder::SymbolId, NodeIndex, usize)> =
+                ((flags & tsz_binder::symbol_flags::ALIAS) != 0)
+                    .then(|| {
+                        let target_sym_id = self.ctx.resolve_import_alias_and_register(sym_id)?;
+                        let target = self.get_symbol_globally(target_sym_id)?;
+                        let tflags = target.flags;
+                        if (tflags & tsz_binder::symbol_flags::INTERFACE) != 0
+                            && (tflags & tsz_binder::symbol_flags::VALUE) != 0
+                            && target.value_declaration.is_some()
+                        {
+                            let target_value_decl = target.value_declaration;
+                            let target_file_idx =
+                                self.ctx.resolve_symbol_file_index(target_sym_id)?;
+                            Some((target_sym_id, target_value_decl, target_file_idx))
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten();
             let is_merged_interface_value =
-                has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0;
+                (has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0)
+                    || alias_target_merged_value_info.is_some();
             // NOTE: tsc 6.0 does NOT emit TS2585 for ES2015+ globals based on
             // target alone. The value bindings from transitively loaded libs
             // (e.g. lib.dom.d.ts → lib.es2015.d.ts) are considered available.
@@ -883,8 +914,23 @@ impl<'a> CheckerState<'a> {
                 // Value declarations from transitively loaded libs are available.
                 // Prefer value-declaration resolution for merged symbols so we pick
                 // the constructor-side type (e.g. Promise -> PromiseConstructor).
+                //
+                // For cross-file ALIAS targets, route through the dedicated
+                // cross-file delegation so the local arena's collision with
+                // the target's NodeIndex (different node, same numeric id)
+                // doesn't return the wrong type.
                 let mut value_type =
-                    self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl);
+                    if let Some((target_sym_id, target_value_decl, target_file_idx)) =
+                        alias_target_merged_value_info
+                    {
+                        self.type_of_value_declaration_for_cross_file_symbol(
+                            target_sym_id,
+                            target_value_decl,
+                            target_file_idx,
+                        )
+                    } else {
+                        self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl)
+                    };
                 if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
                     for &decl_idx in &symbol_declarations {
                         if decl_idx == preferred_value_decl {
