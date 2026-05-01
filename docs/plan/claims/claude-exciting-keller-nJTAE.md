@@ -2,7 +2,7 @@
 
 **2026-04-29 12:00:00**
 
-Status: ready
+Status: shipped (PR #1818 — `fix(checker): preserve ReactChild alias in JSX TS2322 target-type messages`, merged 2026-04-28)
 
 Branch: `claude/exciting-keller-nJTAE`
 
