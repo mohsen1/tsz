@@ -499,6 +499,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source: TypeId,
         object_target: TypeId,
     ) -> bool {
+        if source.is_intrinsic() || object_target.is_intrinsic() {
+            return false;
+        }
         let source_shape_id = match self.interner.lookup(source) {
             Some(TypeData::Object(s) | TypeData::ObjectWithIndex(s)) => s,
             _ => return false,
