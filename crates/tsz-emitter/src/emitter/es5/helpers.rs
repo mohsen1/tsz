@@ -1218,7 +1218,9 @@ impl<'a> Printer<'a> {
 
         let body_has_await = async_emitter.body_contains_await(func.body);
         let (generator_body, hoisted_vars) = if body_has_await {
-            async_emitter.emit_generator_body_with_await_and_hoisted_vars(func.body)
+            let (generator_body, hoisted_vars, _) =
+                async_emitter.emit_generator_body_with_await_and_hoisted_vars(func.body);
+            (generator_body, hoisted_vars)
         } else {
             async_emitter.emit_simple_generator_body_with_hoisted_vars(func.body)
         };
