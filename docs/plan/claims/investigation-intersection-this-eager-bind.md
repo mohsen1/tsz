@@ -197,3 +197,77 @@ sites. Option 1 is unsafe.
 
 This stays unclaimed pending more investigation of which option breaks
 the fewest existing assumptions.
+
+## Iter 28 attempt (2026-05-01) — shallow_this_only flag
+
+Added `shallow_this_only: bool` to `TypeInstantiator` and set it in
+`substitute_this_type_cached`. When true, the Object/ObjectWithIndex/
+Function/Callable arms `return self.interner.intern(*key)` instead of
+re-instantiating their internals.
+
+Result on `intersectionThisTypes.ts`: **FIXED** — `outer.id` and
+`outer.tag` no longer error. The chained `extend({id}).extend({tag})`
+correctly produces `Label & {id} & {tag}`.
+
+Result on full conformance: net **−5** (12305 → 12300). 5 improvements,
+10 regressions. Of the 10 regressions, 5 are flaky (also fail on main)
+but 5 are genuine breakages caused by the filter:
+
+- `subclassThisTypeAssignable02.ts` — uses `Vnode<A, this>` (`this`
+  in type-argument position) and `view(this: State, ...)`
+  (this-parameter annotation).
+- `contextualThisType.ts`, `looseThisTypeInFunctions.ts`,
+  `unionThisTypeInFunctions.ts` — function `this:` annotations need
+  the substitution to walk into Function bodies.
+- `superCallsInConstructor.ts`, `arrowFunctionContexts.ts` — class /
+  arrow function `this` flow.
+
+These tests fail because the filter blocks substitution into
+Function/Callable internals **even when that substitution is the
+intended behavior** (e.g., when computing the type of a method bound
+to a specific class instance).
+
+Variants tried (all reverted):
+- Object-with-symbol filter only: the repro stays broken — recursion
+  path that causes the bake goes through Function/Callable methods,
+  not directly through Object.
+- Object-with-symbol + Function + Callable filter: fixes the repro
+  but breaks the 5 real regressions above.
+
+### Why a static filter doesn't work
+
+The substitution needs a **context-aware** distinction:
+
+1. `apply_this_substitution_to_call_return` substituting `this` in
+   `this & T` should only replace structural `ThisType` references at
+   the return-type level. Walking into stored Object/Function bodies
+   is harmful — they carry their own polymorphic `this`.
+2. `instantiate_type_with_this` for class inheritance ("how does
+   Subclass see Superclass's methods when `this` is the subclass")
+   genuinely means "specialize this method body".
+
+The two cases use the same `substitute_this_type` entry. The flag must
+be set differently per call site, not as a blanket policy.
+
+### Real fix sketch (round 3)
+
+Split into two functions:
+- `substitute_this_type_at_return_position(...)`: shallow. Used by
+  `apply_this_substitution_to_call_return`.
+- `substitute_this_type_for_class_specialization(...)`: deep.
+  Used by class inheritance / heritage merging.
+
+Then audit all current `substitute_this_type` call sites, classify
+each as "call return" or "class specialization", and route to the
+correct variant.
+
+### Action items for next investigator
+
+1. Audit all call sites of `substitute_this_type` /
+   `substitute_this_type_cached`. Classify each.
+2. Split into two functions; extend cache key with the variant.
+3. Verify the 5 real-regression tests above stay green.
+4. Verify the fix on `intersectionThisTypes.ts` still applies.
+
+This is the third attempt; each iteration narrows the fix surface.
+Unclaimed pending the call-site audit.
