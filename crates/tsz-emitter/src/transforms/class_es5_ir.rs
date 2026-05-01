@@ -1383,7 +1383,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 let has_accessor = self
                     .arena
                     .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                prop.initializer.is_none()
+                !self.property_initializer_has_equals(member_node, prop)
                     && !self.use_define_for_class_fields
                     && !is_private
                     && !has_accessor
@@ -1611,8 +1611,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 {
                     return None;
                 }
-                // Include if has initializer
-                prop_data.initializer.is_some().then_some(member_idx)
+                self.property_initializer_has_equals(member_node, prop_data)
+                    .then_some(member_idx)
             })
             .collect();
 
@@ -2232,6 +2232,9 @@ impl<'a> ES5ClassTransformer<'a> {
         if prop_data.initializer.is_none() {
             return None;
         }
+        if !self.property_initializer_has_equals(prop_node, prop_data) {
+            return None;
+        }
 
         let receiver = if use_this {
             IRNode::id("_this")
@@ -2569,6 +2572,34 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
         false
+    }
+
+    fn property_initializer_has_equals(
+        &self,
+        member_node: &Node,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return prop.initializer.is_some();
+        };
+        let Some(init_node) = self.arena.get(prop.initializer) else {
+            return false;
+        };
+        if prop.type_annotation.is_none() {
+            return true;
+        }
+
+        let start = member_node.pos as usize;
+        let end = (init_node.pos as usize).min(text.len());
+        if start >= end {
+            return false;
+        }
+        let segment = &text.as_bytes()[start..end];
+        let search_from = segment
+            .iter()
+            .rposition(|&byte| byte == b':')
+            .map_or(0, |idx| idx + 1);
+        segment[search_from..].contains(&b'=')
     }
 
     /// Recursively collect arrow function indices starting from a node

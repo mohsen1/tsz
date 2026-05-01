@@ -489,7 +489,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         && !self
                             .arena
                             .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
-                        && prop_data.initializer.is_some();
+                        && self.property_initializer_has_equals(m_node, prop_data);
                 }
             } else if (m_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || m_node.kind == syntax_kind_ext::SET_ACCESSOR)
@@ -669,7 +669,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
 
                 // Skip if no initializer
-                if prop_data.initializer.is_none() {
+                if !self.property_initializer_has_equals(member_node, prop_data) {
                     continue;
                 }
 
@@ -890,7 +890,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         && !self
                             .arena
                             .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
-                        && prop_data.initializer.is_some();
+                        && self.property_initializer_has_equals(m_node, prop_data);
                 }
             } else if (m_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || m_node.kind == syntax_kind_ext::SET_ACCESSOR)
@@ -1268,7 +1268,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     if is_abstract || is_declare || is_private_field || is_accessor_keyword {
                         continue;
                     }
-                    if prop_data.initializer.is_none() {
+                    if !self.property_initializer_has_equals(member_node, prop_data) {
                         continue;
                     }
                     // Defer static property initializers to after all methods/accessors.
@@ -1457,7 +1457,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 {
                     continue;
                 }
-                if prop_data.initializer.is_none() {
+                if !self.property_initializer_has_equals(member_node, prop_data) {
                     continue;
                 }
                 // Check if the initializer expression contains `this`
