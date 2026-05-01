@@ -1015,16 +1015,10 @@ impl<'a> CheckerState<'a> {
 
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
         let query_file_idx = self.ctx.get_file_idx_for_arena(symbol_arena);
-        if self.ctx.share_owner_symbol_type_results
-            && let Some(file_idx) = query_file_idx
-            && let Some((cached_type, cached_params)) =
-                self.ctx.definition_store.get_resolved_cross_file_query(
-                    CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
-                    file_idx as u32,
-                    sym_id.0,
-                    0,
-                    0,
-                )
+        if let Some(file_idx) = query_file_idx
+            && let Some((cached_type, cached_params)) = self
+                .ctx
+                .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
         {
             return Some((cached_type, cached_params));
         }
