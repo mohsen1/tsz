@@ -32,24 +32,12 @@ impl<'a> CheckerState<'a> {
         // For relative imports, use the module specifier directly as the display
         // name rather than the resolved file path. This matches tsc, which shows
         // `typeof import("aliasAssignments_moduleA")` not the full resolved path.
-        // Only resolve to the actual file path for non-relative/node_modules imports
-        // where the package structure matters.
-        let is_relative = module_name.starts_with("./") || module_name.starts_with("../");
-        let resolved_name = if is_relative {
-            module_name.to_string()
-        } else {
-            self.ctx
-                .resolve_import_target(module_name)
-                .and_then(|target_idx| {
-                    self.ctx
-                        .get_arena_for_file(target_idx as u32)
-                        .source_files
-                        .first()
-                        .map(|source_file| source_file.file_name.clone())
-                })
-                .unwrap_or_else(|| module_name.to_string())
-        };
-        let trimmed = trim_namespace_display_path(&resolved_name);
+        // For non-relative (bare) imports — package names like `"shortid"` —
+        // tsc also uses the original specifier in `typeof import("...")` output,
+        // not the resolved `node_modules/<pkg>/index` path. Treat both kinds
+        // uniformly: the display name is the original specifier with `./` and
+        // any known extension stripped.
+        let trimmed = trim_namespace_display_path(module_name);
         tsz_common::file_extensions::strip_known_extension(&trimmed).to_string()
     }
 
