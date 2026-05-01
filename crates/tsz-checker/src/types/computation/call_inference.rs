@@ -2325,3 +2325,7 @@ impl<'a> CheckerState<'a> {
         arg_type
     }
 }
+
+#[cfg(test)]
+#[path = "intra_expression_inference_tests.rs"]
+mod intra_expression_inference_tests;
