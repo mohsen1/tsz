@@ -119,25 +119,30 @@ impl TypeInterner {
             // with primitives. In TypeScript, `string & {}` is just `string`, so we must not
             // mark this as disjoint.
             let mut mark_non_primitive = false;
-            match self.lookup(member) {
-                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                    let shape = self.object_shape(shape_id);
-                    if !(shape.properties.is_empty()
-                        && shape.string_index.is_none()
-                        && shape.number_index.is_none())
-                    {
+            // Intrinsics never resolve to Object/Function/Array/Tuple/etc.
+            // — skip the dyn-dispatched lookup and leave mark_non_primitive
+            // false (matches the existing `_ => {}` fall-through).
+            if !member.is_intrinsic() {
+                match self.lookup(member) {
+                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                        let shape = self.object_shape(shape_id);
+                        if !(shape.properties.is_empty()
+                            && shape.string_index.is_none()
+                            && shape.number_index.is_none())
+                        {
+                            mark_non_primitive = true;
+                        }
+                    }
+                    Some(
+                        TypeData::Function(_)
+                        | TypeData::Callable(_)
+                        | TypeData::Array(_)
+                        | TypeData::Tuple(_),
+                    ) => {
                         mark_non_primitive = true;
                     }
+                    _ => {}
                 }
-                Some(
-                    TypeData::Function(_)
-                    | TypeData::Callable(_)
-                    | TypeData::Array(_)
-                    | TypeData::Tuple(_),
-                ) => {
-                    mark_non_primitive = true;
-                }
-                _ => {}
             }
             let Some(member_class) = self.primitive_class_for(member) else {
                 has_non_primitive = has_non_primitive || mark_non_primitive;
