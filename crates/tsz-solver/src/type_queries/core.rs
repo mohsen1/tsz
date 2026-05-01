@@ -169,6 +169,14 @@ pub fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 /// assert!(!is_invokable_type(&db, class_constructor_only));
 /// ```
 pub fn is_invokable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic kinds (any / unknown / never / void / null /
+    // undefined plus the reserved PrimitiveX kinds) cannot be a Function,
+    // Callable, or Intersection. Skip the `db.lookup` virtual call and
+    // the recursive intersection-walk for them. is_intrinsic() is a
+    // free TypeId-range check (no TypeData lookup needed).
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(_)) => true,
         Some(TypeData::Callable(shape_id)) => {
