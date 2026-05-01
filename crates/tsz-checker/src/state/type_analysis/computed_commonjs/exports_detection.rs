@@ -819,11 +819,11 @@ impl<'a> CheckerState<'a> {
         if !preserve_js_extension
             && let Some(specifier) = self.current_file_explicit_js_module_specifier()
         {
-            return specifier
+            let basename = specifier
                 .rsplit(|ch| ['/', '\\'].contains(&ch))
                 .next()
-                .unwrap_or(specifier)
-                .to_string();
+                .unwrap_or(specifier);
+            return tsz_common::file_extensions::strip_known_extension(basename).to_string();
         }
 
         let file_name = self
