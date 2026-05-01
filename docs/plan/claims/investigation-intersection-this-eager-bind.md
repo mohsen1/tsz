@@ -111,3 +111,89 @@ let resolved = if !self.skip_this_binding.get()
 
 - The intersection-flattening path (look in `crates/tsz-solver/src/evaluation/`, especially intersection normalization that converts `A & B` of object members into a single flattened `Object`) needs to **either** keep `A & B` as a structural `Intersection` of two members so the visitor can still use `skip_this_binding`, **or** preserve raw `this` on the flattened result so each call-site substitution can rebind to the actual receiver.
 - The Lazy-arm fix above is still the right behavior for the case it covers, but it must land bundled with the flattening fix to net non-negative on conformance. Not safe to land alone.
+
+## Second follow-up trace (2026-05-01, iter 26)
+
+Pinpointed the flattening site. The intersection-to-Object merge happens in
+`crates/tsz-solver/src/intern/intersection.rs::extract_and_merge_objects`
+(called from `normalize_intersection`). Two object members of an
+intersection get merged via `try_merge_objects_in_intersection` which
+clones each property's `type_id` verbatim into the merged shape.
+
+So the property's `type_id` itself is preserved unchanged; the merge does
+NOT substitute `this`. Yet the trace below shows `Label`'s `extend`
+property has `contains_this=true` (TypeId 1202), but the merged
+`{id:number} & Label` Object's `extend` has `contains_this=false`
+(TypeId 1363). Different TypeIds — same conceptual member.
+
+```
+DBG-VOI prop=extend obj=TypeId(1009) raw=TypeId(1202) contains_this=true   ← Label.extend
+DBG-VOI prop=extend obj=TypeId(1111) raw=TypeId(1363) contains_this=false  ← inner.extend (merged)
+```
+
+So the substitution runs **between** Label's stored shape and the merged
+shape. Most likely culprit: the call-return path
+(`apply_this_substitution_to_call_return`) calls `substitute_this_type`
+on the call's return type `this & T`. After that runs, the return type
+is `Label & {id: number}`. Then this Intersection gets normalized by
+`extract_and_merge_objects`, which clones each member's properties.
+For the `Label` member, its body is read via `object_shape(...)` —
+**but** `instantiate_type` may have been applied to it during the prior
+substitute_this_type pass, which walks Object types via line 781-786 in
+`instantiation/instantiate.rs` and re-interns each property after
+calling `instantiate_properties`. That re-internment substitutes `this`
+in every method body of Label.
+
+So the eager bake site is `TypeData::Object` arm of `instantiate`
+(`instantiation/instantiate.rs:781-786`):
+
+```rust
+TypeData::Object(shape_id) => {
+    let shape = self.interner.object_shape(*shape_id);
+    let instantiated = self.instantiate_properties(&shape.properties);
+    self.interner
+        .object_with_flags_and_symbol(instantiated, shape.flags, shape.symbol)
+}
+```
+
+`instantiate_properties` runs `instantiate(prop.type_id)` for each prop,
+which substitutes `this -> instantiator.this_type`. When the call-return
+path calls `substitute_this_type(this & T, Label)`, the instantiator's
+`this_type = Label`, and the WHOLE `this & T` shape walks through this
+Object arm — meaning Label's stored body is re-instantiated with
+`this -> Label` baked into every method.
+
+### Tried and reverted (round 2)
+
+1. Removed the `this` substitution from `evaluate.rs::visit_lazy` —
+   no effect (Label is already in Object form before reaching this path).
+2. Removed the `this` substitution from
+   `property.rs::resolve_property_access_inner` Lazy arm — no effect
+   (same reason).
+
+### Real fix sketch
+
+Either:
+1. In the `TypeData::Object` arm of `instantiate`: when instantiating
+   Object properties via `instantiate_properties`, **skip** properties
+   whose type contains raw `this` if `instantiator.this_type` is set to
+   the very Object being instantiated (would cause `this -> selfId` bake
+   that defeats subsequent intersection rebinding). But "self vs the
+   intersection that wraps self" is tricky to detect here.
+2. Defer the call-return `this` substitution until after intersection
+   normalization, and apply it only on the final post-normalization
+   shape — so the merged Object can store raw `this` and the
+   substitution sees the merged Object as the new receiver.
+3. In `extract_and_merge_objects`: when one member's properties contain
+   `this` baked to that member's own TypeId, *un-substitute* that
+   `this -> member_id` back to raw `this` in the merged result. This
+   restores the polymorphic shape so the next call-site substitution
+   can bind `this` to the full intersection.
+
+Option 3 is the most localized but requires a `unsubstitute_this_type`
+pass, which doesn't exist yet. Option 2 is the most semantically
+correct but reorders a substitution that's depended on by many other
+sites. Option 1 is unsafe.
+
+This stays unclaimed pending more investigation of which option breaks
+the fewest existing assumptions.
