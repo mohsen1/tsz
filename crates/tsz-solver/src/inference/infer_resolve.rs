@@ -702,7 +702,8 @@ impl<'a> InferenceContext<'a> {
             highest_priority,
             Some(InferencePriority::ReturnType | InferencePriority::LowPriority)
         );
-        let resolved = if !preserve_literals && !is_contextual_inference {
+        let resolved = if !preserve_literals && !is_contextual_inference && !resolved.is_intrinsic()
+        {
             match self.interner.lookup(resolved) {
                 Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     // Only deep-widen fresh object literals (from object literal
