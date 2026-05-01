@@ -740,9 +740,9 @@ impl<'a> CheckerState<'a> {
                             })
                             .unwrap_or(false)
                     });
-                // TS7006: In TS files, contextual `unknown` is still a concrete contextual
-                // type and should suppress implicit-any reporting for callback parameters.
-                // Keep the old JS behavior where weak contextual `unknown` is treated as no context.
+                // TS7006: contextual `unknown` is still a concrete contextual
+                // type and should suppress implicit-any reporting for callback
+                // parameters in both TS and JS/checkJs paths.
                 // Rest parameters (`...x`) are always contextually typed when a contextual
                 // type helper exists — even if the contextual function has fewer parameters,
                 // the rest param captures the "remaining" args (type `[]` for 0-param context).
@@ -751,10 +751,9 @@ impl<'a> CheckerState<'a> {
                 // context, so it must not suppress TS7006 for the RHS function.
                 let weak_self_contextual_prototype_any = is_bare_js_prototype_assignment_function
                     && contextual_type == Some(TypeId::ANY);
-                let has_contextual_type = (contextual_type
-                    .is_some_and(|t| t != TypeId::UNKNOWN || !is_js_file)
+                let has_contextual_type = (contextual_type.is_some()
                     && !weak_self_contextual_prototype_any)
-                    || (has_unknown_expected_context && !is_js_file)
+                    || has_unknown_expected_context
                     || (param.dot_dot_dot_token
                         && ctx_helper.is_some()
                         && !weak_self_contextual_prototype_any)

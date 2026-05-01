@@ -601,5 +601,9 @@ path = "tests/reserved_keyword_param_function_type_tests.rs"
 name = "global_this_property_access_diagnostics_tests"
 path = "tests/global_this_property_access_diagnostics_tests.rs"
 
+[[test]]
+name = "jsdoc_template_variance_function_tests"
+path = "tests/jsdoc_template_variance_function_tests.rs"
+
 [lints]
 workspace = true
