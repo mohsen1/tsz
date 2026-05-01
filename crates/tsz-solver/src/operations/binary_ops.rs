@@ -481,6 +481,9 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Check if a type has call or construct signatures.
     fn type_has_call_or_construct_signatures(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(crate::TypeData::Callable(shape_id)) => {
                 let shape = self.interner.callable_shape(shape_id);
