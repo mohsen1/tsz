@@ -21,6 +21,7 @@ pub(crate) use compiler_options::is_js_file_name;
 pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
 mod constructors;
 mod core;
+mod cross_file_query;
 mod def_mapping;
 mod parse_health;
 pub use parse_health::ParseHealth;
