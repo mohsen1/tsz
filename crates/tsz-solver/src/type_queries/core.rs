@@ -189,6 +189,9 @@ pub fn is_invokable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::Object` and `TypeData::ObjectWithIndex`.
 pub fn is_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
@@ -234,6 +237,9 @@ pub fn has_nominal_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::Application`.
 pub fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::Application(_)))
 }
 
@@ -241,6 +247,9 @@ pub fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::Lazy(DefId)` (interfaces, classes, type aliases).
 pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(
         db.lookup(type_id),
         Some(TypeData::Lazy(_) | TypeData::Recursive(_) | TypeData::BoundParameter(_))
