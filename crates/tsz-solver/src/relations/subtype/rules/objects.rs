@@ -600,6 +600,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     fn normalize_receiver_type(&self, receiver: TypeId) -> TypeId {
+        if receiver.is_intrinsic() {
+            return receiver;
+        }
         match self.interner.lookup(receiver) {
             Some(crate::types::TypeData::Object(shape_id))
             | Some(crate::types::TypeData::ObjectWithIndex(shape_id)) => {
