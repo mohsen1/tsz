@@ -870,7 +870,37 @@ impl<'a> CheckerState<'a> {
             let alias_target_merged_value_info: Option<(tsz_binder::SymbolId, NodeIndex, usize)> =
                 ((flags & tsz_binder::symbol_flags::ALIAS) != 0)
                     .then(|| {
-                        let target_sym_id = self.ctx.resolve_import_alias_and_register(sym_id)?;
+                        let mut target_sym_id =
+                            self.ctx.resolve_import_alias_and_register(sym_id)?;
+                        // Default imports resolve through `target_binder.file_locals`'s
+                        // synthesized "default" alias. That alias has `ALIAS`
+                        // flag but no `import_module`/`import_name`, so a
+                        // second `resolve_import_alias_and_register` returns
+                        // `None`. Instead follow the `default` alias's
+                        // `declarations[0]` — which is the `export_clause`
+                        // Identifier for `export default <Foo>` — and look
+                        // up that identifier's text in the same target
+                        // binder to reach the underlying merged symbol.
+                        if let Some(target) = self.get_symbol_globally(target_sym_id)
+                            && (target.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                            && target.import_module.is_none()
+                            && let Some(decl_idx) = target.primary_declaration()
+                            && let Some(target_file_idx) =
+                                self.ctx.resolve_symbol_file_index(target_sym_id)
+                            && let Some(target_binder) =
+                                self.ctx.get_binder_for_file(target_file_idx)
+                        {
+                            let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+                            if let Some(ident) = target_arena.get_identifier_at(decl_idx)
+                                && let Some(underlying) =
+                                    target_binder.file_locals.get(&ident.escaped_text)
+                                && underlying != target_sym_id
+                            {
+                                self.ctx
+                                    .register_symbol_file_target(underlying, target_file_idx);
+                                target_sym_id = underlying;
+                            }
+                        }
                         let target = self.get_symbol_globally(target_sym_id)?;
                         let tflags = target.flags;
                         if (tflags & tsz_binder::symbol_flags::INTERFACE) != 0
