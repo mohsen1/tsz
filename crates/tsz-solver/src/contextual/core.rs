@@ -40,6 +40,9 @@ pub fn rest_argument_element_type(db: &dyn crate::TypeDatabase, type_id: TypeId)
         if depth == 0 {
             return type_id;
         }
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
 
         // Fast path: intrinsics aren't `ReadonlyType` / `NoInfer` /
         // `TypeParameter` / `Infer` / `Union` / `Array` / `Tuple` /
