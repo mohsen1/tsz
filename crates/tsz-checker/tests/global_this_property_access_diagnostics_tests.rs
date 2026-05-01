@@ -44,6 +44,20 @@ globalThis.someUnknownProperty
     );
 }
 
+/// Type queries use a separate `typeof` member-access path. It must apply the
+/// same direct-`globalThis` TS7017 rule as value-space member access.
+#[test]
+fn globalthis_type_query_member_access_emits_ts7017() {
+    let source = r#"
+type T = typeof globalThis.someUnknownProperty;
+"#;
+    let diags = check_with_no_implicit_any(source);
+    assert!(
+        count(&diags, 7017) >= 1,
+        "TS7017 must fire for typeof globalThis.unknown; got: {diags:#?}"
+    );
+}
+
 /// Element access `globalThis['unknown']` under `--noImplicitAny` must emit
 /// TS7053. Same rationale as TS7017 above.
 #[test]
@@ -114,6 +128,24 @@ v.someUnknownProperty;
     assert!(
         msg.contains("Foo & Bar & Baz") || msg.contains("Foo &"),
         "TS2339 must preserve the multi-member intersection annotation; got: {msg}"
+    );
+}
+
+/// Reduced intersections still display their reduced form. For impossible
+/// intersections, tsc reports `never`, not the unreduced source annotation.
+#[test]
+fn reduced_never_intersection_receiver_displays_never_not_annotation() {
+    let source = r#"
+class A { private x: unknown; y?: string; }
+class B { private x: unknown; y?: string; }
+declare let ab: A & B;
+ab.y;
+"#;
+    let diags = check_with_no_implicit_any(source);
+    let msg = message_for(&diags, 2339).expect("TS2339 should fire for ab.y");
+    assert!(
+        msg.contains("type 'never'") && !msg.contains("A & B"),
+        "TS2339 should display the reduced never type, not the source annotation; got: {msg}"
     );
 }
 

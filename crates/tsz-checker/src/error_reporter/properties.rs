@@ -399,9 +399,13 @@ impl<'a> CheckerState<'a> {
         //     evaluation; the source text faithfully preserves all members).
         // Skip annotations containing `{` (inline object literals need the
         // proper type formatter to add `| undefined` for optional members).
+        // Also skip reduced intersections: tsc displays `never` for impossible
+        // intersections like `A & B` with conflicting private fields or
+        // discriminants, not the unreduced source annotation.
         // We deliberately do NOT trigger on `|` annotations because flow
         // narrowing legitimately replaces a union receiver with its picked
         // member, and the narrowed display is what tsc shows.
+        let receiver_reduces_to_never = self.evaluate_type_for_assignability(type_id).is_never();
         if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
             && let Some(annotation) = self.declared_type_annotation_text_for_expression(receiver)
             && annotation
@@ -409,6 +413,7 @@ impl<'a> CheckerState<'a> {
                 .next()
                 .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
             && !annotation.contains('{')
+            && !receiver_reduces_to_never
             && (crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
                 || self.ctx.types.get_display_alias(type_id).is_some()
                 || annotation.contains('&'))
