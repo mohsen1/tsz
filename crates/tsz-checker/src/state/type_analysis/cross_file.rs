@@ -12,7 +12,7 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
+pub(crate) const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
 pub(crate) const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
 const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
 pub(crate) const CROSS_FILE_QUERY_SYMBOL_TYPE: u8 = 4;
@@ -1146,17 +1146,10 @@ impl<'a> CheckerState<'a> {
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
         let query_file_idx =
             delegate_file_idx.or_else(|| self.ctx.get_file_idx_for_arena(symbol_arena));
-        if self.ctx.share_owner_symbol_type_results
-            && let Some(file_idx) = query_file_idx
-            && let Some((cached_type, _)) = self.ctx.definition_store.get_resolved_cross_file_query(
-                CROSS_FILE_QUERY_INTERFACE_TYPE,
-                file_idx as u32,
-                sym_id.0,
-                0,
-                0,
-            )
-            && cached_type != TypeId::UNKNOWN
-            && cached_type != TypeId::ERROR
+        if let Some(file_idx) = query_file_idx
+            && let Some(cached_type) = self
+                .ctx
+                .cached_cross_file_interface_type(sym_id, file_idx as u32)
         {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
             self.ctx
@@ -1184,18 +1177,9 @@ impl<'a> CheckerState<'a> {
             if !direct_params.is_empty() {
                 self.ctx.insert_def_type_params(def_id, direct_params);
             }
-            if self.ctx.share_owner_symbol_type_results
-                && let Some(file_idx) = query_file_idx
-            {
-                self.ctx.definition_store.cache_resolved_cross_file_query(
-                    CROSS_FILE_QUERY_INTERFACE_TYPE,
-                    file_idx as u32,
-                    sym_id.0,
-                    0,
-                    0,
-                    direct_type,
-                    Vec::new(),
-                );
+            if let Some(file_idx) = query_file_idx {
+                self.ctx
+                    .cache_cross_file_interface_type(sym_id, file_idx as u32, direct_type);
             }
             return Some(direct_type);
         }
@@ -1311,18 +1295,9 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .definition_store
                 .register_type_to_def(result, def_id);
-            if self.ctx.share_owner_symbol_type_results
-                && let Some(file_idx) = query_file_idx
-            {
-                self.ctx.definition_store.cache_resolved_cross_file_query(
-                    CROSS_FILE_QUERY_INTERFACE_TYPE,
-                    file_idx as u32,
-                    sym_id.0,
-                    0,
-                    0,
-                    result,
-                    Vec::new(),
-                );
+            if let Some(file_idx) = query_file_idx {
+                self.ctx
+                    .cache_cross_file_interface_type(sym_id, file_idx as u32, result);
             }
             Some(result)
         } else {
