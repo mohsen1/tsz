@@ -14,7 +14,7 @@ use tsz_solver::TypeId;
 
 pub(crate) const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
 pub(crate) const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
-const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
+pub(crate) const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
 pub(crate) const CROSS_FILE_QUERY_SYMBOL_TYPE: u8 = 4;
 
 fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
@@ -1350,21 +1350,14 @@ impl<'a> CheckerState<'a> {
         let mut results = rustc_hash::FxHashMap::default();
         let mut misses = Vec::new();
         if type_args.is_none()
-            && self.ctx.share_owner_symbol_type_results
             && let Some(file_idx) = delegate_file_idx
         {
             for &member_idx in member_indices {
-                if let Some((cached_type, _)) =
-                    self.ctx.definition_store.get_resolved_cross_file_query(
-                        CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
-                        file_idx as u32,
-                        interface_idx.0,
-                        member_idx.0,
-                        0,
-                    )
-                    && cached_type != TypeId::UNKNOWN
-                    && cached_type != TypeId::ERROR
-                {
+                if let Some(cached_type) = self.ctx.cached_cross_file_interface_member_simple_type(
+                    interface_idx,
+                    member_idx,
+                    file_idx as u32,
+                ) {
                     results.insert(member_idx, cached_type);
                 } else {
                     misses.push(member_idx);
@@ -1386,18 +1379,14 @@ impl<'a> CheckerState<'a> {
             type_args,
         ) {
             if type_args.is_none()
-                && self.ctx.share_owner_symbol_type_results
                 && let Some(file_idx) = delegate_file_idx
             {
                 for (&member_idx, &member_type) in direct_results.iter() {
-                    self.ctx.definition_store.cache_resolved_cross_file_query(
-                        CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+                    self.ctx.cache_cross_file_interface_member_simple_type(
+                        interface_idx,
+                        member_idx,
                         file_idx as u32,
-                        interface_idx.0,
-                        member_idx.0,
-                        0,
                         member_type,
-                        Vec::new(),
                     );
                 }
             }
@@ -1497,17 +1486,13 @@ impl<'a> CheckerState<'a> {
             }
             if result != TypeId::UNKNOWN && result != TypeId::ERROR {
                 if type_args.is_none()
-                    && self.ctx.share_owner_symbol_type_results
                     && let Some(file_idx) = delegate_file_idx
                 {
-                    self.ctx.definition_store.cache_resolved_cross_file_query(
-                        CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+                    self.ctx.cache_cross_file_interface_member_simple_type(
+                        interface_idx,
+                        member_idx,
                         file_idx as u32,
-                        interface_idx.0,
-                        member_idx.0,
-                        0,
                         result,
-                        Vec::new(),
                     );
                 }
                 results.insert(member_idx, result);

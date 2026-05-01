@@ -149,4 +149,78 @@ impl<'a> CheckerContext<'a> {
             Vec::new(),
         );
     }
+
+    /// Look up a cached cross-file interface-member simple type via the
+    /// canonical `CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE` bucket.
+    ///
+    /// Unlike the `SYMBOL_TYPE` / `INTERFACE_TYPE` buckets (keyed by `sym_id`),
+    /// this bucket is keyed by `(interface_idx, member_idx)` so a single
+    /// interface's members each live under their own entry.
+    ///
+    /// Returns `None` when:
+    /// - the share-owner gate is off,
+    /// - the bucket has no entry for `(file_idx, interface_idx, member_idx)`, or
+    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`.
+    pub fn cached_cross_file_interface_member_simple_type(
+        &self,
+        interface_idx: tsz_parser::NodeIndex,
+        member_idx: tsz_parser::NodeIndex,
+        file_idx: u32,
+    ) -> Option<tsz_solver::TypeId> {
+        if !self.share_owner_symbol_type_results {
+            return None;
+        }
+        let (cached_type, _params) = self.definition_store.get_resolved_cross_file_query(
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+            file_idx,
+            interface_idx.0,
+            member_idx.0,
+            0,
+        )?;
+        if matches!(
+            cached_type,
+            tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
+        ) {
+            return None;
+        }
+        Some(cached_type)
+    }
+
+    /// Cache a cross-file interface-member simple type result in the
+    /// canonical `CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE` bucket.
+    ///
+    /// No-op when:
+    /// - the share-owner gate is off, or
+    /// - `type_id` is `TypeId::ERROR` / `TypeId::UNKNOWN`.
+    ///
+    /// First-writer-wins via `DashMap::entry().or_insert_with(...)`. The
+    /// bucket value's params payload is empty — interface-member type
+    /// params would live on the owning interface's `DefId`, not on the
+    /// per-member entry.
+    pub fn cache_cross_file_interface_member_simple_type(
+        &self,
+        interface_idx: tsz_parser::NodeIndex,
+        member_idx: tsz_parser::NodeIndex,
+        file_idx: u32,
+        type_id: tsz_solver::TypeId,
+    ) {
+        if !self.share_owner_symbol_type_results {
+            return;
+        }
+        if matches!(
+            type_id,
+            tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
+        ) {
+            return;
+        }
+        self.definition_store.cache_resolved_cross_file_query(
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+            file_idx,
+            interface_idx.0,
+            member_idx.0,
+            0,
+            type_id,
+            Vec::new(),
+        );
+    }
 }
