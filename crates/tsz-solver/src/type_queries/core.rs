@@ -273,6 +273,9 @@ pub fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::KeyOf`.
 pub fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::KeyOf(_)))
 }
 
@@ -280,6 +283,9 @@ pub fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for `TypeData::ReadonlyType`.
 pub fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::ReadonlyType(_)))
 }
 
@@ -308,6 +314,9 @@ pub fn type_has_readonly_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool
 /// `ThisType` represents `this` in class methods and needs to be resolved
 /// to the concrete class type before property access.
 pub fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::ThisType))
 }
 
@@ -319,6 +328,9 @@ pub fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Returns true only for `TypeData::UniqueSymbol` types, which represent
 /// individual `typeof sym` types created for const symbol declarations.
 pub fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     matches!(db.lookup(type_id), Some(TypeData::UniqueSymbol(_)))
 }
 
