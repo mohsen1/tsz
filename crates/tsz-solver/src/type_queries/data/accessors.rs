@@ -43,6 +43,9 @@ pub fn collect_callable_property_types(db: &dyn TypeDatabase, type_id: TypeId) -
 
 /// Check if a type is a callable type (Function or Callable with call signatures).
 fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(_)) => true,
         Some(TypeData::Callable(id)) => !db.callable_shape(id).call_signatures.is_empty(),
@@ -56,6 +59,9 @@ fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// `construct_signatures`) or is a constructor Function (`is_constructor`).
 /// For union types, returns true if ANY member is constructor-like.
 pub fn is_constructor_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     if let Some(shape_id) = crate::visitor::callable_shape_id(db, type_id)
         && !db.callable_shape(shape_id).construct_signatures.is_empty()
     {
@@ -349,6 +355,9 @@ pub fn intersect_constructor_returns(
 /// as tuples: homomorphic mapped types preserve array/tuple structure, so the
 /// array literal input should maintain per-element type information.
 pub fn is_homomorphic_mapped_type_context(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Mapped(mapped_id)) => {
             let mapped = db.mapped_type(mapped_id);
@@ -367,6 +376,9 @@ pub fn is_homomorphic_mapped_type_context(db: &dyn TypeDatabase, type_id: TypeId
 
 /// Check if a type is `keyof T` where T is a type parameter (possibly intersected).
 fn is_keyof_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::KeyOf(target)) => {
             matches!(db.lookup(target), Some(TypeData::TypeParameter(_)))
@@ -847,6 +859,9 @@ pub fn find_property_in_object_by_str(
 /// property named `"0"`. This is used by array literal contextual typing
 /// to decide whether to create a tuple type instead of an array type.
 pub fn is_tuple_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => true,
         Some(TypeData::ReadonlyType(inner)) => is_tuple_like_type(db, inner),
