@@ -171,15 +171,16 @@ impl TypeInterner {
         // `(S["a"] & T) | (S["a"] & undefined)`, losing the deferred constraint
         // and making `T` incorrectly assignable to `(S & State<T>)["a"]`.
         let has_unresolved = flat.iter().any(|&id| {
-            matches!(
-                self.lookup(id),
-                Some(
-                    TypeData::Lazy(_)
-                        | TypeData::Application(_)
-                        | TypeData::Mapped(_)
-                        | TypeData::IndexAccess(_, _)
+            !id.is_intrinsic()
+                && matches!(
+                    self.lookup(id),
+                    Some(
+                        TypeData::Lazy(_)
+                            | TypeData::Application(_)
+                            | TypeData::Mapped(_)
+                            | TypeData::IndexAccess(_, _)
+                    )
                 )
-            )
         });
         if has_unresolved {
             let list_id = self.intern_type_list_from_slice(&flat);
@@ -287,9 +288,9 @@ impl TypeInterner {
         // remaining intersection types in the result). This matches tsc:
         // `(string|boolean) & (boolean|null)` → `boolean`, but
         // `(A|B) & (C|D)` with interfaces stays as intersection.
-        let has_non_union = flat.iter().any(|&id| {
-            id.is_intrinsic() || !matches!(self.lookup(id), Some(TypeData::Union(_)))
-        });
+        let has_non_union = flat
+            .iter()
+            .any(|&id| id.is_intrinsic() || !matches!(self.lookup(id), Some(TypeData::Union(_))));
         if has_non_union {
             if let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
                 return distributed;
