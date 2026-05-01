@@ -1094,17 +1094,21 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let (diag_node, type_node) = if child_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+            // The diagnostic anchor is the JSX child wrapper itself
+            // (`{expr}` or `<Elem />`) so its column matches tsc's report,
+            // while the child's *type* still comes from the inner expression
+            // when the wrapper is a JSX expression container.
+            let type_node = if child_node.kind == syntax_kind_ext::JSX_EXPRESSION {
                 self.ctx
                     .arena
                     .get_jsx_expression(child_node)
                     .map(|expr_data| expr_data.expression)
                     .filter(|&expr_idx| expr_idx != NodeIndex::NONE)
-                    .map(|expr_idx| (expr_idx, expr_idx))
-                    .unwrap_or((child_idx, child_idx))
+                    .unwrap_or(child_idx)
             } else {
-                (child_idx, child_idx)
+                child_idx
             };
+            let diag_node = child_idx;
 
             let actual_child_type =
                 self.compute_type_of_node_with_request(type_node, &child_request);
@@ -1122,10 +1126,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            self.check_assignable_or_report_at(
+            // Use the exact-anchor variant so the diagnostic stays on the JSX
+            // child instead of being rewritten up to the enclosing variable
+            // declaration by the assignment-anchor walker. Pass the inner
+            // expression as the source so callable-child source elaboration
+            // (e.g. arrow-body return-type mismatch) still triggers, while the
+            // diagnostic anchor points at the outer JSX child wrapper.
+            self.check_assignable_or_report_at_exact_anchor(
                 actual_child_type,
                 expected_child_type,
-                diag_node,
+                type_node,
                 diag_node,
             );
             emitted = true;
