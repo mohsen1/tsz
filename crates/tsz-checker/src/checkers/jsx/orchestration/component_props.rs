@@ -845,17 +845,26 @@ impl<'a> CheckerState<'a> {
             match ty {
                 Some(ty) => {
                     if name != &children_prop_name {
-                        // Widen *interior* literals of object/array prop values
-                        // before Round 1 inference, mirroring tsc's
-                        // getInferredType behavior: `{ x: "y" }` → `{ x: string }`.
-                        // Top-level primitive-literal props (e.g. `as="button"`)
-                        // are kept narrow — those drive discriminator-style
-                        // conditional-type narrowing downstream.
-                        let widened = if crate::query_boundaries::common::is_object_like_type(
-                            self.ctx.types,
-                            *ty,
-                        ) {
-                            crate::query_boundaries::common::widen_type_deep(self.ctx.types, *ty)
+                        // Widen *interior* literals of plain object/array
+                        // prop values before Round 1 inference, mirroring
+                        // tsc's `getInferredType` for fresh object literals
+                        // (`{ x: "y" }` → `{ x: string }`). Use
+                        // `widen_type_for_inference` so function/callable
+                        // parameter/return types stay narrow under
+                        // strict-function-types. Gate on plain
+                        // Object/ObjectWithIndex/Array/Tuple to avoid widening
+                        // top-level primitive props like `as="button"` (which
+                        // need to keep their literal form for discriminator
+                        // narrowing) and to avoid touching Function/Callable
+                        // types.
+                        let is_plain_shape =
+                            tsz_solver::type_queries::is_object_type(self.ctx.types, *ty)
+                                || tsz_solver::type_queries::is_array_or_tuple_type(
+                                    self.ctx.types,
+                                    *ty,
+                                );
+                        let widened = if is_plain_shape {
+                            tsz_solver::widen_type_for_inference(self.ctx.types, *ty)
                         } else {
                             *ty
                         };
