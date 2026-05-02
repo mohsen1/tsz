@@ -10,7 +10,9 @@ use crate::transforms::private_fields_es5::{
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_parser::syntax::transform_utils::{contains_super_reference, contains_this_reference};
+use tsz_parser::syntax::transform_utils::{
+    contains_async_arrow_function, contains_super_reference, contains_this_reference,
+};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -717,9 +719,10 @@ impl<'a> Printer<'a> {
             };
 
         let static_initializer_needs_this_alias = !static_initializer_nodes.is_empty()
-            && static_initializer_nodes
-                .iter()
-                .any(|init_idx| contains_this_reference(self.arena, *init_idx));
+            && static_initializer_nodes.iter().any(|init_idx| {
+                contains_this_reference(self.arena, *init_idx)
+                    || contains_async_arrow_function(self.arena, *init_idx)
+            });
         let static_initializer_needs_super_alias = has_extends
             && !extends_null
             && !static_initializer_nodes.is_empty()

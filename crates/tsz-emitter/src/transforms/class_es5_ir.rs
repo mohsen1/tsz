@@ -319,6 +319,7 @@ pub struct ES5ClassTransformer<'a> {
     /// Alias used for `this` in static property initializers/static blocks for the current class.
     current_static_class_alias: Option<String>,
     use_define_for_class_fields: bool,
+    commonjs_import_substitutions: FxHashMap<String, String>,
     /// Additional hoisted temp variable names collected from expression conversions
     /// (e.g., from computed property lowering inside object literals)
     extra_hoisted_temps: RefCell<Vec<String>>,
@@ -344,12 +345,17 @@ impl<'a> ES5ClassTransformer<'a> {
             computed_prop_temp_map: std::collections::HashMap::new(),
             current_static_class_alias: None,
             use_define_for_class_fields: false,
+            commonjs_import_substitutions: FxHashMap::default(),
             extra_hoisted_temps: RefCell::new(Vec::new()),
         }
     }
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
         self.use_define_for_class_fields = enable;
+    }
+
+    pub fn set_commonjs_import_substitutions(&mut self, subs: FxHashMap<String, String>) {
+        self.commonjs_import_substitutions = subs;
     }
 
     pub fn set_temp_var_counter(&mut self, counter: u32) {

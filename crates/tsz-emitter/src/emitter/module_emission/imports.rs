@@ -88,6 +88,65 @@ impl<'a> Printer<'a> {
         names
             .iter()
             .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name))
+            || (self.ctx.target_es5
+                && self
+                    .async_return_type_uses_imported_promise_constructor_after_node(node, &names))
+    }
+
+    fn async_return_type_uses_imported_promise_constructor_after_node(
+        &self,
+        import_node: &Node,
+        names: &[String],
+    ) -> bool {
+        self.arena.nodes.iter().any(|node| {
+            if node.pos < import_node.end {
+                return false;
+            }
+            match node.kind {
+                kind if kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || kind == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    self.arena.get_function(node).is_some_and(|func| {
+                        func.is_async
+                            && self
+                                .promise_constructor_type_name(func.type_annotation)
+                                .is_some_and(|name| names.iter().any(|import| import == &name))
+                    })
+                }
+                kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
+                    self.arena.get_method_decl(node).is_some_and(|method| {
+                        self.arena
+                            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword)
+                            && self
+                                .promise_constructor_type_name(method.type_annotation)
+                                .is_some_and(|name| names.iter().any(|import| import == &name))
+                    })
+                }
+                _ => false,
+            }
+        })
+    }
+
+    fn promise_constructor_type_name(&self, type_annotation: NodeIndex) -> Option<String> {
+        let type_node = self.arena.get(type_annotation)?;
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.arena.get_type_ref(type_node)?;
+        let type_name_node = self.arena.get(type_ref.type_name)?;
+        if type_name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let name = self.get_identifier_text_idx(type_ref.type_name);
+        if name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+            && name != "Promise"
+            && name != "PromiseLike"
+        {
+            Some(name)
+        } else {
+            None
+        }
     }
 
     /// Filter named import specifiers to only those with value-level usage

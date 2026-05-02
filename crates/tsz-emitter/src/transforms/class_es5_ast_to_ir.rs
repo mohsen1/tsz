@@ -1489,6 +1489,16 @@ impl<'a> AstToIr<'a> {
             // Delegate to the main emitter via ASTRef so the ES5ArrowFunction
             // directive triggers the full async arrow emit path.
             if arrow.is_async {
+                if let Some(substitution) = self.current_this_substitution.take() {
+                    self.current_this_substitution
+                        .set(Some(substitution.clone()));
+                    if let ThisSubstitution::Identifier(alias) = substitution {
+                        return IRNode::ASTRefWithGeneratorThis {
+                            node: idx,
+                            generator_this: alias.into(),
+                        };
+                    }
+                }
                 return IRNode::ASTRef(idx);
             }
             // First check if there's a directive from LoweringPass

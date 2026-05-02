@@ -1270,6 +1270,11 @@ impl<'a> Printer<'a> {
         }
 
         let body_has_await = async_emitter.body_contains_await(func.body);
+        let body_is_single_line = self
+            .arena
+            .get(func.body)
+            .is_some_and(|n| self.is_single_line(n));
+        let promise_ctor = self.extract_awaiter_promise_constructor(func.type_annotation);
         let (generator_body, hoisted_vars) = if body_has_await {
             let (generator_body, hoisted_vars, _) =
                 async_emitter.emit_generator_body_with_await_and_hoisted_vars(func.body);
@@ -1289,7 +1294,9 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            self.write(", void 0, void 0, function () {");
+            self.write(", void 0, ");
+            self.write_awaiter_promise_arg(&promise_ctor);
+            self.write(", function () {");
             self.write_line();
             self.increase_indent();
             self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
@@ -1312,7 +1319,9 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            self.write(", void 0, void 0, function () {");
+            self.write(", void 0, ");
+            self.write_awaiter_promise_arg(&promise_ctor);
+            self.write(", function () {");
             self.write_line();
             self.increase_indent();
             self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
@@ -1341,8 +1350,27 @@ impl<'a> Printer<'a> {
             self.write("(");
             self.write(this_expr);
             if hoisted_vars.is_empty() {
+                let can_inline_wrapper = func.equals_greater_than_token
+                    && body_is_single_line
+                    && !body_has_await
+                    && !(this_expr != "this" && generator_body.contains("return _this"))
+                    && generator_mappings.is_empty();
+                if can_inline_wrapper {
+                    self.write(", void 0, ");
+                    self.write_awaiter_promise_arg(&promise_ctor);
+                    self.write(", function () { ");
+                    self.write(&Self::inline_async_arrow_generator_body(&generator_body));
+                    self.write(" }); }");
+                    if synced_visual_indent {
+                        self.writer.set_indent_level(original_indent_level);
+                    }
+                    self.pop_temp_scope();
+                    return;
+                }
                 // Multi-line format (matches tsc): __generator on new line
-                self.write(", void 0, void 0, function () {");
+                self.write(", void 0, ");
+                self.write_awaiter_promise_arg(&promise_ctor);
+                self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
                 self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
@@ -1361,7 +1389,9 @@ impl<'a> Printer<'a> {
                 self.write("}); }");
             } else {
                 // Multi-line format with hoisted vars
-                self.write(", void 0, void 0, function () {");
+                self.write(", void 0, ");
+                self.write_awaiter_promise_arg(&promise_ctor);
+                self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
                 self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
@@ -1386,6 +1416,21 @@ impl<'a> Printer<'a> {
         self.pop_temp_scope();
     }
 
+    fn inline_async_arrow_generator_body(generator_body: &str) -> String {
+        let mut lines = generator_body.lines();
+        let Some(first_line) = lines.next() else {
+            return String::new();
+        };
+
+        let following_strip = 4;
+        let mut output = String::from(first_line.trim_start());
+        for line in lines {
+            output.push('\n');
+            output.push_str(line.get(following_strip..).unwrap_or(line).trim_end());
+        }
+        output
+    }
+
     fn emit_async_arrow_hoisted_vars(
         &mut self,
         hoisted_vars: &[String],
@@ -1393,15 +1438,12 @@ impl<'a> Printer<'a> {
         this_expr: &str,
     ) {
         if !hoisted_vars.is_empty() {
-            self.write("var ");
-            for (i, var_name) in hoisted_vars.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
+            for var_name in hoisted_vars {
+                self.write("var ");
                 self.write(var_name);
+                self.write(";");
+                self.write_line();
             }
-            self.write(";");
-            self.write_line();
         }
 
         if this_expr != "this" && generator_body.contains("return _this") {
