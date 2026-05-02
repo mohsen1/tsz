@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-02
 - **Branch**: `fix/ts2739-total-order-comparator`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2234
+- **Status**: ready
 - **Workstream**: 5 (large-repo fixture stability)
 
 ## Intent
@@ -21,4 +21,10 @@ started ordering missing properties by declaration order.
 
 ## Verification
 
-- Pending
+- `cargo fmt --check` (pass)
+- `cargo check -p tsz-solver` (pass)
+- `cargo test -p tsz-checker ts2739_lists_missing_properties_in_declaration_order` (pass; 2/2)
+- `CARGO_TARGET_DIR=.target-bench cargo build --profile dist -p tsz-cli --bin tsz` (pass)
+- Guarded large-repo retry:
+  `RUST_BACKTRACE=1 scripts/safe-run.sh --limit 75% --interval 2 --verbose -- .target-bench/dist/tsz --extendedDiagnostics --noEmit -p ~/code/large-ts-repo/tsconfig.flat.bench.json`;
+  manual stop after stable sample window, exit 143, no sort panic observed, peak sampled physical footprint ~11.47 GB / 12.29 GB guard.
