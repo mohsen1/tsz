@@ -92,6 +92,8 @@ pub(crate) mod flow;
     clippy::manual_map
 )]
 pub(crate) mod flow_analysis;
+#[allow(dead_code)]
+pub(crate) mod inference;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,

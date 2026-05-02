@@ -1407,6 +1407,8 @@ impl<'a> CheckerState<'a> {
                                     };
                                     if ty == TypeId::UNKNOWN
                                         || ty == TypeId::ERROR
+                                        || (sensitive_args.get(i).copied().unwrap_or(false)
+                                            && (ty == TypeId::NULL || ty == TypeId::UNDEFINED))
                                         || self.target_contains_blocking_return_context_type_params(
                                             ty,
                                             &tracked_type_params,
@@ -1471,6 +1473,8 @@ impl<'a> CheckerState<'a> {
                                 let mut substitution_changed = false;
                                 for (&name, &ty) in refined_substitution.map().iter() {
                                     if ty == TypeId::UNKNOWN
+                                        || (sensitive_args.get(i).copied().unwrap_or(false)
+                                            && (ty == TypeId::NULL || ty == TypeId::UNDEFINED))
                                         || common::contains_infer_types(self.ctx.types, ty)
                                         || common::contains_type_parameters(self.ctx.types, ty)
                                     {

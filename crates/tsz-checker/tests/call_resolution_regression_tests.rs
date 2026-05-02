@@ -2386,3 +2386,83 @@ const r2: number[] = i.call(inputB, (x) => x.b);
         get_diagnostics(source)
     );
 }
+
+#[test]
+fn contextual_overload_callback_list_infers_generic_result() {
+    let source = r#"
+interface Callback<T> {
+    (error: null, result: T): unknown;
+    (error: Error, result: null): unknown;
+}
+
+interface Error {
+    message: string;
+}
+
+interface Task<T> {
+    (callback: Callback<T>): unknown;
+}
+
+declare function setTimeout(handler: () => void, timeout: number): void;
+
+declare function series<T>(tasks: Task<T>[], callback: Callback<T[]>): void;
+
+series([
+    cb => setTimeout(() => cb(null, 1), 300),
+    cb => setTimeout(() => cb(null, 2), 200),
+    cb => setTimeout(() => cb(null, 3), 100),
+], (error, results) => {});
+"#;
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2769),
+        "contextual callback overloads should infer T from successful callback \
+         result calls; got diagnostics: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn overloaded_callback_unknown_accepts_success_branch() {
+    let source = r#"
+interface Error {
+    message: string;
+}
+interface Callback<T> {
+    (error: null, result: T): unknown;
+    (error: Error, result: null): unknown;
+}
+declare const cb: Callback<unknown>;
+cb(null, 1);
+"#;
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2769),
+        "Callback<unknown> should accept the null/result overload; got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn contextual_task_unknown_accepts_success_branch() {
+    let source = r#"
+interface Error {
+    message: string;
+}
+interface Callback<T> {
+    (error: null, result: T): unknown;
+    (error: Error, result: null): unknown;
+}
+interface Task<T> {
+    (callback: Callback<T>): unknown;
+}
+declare const task: Task<unknown>;
+const value: Task<unknown> = cb => task(() => cb(null, 1));
+"#;
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2769),
+        "Task<unknown> contextual callback should accept the null/result overload; got: {:?}",
+        get_diagnostics(source)
+    );
+}

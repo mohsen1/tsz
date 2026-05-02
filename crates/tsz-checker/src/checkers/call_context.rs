@@ -313,17 +313,50 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn callback_body_spans(&self, arg_idx: NodeIndex) -> Vec<(u32, u32)> {
-        self.callback_function_indices(arg_idx)
-            .into_iter()
-            .filter_map(|callback_idx| {
-                self.ctx
-                    .arena
-                    .get(callback_idx)
-                    .and_then(|node| self.ctx.arena.get_function(node))
-                    .and_then(|func| self.ctx.arena.get(func.body))
-                    .map(|body_node| (body_node.pos, body_node.end))
-            })
-            .collect()
+        fn collect<'a>(checker: &CheckerState<'a>, idx: NodeIndex, spans: &mut Vec<(u32, u32)>) {
+            if idx.is_none() {
+                return;
+            }
+            let current = checker.ctx.arena.skip_parenthesized_and_assertions(idx);
+            let Some(node) = checker.ctx.arena.get(current) else {
+                return;
+            };
+
+            match node.kind {
+                k if k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+                {
+                    if let Some(func) = checker.ctx.arena.get_function(node)
+                        && let Some(body_node) = checker.ctx.arena.get(func.body)
+                    {
+                        spans.push((body_node.pos, body_node.end));
+                    }
+                }
+                k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                    if let Some(cond) = checker.ctx.arena.get_conditional_expr(node) {
+                        collect(checker, cond.when_true, spans);
+                        collect(checker, cond.when_false, spans);
+                    }
+                }
+                k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                    if let Some(literal) = checker.ctx.arena.get_literal_expr(node) {
+                        for &element_idx in &literal.elements.nodes {
+                            collect(checker, element_idx, spans);
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::SPREAD_ELEMENT => {
+                    if let Some(spread) = checker.ctx.arena.get_spread(node) {
+                        collect(checker, spread.expression, spans);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut spans = Vec::new();
+        collect(self, arg_idx, &mut spans);
+        spans
     }
 
     pub(crate) fn callback_function_param_spans(&self, arg_idx: NodeIndex) -> Vec<(u32, u32)> {
