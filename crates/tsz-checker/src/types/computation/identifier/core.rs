@@ -5,12 +5,145 @@ use crate::context::{PendingImplicitAnyKind, TypingRequest};
 use crate::query_boundaries::common as common_query;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tracing::trace;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn identifier_is_property_access_receiver(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+        matches!(
+            parent_node.kind,
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        ) && self
+            .ctx
+            .arena
+            .get_access_expr(parent_node)
+            .is_some_and(|access| access.expression == idx)
+    }
+
+    fn import_equals_alias_value_type(&mut self, sym_id: tsz_binder::SymbolId) -> Option<TypeId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
+            return None;
+        }
+
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .iter()
+                .copied()
+                .find(|idx| idx.is_some())
+                .unwrap_or(NodeIndex::NONE)
+        };
+        if !decl_idx.is_some() {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return None;
+        }
+        let import = self.ctx.arena.get_import_decl(decl_node)?;
+        if self
+            .get_require_module_specifier(import.module_specifier)
+            .is_some()
+        {
+            return None;
+        }
+
+        let target_sym = self.resolve_qualified_symbol(import.module_specifier)?;
+        let mut candidates = Vec::new();
+        if let Some(partner) = self.ctx.alias_partner_for(self.ctx.binder, target_sym) {
+            candidates.push(partner);
+        }
+
+        let mut visited = AliasCycleTracker::new();
+        if let Some(resolved) = self.resolve_alias_symbol(target_sym, &mut visited) {
+            if let Some(partner) = self.ctx.alias_partner_for(self.ctx.binder, resolved) {
+                candidates.push(partner);
+            }
+            candidates.push(resolved);
+        }
+        candidates.push(target_sym);
+
+        let lib_binders = self.get_lib_binders();
+        let mut seen = rustc_hash::FxHashSet::default();
+        for candidate in candidates {
+            if !seen.insert(candidate) {
+                continue;
+            }
+            let Some(candidate_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(candidate, &lib_binders)
+            else {
+                continue;
+            };
+            if !candidate_symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS)
+                && candidate_symbol.value_declaration.is_none()
+            {
+                continue;
+            }
+
+            let mut ty = candidate_symbol
+                .value_declaration
+                .is_some()
+                .then(|| {
+                    self.ctx
+                        .arena
+                        .get(candidate_symbol.value_declaration)
+                        .and_then(|node| self.ctx.arena.get_variable_declaration(node))
+                        .map(|decl| decl.initializer)
+                        .filter(|initializer| initializer.is_some())
+                })
+                .flatten()
+                .map(|initializer| self.get_type_of_node(initializer))
+                .unwrap_or(TypeId::UNKNOWN);
+            if (ty == TypeId::UNKNOWN || ty == TypeId::ERROR)
+                && candidate_symbol.value_declaration.is_some()
+                && candidate_symbol.has_any_flags(symbol_flags::VALUE)
+            {
+                ty = if self
+                    .ctx
+                    .arena
+                    .get(candidate_symbol.value_declaration)
+                    .is_some()
+                {
+                    self.type_of_value_declaration_for_symbol(
+                        candidate,
+                        candidate_symbol.value_declaration,
+                    )
+                } else if let Some(file_idx) = self.ctx.resolve_symbol_file_index(candidate) {
+                    self.type_of_value_declaration_for_cross_file_symbol(
+                        candidate,
+                        candidate_symbol.value_declaration,
+                        file_idx,
+                    )
+                } else {
+                    TypeId::UNKNOWN
+                };
+            }
+            if ty == TypeId::UNKNOWN || ty == TypeId::ERROR {
+                ty = self.get_type_of_symbol(candidate);
+            }
+            if ty != TypeId::UNKNOWN && ty != TypeId::ERROR {
+                return Some(ty);
+            }
+        }
+
+        None
+    }
+
     fn has_recursive_alias_shape_for_flow_compare(&self, type_id: TypeId) -> bool {
         common_query::contains_lazy_or_recursive(self.ctx.types.as_type_database(), type_id)
     }
@@ -607,6 +740,13 @@ impl<'a> CheckerState<'a> {
                 is_interface = (flags & tsz_binder::symbol_flags::INTERFACE) != 0,
                 "get_type_of_identifier: symbol flags"
             );
+
+            if (flags & tsz_binder::symbol_flags::ALIAS) != 0
+                && self.identifier_is_property_access_receiver(idx)
+                && let Some(value_type) = self.import_equals_alias_value_type(sym_id)
+            {
+                return self.check_flow_usage(idx, value_type, sym_id);
+            }
 
             // Check for type-only symbols used as values
             // This includes:

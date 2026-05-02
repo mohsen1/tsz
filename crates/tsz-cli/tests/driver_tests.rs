@@ -765,6 +765,69 @@ export const SpotifyAgeGroupEnum = { ...AgeGroups };
 }
 
 #[test]
+fn declaration_emit_import_equals_alias_to_merged_namespace_value_allows_property_access() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("translation.ts"),
+        r#"export interface Translation {
+  translationKey: Translation.TranslationKeyEnum;
+}
+
+export namespace Translation {
+  export type TranslationKeyEnum = 'translation1' | 'translation2';
+  export const TranslationKeyEnum = {
+    Translation1: 'translation1' as TranslationKeyEnum,
+    Translation2: 'translation2' as TranslationKeyEnum,
+  }
+}
+"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"import { Translation } from "./translation";
+import TranslationKeyEnum = Translation.TranslationKeyEnum;
+
+export class Test {
+  TranslationKeyEnum = TranslationKeyEnum;
+  print() {
+    console.log(TranslationKeyEnum.Translation1);
+  }
+}
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import { Test } from "./test";
+new Test().print();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015",
+    "strict": true,
+    "declaration": true
+  },
+  "files": ["translation.ts", "test.ts", "index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn declaration_emit_namespace_import_callable_member_avoids_ts7056() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
