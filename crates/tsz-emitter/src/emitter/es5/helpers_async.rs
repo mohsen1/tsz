@@ -632,6 +632,7 @@ impl<'a> Printer<'a> {
             if name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
                 && name != "Promise"
                 && name != "PromiseLike"
+                && !self.is_type_only_declaration_name(&name)
             {
                 Some(name)
             } else {
@@ -640,6 +641,22 @@ impl<'a> Printer<'a> {
         } else {
             None
         }
+    }
+
+    fn is_type_only_declaration_name(&self, name: &str) -> bool {
+        self.arena.nodes.iter().any(|node| {
+            if node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                self.arena.get_type_alias(node).is_some_and(|alias| {
+                    emit_utils::identifier_text_or_empty(self.arena, alias.name) == name
+                })
+            } else if node.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION {
+                self.arena.get_interface(node).is_some_and(|interface| {
+                    emit_utils::identifier_text_or_empty(self.arena, interface.name) == name
+                })
+            } else {
+                false
+            }
+        })
     }
 
     /// Convert a qualified name or identifier AST node to a dotted JS expression string.
