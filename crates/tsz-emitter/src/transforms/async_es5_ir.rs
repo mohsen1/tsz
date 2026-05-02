@@ -51,6 +51,7 @@
 
 use std::cell::Cell;
 
+use crate::transforms::es5::ES5ClassTransformer;
 use crate::transforms::helpers::HelpersNeeded;
 use crate::transforms::ir::{IRGeneratorCase, IRNode, IRParam};
 use tsz_parser::parser::NodeIndex;
@@ -747,6 +748,18 @@ impl<'a> AsyncES5Transformer<'a> {
                 }
             }
 
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if self.lower_class_extends_before_suspension(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
+                    return;
+                }
+                current_statements.push(self.statement_to_ir(idx));
+            }
+
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 self.process_if_statement_in_async(idx, cases, current_statements, current_label);
             }
@@ -1322,6 +1335,105 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
+    fn lower_class_extends_before_suspension(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> bool {
+        let Some((class_name, extends_expr, suspension_idx)) = self.class_extends_suspension(idx)
+        else {
+            return false;
+        };
+        let Some(factory) = self.es5_class_factory(idx, &class_name) else {
+            return false;
+        };
+
+        let factory_temp = self.generate_hoisted_temp();
+        current_statements.push(IRNode::VarDecl {
+            name: class_name.clone().into(),
+            initializer: None,
+        });
+        current_statements.push(IRNode::VarDecl {
+            name: factory_temp.clone().into(),
+            initializer: None,
+        });
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(factory_temp.clone()),
+            factory,
+        ))));
+
+        self.process_await_expression(suspension_idx, cases, current_statements, current_label);
+
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(class_name),
+            IRNode::ES5ClassApply {
+                factory: Box::new(IRNode::id(factory_temp)),
+                base_class: Box::new(self.extends_value_after_suspension(extends_expr)),
+            },
+        ))));
+        true
+    }
+
+    fn class_extends_suspension(
+        &self,
+        class_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex, NodeIndex)> {
+        let node = self.arena.get(class_idx)?;
+        let class_data = self.arena.get_class(node)?;
+        let class_name =
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, class_data.name);
+        if class_name.is_empty() {
+            return None;
+        }
+        let extends_expr = crate::transforms::emit_utils::get_extends_expression_index(
+            self.arena,
+            &class_data.heritage_clauses,
+        )?;
+        let suspension_idx = self.find_suspension_expression(extends_expr)?;
+        Some((class_name, extends_expr, suspension_idx))
+    }
+
+    fn es5_class_factory(&self, class_idx: NodeIndex, class_name: &str) -> Option<IRNode> {
+        let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        let class_ir = class_transformer.transform_class_with_name(class_idx, Some(class_name))?;
+        let IRNode::ES5ClassIIFE { body, .. } = class_ir else {
+            return None;
+        };
+        Some(IRNode::FunctionExpr {
+            name: None,
+            parameters: vec![IRParam::new("_super")],
+            body,
+            is_expression_body: false,
+            body_source_range: None,
+        })
+    }
+
+    fn extends_value_after_suspension(&self, extends_expr: NodeIndex) -> IRNode {
+        let stripped = self.strip_parenthesized_expression(extends_expr);
+        if self.is_suspension_expression(stripped) {
+            IRNode::GeneratorSent
+        } else {
+            self.expression_to_ir(extends_expr)
+        }
+    }
+
+    fn strip_parenthesized_expression(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return idx;
+            };
+            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                return idx;
+            }
+            let Some(paren) = self.arena.get_parenthesized(node) else {
+                return idx;
+            };
+            idx = paren.expression;
+        }
+    }
+
     // =========================================================================
     // Control flow statement processing for async state machine
     // =========================================================================
@@ -1679,6 +1791,22 @@ impl<'a> AsyncES5Transformer<'a> {
                         return true;
                     }
                 }
+            }
+            return false;
+        }
+
+        // Class method bodies are function-like scopes, but heritage clauses are
+        // evaluated in the surrounding async function.
+        if (node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+            && let Some(class_data) = self.arena.get_class(node)
+        {
+            if let Some(extends_expr) = crate::transforms::emit_utils::get_extends_expression_index(
+                self.arena,
+                &class_data.heritage_clauses,
+            ) && self.contains_await_recursive(extends_expr)
+            {
+                return true;
             }
             return false;
         }

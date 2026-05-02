@@ -275,6 +275,13 @@ pub enum IRNode {
     /// __extends helper call: `__extends(ClassName, _super);`
     ExtendsHelper { class_name: Cow<'static, str> },
 
+    /// ES5 class expression application:
+    /// `/** @class */ (_a.apply(void 0, [(Base)]))`
+    ES5ClassApply {
+        factory: Box<Self>,
+        base_class: Box<Self>,
+    },
+
     /// Prototype method assignment: `ClassName.prototype.method = function() {...};`
     PrototypeMethod {
         class_name: Cow<'static, str>,

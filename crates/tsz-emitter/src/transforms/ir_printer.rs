@@ -1071,6 +1071,19 @@ impl<'a> IRPrinter<'a> {
                 self.write(class_name);
                 self.write(", _super);");
             }
+            IRNode::ES5ClassApply {
+                factory,
+                base_class,
+            } => {
+                if !self.remove_comments {
+                    self.write("/** @class */ ");
+                }
+                self.write("(");
+                self.emit_node(factory);
+                self.write(".apply(void 0, [(");
+                self.emit_node(base_class);
+                self.write(")]))");
+            }
             IRNode::PrototypeMethod {
                 class_name,
                 method_name,
