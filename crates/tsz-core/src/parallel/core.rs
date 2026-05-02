@@ -3386,7 +3386,17 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                         }
                     }
                 }
-                if let Some(target_members) = target_symbol.members.as_ref() {
+                // The `.members` table on a class symbol holds INSTANCE members (e.g.
+                // `bar` from `class D { bar: string; }`). They are accessible only
+                // through an instance — never at the module-namespace level. Static
+                // members and namespace augmentations live in `.exports`, merged above.
+                // Without this guard, `import x = require()` of an `export = D` module
+                // synthesizes a phantom `{ bar }` namespace surface and produces
+                // `typeof D & { bar }` instead of tsc's plain `typeof D`, which in turn
+                // causes assignment failures to be reported as TS2322 instead of TS2741.
+                let target_is_class =
+                    (target_symbol.flags & crate::binder::symbol_flags::CLASS) != 0;
+                if !target_is_class && let Some(target_members) = target_symbol.members.as_ref() {
                     for (member_name, old_sym_id) in target_members.iter() {
                         if member_name == "default" {
                             continue;
