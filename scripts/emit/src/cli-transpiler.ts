@@ -67,6 +67,8 @@ interface CompilerFlagOptions {
   removeComments?: boolean;
   stripInternal?: boolean;
   outFile?: string;
+  outDir?: string;
+  rootDir?: string;
 }
 
 // Append shared compiler-option flags onto a tsz CLI args array. Used by both
@@ -247,6 +249,8 @@ export class CliTranspiler {
       removeComments?: boolean;
       stripInternal?: boolean;
       outFile?: string;
+      outDir?: string;
+      rootDir?: string;
       sourceFiles?: SourceInputFile[];
       expectedJsFileName?: string;
       expectedDtsFileName?: string;
@@ -286,6 +290,8 @@ export class CliTranspiler {
       removeComments = false,
       stripInternal = false,
       outFile,
+      outDir,
+      rootDir,
       sourceFiles,
       expectedJsFileName,
       expectedDtsFileName,
@@ -325,6 +331,15 @@ export class CliTranspiler {
       const extMatch = relName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/);
       const ext = extMatch ? `.${extMatch[1]}` : '.ts';
       const stem = filePath.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+      const outputRelStem = (() => {
+        if (!outDir) return null;
+        const normalizedRoot = rootDir?.replace(/^[/\\]+/, '').replace(/\\/g, '/').replace(/\/+$/, '');
+        let relStem = relName.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+        if (normalizedRoot && (relStem === normalizedRoot || relStem.startsWith(`${normalizedRoot}/`))) {
+          relStem = relStem.slice(normalizedRoot.length).replace(/^\/+/, '');
+        }
+        return path.join(testDir, outDir.replace(/^[/\\]+/, ''), relStem);
+      })();
       // For TS→JS: .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs
       // For JS→JS (allowJs): output has same extension as input
       const sourceDefaultJsPath =
@@ -336,6 +351,12 @@ export class CliTranspiler {
       expectedOutputs.push({
         jsPath: sourceDefaultJsPath,
         jsCandidates: [
+          ...(outputRelStem ? [
+            ext === '.tsx' || ext === '.jsx' ? `${outputRelStem}.jsx` :
+            ext === '.mts' || ext === '.mjs' ? `${outputRelStem}.mjs` :
+            ext === '.cts' || ext === '.cjs' ? `${outputRelStem}.cjs` :
+            `${outputRelStem}.js`,
+          ] : []),
           sourceDefaultJsPath,
           `${stem}.js`,
           `${stem}.jsx`,
@@ -344,6 +365,11 @@ export class CliTranspiler {
         ],
         dtsPath: `${stem}.d.ts`,
         dtsCandidates: [
+          ...(outputRelStem ? [
+            `${outputRelStem}.d.ts`,
+            `${outputRelStem}.d.mts`,
+            `${outputRelStem}.d.cts`,
+          ] : []),
           `${stem}.d.ts`,
           `${stem}.d.mts`,
           `${stem}.d.cts`,
