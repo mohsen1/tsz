@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-02T11:14:12Z",
-  "git_sha": "e47e41429cc8c733533040420aaf648b3b113490",
+  "timestamp": "2026-05-02T14:31:37Z",
+  "git_sha": "03b75210a8a909ba942d5a10f80cafa00c72acf5",
   "summary": {
     "total_tests": 12582,
-    "passed": 12340,
-    "failed": 242,
+    "passed": 12344,
+    "failed": 238,
     "pass_rate": 98.1
   },
   "areas_by_pass_rate": [
@@ -51,13 +51,6 @@
       "pass_rate": 88.89
     },
     {
-      "area": "types/thisType",
-      "total": 30,
-      "passed": 27,
-      "failed": 3,
-      "pass_rate": 90.0
-    },
-    {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 22,
@@ -90,6 +83,13 @@
       "total": 195,
       "passed": 182,
       "failed": 13,
+      "pass_rate": 93.33
+    },
+    {
+      "area": "types/thisType",
+      "total": 30,
+      "passed": 28,
+      "failed": 2,
       "pass_rate": 93.33
     },
     {
@@ -184,13 +184,6 @@
       "pass_rate": 96.0
     },
     {
-      "area": "es6/destructuring",
-      "total": 147,
-      "passed": 142,
-      "failed": 5,
-      "pass_rate": 96.6
-    },
-    {
       "area": "internalModules/DeclarationMerging",
       "total": 30,
       "passed": 29,
@@ -219,11 +212,18 @@
       "pass_rate": 97.06
     },
     {
+      "area": "es6/destructuring",
+      "total": 147,
+      "passed": 143,
+      "failed": 4,
+      "pass_rate": 97.28
+    },
+    {
       "area": "compiler",
       "total": 6520,
-      "passed": 6403,
-      "failed": 117,
-      "pass_rate": 98.21
+      "passed": 6406,
+      "failed": 114,
+      "pass_rate": 98.25
     },
     {
       "area": "externalModules",
@@ -1472,7 +1472,7 @@
     "false_positive": 13,
     "all_missing": 11,
     "wrong_code": 64,
-    "fingerprint_only": 154,
+    "fingerprint_only": 149,
     "same_code_count_drift": 0,
     "close_to_passing": 43
   }
