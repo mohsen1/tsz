@@ -665,14 +665,47 @@ impl<'a> Printer<'a> {
         if name.is_empty() {
             return;
         }
+        let hoisted_start = self.hoisted_assignment_temps.len();
+        let value_start = self.hoisted_assignment_value_temps.len();
+        let initializer_text = self.capture_emit(initializer);
+        self.emit_param_initializer_temp_declarations(hoisted_start, value_start);
+
         self.write("if (");
         self.write(name);
         self.write(" === void 0) { ");
         self.write(name);
         self.write(" = ");
-        self.emit_expression(initializer);
+        self.write(&initializer_text);
         self.write("; }");
         self.write_line();
+    }
+
+    fn emit_param_initializer_temp_declarations(
+        &mut self,
+        hoisted_start: usize,
+        value_start: usize,
+    ) {
+        let value_temps: Vec<_> = self
+            .hoisted_assignment_value_temps
+            .drain(value_start..)
+            .collect();
+        if !value_temps.is_empty() {
+            self.write("var ");
+            self.write(&value_temps.join(", "));
+            self.write(";");
+            self.write_line();
+        }
+
+        let hoisted_temps: Vec<_> = self
+            .hoisted_assignment_temps
+            .drain(hoisted_start..)
+            .collect();
+        if !hoisted_temps.is_empty() {
+            self.write("var ");
+            self.write(&hoisted_temps.join(", "));
+            self.write(";");
+            self.write_line();
+        }
     }
 
     pub(in crate::emitter) fn emit_param_binding_assignments(

@@ -84,6 +84,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.native_arrow_default_params_need_temp_prologue(func) {
+            self.emit_arrow_function_native_with_default_prologue(func);
+            return;
+        }
+
         if func.is_async {
             self.write("async ");
         }
@@ -220,6 +225,206 @@ impl<'a> Printer<'a> {
         }
 
         self.pop_temp_scope();
+    }
+
+    fn emit_arrow_function_native_with_default_prologue(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) {
+        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
+        let is_simple = self.is_simple_single_parameter(&func.parameters.nodes);
+        let needs_parens = source_had_parens || !is_simple;
+
+        if needs_parens {
+            self.write("(");
+        }
+        self.emit_function_parameter_names_js(&func.parameters.nodes);
+        if needs_parens {
+            self.write(")");
+        }
+
+        self.write_space();
+        self.write("=> ");
+
+        self.push_temp_scope();
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+        self.emit_native_default_param_prologue(&func.parameters.nodes);
+
+        let body_node = self.arena.get(func.body);
+        let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
+        if is_block {
+            if let Some(block_node) = body_node
+                && let Some(block) = self.arena.get_block(block_node)
+            {
+                for &stmt_idx in &block.statements.nodes {
+                    let before_len = self.writer.len();
+                    self.emit(stmt_idx);
+                    if self.writer.len() > before_len {
+                        self.write_line();
+                    }
+                }
+            }
+        } else {
+            self.write("return ");
+            self.emit(func.body);
+            self.write(";");
+            self.write_line();
+        }
+
+        self.decrease_indent();
+        self.write("}");
+        self.pop_temp_scope();
+    }
+
+    fn emit_function_parameter_names_js(&mut self, params: &[NodeIndex]) {
+        let mut first = true;
+        for &param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.name.is_none() || param.dot_dot_dot_token {
+                continue;
+            }
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+            self.emit_parameter_name_js(param.name);
+        }
+    }
+
+    fn emit_native_default_param_prologue(&mut self, params: &[NodeIndex]) {
+        for &param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.initializer.is_none() {
+                continue;
+            }
+            let name =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, param.name);
+            self.emit_param_default_assignment(&name, param.initializer);
+        }
+    }
+
+    fn native_arrow_default_params_need_temp_prologue(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> bool {
+        if func.is_async || self.ctx.options.target.supports_es2020() {
+            return false;
+        }
+        if !self.arrow_params_are_simple_identifiers(&func.parameters.nodes) {
+            return false;
+        }
+        func.parameters.nodes.iter().copied().any(|param_idx| {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                return false;
+            };
+            param.initializer.is_some()
+                && self.param_initializer_generates_hoisted_temp(param.initializer)
+        })
+    }
+
+    fn arrow_params_are_simple_identifiers(&self, params: &[NodeIndex]) -> bool {
+        params.iter().copied().all(|param_idx| {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                return false;
+            };
+            if param.dot_dot_dot_token || param.name.is_none() {
+                return false;
+            }
+            self.arena
+                .get(param.name)
+                .is_some_and(|name| name.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+        })
+    }
+
+    fn param_initializer_generates_hoisted_temp(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if let Some(binary) = self.arena.get_binary_expr(node) {
+            if binary.operator_token == tsz_scanner::SyntaxKind::QuestionQuestionToken as u16
+                && !self.is_simple_nullish_expression(binary.left)
+            {
+                return true;
+            }
+            return self.param_initializer_generates_hoisted_temp(binary.left)
+                || self.param_initializer_generates_hoisted_temp(binary.right);
+        }
+
+        if let Some(access) = self.arena.get_access_expr(node) {
+            if access.question_dot_token && !self.is_simple_nullish_expression(access.expression) {
+                return true;
+            }
+            return self.param_initializer_generates_hoisted_temp(access.expression)
+                || self.param_initializer_generates_hoisted_temp(access.name_or_argument);
+        }
+
+        if let Some(call) = self.arena.get_call_expr(node) {
+            if node.is_optional_chain() && !self.is_simple_nullish_expression(call.expression) {
+                return true;
+            }
+            if self.param_initializer_generates_hoisted_temp(call.expression) {
+                return true;
+            }
+            if let Some(args) = &call.arguments {
+                return args
+                    .nodes
+                    .iter()
+                    .copied()
+                    .any(|arg| self.param_initializer_generates_hoisted_temp(arg));
+            }
+        }
+
+        if let Some(paren) = self.arena.get_parenthesized(node) {
+            return self.param_initializer_generates_hoisted_temp(paren.expression);
+        }
+
+        if let Some(assertion) = self.arena.get_type_assertion(node) {
+            return self.param_initializer_generates_hoisted_temp(assertion.expression);
+        }
+
+        if let Some(cond) = self.arena.get_conditional_expr(node) {
+            return self.param_initializer_generates_hoisted_temp(cond.condition)
+                || self.param_initializer_generates_hoisted_temp(cond.when_true)
+                || self.param_initializer_generates_hoisted_temp(cond.when_false);
+        }
+
+        if let Some(unary) = self.arena.get_unary_expr(node) {
+            return self.param_initializer_generates_hoisted_temp(unary.operand);
+        }
+
+        if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+            return self.param_initializer_generates_hoisted_temp(unary.expression);
+        }
+
+        if let Some(literal) = self.arena.get_literal_expr(node) {
+            return literal
+                .elements
+                .nodes
+                .iter()
+                .copied()
+                .any(|element| self.param_initializer_generates_hoisted_temp(element));
+        }
+
+        false
     }
 
     /// Emit an async arrow function lowered for ES2015/ES2016 targets.
