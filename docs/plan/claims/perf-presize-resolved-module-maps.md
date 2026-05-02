@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-02
 - **Branch**: `perf/presize-resolved-module-maps`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2228
+- **Status**: ready
 - **Workstream**: 5 (large-repo residency/runtime)
 
 ## Intent
@@ -20,4 +20,15 @@ the existing resolution behavior and checker-facing data shape.
 
 ## Verification
 
-- Pending
+- `cargo fmt --check` (pass)
+- `cargo check -p tsz-cli` (pass)
+- `cargo test -p tsz-cli driver_tests_ts2307` (pass; 8/8)
+- `scripts/bench/perf-hotspots.sh --quick` (pass; tsz beat tsgo on all 5 fixtures)
+  - 100 classes: 2.17x
+  - Constraint conflicts N=30: 1.70x
+  - DeepPartial optional-chain N=50: 1.40x
+  - 50 generic functions: 1.38x
+  - Shallow optional-chain N=50: 1.28x
+- Guarded large-repo RSS sample:
+  `RUST_BACKTRACE=1 scripts/safe-run.sh --limit 75% --interval 2 --verbose -- .target-bench/dist/tsz --extendedDiagnostics --noEmit -p ~/code/large-ts-repo/tsconfig.flat.bench.json`;
+  manual stop after stable sample window, exit 143, peak sampled physical footprint ~11.32 GB / 12.29 GB guard.
