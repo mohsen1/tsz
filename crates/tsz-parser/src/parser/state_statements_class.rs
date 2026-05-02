@@ -726,13 +726,13 @@ impl ParserState {
         let is_heritage_keyword = (self.is_token(SyntaxKind::ExtendsKeyword)
             || self.is_token(SyntaxKind::ImplementsKeyword))
             && !self.look_ahead_next_is_open_brace_on_same_line();
+        let mut recover_reserved_class_name_as_statement = false;
         let name = if self.is_identifier_or_keyword() && !is_heritage_keyword {
             // TS1005: Reserved words cannot be used as class names
             if self.is_reserved_word() {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
-                // Consume the invalid token to avoid cascading errors
-                self.next_token();
+                recover_reserved_class_name_as_statement = true;
                 NodeIndex::NONE
             } else {
                 self.parse_identifier_name()
@@ -741,21 +741,22 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // Parse type parameters: class Foo<T, U> {}
-        let type_parameters = self
-            .is_token(SyntaxKind::LessThanToken)
-            .then(|| self.parse_type_parameters());
-
-        // Parse heritage clauses (extends, implements)
-        let heritage_clauses = self.parse_heritage_clauses();
-
-        // Parse class body
-        self.parse_expected(SyntaxKind::OpenBraceToken);
-        let class_saved_flags = self.context_flags;
-        self.context_flags |= CONTEXT_FLAG_IN_CLASS;
-        let members = self.parse_class_members();
-        self.context_flags = class_saved_flags;
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        let (type_parameters, heritage_clauses, members) =
+            if recover_reserved_class_name_as_statement {
+                (None, None, self.make_node_list(Vec::new()))
+            } else {
+                let type_parameters = self
+                    .is_token(SyntaxKind::LessThanToken)
+                    .then(|| self.parse_type_parameters());
+                let heritage_clauses = self.parse_heritage_clauses();
+                self.parse_expected(SyntaxKind::OpenBraceToken);
+                let class_saved_flags = self.context_flags;
+                self.context_flags |= CONTEXT_FLAG_IN_CLASS;
+                let members = self.parse_class_members();
+                self.context_flags = class_saved_flags;
+                self.parse_expected(SyntaxKind::CloseBraceToken);
+                (type_parameters, heritage_clauses, members)
+            };
 
         let end_pos = self.token_end();
         self.arena.add_class(
@@ -790,13 +791,13 @@ impl ParserState {
         let is_heritage_keyword = (self.is_token(SyntaxKind::ExtendsKeyword)
             || self.is_token(SyntaxKind::ImplementsKeyword))
             && !self.look_ahead_next_is_open_brace_on_same_line();
+        let mut recover_reserved_class_name_as_statement = false;
         let name = if self.is_identifier_or_keyword() && !is_heritage_keyword {
             // TS1005: Reserved words cannot be used as class names
             if self.is_reserved_word() {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
-                // Consume the invalid token to avoid cascading errors
-                self.next_token();
+                recover_reserved_class_name_as_statement = true;
                 NodeIndex::NONE
             } else {
                 self.parse_identifier_name()
@@ -805,21 +806,22 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // Parse type parameters: class Foo<T, U> {}
-        let type_parameters = self
-            .is_token(SyntaxKind::LessThanToken)
-            .then(|| self.parse_type_parameters());
-
-        // Parse heritage clauses (extends, implements)
-        let heritage_clauses = self.parse_heritage_clauses();
-
-        // Parse class body
-        self.parse_expected(SyntaxKind::OpenBraceToken);
-        let class_saved_flags = self.context_flags;
-        self.context_flags |= CONTEXT_FLAG_IN_CLASS;
-        let members = self.parse_class_members();
-        self.context_flags = class_saved_flags;
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        let (type_parameters, heritage_clauses, members) =
+            if recover_reserved_class_name_as_statement {
+                (None, None, self.make_node_list(Vec::new()))
+            } else {
+                let type_parameters = self
+                    .is_token(SyntaxKind::LessThanToken)
+                    .then(|| self.parse_type_parameters());
+                let heritage_clauses = self.parse_heritage_clauses();
+                self.parse_expected(SyntaxKind::OpenBraceToken);
+                let class_saved_flags = self.context_flags;
+                self.context_flags |= CONTEXT_FLAG_IN_CLASS;
+                let members = self.parse_class_members();
+                self.context_flags = class_saved_flags;
+                self.parse_expected(SyntaxKind::CloseBraceToken);
+                (type_parameters, heritage_clauses, members)
+            };
 
         let end_pos = self.token_end();
         self.arena.add_class(
