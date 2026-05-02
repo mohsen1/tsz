@@ -456,6 +456,23 @@ fn test_invalid_interface_without_name_recovers_body_text() {
 }
 
 #[test]
+fn test_unterminated_empty_switch_recovers_following_class() {
+    let source = "class C {\n  constructor() {\n    switch (e) {\n\nclass D {\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("switch (e) {\n        }\n        class D {\n        }"),
+        "unterminated empty switch should recover following class declaration.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_for_await_of_target_es2018_preserved() {
     let source = "async function f() {\n    const iterable = [];\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
     let output = parse_lower_print(
