@@ -526,6 +526,9 @@ impl<'a> TypePrinter<'a> {
         if types.is_empty() {
             return "never".to_string();
         }
+        if let Some(enum_text) = self.try_print_enum_member_union_as_parent(&types) {
+            return enum_text;
+        }
 
         // Split members into real types vs nullish tail. tsc's type printer
         // emits the nullish members (`null`, `undefined`, `void`) at the end
@@ -622,6 +625,43 @@ impl<'a> TypePrinter<'a> {
 
         // Join with " | "
         parts.join(" | ")
+    }
+
+    pub(crate) fn try_print_enum_member_union_as_parent(&self, types: &[TypeId]) -> Option<String> {
+        let cache = self.type_cache?;
+        let symbols = self.symbol_arena?;
+        let mut parent: Option<SymbolId> = None;
+        for &type_id in types {
+            let (def_id, _) = visitor::enum_components(self.interner, type_id)?;
+            let member_sym = cache.def_to_symbol.get(&def_id).copied()?;
+            let member = symbols.get(member_sym)?;
+            if member.flags & symbol_flags::ENUM_MEMBER == 0 || !member.parent.is_some() {
+                return None;
+            }
+            if let Some(existing) = parent {
+                if existing != member.parent {
+                    return None;
+                }
+            } else {
+                parent = Some(member.parent);
+            }
+        }
+        let parent = parent?;
+        let parent_symbol = symbols.get(parent)?;
+        let exports = parent_symbol.exports.as_ref()?;
+        let enum_member_count = exports
+            .iter()
+            .filter(|(_, sym_id)| {
+                symbols
+                    .get(**sym_id)
+                    .is_some_and(|symbol| symbol.flags & symbol_flags::ENUM_MEMBER != 0)
+            })
+            .count();
+        if enum_member_count != types.len() {
+            return None;
+        }
+
+        self.print_named_symbol_reference(parent, false)
     }
 
     pub(crate) fn print_intersection(&self, type_list_id: tsz_solver::types::TypeListId) -> String {
