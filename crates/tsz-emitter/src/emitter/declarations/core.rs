@@ -111,6 +111,9 @@ impl<'a> Printer<'a> {
             search_start,
             search_end,
         );
+        if func.is_async {
+            self.emit_recovered_async_await_arrow_parameter(&func.parameters.nodes);
+        }
         self.write(")");
 
         // No return type for JavaScript — skip comments inside erased return type

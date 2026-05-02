@@ -1175,11 +1175,67 @@ impl<'a> Printer<'a> {
 
         self.emit(name_idx);
     }
+
+    pub(in crate::emitter) fn emit_recovered_async_await_arrow_parameter(
+        &mut self,
+        params: &[NodeIndex],
+    ) {
+        if self
+            .recovered_async_await_arrow_parameter_name(params)
+            .is_some()
+        {
+            self.write(", await");
+        }
+    }
+
+    fn recovered_async_await_arrow_parameter_name(&self, params: &[NodeIndex]) -> Option<&'a str> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let source_end = text.len().min(u32::MAX as usize) as u32;
+
+        for &param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(init_node) = self.arena.get(param.initializer) else {
+                continue;
+            };
+            if init_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
+                continue;
+            }
+
+            let mut pos = self.skip_trivia_forward(init_node.pos, source_end) as usize;
+            if bytes.get(pos..pos + "await".len()) != Some(b"await") {
+                continue;
+            }
+            pos += "await".len();
+            pos = self.skip_trivia_forward(pos as u32, source_end) as usize;
+            if bytes.get(pos) != Some(&b'=') || bytes.get(pos + 1) != Some(&b'>') {
+                continue;
+            }
+            pos = self.skip_trivia_forward((pos + 2) as u32, source_end) as usize;
+            let end = pos.checked_add("await".len())?;
+            if bytes.get(pos..end) != Some(b"await") {
+                continue;
+            }
+            let next = bytes.get(end).copied();
+            if next.is_some_and(|b| b == b'_' || b == b'$' || b.is_ascii_alphanumeric()) {
+                continue;
+            }
+            return crate::safe_slice::slice(text, pos, end).ok();
+        }
+
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
+    use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
 
     /// Async arrow functions must always have parenthesized parameters,
@@ -1331,6 +1387,47 @@ mod tests {
         assert!(
             result.code.contains("var foo = (...args_1) => __awaiter(void 0, [...args_1], void 0, function* (a = yield ) {"),
             "Async arrow await-default recovery should forward args in ES2015 emit.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn async_function_await_arrow_param_recovery_native_keeps_await_param() {
+        use crate::output::printer::lower_and_print;
+
+        let source = "async function foo(a = await => await): Promise<void> {}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let result = lower_and_print(
+            &parser.arena,
+            root,
+            PrintOptions {
+                target: ScriptTarget::ES2017,
+                ..Default::default()
+            },
+        );
+
+        assert!(
+            result
+                .code
+                .contains("async function foo(a = await , await) {"),
+            "Native async function recovery should preserve the trailing `await` parameter.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn async_function_await_arrow_param_recovery_es2015_keeps_await_param() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "async function foo(a = await => await): Promise<void> {}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains("function* (a = yield , await) {"),
+            "Lowered async function recovery should preserve the trailing `await` parameter.\nOutput:\n{}",
             result.code
         );
     }
