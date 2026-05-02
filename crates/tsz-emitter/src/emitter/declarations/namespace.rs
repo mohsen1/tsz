@@ -479,6 +479,15 @@ impl<'a> Printer<'a> {
             }
             return false;
         }
+        if let Some(block) = self.arena.get_module_block(body_node)
+            && let Some(stmts) = &block.statements
+        {
+            return stmts
+                .nodes
+                .iter()
+                .copied()
+                .any(|stmt| self.namespace_statement_conflicts_iife_param(stmt, ns_name));
+        }
         // Use source text scan: search for the identifier as a binding in the body.
         // This catches parameters, local vars, nested functions/classes at any depth.
         if let Some(text) = self.source_text {
@@ -497,6 +506,60 @@ impl<'a> Printer<'a> {
             };
         }
         false
+    }
+
+    fn namespace_statement_conflicts_iife_param(&self, stmt_idx: NodeIndex, ns_name: &str) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export) = self.arena.get_export_decl(stmt_node)
+        {
+            let Some(inner_node) = self.arena.get(export.export_clause) else {
+                return false;
+            };
+            // `export import M = Z.M` emits as `M.M = Z.M` and should reuse
+            // the namespace parameter. Non-exported `import M = Z.M` emits a
+            // local `var M = Z.M`, so it does require parameter renaming.
+            if inner_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                return false;
+            }
+            return self.declaration_conflicts_iife_param(export.export_clause, ns_name);
+        }
+        self.declaration_conflicts_iife_param(stmt_idx, ns_name)
+    }
+
+    fn declaration_conflicts_iife_param(&self, decl_idx: NodeIndex, ns_name: &str) -> bool {
+        let Some(node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.arena.get_import_decl(node).is_some_and(|import| {
+                    self.get_identifier_text_idx(import.import_clause) == ns_name
+                })
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                self.arena.get_variable(node).is_some_and(|var_stmt| {
+                    self.collect_variable_names(&var_stmt.declarations)
+                        .iter()
+                        .any(|name| name == ns_name)
+                })
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(node)
+                .is_some_and(|func| self.get_identifier_text_idx(func.name) == ns_name),
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(node)
+                .is_some_and(|class| self.get_identifier_text_idx(class.name) == ns_name),
+            k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                .arena
+                .get_enum(node)
+                .is_some_and(|enum_decl| self.get_identifier_text_idx(enum_decl.name) == ns_name),
+            _ => false,
+        }
     }
 
     /// Check if source text contains a binding (variable, function, class, parameter,
