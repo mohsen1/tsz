@@ -8,7 +8,6 @@ use crate::types::{IntrinsicKind, LiteralValue};
 use crate::{QueryDatabase, TypeData, TypeDatabase, TypeId};
 
 use super::classifiers::get_lazy_def_id;
-use super::data::get_type_parameter_constraint;
 use super::traversal::collect_property_name_atoms_for_diagnostics;
 
 pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::FxHashSet<String> {
@@ -603,9 +602,35 @@ fn is_definitely_falsy_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 /// Resolve a type parameter to its base constraint, or return the type itself.
-/// Matches tsc's `getBaseConstraintOrType()`.
+///
+/// Matches tsc's `getResolvedBaseConstraint()` for the type-parameter case:
+/// - Walks nested type parameter chains (`U extends T extends number` →
+///   `number`) until reaching a non-instantiable type.
+/// - Stops and returns the current type when an unconstrained parameter
+///   is reached, mirroring tsc's `noConstraintType` fallback.
+/// - Normalizes an explicit `extends any` constraint to `unknown` along the
+///   way, mirroring tsc's `getConstraintFromTypeParameter` (which rewrites
+///   `T extends any` to `T extends unknown` outside mapped-type contexts).
 fn get_base_constraint_or_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    get_type_parameter_constraint(db, type_id).unwrap_or(type_id)
+    let mut current = type_id;
+    let mut depth: u32 = 0;
+    loop {
+        if depth > 50 {
+            return current;
+        }
+        match db.lookup(current) {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => match info.constraint {
+                Some(c) => {
+                    // tsc: an explicit `extends any` is treated as `extends unknown`
+                    // for constraint reads (outside mapped-type contexts).
+                    current = if c == TypeId::ANY { TypeId::UNKNOWN } else { c };
+                    depth += 1;
+                }
+                None => return current,
+            },
+            _ => return current,
+        }
+    }
 }
 
 fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {

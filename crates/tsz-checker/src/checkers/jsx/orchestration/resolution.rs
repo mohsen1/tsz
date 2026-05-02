@@ -190,6 +190,17 @@ impl<'a> CheckerState<'a> {
         let Some(jsx_opening) = self.ctx.arena.get_jsx_opening(node) else {
             return TypeId::ANY;
         };
+
+        // TS2698: validate `{...x}` spread attribute types as a separate
+        // pre-pass so the diagnostic is emitted once per JSX element,
+        // independent of which downstream path (overload resolution,
+        // class-component construct path, intrinsic-attrs fallback) handles
+        // the rest of the element. This catches spreads of `T extends any`
+        // (which tsc rewrites to `T extends unknown`) into
+        // `React.ComponentClass<P>`-style components, where the orchestration
+        // bypasses `check_jsx_attributes_against_props`.
+        self.check_jsx_spread_attrs_for_ts2698(jsx_opening.attributes);
+
         let tag_name_idx = jsx_opening.tag_name;
         let Some(tag_name_node) = self.ctx.arena.get(tag_name_idx) else {
             return TypeId::ANY;

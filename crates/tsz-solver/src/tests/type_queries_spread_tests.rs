@@ -179,6 +179,122 @@ fn spread_type_param_constrained_to_string_is_invalid() {
 }
 
 #[test]
+fn spread_type_param_constrained_to_any_is_invalid() {
+    // `T extends any` — tsc internally rewrites the explicit `extends any`
+    // to `extends unknown` (`getConstraintFromTypeParameter`), so spreading
+    // is rejected the same way `T extends unknown` would be.
+    //
+    // Conformance regression source: `jsxExcessPropsAndAssignability.tsx`,
+    // where `<ComposedComponentProps extends any>(props: ComposedComponentProps)`
+    // followed by `{...props}` must produce TS2698.
+    let db = TypeInterner::new();
+    let tp = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: Some(TypeId::ANY),
+        default: None,
+        is_const: false,
+    };
+    let tp_id = db.type_param(tp);
+    assert!(!is_valid_spread_type(&db, tp_id));
+}
+
+#[test]
+fn spread_type_param_constrained_to_unknown_is_invalid() {
+    // `T extends unknown` — same as `extends any` after tsc's normalization.
+    let db = TypeInterner::new();
+    let tp = TypeParamInfo {
+        name: db.intern_string("Q"),
+        constraint: Some(TypeId::UNKNOWN),
+        default: None,
+        is_const: false,
+    };
+    let tp_id = db.type_param(tp);
+    assert!(!is_valid_spread_type(&db, tp_id));
+}
+
+#[test]
+fn spread_nested_type_param_chain_resolves_to_unknown_via_any() {
+    // `<T extends any, U extends T>(x: U) { ...{ ...x } }` — tsc walks the
+    // chain `U → T → any`, normalizes `any` to `unknown`, and rejects the
+    // spread.
+    let db = TypeInterner::new();
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: Some(TypeId::ANY),
+        default: None,
+        is_const: false,
+    });
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: Some(t),
+        default: None,
+        is_const: false,
+    });
+    assert!(!is_valid_spread_type(&db, u));
+}
+
+#[test]
+fn spread_nested_type_param_chain_resolves_to_primitive() {
+    // `<T extends number, U extends T>(x: U) { ...{ ...x } }` — chain
+    // resolves to `number` so the spread is rejected.
+    let db = TypeInterner::new();
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: Some(TypeId::NUMBER),
+        default: None,
+        is_const: false,
+    });
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: Some(t),
+        default: None,
+        is_const: false,
+    });
+    assert!(!is_valid_spread_type(&db, u));
+}
+
+#[test]
+fn spread_nested_type_param_chain_resolves_to_object_is_valid() {
+    // `<T extends object, U extends T>(x: U) { ...{ ...x } }` — chain
+    // resolves to `object`, which is non-primitive, so spread is allowed.
+    let db = TypeInterner::new();
+    let obj = db.object(vec![]);
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: Some(obj),
+        default: None,
+        is_const: false,
+    });
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: Some(t),
+        default: None,
+        is_const: false,
+    });
+    assert!(is_valid_spread_type(&db, u));
+}
+
+#[test]
+fn spread_nested_type_param_chain_with_unconstrained_tail_is_valid() {
+    // `<T, U extends T>(x: U)` — `T` is unconstrained, so the chain stops
+    // at `T` itself. tsc keeps `U` as instantiable and allows the spread.
+    let db = TypeInterner::new();
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: Some(t),
+        default: None,
+        is_const: false,
+    });
+    assert!(is_valid_spread_type(&db, u));
+}
+
+#[test]
 fn spread_index_access_uses_base_constraint_before_validation() {
     // `T["text"]` where `T extends { text: string }` resolves to a primitive
     // base constraint and is invalid for object rest, while `T["object"]`

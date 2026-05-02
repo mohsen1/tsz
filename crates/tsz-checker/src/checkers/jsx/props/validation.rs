@@ -18,6 +18,58 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Walk every `{...expr}` spread attribute on a JSX element and emit
+    /// TS2698 ("Spread types may only be created from object types") for
+    /// each one whose type is not a valid spread source.
+    ///
+    /// This mirrors tsc's behaviour: `isValidSpreadType` is checked
+    /// independently of overload resolution and props-type narrowing, so the
+    /// diagnostic must fire even when the overload path takes its own
+    /// speculative-rollback shortcut and never visits
+    /// `check_jsx_attributes_against_props` (which has its own inline check).
+    ///
+    /// `any` and `error` types are always valid spread sources. Everything
+    /// else is delegated to the solver via `is_valid_spread_type`, which in
+    /// turn handles the `T extends any → unknown` normalization that tsc
+    /// applies to type-parameter constraints.
+    pub(crate) fn check_jsx_spread_attrs_for_ts2698(&mut self, attributes_idx: NodeIndex) {
+        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
+            return;
+        };
+        let attr_nodes = attrs.properties.nodes.clone();
+        for attr_idx in attr_nodes {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+            if attr_node.kind != syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                continue;
+            }
+            let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
+                continue;
+            };
+            let spread_expr_idx = spread_data.expression;
+            let spread_type = self.compute_normalized_jsx_spread_type_with_request(
+                spread_expr_idx,
+                &TypingRequest::NONE,
+            );
+            if matches!(spread_type, TypeId::ANY | TypeId::ERROR) {
+                continue;
+            }
+            let resolved = self.resolve_lazy_type(spread_type);
+            if resolved == TypeId::NEVER
+                || !crate::query_boundaries::type_computation::access::is_valid_spread_type(
+                    self.ctx.types,
+                    resolved,
+                )
+            {
+                self.report_spread_not_object_type(spread_expr_idx);
+            }
+        }
+    }
+
     pub(in crate::checkers_domain::jsx) fn compute_normalized_jsx_spread_type_with_request(
         &mut self,
         spread_expr_idx: NodeIndex,

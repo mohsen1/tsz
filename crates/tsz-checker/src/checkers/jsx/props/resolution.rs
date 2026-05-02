@@ -583,12 +583,14 @@ impl<'a> CheckerState<'a> {
         // Deferred spread entries: (spread_type, expr_idx, attr_index) for TS2322.
         let mut spread_entries: Vec<(TypeId, NodeIndex, usize)> = Vec::new();
 
-        // Pre-scan: if any attribute is an `any`/`error`/`unknown`-typed spread,
-        // tsc widens the merged JSX-attributes object to be `any`-compatible
-        // and skips per-attribute assignability checks against the props type
-        // for *every* explicit attribute on the element (regardless of order).
+        // Pre-scan: if any attribute is an `any`/`error`-typed spread, tsc
+        // widens the merged JSX-attributes object to be `any`-compatible and
+        // skips per-attribute assignability checks against the props type for
+        // *every* explicit attribute on the element (regardless of order).
         // Mirrors `tsxSpreadAttributesResolution12.tsx` where
-        // `<OverWriteAttr {...anyobj} x={3} />` produces no TS2322.
+        // `<OverWriteAttr {...anyobj} x={3} />` produces no TS2322. `unknown`
+        // is *not* in this set: tsc rejects unknown spreads with TS2698, so we
+        // must keep per-attribute checks active for them too.
         let attr_nodes = &attrs.properties.nodes;
         let any_spread_present = attr_nodes.iter().any(|&attr_idx| {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
@@ -604,7 +606,7 @@ impl<'a> CheckerState<'a> {
                 spread_data.expression,
                 &TypingRequest::NONE,
             );
-            matches!(spread_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
+            matches!(spread_type, TypeId::ANY | TypeId::ERROR)
         });
 
         // Check each attribute
@@ -1148,19 +1150,20 @@ impl<'a> CheckerState<'a> {
                     &spread_request,
                 );
 
-                // any/error/unknown spread covers all properties.
-                if spread_type == TypeId::ANY
-                    || spread_type == TypeId::ERROR
-                    || spread_type == TypeId::UNKNOWN
-                {
+                // any/error spread covers all properties (no TS2698 — tsc treats
+                // these as dynamic). `unknown` spread is *not* covered: tsc emits
+                // TS2698 for it (and for `T extends any` after constraint
+                // normalization, whose apparent type resolves to `unknown`).
+                if spread_type == TypeId::ANY || spread_type == TypeId::ERROR {
                     // Mark all required props as provided (any spread covers everything)
                     spread_covers_all = true;
                     continue;
                 }
 
-                // TS2698: Validate spread type is object-like.
-                // tsc rejects spreading `null`, `undefined`, `never`, primitives in JSX.
-                // This runs regardless of skip_prop_checks — it's independent of props type.
+                // TS2698 spread validity is emitted by the JSX orchestration entry
+                // (`check_jsx_spread_attrs_for_ts2698`). We still skip further
+                // processing of an invalid spread here so we don't try to
+                // enumerate properties from a non-object source.
                 let resolved = self.resolve_lazy_type(spread_type);
                 if resolved == TypeId::NEVER
                     || !crate::query_boundaries::type_computation::access::is_valid_spread_type(
@@ -1168,7 +1171,6 @@ impl<'a> CheckerState<'a> {
                         resolved,
                     )
                 {
-                    self.report_spread_not_object_type(spread_expr_idx);
                     continue;
                 }
 
