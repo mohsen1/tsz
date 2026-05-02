@@ -2,10 +2,14 @@
 //! discriminants, type predicates, Array.isArray, array.every).
 
 use crate::query_boundaries::common::TypeResolver;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{SymbolRef, TypeGuard, TypeId, TypeofKind};
+use tsz_solver::{
+    GuardSense, ParamInfo, SymbolRef, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
+    TypeofKind,
+};
 
 use crate::state::MAX_TREE_WALK_ITERATIONS;
 
@@ -1009,6 +1013,258 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    /// Try to infer a type predicate from a function body whose return type was
+    /// inferred (no explicit return type annotation, no explicit predicate).
+    ///
+    /// Mirrors TS 5.5+ inferred type predicates. When a function body is a
+    /// single guard expression that narrows one of the function's parameters
+    /// to a strict subtype of its declared type, return a synthesized
+    /// `TypePredicate` so callers can narrow on the function's call.
+    ///
+    /// `body_idx` is the function body (either an arrow's expression body or a
+    /// block whose only statement is `return <expr>`). `params_list` is the
+    /// list of parameter declaration nodes (parallel to `params` minus any
+    /// `this` parameter). Returns `None` for any pattern outside the
+    /// well-defined inference cases.
+    pub(crate) fn try_infer_type_predicate_from_body(
+        &self,
+        body_idx: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let expr = self.find_inferable_predicate_body_expression(body_idx)?;
+        let (mut guard, mut guard_target, is_optional) = self.extract_type_guard(expr)?;
+
+        if is_optional {
+            return None;
+        }
+        if matches!(guard, TypeGuard::Predicate { asserts: true, .. }) {
+            // Inferred predicates never assert (TS 5.5+ semantics).
+            return None;
+        }
+
+        // For binary equality on a property access of a parameter (e.g.
+        // `fb.type === "foo"`), `extract_type_guard` returns
+        // `LiteralEquality(literal)` with `target = fb.type`. Promote that to a
+        // discriminant on `fb` so narrowing can refine the parameter union.
+        if let TypeGuard::LiteralEquality(literal) = guard
+            && let Some((base, path)) =
+                self.parameter_property_access_chain(guard_target, params_list)
+        {
+            guard = TypeGuard::Discriminant {
+                property_path: path,
+                value_type: literal,
+            };
+            guard_target = base;
+        }
+
+        // Resolve the guard target to one of the function's parameters.
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(guard_target, params_list, params)?;
+        let param_type = params.get(param_idx)?.type_id;
+
+        // Run the guard through the solver's narrowing primitive.
+        let narrowed = self.narrow_with_inferred_predicate_guard(param_type, &guard);
+
+        // Only emit a predicate when the narrowed type is strictly more
+        // specific. Equal-or-wider results would not give callers useful
+        // information; `never` is excluded to avoid synthesising vacuous
+        // predicates that look like a tautology.
+        if narrowed == param_type
+            || narrowed == TypeId::NEVER
+            || narrowed == TypeId::ERROR
+            || narrowed == TypeId::ANY
+        {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
+    }
+
+    /// Locate the single guard expression in an inferable function body.
+    ///
+    /// Returns the expression node when:
+    ///   * the body is itself an expression (arrow function expression body),
+    ///   * the body is a `{ return <expr>; }` block with no other statements.
+    ///
+    /// Anything else (multiple statements, missing return value, statements
+    /// before the return) is rejected so we never infer a predicate from a
+    /// body that may also produce side-effects or alternative paths.
+    fn find_inferable_predicate_body_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body = self.arena.get(body_idx)?;
+        if body.kind != syntax_kind_ext::BLOCK {
+            return Some(body_idx);
+        }
+        let block = self.arena.get_block(body)?;
+        if block.statements.nodes.len() != 1 {
+            return None;
+        }
+        let stmt_idx = block.statements.nodes[0];
+        let stmt = self.arena.get(stmt_idx)?;
+        if stmt.kind != syntax_kind_ext::RETURN_STATEMENT {
+            return None;
+        }
+        let ret = self.arena.get_return_statement(stmt)?;
+        if ret.expression.is_none() {
+            return None;
+        }
+        Some(ret.expression)
+    }
+
+    /// If `node` is a property-access chain rooted at one of the parameters
+    /// (e.g. `fb.kind` or `fb.payload.type` where `fb` is a parameter),
+    /// returns `(parameter_name_node, property_path)`. Optional-chain links
+    /// (`fb?.kind`) disqualify the chain because their narrowing semantics
+    /// cannot be expressed via a non-optional discriminant predicate.
+    fn parameter_property_access_chain(
+        &self,
+        node: NodeIndex,
+        params_list: &[NodeIndex],
+    ) -> Option<(NodeIndex, Vec<Atom>)> {
+        let mut path: Vec<Atom> = Vec::new();
+        let mut current = self.skip_parenthesized(node);
+        loop {
+            let cur_node = self.arena.get(current)?;
+            if cur_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && cur_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                break;
+            }
+            let access = self.arena.get_access_expr(cur_node)?;
+            if access.question_dot_token {
+                return None;
+            }
+            let prop_name = if cur_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let ident = self.arena.get_identifier_at(access.name_or_argument)?;
+                self.interner.intern_string(&ident.escaped_text)
+            } else {
+                self.literal_atom_from_node_or_type(access.name_or_argument)?
+            };
+            path.push(prop_name);
+            current = self.skip_parenthesized(access.expression);
+        }
+        if path.is_empty() {
+            return None;
+        }
+        // `current` is now the base of the chain. It must resolve to one of
+        // the function's parameter symbols.
+        let cur_node = self.arena.get(current)?;
+        if cur_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let base_sym = self.binder.resolve_identifier(self.arena, current)?;
+        if !params_list
+            .iter()
+            .any(|&p_idx| self.parameter_owns_symbol(p_idx, base_sym))
+        {
+            return None;
+        }
+        path.reverse();
+        Some((current, path))
+    }
+
+    /// Find the parameter whose declaration owns the symbol referenced by
+    /// `target`. Returns `(index, name)` on a match. Identifiers that don't
+    /// resolve, that resolve to a non-parameter, or whose symbol does not match
+    /// any of the supplied parameter declarations are rejected.
+    fn match_guard_target_to_parameter(
+        &self,
+        target: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<(usize, Atom)> {
+        let target = self.skip_parenthesized(target);
+        let target_node = self.arena.get(target)?;
+        if target_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym = self.binder.resolve_identifier(self.arena, target)?;
+        // `params_list` includes every parameter declaration (including a
+        // `this` parameter when present); `params` excludes the synthetic
+        // `this` parameter. Walk both in lockstep, advancing the `params`
+        // cursor only for non-`this` declarations so the returned index always
+        // refers to the correct `ParamInfo`.
+        let mut info_idx = 0usize;
+        for &param_idx in params_list {
+            if self.is_this_parameter_decl(param_idx) {
+                continue;
+            }
+            if self.parameter_owns_symbol(param_idx, sym)
+                && let Some(name) = params.get(info_idx).and_then(|p| p.name)
+            {
+                return Some((info_idx, name));
+            }
+            info_idx += 1;
+        }
+        None
+    }
+
+    /// Returns true if `param_idx` is a `this` parameter declaration
+    /// (`function f(this: T, ...)`). `this` parameters appear in the AST
+    /// parameter list but are excluded from `ParamInfo` collections.
+    fn is_this_parameter_decl(&self, param_idx: NodeIndex) -> bool {
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(param.name) else {
+            return false;
+        };
+        name_node.kind == SyntaxKind::ThisKeyword as u16
+    }
+
+    /// Returns true when the parameter declaration node owns `sym` — either by
+    /// `value_declaration` pointing back at the parameter node, or by the
+    /// parameter's name node resolving to that symbol. Both directions are
+    /// needed because destructuring parameters and parameter properties have
+    /// slightly different value-declaration shapes.
+    fn parameter_owns_symbol(&self, param_idx: NodeIndex, sym: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.binder.get_symbol(sym) else {
+            return false;
+        };
+        if symbol.value_declaration == param_idx {
+            return true;
+        }
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(param.name) else {
+            return false;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        self.binder.get_node_symbol(param.name) == Some(sym)
+    }
+
+    /// Run the solver's narrowing primitive against `param_type` for the
+    /// truthy branch of `guard`. Wires up the type environment when present so
+    /// `Lazy(DefId)` parameter types resolve correctly during narrowing.
+    fn narrow_with_inferred_predicate_guard(
+        &self,
+        param_type: TypeId,
+        guard: &TypeGuard,
+    ) -> TypeId {
+        if let Some(env) = &self.type_environment {
+            let env_borrow = env.borrow();
+            let narrowing = self.make_narrowing_context().with_resolver(&*env_borrow);
+            narrowing.narrow_type(param_type, guard, GuardSense::Positive)
+        } else {
+            self.make_narrowing_context()
+                .narrow_type(param_type, guard, GuardSense::Positive)
+        }
     }
 
     /// Check if a node is a simple reference (identifier or property access).

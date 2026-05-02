@@ -12565,7 +12565,7 @@ PASS TypeScript/tests/cases/transpile/jsWithSourceMapBasic.ts
 PASS TypeScript/tests/cases/unittests/matchFiles.ts
 XFAIL TypeScript/tests/cases/compiler/arrayFrom.ts | expected:[TS2322] actual:[TS2322,TS2769]
 XFAIL TypeScript/tests/cases/compiler/expandoFunctionSymbolPropertyJs.ts | expected:[] actual:[TS2322,TS2741]
-XFAIL TypeScript/tests/cases/compiler/inferTypePredicates.ts | expected:[TS2322,TS2345,TS2740,TS2741,TS18048] actual:[TS2322,TS2339,TS2345,TS2740,TS2741,TS18048]
+XFAIL TypeScript/tests/cases/compiler/inferTypePredicates.ts | expected:[TS2322,TS2345,TS2740,TS2741,TS18048] actual:[TS2322,TS2345,TS2740,TS2741,TS18048]
 XFAIL TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts | expected:[TS2344,TS2635] actual:[TS2344,TS2635]
 XFAIL TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts | expected:[TS2300,TS2430,TS2536] actual:[TS2300,TS2536]
 XFAIL TypeScript/tests/cases/compiler/isolatedDeclarationErrorsObjects.ts | expected:[TS7006,TS7032] actual:[TS7006,TS7032,TS9038]
