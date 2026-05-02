@@ -705,6 +705,66 @@ export const Mixer = Mix(class {
 }
 
 #[test]
+fn declaration_emit_spread_stringly_keyed_enum_preserves_member_order() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("index.ts"),
+        r#"enum AgeGroups {
+    "0-17",
+    "18-22",
+    "23-27",
+    "28-34",
+    "35-44",
+    "45-59",
+    "60-150",
+}
+
+export const SpotifyAgeGroupEnum = { ...AgeGroups };
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "strict": true,
+    "declaration": true,
+    "module": "es2015"
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:#?}",
+        result.diagnostics
+    );
+
+    let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
+    let expected = r#"export declare const SpotifyAgeGroupEnum: {
+    [x: number]: string;
+    "0-17": (typeof AgeGroups)["0-17"];
+    "18-22": (typeof AgeGroups)["18-22"];
+    "23-27": (typeof AgeGroups)["23-27"];
+    "28-34": (typeof AgeGroups)["28-34"];
+    "35-44": (typeof AgeGroups)["35-44"];
+    "45-59": (typeof AgeGroups)["45-59"];
+    "60-150": (typeof AgeGroups)["60-150"];
+};"#;
+    assert!(
+        dts.contains(expected),
+        "expected spread enum members to follow declaration order: {dts}"
+    );
+}
+
+#[test]
 fn declaration_emit_namespace_import_callable_member_avoids_ts7056() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();

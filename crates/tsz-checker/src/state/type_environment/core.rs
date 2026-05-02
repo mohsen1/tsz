@@ -30,7 +30,6 @@ impl<'a> CheckerState<'a> {
     // Note: enum_symbol_from_type and enum_symbol_from_value_type are defined in type_checking.rs
 
     pub(crate) fn enum_object_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
-        use rustc_hash::FxHashMap;
         use tsz_solver::{IndexSignature, ObjectShape, PropertyInfo};
 
         let factory = self.ctx.types.factory();
@@ -51,7 +50,8 @@ impl<'a> CheckerState<'a> {
             .get_binder_for_file(file_idx)
             .unwrap_or(self.ctx.binder);
 
-        let mut props: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let mut seen_props: FxHashSet<Atom> = FxHashSet::default();
+        let mut props: Vec<PropertyInfo> = Vec::new();
         for &decl_idx in &symbol.declarations {
             let Some(node) = enum_arena.get(decl_idx) else {
                 continue;
@@ -113,7 +113,11 @@ impl<'a> CheckerState<'a> {
                 };
                 let specific_member_type = factory.enum_type(member_def_id, literal_type);
 
-                props.entry(name_atom).or_insert(PropertyInfo {
+                if !seen_props.insert(name_atom) {
+                    continue;
+                }
+
+                props.push(PropertyInfo {
                     name: name_atom,
                     type_id: specific_member_type,
                     write_type: specific_member_type,
@@ -123,13 +127,13 @@ impl<'a> CheckerState<'a> {
                     is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: None,
-                    declaration_order: 0,
+                    declaration_order: props.len() as u32 + 1,
                     is_string_named: false,
                 });
             }
         }
 
-        let properties: Vec<PropertyInfo> = props.into_values().collect();
+        let properties = props;
         let is_const_enum = symbol.has_any_flags(symbol_flags::CONST_ENUM);
         let flags = if is_const_enum {
             tsz_solver::ObjectFlags::CONST_ENUM
