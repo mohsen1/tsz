@@ -647,6 +647,11 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             self.skip_comments_in_node(accessor_node.pos, accessor_node.end);
+        } else if !is_getter
+            && !is_private
+            && let Some(type_text) = self.js_accessor_backing_field_type_text(accessor_idx)
+        {
+            self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
         } else {
             self.emit_parameters_without_types(&accessor.parameters, is_private);
         }
@@ -766,6 +771,10 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
+            if let Some(type_text) = self.js_accessor_backing_field_type_text(member_idx) {
+                return Some(type_text);
+            }
+
             if param.type_annotation.is_some() {
                 let saved_comment_idx = self.comment_emit_idx;
                 let saved_pending_source_pos = self.pending_source_pos;
@@ -787,6 +796,172 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    pub(in crate::declaration_emitter) fn js_accessor_backing_field_type_text(
+        &self,
+        accessor_idx: NodeIndex,
+    ) -> Option<String> {
+        if !self.source_is_js_file {
+            return None;
+        }
+
+        let key_text = self.accessor_this_element_key_text(accessor_idx)?;
+        let parent_idx = self.arena.get_extended(accessor_idx)?.parent;
+        let parent_node = self.arena.get(parent_idx)?;
+        let class = self.arena.get_class(parent_node)?;
+
+        class.members.nodes.iter().copied().find_map(|member_idx| {
+            let member_node = self.arena.get(member_idx)?;
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return None;
+            }
+            if self.class_computed_property_key_text(member_idx).as_deref()
+                != Some(key_text.as_str())
+            {
+                return None;
+            }
+            self.jsdoc_type_text_for_node(member_idx)
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn accessor_this_element_key_text(
+        &self,
+        accessor_idx: NodeIndex,
+    ) -> Option<String> {
+        let accessor_node = self.arena.get(accessor_idx)?;
+        let accessor = self.arena.get_accessor(accessor_node)?;
+        let body_idx = accessor.body.into_option()?;
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let first_param_name = accessor.parameters.nodes.first().and_then(|&param_idx| {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            self.get_identifier_text(param.name)
+        });
+
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                    let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                        continue;
+                    };
+                    if let Some(key_text) = self.this_element_access_key_text(ret.expression) {
+                        return Some(key_text);
+                    }
+                }
+                k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                    let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                        continue;
+                    };
+                    let expr_idx = self
+                        .arena
+                        .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+                    let Some(expr_node) = self.arena.get(expr_idx) else {
+                        continue;
+                    };
+                    if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                        continue;
+                    }
+                    let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+                        continue;
+                    };
+                    if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                        continue;
+                    }
+                    if let Some(param_name) = first_param_name.as_deref() {
+                        let rhs_idx = self
+                            .arena
+                            .skip_parenthesized_and_assertions_and_comma(binary.right);
+                        if self.get_identifier_text(rhs_idx).as_deref() != Some(param_name) {
+                            continue;
+                        }
+                    }
+                    if let Some(key_text) = self.this_element_access_key_text(binary.left) {
+                        return Some(key_text);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn class_computed_property_key_text(
+        &self,
+        member_idx: NodeIndex,
+    ) -> Option<String> {
+        let name_idx = self.get_member_name_idx(member_idx)?;
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let computed = self.arena.get_computed_property(name_node)?;
+        let key_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        let key_node = self.arena.get(key_idx)?;
+        self.get_source_slice(key_node.pos, key_node.end)
+            .map(|text| text.trim().to_string())
+    }
+
+    fn this_element_access_key_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(expr_node)?;
+        let receiver_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        let receiver_node = self.arena.get(receiver_idx)?;
+        if receiver_node.kind != SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+        let key_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.name_or_argument);
+        let key_node = self.arena.get(key_idx)?;
+        self.get_source_slice(key_node.pos, key_node.end)
+            .map(|text| text.trim().to_string())
+    }
+
+    fn emit_setter_parameters_with_type_text(
+        &mut self,
+        params: &tsz_parser::parser::NodeList,
+        type_text: &str,
+    ) {
+        let mut first = true;
+        for &param_idx in &params.nodes {
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            if param.dot_dot_dot_token {
+                self.write("...");
+            }
+            self.emit_node(param.name);
+            if param.question_token {
+                self.write("?");
+            }
+            self.write(": ");
+            self.write(type_text);
+        }
     }
 
     pub(in crate::declaration_emitter) fn emit_index_signature(&mut self, sig_idx: NodeIndex) {
