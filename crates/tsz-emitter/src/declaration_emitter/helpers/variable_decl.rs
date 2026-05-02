@@ -852,6 +852,18 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
 
+        let preferred_return_type_text = if func.body.is_some() {
+            self.arena.get(func.body).and_then(|body_node| {
+                if body_node.kind == syntax_kind_ext::BLOCK {
+                    self.function_body_preferred_return_type_text(func.body)
+                } else {
+                    self.preferred_expression_type_text(func.body)
+                }
+            })
+        } else {
+            None
+        };
+
         if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             let func_type_id = cache
                 .node_types
@@ -867,6 +879,10 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func.body)
                 {
                     self.write("void");
+                } else if let Some(type_text) = preferred_return_type_text.as_ref()
+                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                {
+                    self.write(type_text);
                 } else {
                     self.write(&self.print_type_id(return_type_id));
                 }
@@ -876,6 +892,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         if func.body.is_some() && self.body_returns_void(func.body) {
             self.write("void");
+        } else if let Some(type_text) = preferred_return_type_text {
+            self.write(&type_text);
         } else {
             self.write("any");
         }
