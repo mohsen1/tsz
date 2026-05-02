@@ -185,6 +185,36 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn decorator_metadata_conditional_type_uses_common_branch_runtime_type() {
+        let source = "declare function d(): PropertyDecorator;\nabstract class BaseEntity<T> {\n    @d()\n    public attributes: T extends { attributes: infer A } ? A : undefined;\n}\nclass C {\n    @d()\n    x: number extends string ? false : true;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("__metadata(\"design:type\", Object)\n], BaseEntity.prototype, \"attributes\", void 0);"),
+            "Generic conditional metadata should stay Object.\nOutput:\n{output}"
+        );
+        assert!(
+            output
+                .contains("__metadata(\"design:type\", Boolean)\n], C.prototype, \"x\", void 0);"),
+            "Conditional metadata with boolean literal branches should emit Boolean.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn commonjs_top_level_using_direct_exported_legacy_class_stays_inline() {
         let source =
             "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";

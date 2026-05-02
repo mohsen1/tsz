@@ -232,6 +232,16 @@ fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex) -> String
             }
             "Object".to_string()
         }
+        k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+            if let Some(cond) = arena.get_conditional_type(type_node) {
+                let true_type = serialize_type_for_metadata(arena, cond.true_type);
+                let false_type = serialize_type_for_metadata(arena, cond.false_type);
+                if true_type == false_type {
+                    return true_type;
+                }
+            }
+            "Object".to_string()
+        }
         _ => "Object".to_string(),
     }
 }
