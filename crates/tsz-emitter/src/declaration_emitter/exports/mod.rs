@@ -1435,6 +1435,8 @@ impl<'a> DeclarationEmitter<'a> {
         // Check if this is an overload (no body) or implementation (has body)
         let is_overload = func.body.is_none();
         let is_implementation = !is_overload;
+        let should_emit_late_bound_namespace =
+            self.should_emit_ts_late_bound_function_namespace(func_idx, func.name, is_overload);
 
         // Overload handling:
         // - If this is an overload, emit it and mark that this function has overloads
@@ -1574,11 +1576,13 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
-        self.emit_ts_late_bound_function_namespace_from_members(
-            func.name,
-            true,
-            &late_bound_members,
-        );
+        if should_emit_late_bound_namespace {
+            self.emit_ts_late_bound_function_namespace_from_members(
+                func.name,
+                true,
+                &late_bound_members,
+            );
+        }
         if self.source_is_js_file {
             self.emit_js_function_like_class_if_needed(
                 func.name,
