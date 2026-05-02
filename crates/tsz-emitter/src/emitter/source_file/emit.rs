@@ -443,13 +443,27 @@ impl<'a> Printer<'a> {
             && self.ctx.original_module_kind.is_none()
             && !(is_es_module_output && is_file_module)
             && !jsx_will_add_esm_imports;
+        let has_invalid_export_recovery = source.statements.nodes.iter().any(|&idx| {
+            self.arena
+                .get(idx)
+                .and_then(|node| self.arena.get_export_decl(node))
+                .is_some_and(|export| {
+                    export.export_clause.is_none() && export.module_specifier.is_none()
+                })
+        });
+        let needs_use_strict_invalid_export_recovery = has_invalid_export_recovery
+            && (matches!(self.ctx.options.module, ModuleKind::None) || is_es_module_output)
+            && self.ctx.original_module_kind.is_none()
+            && !has_module_wrapper_stmt
+            && !jsx_will_add_esm_imports;
 
         let should_emit_use_strict = !source_has_use_strict
             && !self.ctx.options.suppress_use_strict
             && (needs_use_strict_cjs
                 || needs_use_strict_amd_umd
                 || needs_use_strict_inside_wrapper
-                || needs_use_strict_always);
+                || needs_use_strict_always
+                || needs_use_strict_invalid_export_recovery);
 
         // When the source has its own "use strict" prologue AND this is a CJS
         // module file, we must emit "use strict" at the correct position (before
@@ -1668,7 +1682,11 @@ impl<'a> Printer<'a> {
         // (all type-only), emit `export {};` to preserve module semantics.
         // This matches tsc behavior: the file must remain an ES module even if
         // all its import/export syntax was type-only and got stripped.
-        if is_file_module && is_es_module_output && !has_runtime_module_syntax {
+        if is_file_module
+            && is_es_module_output
+            && !has_runtime_module_syntax
+            && !has_invalid_export_recovery
+        {
             self.write("export {};");
             self.write_line();
         }
