@@ -2652,8 +2652,19 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
 
     // Create global symbol arena with pre-allocated capacity
     let mut global_symbols = SymbolArena::with_capacity(total_symbols);
-    let mut symbol_arenas = FxHashMap::default();
-    let mut declaration_arenas: DeclarationArenaMap = FxHashMap::default();
+    // Pre-size to `total_symbols`: each merged symbol gets exactly one entry
+    // in `symbol_arenas` (the arena that contributed the symbol). On a
+    // 6086-file project this is hundreds of thousands of entries and the
+    // default-`FxHashMap` doubling schedule rehashes ~18 times during the
+    // merge phase. The capacity is known up-front, so skip the rehash chain.
+    let mut symbol_arenas = FxHashMap::with_capacity_and_hasher(total_symbols, Default::default());
+    // Pre-size to `total_symbols` as an upper bound: most symbols have a
+    // single declaration so this approximates the final size; the few that
+    // have multiple declarations only push extra entries into the same key's
+    // `SmallVec`, not new map entries. Cuts another long doubling chain on
+    // large repos.
+    let mut declaration_arenas: DeclarationArenaMap =
+        FxHashMap::with_capacity_and_hasher(total_symbols, Default::default());
     // Pre-size to the file count: this map ends up holding exactly one entry
     // per file (`Arc::as_ptr(&file.arena) -> file.node_symbols`), so the
     // capacity is known up-front. Skipping the default `FxHashMap` growth
