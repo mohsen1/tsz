@@ -422,6 +422,10 @@ name = "ts2322_undefined_null_target_literal_display_tests"
 path = "tests/ts2322_undefined_null_target_literal_display_tests.rs"
 
 [[test]]
+name = "ts2322_jsx_spread_strip_children_injection_tests"
+path = "tests/ts2322_jsx_spread_strip_children_injection_tests.rs"
+
+[[test]]
 name = "promise_constructor_capability_tests"
 path = "tests/promise_constructor_capability_tests.rs"
 
