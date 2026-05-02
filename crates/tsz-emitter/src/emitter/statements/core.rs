@@ -776,7 +776,12 @@ impl<'a> Printer<'a> {
         for &decl_list_idx in &var_stmt.declarations.nodes {
             self.emit(decl_list_idx);
         }
+        let recovered_async_arrow_return = self.recovered_async_arrow_return_name(node);
         if !using_is_lowered {
+            if let Some(return_name) = &recovered_async_arrow_return {
+                self.write(", ");
+                self.write(return_name);
+            }
             self.map_trailing_semicolon(node);
             self.write_semicolon();
         }
@@ -787,7 +792,10 @@ impl<'a> Printer<'a> {
         // not find semicolons inside the erased type annotation.
         let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
         self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
-        self.emit_recovered_malformed_arrow_block_after_variable_statement(node);
+        self.emit_recovered_malformed_arrow_block_after_variable_statement(
+            node,
+            recovered_async_arrow_return.is_some(),
+        );
 
         // CommonJS: emit exports.X = X; after the declaration
         if is_exported && !export_names.is_empty() {
@@ -854,7 +862,11 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_recovered_malformed_arrow_block_after_variable_statement(&mut self, node: &Node) {
+    fn emit_recovered_malformed_arrow_block_after_variable_statement(
+        &mut self,
+        node: &Node,
+        recovered_async_arrow_return: bool,
+    ) {
         let Some(text) = self.source_text else {
             return;
         };
@@ -896,6 +908,16 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if recovered_async_arrow_return {
+            self.write_line();
+            self.write_semicolon();
+            self.write_line();
+            self.write("{");
+            self.write_line();
+            self.write("}");
+            return;
+        }
+
         let Some(arrow_rel) = line.find("): =>").or_else(|| line.find("):=>")) else {
             return;
         };
@@ -922,6 +944,34 @@ impl<'a> Printer<'a> {
         self.write("}");
         self.write_line();
         self.write_semicolon();
+    }
+
+    fn recovered_async_arrow_return_name(&self, node: &Node) -> Option<String> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        if start >= bytes.len() {
+            return None;
+        }
+
+        let mut line_end = start;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let line = std::str::from_utf8(&bytes[start..line_end]).ok()?;
+        if !line.contains("async") || !line.contains("= await =>") {
+            return None;
+        }
+
+        let colon = line.find("):")? + 2;
+        let arrow = line[colon..].find("=>")? + colon;
+        let return_type = line[colon..arrow].trim();
+        let name: String = return_type
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .collect();
+        if name.is_empty() { None } else { Some(name) }
     }
 
     fn emit_recovered_ambiguous_generic_assertion_variable_statement(
