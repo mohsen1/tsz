@@ -525,11 +525,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if resolver.is_numeric_index_name(prop_name)
             && let Some(ref idx) = shape.number_index
         {
-            return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(
-                    self.bind_object_receiver_this(obj_type, idx.value_type),
-                ),
-            ));
+            let bound = self.bind_object_receiver_this(obj_type, idx.value_type);
+            return Some(self.index_signature_result_with_nuia_write_type(bound));
         }
 
         // Check string index signature.
@@ -539,11 +536,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if !prop_name.starts_with("__unique_")
             && let Some(ref idx) = shape.string_index
         {
-            return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(
-                    self.bind_object_receiver_this(obj_type, idx.value_type),
-                ),
-            ));
+            let bound = self.bind_object_receiver_this(obj_type, idx.value_type);
+            return Some(self.index_signature_result_with_nuia_write_type(bound));
         }
 
         Some(PropertyAccessResult::PropertyNotFound {
@@ -862,17 +856,23 @@ impl<'a> PropertyAccessEvaluator<'a> {
             });
         }
 
-        let mut type_id = self.interner().union(valid_results);
-        if any_from_index && self.no_unchecked_indexed_access {
+        let read_pre_nuia = self.interner().union(valid_results);
+        let nuia_active = any_from_index && self.no_unchecked_indexed_access;
+        let mut type_id = read_pre_nuia;
+        if nuia_active {
             type_id = self.add_undefined_if_unchecked(type_id);
         }
 
+        // `noUncheckedIndexedAccess` only widens the READ type with `| undefined`;
+        // the WRITE type stays the index signature's declared value type. Without
+        // this distinction, writes like `strMap["k"] = undefined` against
+        // `{[s: string]: boolean}` would silently succeed because the assignment
+        // target picked up the read-side `boolean | undefined`.
         let write_type = if any_has_divergent_write_type {
-            let mut wt = self.interner().union(valid_write_results);
-            if any_from_index && self.no_unchecked_indexed_access {
-                wt = self.add_undefined_if_unchecked(wt);
-            }
+            let wt = self.interner().union(valid_write_results);
             if wt != type_id { Some(wt) } else { None }
+        } else if nuia_active && type_id != read_pre_nuia {
+            Some(read_pre_nuia)
         } else {
             None
         };
