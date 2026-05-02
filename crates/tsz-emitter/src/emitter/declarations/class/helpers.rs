@@ -82,7 +82,9 @@ impl<'a> Printer<'a> {
         self.comment_emit_idx = saved_comment_idx;
         if let Some(static_node) = self.arena.get(static_block_idx) {
             let prev = self.emitting_function_body_block;
+            let saved_await_as_yield = self.ctx.emit_await_as_yield;
             self.emitting_function_body_block = true;
+            self.ctx.emit_await_as_yield = true;
             // Save and restore hoisted temps so outer-scope vars (e.g. private
             // field WeakMap names) don't get re-declared inside the IIFE body.
             let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
@@ -90,6 +92,7 @@ impl<'a> Printer<'a> {
             // Any temps generated inside the IIFE block have already been
             // emitted by emit_block; restore the outer-scope temps.
             self.hoisted_assignment_temps = saved_temps;
+            self.ctx.emit_await_as_yield = saved_await_as_yield;
             self.emitting_function_body_block = prev;
         } else {
             self.write("{ }");
