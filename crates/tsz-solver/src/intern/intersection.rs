@@ -1,6 +1,7 @@
 //! Intersection type normalization and merging.
 
 use super::*;
+use crate::types::IntrinsicKind;
 
 impl TypeInterner {
     /// Check if a type is an empty object type (no properties, no index signatures).
@@ -19,6 +20,35 @@ impl TypeInterner {
                     && shape.number_index.is_none()
             }
             _ => false,
+        }
+    }
+
+    /// Check if a type is a "widening" primitive intrinsic — i.e., the wide
+    /// `string` / `number` / `boolean` / `bigint` / `symbol` types whose
+    /// literal subtypes get absorbed during union normalization.
+    ///
+    /// `string & {}`, `number & {}`, etc. must be preserved as Intersection
+    /// rather than collapsed to the bare primitive: an Intersection wrapper
+    /// is NOT a String-flagged union member, so unions like
+    /// `(string & {}) | "literal"` correctly retain their literal members
+    /// (matching tsc's literal-preservation idiom). Literal types like
+    /// `"hello"` are NOT widening primitives — `"hello" & {}` still collapses
+    /// to `"hello"`.
+    fn is_widening_primitive_intrinsic(&self, id: TypeId) -> bool {
+        match id {
+            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL => {
+                true
+            }
+            _ => matches!(
+                self.lookup(id),
+                Some(TypeData::Intrinsic(
+                    IntrinsicKind::String
+                        | IntrinsicKind::Number
+                        | IntrinsicKind::Boolean
+                        | IntrinsicKind::Bigint
+                        | IntrinsicKind::Symbol
+                ))
+            ),
         }
     }
 
@@ -110,20 +140,37 @@ impl TypeInterner {
         }
 
         // =========================================================
-        // Task #48: Empty Object Rule for Intersections
+        // Empty Object Rule for Intersections
         // =========================================================
-        // Remove {} from intersections if other non-nullish types are present.
-        // In TypeScript, {} represents "any non-nullish value", which is redundant
-        // when we already have a non-nullish type like string, number, etc.
-        // Example: `string & {}` → `string` (correct)
+        // Remove {} from intersections when another non-nullish member exists
+        // that already covers it. `{}` represents "any non-nullish value" and
+        // is redundant once a structural object/array/function or a literal
+        // type pins down a concrete shape.
+        //
+        // EXCEPTION — branded widening primitives (`string & {}`, `number & {}`,
+        // `boolean & {}`, `bigint & {}`, `symbol & {}`): tsc keeps these as
+        // Intersection rather than collapsing to the bare primitive, so unions
+        // like `(string & {}) | "literal"` retain their literal members. tsc's
+        // union literal absorption only triggers when the union directly
+        // contains the primitive intrinsic; an Intersection wrapping the
+        // intrinsic is NOT a String-flagged member and does not absorb. If we
+        // collapsed `string & {}` to `string` here, mapped types like
+        // `Record<(string & {}) | "x", V>` would lose their literal properties
+        // and accesses through known keys would incorrectly hit the index
+        // signature with `noUncheckedIndexedAccess`.
+        //
+        // Literal types (e.g., `"hello"`) are NOT considered widening primitives
+        // — `"hello" & {}` still collapses to `"hello"` (matching tsc).
         // Note: This is INTERSECTION-SPECIFIC. For unions, we DO NOT remove {}
         //       because `string | {}` should stay as `string | {}` (weak type rule).
         if flat.len() > 1 && flat.iter().any(|&id| self.is_empty_object(id)) {
-            let has_non_nullish = flat
-                .iter()
-                .any(|&id| !self.is_empty_object(id) && self.is_non_nullish_type(id));
+            let has_redundant_with_empty = flat.iter().any(|&id| {
+                !self.is_empty_object(id)
+                    && self.is_non_nullish_type(id)
+                    && !self.is_widening_primitive_intrinsic(id)
+            });
 
-            if has_non_nullish {
+            if has_redundant_with_empty {
                 flat.retain(|id| !self.is_empty_object(*id));
             }
         }

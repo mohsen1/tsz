@@ -757,42 +757,54 @@ fn intersection_objects_same_prop_intersects_types() {
 // =========================================================================
 // 12. INTERSECTION — EMPTY OBJECT RULE
 // =========================================================================
+//
+// `string & {}` (and friends) are preserved as Intersection so unions like
+// `(string & {}) | "literal"` retain their literal members — tsc's union
+// literal absorption keys off the bare primitive intrinsic and skips an
+// Intersection that wraps it. Literal types (`"hello"`) are NOT widening
+// primitives, so `"hello" & {}` still collapses to `"hello"`.
+
+fn assert_string_and_empty(i: &TypeInterner, primitive: TypeId, empty_obj: TypeId) {
+    let intersected = i.intersection(vec![primitive, empty_obj]);
+    assert_ne!(
+        intersected, primitive,
+        "primitive & {{}} must NOT collapse to the primitive (branded primitive idiom)"
+    );
+    match i.lookup(intersected) {
+        Some(TypeData::Intersection(list_id)) => {
+            let members = i.type_list(list_id);
+            assert!(members.contains(&primitive));
+            assert!(members.contains(&empty_obj));
+        }
+        other => panic!("expected Intersection, got {other:?}"),
+    }
+}
 
 #[test]
 fn intersection_string_and_empty_object() {
     let i = TypeInterner::new();
     let empty_obj = i.object(vec![]);
-    assert_eq!(
-        i.intersection(vec![TypeId::STRING, empty_obj]),
-        TypeId::STRING,
-        "string & {{}} => string"
-    );
+    assert_string_and_empty(&i, TypeId::STRING, empty_obj);
 }
 
 #[test]
 fn intersection_number_and_empty_object() {
     let i = TypeInterner::new();
     let empty_obj = i.object(vec![]);
-    assert_eq!(
-        i.intersection(vec![TypeId::NUMBER, empty_obj]),
-        TypeId::NUMBER,
-        "number & {{}} => number"
-    );
+    assert_string_and_empty(&i, TypeId::NUMBER, empty_obj);
 }
 
 #[test]
 fn intersection_boolean_and_empty_object() {
     let i = TypeInterner::new();
     let empty_obj = i.object(vec![]);
-    assert_eq!(
-        i.intersection(vec![TypeId::BOOLEAN, empty_obj]),
-        TypeId::BOOLEAN,
-        "boolean & {{}} => boolean"
-    );
+    assert_string_and_empty(&i, TypeId::BOOLEAN, empty_obj);
 }
 
 #[test]
 fn intersection_literal_and_empty_object() {
+    // Literals are not widening primitives, so the empty object is still
+    // absorbed: `"hello" & {}` collapses back to `"hello"`.
     let i = TypeInterner::new();
     let empty_obj = i.object(vec![]);
     let hello = i.literal_string("hello");

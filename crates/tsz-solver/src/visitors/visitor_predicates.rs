@@ -199,6 +199,32 @@ pub fn is_empty_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
+/// Check if a type is a "widening" primitive intrinsic — i.e., the wide
+/// `string` / `number` / `boolean` / `bigint` / `symbol` types whose
+/// literal subtypes get absorbed during union normalization.
+///
+/// Used to recognize the branded-primitive idiom (`string & {}`,
+/// `number & {}`, …): subtype-based intersection simplification must
+/// preserve the empty-object brand here so unions like
+/// `(string & {}) | "literal"` retain their literal members. Literal
+/// types like `"hello"` are NOT widening primitives — `"hello" & {}`
+/// still collapses to `"hello"`.
+pub fn is_widening_primitive_intrinsic(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match type_id {
+        TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL => true,
+        _ => matches!(
+            types.lookup(type_id),
+            Some(TypeData::Intrinsic(
+                IntrinsicKind::String
+                    | IntrinsicKind::Number
+                    | IntrinsicKind::Boolean
+                    | IntrinsicKind::Bigint
+                    | IntrinsicKind::Symbol
+            ))
+        ),
+    }
+}
+
 /// Check if a type is a primitive type (intrinsic or literal).
 pub fn is_primitive_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // Check well-known intrinsic primitive TypeIds first.

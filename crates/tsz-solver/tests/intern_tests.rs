@@ -1161,48 +1161,66 @@ fn test_template_any_widening() {
 fn test_empty_object_rule_intersection() {
     let interner = TypeInterner::new();
 
-    // Task #48: Empty Object Rule for Intersections
-    // Primitives should absorb empty objects in intersections
-
-    // Case 1: string & empty_object → string
+    // Branded primitive idiom: `string & {}` is preserved as Intersection so
+    // unions like `(string & {}) | "literal"` retain their literal members
+    // (tsc's union literal absorption keys off the bare primitive intrinsic
+    // and skips an Intersection that wraps it).
     let empty_obj = interner.object(vec![]);
+
+    // Case 1: string & {} stays as Intersection(string, {}), not collapsed to string.
     let string_and_empty = interner.intersection(vec![TypeId::STRING, empty_obj]);
-    assert_eq!(
+    assert_ne!(
         string_and_empty,
         TypeId::STRING,
-        "string & empty_object should normalize to string"
+        "string & empty_object must NOT collapse to string (branded primitive idiom)"
     );
+    match interner.lookup(string_and_empty) {
+        Some(TypeData::Intersection(list_id)) => {
+            let members = interner.type_list(list_id);
+            assert_eq!(members.len(), 2, "intersection should keep both members");
+            assert!(members.contains(&TypeId::STRING));
+            assert!(members.contains(&empty_obj));
+        }
+        other => panic!("expected Intersection, got {other:?}"),
+    }
 
-    // Case 2: number & empty_object → number
+    // Case 2: number & {} stays as Intersection(number, {}).
     let number_and_empty = interner.intersection(vec![TypeId::NUMBER, empty_obj]);
-    assert_eq!(
+    assert_ne!(
         number_and_empty,
         TypeId::NUMBER,
-        "number & empty_object should normalize to number"
+        "number & empty_object must NOT collapse to number"
     );
 
-    // Case 3: (string | null) & empty_object
-    // Due to distributivity: (string | null) & {} → (string & {}) | (null & {})
-    // string & {} → string
-    // null & {} → never (null is disjoint from objects)
-    // Result: string | never → string
+    // Case 3: (string | null) & {} distributes to (string & {}) | (null & {})
+    //   = Intersection(string, {}) | never  (null & {} → never via disjoint check)
+    //   = Intersection(string, {})
     let string_or_null = interner.union(vec![TypeId::STRING, TypeId::NULL]);
     let union_and_empty = interner.intersection(vec![string_or_null, empty_obj]);
-
-    // The result should be string (null is filtered out by the empty object constraint)
     assert_eq!(
-        union_and_empty,
-        TypeId::STRING,
-        "(string | null) & empty_object should normalize to string"
+        union_and_empty, string_and_empty,
+        "(string | null) & {{}} should reduce to string & {{}}"
     );
 
-    // Case 4: string & empty_object & number → never (disjoint primitives still detected)
+    // Case 4: string & {} & number → never (disjoint primitives still detected).
     let string_and_empty_and_number =
         interner.intersection(vec![TypeId::STRING, empty_obj, TypeId::NUMBER]);
     assert_eq!(
         string_and_empty_and_number,
         TypeId::NEVER,
-        "string & empty_object & number should be never (disjoint primitives)"
+        "string & {{}} & number should still be never (disjoint primitives)"
+    );
+
+    // Case 5: structural object types still absorb {}.
+    //   { a: string } & {} → { a: string }
+    let obj_with_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_and_empty = interner.intersection(vec![obj_with_a, empty_obj]);
+    assert_eq!(
+        obj_and_empty, obj_with_a,
+        "structural object & {{}} should still collapse to the object"
     );
 }
 

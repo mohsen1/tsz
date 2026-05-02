@@ -716,6 +716,125 @@ q.z.toFixed();
 }
 
 #[test]
+fn test_branded_primitive_in_mapped_constraint_preserves_literal_keys() {
+    // Conformance: TypeScript/tests/cases/compiler/specialIntersectionsInMappedTypes.ts
+    //
+    // `(string & {}) | "literal"` is the documented "branded primitive" idiom
+    // that prevents tsc from absorbing the literal into the wide `string`
+    // intrinsic. When used as the key type of a mapped type, the result is
+    // a hybrid object whose literal members carry their concrete value type
+    // and whose `string & {}` brand expands to a string index signature.
+    //
+    // Under `noUncheckedIndexedAccess`, accessing a *known* literal key on
+    // such an object must yield the value type without `| undefined` (the
+    // literal property is concrete), while accessing an unknown key must
+    // go through the index signature and add `| undefined` to the result.
+    //
+    // Before this fix, the `string & {}` intersection collapsed to plain
+    // `string` during interning and during evaluator subtype simplification,
+    // which absorbed the literal members in the union and turned the mapped
+    // type into a bare `{ [x: string]: V }`. That caused tsz to flag known
+    // accesses (e.g., `a.left`) as possibly `undefined`, diverging from tsc.
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        no_unchecked_indexed_access: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type Alignment = (string & {}) | "left" | "center" | "right";
+type Alignments = Record<Alignment, string>;
+
+declare const a: Alignments;
+
+a.left.length;          // OK — `left` is a literal property, type is `string`
+a.center.length;        // OK
+a.right.length;         // OK
+a.other.length;         // ERROR — falls through index signature, `string | undefined`
+"#,
+        options,
+    );
+
+    let non_lib: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    let undefined_msgs: Vec<_> = non_lib
+        .iter()
+        .filter(|(code, _)| *code == 18048)
+        .map(|(_, msg)| msg.clone())
+        .collect();
+
+    assert_eq!(
+        undefined_msgs.len(),
+        1,
+        "Expected exactly one TS18048 for the index-signature access (a.other); \
+         literal-key accesses (a.left/a.center/a.right) must NOT trigger TS18048. \
+         Actual: {undefined_msgs:?}"
+    );
+    assert!(
+        undefined_msgs[0].contains("a.other"),
+        "TS18048 must be reported on `a.other` (the index-signature access), got {undefined_msgs:?}"
+    );
+    assert!(
+        !undefined_msgs
+            .iter()
+            .any(|m| m.contains("a.left") || m.contains("a.center") || m.contains("a.right")),
+        "TS18048 must NOT be reported on literal-key accesses; got {undefined_msgs:?}"
+    );
+}
+
+#[test]
+fn test_branded_primitive_alternate_iteration_var_name() {
+    // Same invariant as the test above, but the mapped type uses iteration
+    // variable name `K` instead of `P`. Guards against any hardcoded variable
+    // name in the printer or solver expansion path (see CLAUDE.md §25).
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        no_unchecked_indexed_access: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type K = "a" | "b" | (string & {});
+type M = { [X in K]: number };
+
+declare const m: M;
+m.a.toFixed();          // OK
+m.b.toFixed();          // OK
+m.zzz.toFixed();        // ERROR — index-signature access
+"#,
+        options,
+    );
+
+    let non_lib: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    let undefined_msgs: Vec<_> = non_lib
+        .iter()
+        .filter(|(code, _)| *code == 18048)
+        .map(|(_, msg)| msg.clone())
+        .collect();
+
+    assert_eq!(
+        undefined_msgs.len(),
+        1,
+        "Expected exactly one TS18048 (for m.zzz). Actual: {undefined_msgs:?}"
+    );
+    assert!(
+        undefined_msgs[0].contains("m.zzz"),
+        "TS18048 must be reported on `m.zzz`, got {undefined_msgs:?}"
+    );
+}
+
+#[test]
 fn test_class_extends_inherits_instance_members_via_symbol_path() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
