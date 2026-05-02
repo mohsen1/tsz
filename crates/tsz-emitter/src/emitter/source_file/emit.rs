@@ -1246,6 +1246,7 @@ impl<'a> Printer<'a> {
             // Defer `export {}` (empty named exports, no module specifier) to end
             // of file. TSC places these at the end as ESM markers.
             if is_es_module_output
+                && !self.ctx.options.verbatim_module_syntax
                 && stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                 && let Some(export) = self.arena.get_export_decl(stmt_node)
                 && export.module_specifier.is_none()
