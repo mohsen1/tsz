@@ -520,6 +520,31 @@ fn test_amd_non_module_script_no_use_strict() {
 }
 
 #[test]
+fn test_amd_export_assignment_elides_unused_namespace_alias() {
+    let source = r#"namespace M {
+    export class C {}
+}
+import M22 = M;
+export = M;"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !output.contains("M22"),
+        "Unused namespace alias should be erased from export-assignment modules.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return M;"),
+        "Export assignment should still return the namespace value.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_module_gets_use_strict() {
     // CJS module files (with export) should get "use strict" in the preamble.
     let source = "export const x = 1;\n";
