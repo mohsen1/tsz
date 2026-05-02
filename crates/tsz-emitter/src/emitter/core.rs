@@ -680,6 +680,39 @@ impl<'a> Printer<'a> {
         Self::with_capacity_and_options(arena, Self::DEFAULT_OUTPUT_CAPACITY, options)
     }
 
+    fn emit_recovered_invalid_import_expression(&mut self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = (node.end as usize).min(text.len());
+        if start >= end {
+            return false;
+        }
+
+        let line = &text[start..end];
+        let trimmed = line.trim_start();
+        let Some(after_import) = trimmed.strip_prefix("import") else {
+            return false;
+        };
+        if !after_import
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            return false;
+        }
+
+        let expr = after_import.trim_start().trim_end_matches(';').trim_end();
+        if expr.is_empty() {
+            return false;
+        }
+
+        self.write(expr);
+        self.write_semicolon();
+        true
+    }
+
     fn emit_recovered_let_array_assignment(&mut self, node: &Node) -> bool {
         let Some(text) = self.source_text else {
             return false;
@@ -1639,6 +1672,9 @@ impl<'a> Printer<'a> {
 
             // Empty statement
             k if k == syntax_kind_ext::EMPTY_STATEMENT => {
+                if self.emit_recovered_invalid_import_expression(node) {
+                    return;
+                }
                 if self.emit_recovered_let_array_assignment(node) {
                     return;
                 }
