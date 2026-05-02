@@ -1276,12 +1276,62 @@ impl<'a> Printer<'a> {
                     && decl.initializer.is_none()
                     && let Some(name_node) = self.arena.get(decl.name)
                 {
-                    // Use the name's end, not the full declaration end
-                    effective_end = name_node.end;
+                    effective_end = self
+                        .find_declaration_semicolon_after(name_node.end, decl_node.end)
+                        .unwrap_or(name_node.end);
                 }
             }
         }
         effective_end
+    }
+
+    fn find_declaration_semicolon_after(&self, start: u32, end: u32) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut i = std::cmp::min(start as usize, bytes.len());
+        let limit = std::cmp::min(end as usize, bytes.len());
+        let mut depth = 0i32;
+        while i < limit {
+            match bytes[i] {
+                b'{' | b'(' | b'[' | b'<' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b'}' | b')' | b']' | b'>' => {
+                    depth -= 1;
+                    i += 1;
+                }
+                b';' if depth == 0 => return Some((i + 1) as u32),
+                b'/' if i + 1 < limit && bytes[i + 1] == b'/' => {
+                    while i < limit && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < limit && bytes[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < limit && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    i = std::cmp::min(i + 2, limit);
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[i];
+                    i += 1;
+                    while i < limit {
+                        if bytes[i] == b'\\' {
+                            i = std::cmp::min(i + 2, limit);
+                        } else if bytes[i] == quote {
+                            i += 1;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+        None
     }
 
     /// Check if all variable declarations in a declaration list lack initializers
