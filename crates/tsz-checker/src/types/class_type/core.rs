@@ -299,10 +299,12 @@ impl<'a> CheckerState<'a> {
             is_getter: bool,
             name_atom: Atom,
             visibility: Visibility,
+            declaration_order: u32,
         }
 
         // PERF: Pre-size maps based on member count to avoid rehashing
         let member_count = class.members.nodes.len();
+        let class_member_order = |member_pos: usize| ((member_pos + 1) as u32) << 16;
         let mut properties: FxHashMap<Atom, PropertyInfo> =
             FxHashMap::with_capacity_and_hasher(member_count, Default::default());
         let mut methods: FxHashMap<Atom, MethodAggregate> =
@@ -326,7 +328,8 @@ impl<'a> CheckerState<'a> {
         {
             // PERF: Single pass over class members for prescan (was 3 separate loops).
             let mut prescan_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
-            for &member_idx in &class.members.nodes {
+            for (member_pos, &member_idx) in class.members.nodes.iter().enumerate() {
+                let declaration_order = class_member_order(member_pos);
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;
                 };
@@ -368,7 +371,7 @@ impl<'a> CheckerState<'a> {
                             is_class_prototype: false,
                             visibility,
                             parent_id: current_sym,
-                            declaration_order: 0,
+                            declaration_order,
                             is_string_named: false,
                         });
                     }
@@ -428,7 +431,7 @@ impl<'a> CheckerState<'a> {
                             is_class_prototype: false,
                             visibility,
                             parent_id: current_sym,
-                            declaration_order: 0,
+                            declaration_order,
                             is_string_named: false,
                         });
                     }
@@ -439,7 +442,7 @@ impl<'a> CheckerState<'a> {
                         if ctor.body.is_none() {
                             continue;
                         }
-                        for &param_idx in &ctor.parameters.nodes {
+                        for (param_pos, &param_idx) in ctor.parameters.nodes.iter().enumerate() {
                             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                                 continue;
                             };
@@ -470,7 +473,7 @@ impl<'a> CheckerState<'a> {
                                 is_class_prototype: false,
                                 visibility,
                                 parent_id: current_sym,
-                                declaration_order: 0,
+                                declaration_order: declaration_order + param_pos as u32 + 1,
                                 is_string_named: false,
                             });
                         }
@@ -515,11 +518,12 @@ impl<'a> CheckerState<'a> {
         // Phase 1: Process all non-method members (properties, accessors, constructors, index sigs).
         // Methods are deferred to phase 2 so that a partial instance type (with property types)
         // can be pushed as `this`, allowing method body inference to resolve `this.x` references.
-        let mut deferred_methods: Vec<(NodeIndex, &tsz_parser::parser::node::MethodDeclData)> =
+        let mut deferred_methods: Vec<(NodeIndex, &tsz_parser::parser::node::MethodDeclData, u32)> =
             Vec::with_capacity(member_count / 2);
         let mut deferred_accessors: Vec<DeferredAccessor<'_>> = Vec::with_capacity(4);
 
-        for &member_idx in &class.members.nodes {
+        for (member_pos, &member_idx) in class.members.nodes.iter().enumerate() {
+            let declaration_order = class_member_order(member_pos);
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
@@ -586,7 +590,7 @@ impl<'a> CheckerState<'a> {
                             is_class_prototype: false,
                             visibility,
                             parent_id: current_sym,
-                            declaration_order: member_idx.0,
+                            declaration_order,
                             is_string_named: false,
                         };
                         let mut partial_props: Vec<PropertyInfo> =
@@ -698,7 +702,7 @@ impl<'a> CheckerState<'a> {
                             is_class_prototype: false,
                             visibility,
                             parent_id: current_sym,
-                            declaration_order: member_idx.0,
+                            declaration_order,
                             is_string_named: false,
                         },
                     );
@@ -727,7 +731,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Defer method processing to phase 2
-                    deferred_methods.push((member_idx, method));
+                    deferred_methods.push((member_idx, method, declaration_order));
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                     let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
@@ -758,6 +762,7 @@ impl<'a> CheckerState<'a> {
                         is_getter: k == syntax_kind_ext::GET_ACCESSOR,
                         name_atom,
                         visibility,
+                        declaration_order,
                     });
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
@@ -768,7 +773,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     // Process constructor parameter properties
-                    for &param_idx in &ctor.parameters.nodes {
+                    for (param_pos, &param_idx) in ctor.parameters.nodes.iter().enumerate() {
                         let Some(param_node) = self.ctx.arena.get(param_idx) else {
                             continue;
                         };
@@ -818,7 +823,7 @@ impl<'a> CheckerState<'a> {
                                 is_class_prototype: false,
                                 visibility,
                                 parent_id: current_sym,
-                                declaration_order: param_idx.0,
+                                declaration_order: declaration_order + param_pos as u32 + 1,
                                 is_string_named: false,
                             },
                         );
@@ -1019,7 +1024,7 @@ impl<'a> CheckerState<'a> {
                 partial_method_props.len() + deferred_methods.len() + deferred_accessors.len(),
             );
             partial_props.extend(partial_method_props.values().cloned());
-            for (_, method) in &deferred_methods {
+            for (_, method, declaration_order) in &deferred_methods {
                 if let Some(name) = self.get_property_name_resolved(method.name) {
                     let name_atom = self.ctx.types.intern_string(&name);
                     if !partial_props.iter().any(|p| p.name == name_atom) {
@@ -1071,7 +1076,7 @@ impl<'a> CheckerState<'a> {
                             is_class_prototype: true,
                             visibility: Visibility::Public,
                             parent_id: current_sym,
-                            declaration_order: 0,
+                            declaration_order: *declaration_order,
                             is_string_named: false,
                         });
                     }
@@ -1089,7 +1094,7 @@ impl<'a> CheckerState<'a> {
                         is_class_prototype: true,
                         visibility: deferred.visibility,
                         parent_id: current_sym,
-                        declaration_order: 0,
+                        declaration_order: deferred.declaration_order,
                         is_string_named: false,
                     });
                 }
@@ -1134,7 +1139,7 @@ impl<'a> CheckerState<'a> {
             let in_constructor_resolution = current_sym
                 .is_some_and(|sym_id| self.ctx.class_constructor_resolution_set.contains(&sym_id));
 
-            for (member_idx, method) in deferred_methods {
+            for (member_idx, method, declaration_order) in deferred_methods {
                 let mut signature = if in_constructor_resolution
                     && method.type_annotation.is_none()
                     && method.body.is_some()
@@ -1216,7 +1221,7 @@ impl<'a> CheckerState<'a> {
                     overload_optional: false,
                     impl_optional: false,
                     visibility,
-                    declaration_order: member_idx.0,
+                    declaration_order,
                 });
                 if method.body.is_none() {
                     entry.overload_signatures.push(signature);
@@ -1326,7 +1331,7 @@ impl<'a> CheckerState<'a> {
                             getter: None,
                             setter: None,
                             visibility: deferred.visibility,
-                            declaration_order: deferred.member_idx.0,
+                            declaration_order: deferred.declaration_order,
                         });
                     entry.getter = Some(getter_type);
                 } else {
@@ -1363,7 +1368,7 @@ impl<'a> CheckerState<'a> {
                             getter: None,
                             setter: None,
                             visibility: deferred.visibility,
-                            declaration_order: deferred.member_idx.0,
+                            declaration_order: deferred.declaration_order,
                         });
                     entry.setter = Some(setter_type);
                 }
@@ -1981,8 +1986,14 @@ impl<'a> CheckerState<'a> {
         // assigning plain objects to class-typed variables, since the plain objects
         // wouldn't have these as own properties.
 
-        // Build the final instance type
-        let props: Vec<PropertyInfo> = properties.into_values().collect();
+        // Build the final instance type. `properties` is an FxHashMap whose
+        // iteration order is non-deterministic, so sort by `declaration_order`
+        // so downstream diagnostics like TS2739 ("missing the following
+        // properties: a, b, c") see properties in source-declaration order.
+        // Synthesized members carry `declaration_order == 0` and stay first
+        // via stable sort.
+        let mut props: Vec<PropertyInfo> = properties.into_values().collect();
+        props.sort_by_key(|p| p.declaration_order);
         let mut shape = ObjectShape {
             properties: props,
             string_index,

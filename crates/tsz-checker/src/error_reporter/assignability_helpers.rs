@@ -801,7 +801,6 @@ impl<'a> CheckerState<'a> {
         if evaluated != target_type && evaluated != resolved {
             collect_ranks(evaluated, target_symbol);
         }
-
         let array_like_target = matches!(
             query_utils::classify_array_like(self.ctx.types, target_type),
             query_utils::ArrayLikeKind::Array(_)
