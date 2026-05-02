@@ -5,7 +5,7 @@ use tsz_emitter::output::printer::PrintOptions;
 #[path = "test_support.rs"]
 mod test_support;
 
-use test_support::{parse_and_print, parse_and_print_with_opts};
+use test_support::{parse_and_lower_print, parse_and_print, parse_and_print_with_opts};
 
 #[test]
 fn test_comment_between_call_arguments() {
@@ -239,5 +239,45 @@ fn test_heritage_multiple_type_arg_comments_do_not_leak() {
     assert!(
         output.contains("extends Map"),
         "The extends clause should still be present.\nOutput:\n{output}"
+    );
+}
+
+/// Regression test: `skip_block_opening_line_comments` must search
+/// FORWARD from `block_node.pos` for `{`, not backward. In the
+/// TypeScript AST, `node.pos` includes leading trivia so `{` is at or
+/// after `node.pos`, never before it. With the previous backward
+/// search the helper could find a `{` from a much earlier construct
+/// (e.g. an outer block's brace) and then advance `comment_emit_idx`
+/// past comments on that earlier line, losing them from the output.
+/// Devin review: <https://github.com/mohsen1/tsz/pull/2248#discussion_r3176256604>
+#[test]
+fn test_skip_block_opening_line_comments_uses_forward_search_for_param_lowered_block() {
+    use tsz_common::ScriptTarget;
+
+    // Verify the helper does NOT scan backward into earlier source by
+    // emitting an inner function whose body block goes through the
+    // `emit_block_with_param_prologue` path (default-valued parameter).
+    // The output should compile and contain the body. A backward search
+    // bug typically manifests as panic, mis-indented body, or a lost
+    // body statement; we keep the assertion narrow on the body presence.
+    let source = "var s = '{';\nfunction outer() {\n    function inner(x = 1) {\n        return x + 1;\n    }\n    return inner();\n}\n";
+
+    let output = parse_and_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    // With the forward-search fix the inner body still emits cleanly.
+    // The default-parameter prologue must be present.
+    assert!(
+        output.contains("if (x === void 0)"),
+        "ES5 default-parameter prologue must be emitted for inner function.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return x + 1;"),
+        "Inner function body must be present in output.\nOutput:\n{output}"
     );
 }
