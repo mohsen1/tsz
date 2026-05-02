@@ -662,4 +662,55 @@ impl<'a> CheckerState<'a> {
             );
         }
     }
+
+    /// TS1274: `in`/`out` are type-parameter variance modifiers — never valid
+    /// as a class member modifier itself. (The parser previously fell through
+    /// to TS1434 "Unexpected keyword" for `class C { in a = 0; }`.)
+    pub(crate) fn check_variance_modifier_not_on_class_member_node(
+        &mut self,
+        member_idx: NodeIndex,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+        let modifiers = match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .ctx
+                .arena
+                .get_property_decl(node)
+                .and_then(|p| p.modifiers.clone()),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .and_then(|m| m.modifiers.clone()),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .ctx
+                .arena
+                .get_accessor(node)
+                .and_then(|a| a.modifiers.clone()),
+            _ => None,
+        };
+        let Some(mods) = modifiers else { return };
+        for &mod_idx in &mods.nodes {
+            let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
+                continue;
+            };
+            let text = if mod_node.kind == SyntaxKind::InKeyword as u16 {
+                "in"
+            } else if mod_node.kind == SyntaxKind::OutKeyword as u16 {
+                "out"
+            } else {
+                continue;
+            };
+            self.error_at_node_msg(
+                mod_idx,
+                crate::diagnostics::diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
+                &[text],
+            );
+        }
+    }
 }

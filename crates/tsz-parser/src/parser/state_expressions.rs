@@ -1258,9 +1258,11 @@ impl ParserState {
     }
 
     // Parse type parameter modifiers: `const`, `in`, `out`
-    // Allows duplicates (e.g. `in out in T`) — the checker reports TS1030 for those.
-    // Not allowing duplicates here causes cascading parse errors since `in`/`out` are
-    // reserved keywords and won't parse as identifiers.
+    //
+    // Emits TS1029 ('in' must precede 'out') and TS1030 ('in'/'out' already seen)
+    // when modifier ordering rules are violated. We still consume duplicates so a
+    // subsequent identifier ends the modifier loop instead of producing cascading
+    // errors from `in`/`out` being reserved keywords.
     //
     // CRITICAL: Before consuming a modifier keyword, peek at the next token to check
     // if it can follow a type parameter name (e.g., `>`, `,`, `extends`, `=`). If so,
@@ -1269,6 +1271,8 @@ impl ParserState {
     // Leaving it for `parse_identifier` produces TS1359 (reserved word) matching tsc.
     fn parse_type_parameter_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
+        let mut seen_in = false;
+        let mut seen_out = false;
 
         #[allow(clippy::while_let_loop)] // Inner conditional break makes while-let impractical
         loop {
@@ -1298,6 +1302,38 @@ impl ParserState {
                     let kind = self.token();
                     let pos = self.token_pos();
                     let end = self.token_end();
+                    let length = end.saturating_sub(pos);
+                    if kind == SyntaxKind::InKeyword {
+                        if seen_in {
+                            use tsz_common::diagnostics::diagnostic_codes;
+                            self.parse_error_at(
+                                pos,
+                                length,
+                                "'in' modifier already seen.",
+                                diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                            );
+                        } else if seen_out {
+                            use tsz_common::diagnostics::diagnostic_codes;
+                            self.parse_error_at(
+                                pos,
+                                length,
+                                "'in' modifier must precede 'out' modifier.",
+                                diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                            );
+                        }
+                        seen_in = true;
+                    } else if kind == SyntaxKind::OutKeyword {
+                        if seen_out {
+                            use tsz_common::diagnostics::diagnostic_codes;
+                            self.parse_error_at(
+                                pos,
+                                length,
+                                "'out' modifier already seen.",
+                                diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                            );
+                        }
+                        seen_out = true;
+                    }
                     self.next_token();
                     modifiers.push(self.arena.add_token(kind as u16, pos, end));
                 }

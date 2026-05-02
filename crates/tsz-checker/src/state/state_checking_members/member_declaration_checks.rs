@@ -56,10 +56,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1274: Check for modifiers that can never appear on type parameters
-    /// (public, private, protected, static, readonly, async, declare, abstract, override,
-    /// export, default, accessor). These are invalid on ALL type parameters regardless
-    /// of context (type alias, interface, class, or function).
+    /// TS1273: modifiers categorically invalid on a type parameter (public,
+    /// private, protected, static, readonly, async, declare, abstract,
+    /// override, export, default, accessor). TS1274 is reserved for `in`/`out`
+    /// in the wrong context.
     pub(crate) fn check_never_valid_type_parameter_modifiers(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -114,7 +114,7 @@ impl<'a> CheckerState<'a> {
                         };
                         self.error_at_node_msg(
                             mod_idx,
-                            crate::diagnostics::diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
+                            crate::diagnostics::diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_PARAMETER,
                             &[modifier_text],
                         );
                     }
@@ -1305,6 +1305,8 @@ impl<'a> CheckerState<'a> {
 
         // TS2302: Static members cannot reference class type parameters
         self.check_static_member_for_class_type_param_refs(member_idx);
+
+        self.check_variance_modifier_not_on_class_member_node(member_idx);
 
         match node.kind {
             syntax_kind_ext::PROPERTY_DECLARATION => {
