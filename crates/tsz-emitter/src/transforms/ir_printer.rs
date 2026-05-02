@@ -701,6 +701,23 @@ impl<'a> IRPrinter<'a> {
                 {
                     return;
                 }
+                if !has_defaults
+                    && !has_rest_to_lower
+                    && should_emit_single_line
+                    && body.len() == 2
+                    && matches!(body[0], IRNode::VarDeclList(_))
+                    && matches!(
+                        body[1],
+                        IRNode::ReturnStatement(_) | IRNode::ExpressionStatement(_)
+                    )
+                {
+                    self.write("{ ");
+                    self.emit_node(&body[0]);
+                    self.write(" ");
+                    self.emit_node(&body[1]);
+                    self.write(" }");
+                    return;
+                }
                 let force_multiline_empty = self.force_iife_multiline_empty
                     || matches!(name, Some(n) if self.current_class_iife_name.as_deref() == Some(&**n));
                 self.emit_function_body_with_defaults(
