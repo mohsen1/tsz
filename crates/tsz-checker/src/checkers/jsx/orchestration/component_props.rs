@@ -684,12 +684,14 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::PropertyAccessResult;
         let template_literal_props =
             self.get_jsx_intrinsic_props_from_template_literal_index_signatures(tag);
+        let mut hit_intrinsic_success = false;
         let props = match self.resolve_property_access_with_env(evaluated_ie, tag) {
             PropertyAccessResult::Success {
                 type_id,
                 from_index_signature,
                 ..
             } => {
+                hit_intrinsic_success = true;
                 if from_index_signature {
                     template_literal_props.unwrap_or(type_id)
                 } else {
@@ -723,6 +725,17 @@ impl<'a> CheckerState<'a> {
 
         if props != TypeId::ERROR || report_missing {
             self.ctx.jsx_intrinsic_props_cache.insert(cache_key, props);
+        }
+
+        // Even when an intrinsic tag resolves successfully via
+        // `JSX.IntrinsicElements`, the tag-name string must also satisfy
+        // `JSX.ElementType` if the user has narrowed it. Example: react's
+        // `IntrinsicElements` has `span`, but a user-declared
+        // `JSX.ElementType = "div"` rejects `<span />` — tsc emits TS2786.
+        // The missing-tag branch already handles tags absent from
+        // IntrinsicElements; this branch covers the success case.
+        if report_missing && hit_intrinsic_success {
+            self.check_intrinsic_tag_against_jsx_element_type(element_idx, tag);
         }
 
         Some(props)
@@ -759,6 +772,76 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT,
             &[tag],
         );
+    }
+
+    /// Validate the tag-name string against `JSX.ElementType` when an
+    /// intrinsic tag resolved successfully. Unlike the missing-tag variant,
+    /// this evaluates `ElementType` first so generic mapped/conditional
+    /// declarations resolve to their concrete union form before the
+    /// assignability check.
+    fn check_intrinsic_tag_against_jsx_element_type(&mut self, element_idx: NodeIndex, tag: &str) {
+        let Some(tag_name_idx) = self.jsx_tag_name_idx_for_element_like(element_idx) else {
+            return;
+        };
+        let Some(element_type_sym_id) = self.get_jsx_namespace_export_symbol_id("ElementType")
+        else {
+            return;
+        };
+        // Skip the success-path check when `JSX.ElementType` is declared as
+        // a generic alias (`type ElementType<P=any> = ...`). Generic mapped+
+        // conditional bodies don't always resolve to a usable union via
+        // `evaluate_type_with_env`, so the assignability check would falsely
+        // reject valid intrinsic tags. The missing-tag branch still
+        // validates these — `<unknownTag />` continues to emit TS2786.
+        if self.jsx_element_type_alias_has_type_params(element_type_sym_id) {
+            return;
+        }
+        let element_type = self.type_reference_symbol_type(element_type_sym_id);
+        let evaluated = self.evaluate_type_with_env(element_type);
+        if matches!(
+            evaluated,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) {
+            return;
+        }
+        let tag_type = self.ctx.types.literal_string(tag);
+        if self.is_assignable_to(tag_type, evaluated) {
+            return;
+        }
+
+        use tsz_common::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            tag_name_idx,
+            diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT,
+            &[tag],
+        );
+    }
+
+    /// True when the `JSX.ElementType` symbol resolves to a type alias
+    /// declaration that has type parameters (e.g. `type ElementType<P=any>`).
+    fn jsx_element_type_alias_has_type_params(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        for &decl_idx in &symbol.declarations {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                continue;
+            }
+            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                continue;
+            };
+            if alias
+                .type_parameters
+                .as_ref()
+                .is_some_and(|tps| !tps.nodes.is_empty())
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn jsx_tag_name_idx_for_element_like(&self, idx: NodeIndex) -> Option<NodeIndex> {
