@@ -286,6 +286,7 @@ impl<'a> Printer<'a> {
             }
 
             let body_has_await = async_emitter.body_contains_await(body);
+            let body_is_single_line = self.arena.get(body).is_some_and(|n| self.is_single_line(n));
             let hoist_function_decls_only =
                 !body_has_await && self.block_has_only_function_decls(body);
             if hoist_function_decls_only {
@@ -362,6 +363,22 @@ impl<'a> Printer<'a> {
             self.write("(");
             self.write(this_expr);
             if hoisted_vars.is_empty() {
+                let can_inline_wrapper = body_is_single_line
+                    && directive_prologue.is_empty()
+                    && !(this_expr != "this" && generator_body.contains("return _this"))
+                    && generator_mappings.is_empty();
+                if can_inline_wrapper {
+                    self.write(", void 0, ");
+                    self.write_awaiter_promise_arg(&promise_ctor);
+                    self.write(", function () { ");
+                    self.write(&Self::inline_async_generator_body(&generator_body));
+                    self.write(" });");
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write("}");
+                    return;
+                }
+
                 // Multi-line format (matches tsc):
                 // return __awaiter(this, void 0, void 0, function () {
                 //     return __generator(this, function (_a) {
@@ -610,6 +627,16 @@ impl<'a> Printer<'a> {
         let type_name_node = self.arena.get(type_ref.type_name)?;
         if type_name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
             Some(self.qualified_name_to_expr(type_ref.type_name))
+        } else if type_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let name = emit_utils::identifier_text_or_empty(self.arena, type_ref.type_name);
+            if name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+                && name != "Promise"
+                && name != "PromiseLike"
+            {
+                Some(name)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -638,6 +665,21 @@ impl<'a> Printer<'a> {
         } else {
             self.write("void 0");
         }
+    }
+
+    fn inline_async_generator_body(generator_body: &str) -> String {
+        let mut lines = generator_body.lines();
+        let Some(first_line) = lines.next() else {
+            return String::new();
+        };
+
+        let following_strip = 4;
+        let mut output = String::from(first_line.trim_start());
+        for line in lines {
+            output.push('\n');
+            output.push_str(line.get(following_strip..).unwrap_or(line).trim_end());
+        }
+        output
     }
 
     pub(in crate::emitter) fn emit_function_parameter_names_only(&mut self, params: &[NodeIndex]) {
