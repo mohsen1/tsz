@@ -448,6 +448,23 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         }
+        if lt.is_none() {
+            let mut i = s;
+            while i < e {
+                if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                    let line_end = i;
+                    let mut j = i + 1;
+                    while j < e && matches!(bytes[j], b' ' | b'\t' | b'\r' | b'\n') {
+                        j += 1;
+                    }
+                    if j + 2 < e && bytes[j] == b'/' && bytes[j + 1] == b'*' && bytes[j + 2] == b'*'
+                    {
+                        return line_end as u32;
+                    }
+                }
+                i += 1;
+            }
+        }
         lt.map_or(end, |x| x as u32)
     }
 

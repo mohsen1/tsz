@@ -950,8 +950,23 @@ impl<'a> UsageAnalyzer<'a> {
         // `declare function` used in a call expression) as needed in the
         // .d.ts, even though tsc expands/inlines the result type instead.
         let has_inferred_type = self.type_cache.node_types.contains_key(&decl_idx.0)
-            || (decl.name.is_some() && self.type_cache.node_types.contains_key(&decl.name.0));
-        if decl.type_annotation.is_none() && decl.initializer.is_some() && !has_inferred_type {
+            || (decl.name.is_some() && self.type_cache.node_types.contains_key(&decl.name.0))
+            || self
+                .get_node_type_related_nodes(decl_node)
+                .iter()
+                .any(|related_idx| {
+                    related_idx.is_some() && self.type_cache.node_types.contains_key(&related_idx.0)
+                });
+        let initializer_is_call_expression = decl.initializer.is_some()
+            && self
+                .arena
+                .get(decl.initializer)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION);
+        if decl.type_annotation.is_none()
+            && decl.initializer.is_some()
+            && !has_inferred_type
+            && !initializer_is_call_expression
+        {
             // Unwrap `new X()` / `X()` to get the callee, or use the
             // initializer directly if it's a plain identifier/expression.
             let callee = self.unwrap_export_default_expression(decl.initializer);
@@ -1369,10 +1384,33 @@ impl<'a> UsageAnalyzer<'a> {
                 };
                 if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0) {
                     self.mark_symbol_used(sym_id, kind);
+                    if kind == UsageKind::TYPE
+                        && self.binder.symbols.get(sym_id).is_some_and(|symbol| {
+                            symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER)
+                        })
+                    {
+                        return;
+                    }
                 }
                 // Also mark the file-local/import symbol by name, since
                 // references and declarations may have different SymbolIds.
                 if let Some(ident) = self.arena.get_identifier(name_node) {
+                    if kind == UsageKind::TYPE {
+                        let mut matched_type_parameter = false;
+                        for scope in self.binder.scopes.iter() {
+                            if let Some(sym_id) = scope.table.get(&ident.escaped_text)
+                                && self.binder.symbols.get(sym_id).is_some_and(|symbol| {
+                                    symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER)
+                                })
+                            {
+                                self.mark_symbol_used(sym_id, kind);
+                                matched_type_parameter = true;
+                            }
+                        }
+                        if matched_type_parameter {
+                            return;
+                        }
+                    }
                     if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
                         self.mark_symbol_used(sym_id, kind);
                     }
@@ -1394,8 +1432,10 @@ impl<'a> UsageAnalyzer<'a> {
             }
             k if k == syntax_kind_ext::QUALIFIED_NAME => {
                 if let Some(name) = self.arena.get_qualified_name(name_node) {
-                    // Recurse to find leftmost identifier
-                    self.analyze_entity_name(name.left);
+                    // A qualified-name prefix is a namespace/module qualifier,
+                    // so a same-named type parameter must not hide the import
+                    // needed to make the emitted `A.B` reference valid.
+                    self.analyze_entity_name_qualifier(name.left);
                     // Also mark right side (for cases like `namespace.Class`)
                     self.analyze_entity_name(name.right);
                 }
@@ -1404,6 +1444,49 @@ impl<'a> UsageAnalyzer<'a> {
                 if let Some(access) = self.arena.get_access_expr(name_node) {
                     self.analyze_entity_name(access.expression);
                     self.analyze_entity_name(access.name_or_argument);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn analyze_entity_name_qualifier(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                let kind = if self.in_value_pos {
+                    UsageKind::VALUE
+                } else {
+                    UsageKind::TYPE
+                };
+                if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0) {
+                    self.mark_symbol_used(sym_id, kind);
+                }
+                if let Some(ident) = self.arena.get_identifier(name_node) {
+                    if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
+                        self.mark_symbol_used(sym_id, kind);
+                    }
+                    if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) {
+                        self.mark_symbol_used(sym_id, kind);
+                    }
+                    for scope in self.binder.scopes.iter() {
+                        if let Some(sym_id) = scope.table.get(&ident.escaped_text) {
+                            self.mark_symbol_used(sym_id, kind);
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                if let Some(name) = self.arena.get_qualified_name(name_node) {
+                    self.analyze_entity_name_qualifier(name.left);
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(name_node) {
+                    self.analyze_entity_name_qualifier(access.expression);
                 }
             }
             _ => {}
