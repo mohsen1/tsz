@@ -452,7 +452,8 @@ impl<'a> CheckerState<'a> {
                     // Filter them like callback body diagnostics so they don't
                     // persist when a different overload resolves successfully.
                     let is_context_sensitive_arg = self.is_callback_like_argument(arg_idx)
-                        || arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
+                        || arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || arg_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
                     if !is_context_sensitive_arg {
                         return false;
                     }

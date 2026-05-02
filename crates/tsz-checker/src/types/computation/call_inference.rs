@@ -1843,6 +1843,18 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.evaluate_type_with_env(instantiated)
                 };
+                let evaluated = if is_sensitive
+                    && (common::contains_type_parameters(self.ctx.types, evaluated)
+                        || common::contains_infer_types(self.ctx.types, evaluated))
+                {
+                    self.instantiate_remaining_contextual_type_params(
+                        evaluated,
+                        &shape.type_params,
+                        current_substitution,
+                    )
+                } else {
+                    evaluated
+                };
                 Some(if is_rest_param {
                     self.rest_argument_element_type_with_env(evaluated)
                 } else {
@@ -1854,6 +1866,82 @@ impl<'a> CheckerState<'a> {
             round2_contextual_types.push(ctx_type);
         }
         round2_contextual_types
+    }
+
+    fn instantiate_remaining_contextual_type_params(
+        &self,
+        type_id: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+        current_substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> TypeId {
+        let mut infer_bindings =
+            crate::query_boundaries::inference::collect_infer_bindings(self.ctx.types, type_id);
+        for referenced in common::collect_referenced_types(self.ctx.types, type_id) {
+            let Some(info) = common::type_param_info(self.ctx.types, referenced) else {
+                continue;
+            };
+            let name = self.ctx.types.resolve_atom(info.name);
+            if name.starts_with("__infer_") || name.starts_with("__infer_src_") {
+                infer_bindings.push((info.name, referenced));
+            }
+        }
+        if type_params.is_empty() && infer_bindings.is_empty() {
+            return type_id;
+        }
+
+        let mut substitution = current_substitution.clone();
+        for tp in type_params {
+            if substitution.get(tp.name).is_some_and(|mapped| {
+                !common::contains_type_parameters(self.ctx.types, mapped)
+                    && !common::contains_infer_types(self.ctx.types, mapped)
+            }) {
+                continue;
+            }
+            let replacement = tp.default.or(tp.constraint).unwrap_or(TypeId::UNKNOWN);
+            let replacement = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                replacement,
+                &substitution,
+            );
+            let replacement = if common::contains_type_parameters(self.ctx.types, replacement)
+                || common::contains_infer_types(self.ctx.types, replacement)
+            {
+                TypeId::UNKNOWN
+            } else {
+                replacement
+            };
+            substitution.insert(tp.name, replacement);
+        }
+        for (name, infer_type) in infer_bindings {
+            if substitution.get(name).is_some_and(|mapped| {
+                !common::contains_type_parameters(self.ctx.types, mapped)
+                    && !common::contains_infer_types(self.ctx.types, mapped)
+            }) {
+                continue;
+            }
+            let replacement = common::type_param_info(self.ctx.types, infer_type)
+                .and_then(|info| info.default.or(info.constraint))
+                .unwrap_or(TypeId::UNKNOWN);
+            let replacement = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                replacement,
+                &substitution,
+            );
+            let replacement = if common::contains_type_parameters(self.ctx.types, replacement)
+                || common::contains_infer_types(self.ctx.types, replacement)
+            {
+                TypeId::UNKNOWN
+            } else {
+                replacement
+            };
+            substitution.insert(name, replacement);
+        }
+
+        crate::query_boundaries::inference::instantiate_type_with_infer(
+            self.ctx.types,
+            type_id,
+            &substitution,
+        )
     }
 
     pub(crate) fn compute_single_call_argument_type(

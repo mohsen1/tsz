@@ -621,7 +621,15 @@ impl<'a> CheckerState<'a> {
                         && callback_body_spans
                             .iter()
                             .any(|(start, end)| diag.start >= *start && diag.start < *end);
-                    let keep = if !is_provisional_assignability && !is_provisional_implicit_any {
+                    let is_array_literal_arg =
+                        arg_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
+                    let is_provisional_callback_body_overload =
+                        (is_direct_function_arg || is_array_literal_arg)
+                            && diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
+                            && is_callback_body_diag;
+                    let keep = if is_provisional_callback_body_overload {
+                        false
+                    } else if !is_provisional_assignability && !is_provisional_implicit_any {
                         true
                     } else if is_direct_function_arg {
                         is_direct_callback_body_assignability
