@@ -685,3 +685,89 @@ var v: Box<string>;
         "Should NOT emit TS2315 for generic type 'Box<string>'. Got: {codes:?}"
     );
 }
+
+/// TS2345 must fire when a value typed by a type parameter is passed to a
+/// parameter typed by a *different* unrelated type parameter — neither
+/// parameter has a constraint that proves the relation, so the assignment
+/// is unsound (e.g. `T = string`, `U = number`).
+///
+/// Mirrors `genericCallbackInvokedInsideItsContainingFunction1.ts` line 12,
+/// `var r12 = f(y);` where `f: (v: T) => U` and `y: U`.
+#[test]
+fn test_unrelated_type_param_argument_emits_ts2345() {
+    let source = r#"
+function foo<T, U>(x: T, y: U, f: (v: T) => U) {
+    f(y);
+}
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+    let ts2345 = diags
+        .iter()
+        .filter(|d| d.code == 2345)
+        .map(|d| d.message_text.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        !ts2345.is_empty(),
+        "Expected TS2345 for U-typed argument passed to T-typed parameter. \
+         Got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>(),
+    );
+    assert!(
+        ts2345
+            .iter()
+            .any(|m| m.contains("'U'") && m.contains("'T'")),
+        "Expected TS2345 message naming both 'U' and 'T'. Got: {ts2345:?}",
+    );
+}
+
+/// Renaming the bound names (P/Q instead of T/U) must not change the
+/// behaviour — the fix is structural, not name-based.
+#[test]
+fn test_unrelated_type_param_argument_emits_ts2345_renamed() {
+    let source = r#"
+function foo<P, Q>(x: P, y: Q, f: (v: P) => Q) {
+    f(y);
+}
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+    assert!(
+        codes.contains(&2345),
+        "Expected TS2345 for unrelated type-param assignment with names P/Q. \
+         Got: {codes:?}",
+    );
+}
+
+/// Reflexive assignment of the *same* type parameter must remain valid.
+#[test]
+fn test_same_type_param_argument_no_ts2345() {
+    let source = r#"
+function foo<T>(x: T, f: (v: T) => void) {
+    f(x);
+}
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+    assert!(
+        !codes.contains(&2345),
+        "Reflexive T->T must not emit TS2345. Got: {codes:?}",
+    );
+}
+
+/// When U *is* constrained to be a subtype of T, the assignment is sound and
+/// no TS2345 should fire. This guards against regressing the constrained
+/// case while we tighten the unconstrained case.
+#[test]
+fn test_constrained_type_param_argument_no_ts2345() {
+    let source = r#"
+function foo<T, U extends T>(x: T, y: U, f: (v: T) => void) {
+    f(y);
+}
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+    assert!(
+        !codes.contains(&2345),
+        "U extends T must allow U->T without TS2345. Got: {codes:?}",
+    );
+}
