@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-02T08:27:55Z",
-  "git_sha": "de99e324aeabf0c898e9c560e1d3d2890ba8622b",
+  "timestamp": "2026-05-02T09:28:07Z",
+  "git_sha": "b1690770f31c63e84fafad3dcfb872c94b5c5f37",
   "summary": {
     "total_tests": 12582,
-    "passed": 12337,
-    "failed": 245,
+    "passed": 12338,
+    "failed": 244,
     "pass_rate": 98.1
   },
   "areas_by_pass_rate": [
@@ -221,9 +221,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6400,
-      "failed": 120,
-      "pass_rate": 98.16
+      "passed": 6401,
+      "failed": 119,
+      "pass_rate": 98.17
     },
     {
       "area": "externalModules",
@@ -1472,7 +1472,7 @@
     "false_positive": 14,
     "all_missing": 9,
     "wrong_code": 67,
-    "fingerprint_only": 155,
+    "fingerprint_only": 154,
     "same_code_count_drift": 0,
     "close_to_passing": 46
   }
