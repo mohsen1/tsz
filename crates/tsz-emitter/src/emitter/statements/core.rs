@@ -777,8 +777,12 @@ impl<'a> Printer<'a> {
             self.emit(decl_list_idx);
         }
         let recovered_async_arrow_return = self.recovered_async_arrow_return_name(node);
+        let recovered_bare_arrow_return = self.recovered_bare_arrow_return_name(node);
+        let recovered_arrow_return = recovered_async_arrow_return
+            .as_ref()
+            .or(recovered_bare_arrow_return.as_ref());
         if !using_is_lowered {
-            if let Some(return_name) = &recovered_async_arrow_return {
+            if let Some(return_name) = recovered_arrow_return {
                 self.write(", ");
                 self.write(return_name);
             }
@@ -967,6 +971,40 @@ impl<'a> Printer<'a> {
         let colon = line.find("):")? + 2;
         let arrow = line[colon..].find("=>")? + colon;
         let return_type = line[colon..arrow].trim();
+        let name: String = return_type
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .collect();
+        if name.is_empty() { None } else { Some(name) }
+    }
+
+    fn recovered_bare_arrow_return_name(&self, node: &Node) -> Option<String> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        if start >= bytes.len() {
+            return None;
+        }
+
+        let mut line_end = start;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let line = std::str::from_utf8(&bytes[start..line_end]).ok()?;
+        let equals = line.find('=')?;
+        let arrow = line[equals..].find("=>")? + equals;
+        let colon = line[equals..arrow].rfind(':')? + equals;
+        let arrow_head = line[equals + 1..colon].trim();
+        if arrow_head.is_empty()
+            || !arrow_head
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        {
+            return None;
+        }
+
+        let return_type = line[colon + 1..arrow].trim();
         let name: String = return_type
             .chars()
             .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')

@@ -396,6 +396,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if let Some(recovered) = self.recovered_return_object_literal_text(node) {
+            self.write(&recovered);
+            return;
+        }
+
         let emitted_properties: Vec<NodeIndex> = obj
             .elements
             .nodes
@@ -929,6 +934,30 @@ impl<'a> Printer<'a> {
     fn node_text_contains_newline(&self, start: usize, end: usize) -> bool {
         self.source_text
             .is_some_and(|text| start < end && end <= text.len() && text[start..end].contains('\n'))
+    }
+
+    fn recovered_return_object_literal_text(&self, node: &Node) -> Option<String> {
+        let text = self.source_text?;
+        let open = self.find_block_opening_brace_pos(node)? as usize;
+        let close_end = self.find_block_closing_brace_end(node) as usize;
+        if close_end <= open + 1 || close_end > text.len() {
+            return None;
+        }
+
+        let inner = text[open + 1..close_end - 1].trim();
+        if inner.contains(':') {
+            return None;
+        }
+        let rest = inner.strip_prefix("return")?;
+        if !rest.starts_with(char::is_whitespace) {
+            return None;
+        }
+        let value = rest.trim().trim_end_matches(';').trim();
+        if value.is_empty() {
+            return None;
+        }
+
+        Some(format!("{{ return: {value} }}"))
     }
 
     /// Emit object literal with spread elements as `Object.assign()` for pre-ES2018 targets.
