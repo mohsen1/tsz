@@ -59,7 +59,7 @@ pub(crate) fn replace_identifier(text: &str, name: &str, replacement: &str) -> S
 /// without breaking internal references.
 ///
 /// Uses source text scanning within member spans to detect references.
-pub(super) fn class_has_self_references(
+pub(in crate::emitter) fn class_has_self_references(
     arena: &tsz_parser::parser::node::NodeArena,
     source_text: Option<&str>,
     class_name: &str,
