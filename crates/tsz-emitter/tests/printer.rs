@@ -431,6 +431,31 @@ fn test_commonjs_export_import_namespace_alias_keeps_export_equals() {
 }
 
 #[test]
+fn test_invalid_interface_without_name_recovers_body_text() {
+    let source = "interface { }\ninterface interface{ }\ninterface & { }\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("interface;\n{ }"),
+        "missing interface name should recover the interface token and body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("interface & {};"),
+        "invalid interface ampersand statement should still be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("interface interface"),
+        "invalid identifier named interface should stay erased.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_for_await_of_target_es2018_preserved() {
     let source = "async function f() {\n    const iterable = [];\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
     let output = parse_lower_print(
