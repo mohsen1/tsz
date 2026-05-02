@@ -2654,7 +2654,13 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     let mut global_symbols = SymbolArena::with_capacity(total_symbols);
     let mut symbol_arenas = FxHashMap::default();
     let mut declaration_arenas: DeclarationArenaMap = FxHashMap::default();
-    let mut cross_file_node_symbols: CrossFileNodeSymbols = FxHashMap::default();
+    // Pre-size to the file count: this map ends up holding exactly one entry
+    // per file (`Arc::as_ptr(&file.arena) -> file.node_symbols`), so the
+    // capacity is known up-front. Skipping the default `FxHashMap` growth
+    // schedule (1 → 3 → 7 → 15 → … bucket doublings) on a 6086-file project
+    // saves ~13 rehashes during the merge phase.
+    let mut cross_file_node_symbols: CrossFileNodeSymbols =
+        FxHashMap::with_capacity_and_hasher(results.len(), Default::default());
     let estimated_global_count: usize = (0..results.len())
         .map(|index| results.get(index).file_locals.len())
         .sum();
