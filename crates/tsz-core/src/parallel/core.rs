@@ -4674,6 +4674,23 @@ fn affected_lib_extension_interface_names(
     extension_interfaces
 }
 
+fn lib_file_contains_affected_interface(
+    lib_file: &LibFile,
+    affected_interfaces: &FxHashSet<String>,
+) -> bool {
+    if affected_interfaces.is_empty() {
+        return false;
+    }
+
+    let Some(source_file) = lib_file.arena.get_source_file_at(lib_file.root_index) else {
+        return false;
+    };
+    source_file.statements.nodes.iter().any(|&stmt_idx| {
+        interface_name_text(lib_file.arena.as_ref(), stmt_idx)
+            .is_some_and(|name| affected_interfaces.contains(&name))
+    })
+}
+
 fn build_lib_bound_file_for_interface_checks(
     program: &MergedProgram,
     lib_file: &Arc<LibFile>,
@@ -5238,13 +5255,26 @@ pub fn check_files_parallel(
     };
 
     let affected_lib_interfaces = affected_lib_interface_names(program, &checker_lib_files);
-    let affected_lib_extension_interfaces = affected_lib_extension_interface_names(
-        program,
-        &checker_lib_files,
-        &affected_lib_interfaces,
-    );
+    let affected_lib_extension_interfaces = if affected_lib_interfaces.is_empty() {
+        FxHashSet::default()
+    } else {
+        affected_lib_extension_interface_names(
+            program,
+            &checker_lib_files,
+            &affected_lib_interfaces,
+        )
+    };
 
     let check_one_lib = |lib_idx: usize, lib_file: &Arc<LibFile>| -> FileCheckResult {
+        if !lib_file_contains_affected_interface(lib_file.as_ref(), &affected_lib_interfaces) {
+            return FileCheckResult {
+                file_idx: program.files.len() + lib_idx,
+                file_name: lib_file.file_name.clone(),
+                function_results: Vec::new(),
+                diagnostics: Vec::new(),
+            };
+        }
+
         let query_cache = if let Some(ref shared) = shared_query_cache {
             tsz_solver::QueryCache::new_with_shared(&program.type_interner, shared)
         } else {
@@ -5323,6 +5353,15 @@ pub fn check_files_parallel(
     };
 
     let check_one_lib_baseline = |lib_idx: usize, lib_file: &Arc<LibFile>| -> FileCheckResult {
+        if !lib_file_contains_affected_interface(lib_file.as_ref(), &affected_lib_interfaces) {
+            return FileCheckResult {
+                file_idx: program.files.len() + lib_idx,
+                file_name: lib_file.file_name.clone(),
+                function_results: Vec::new(),
+                diagnostics: Vec::new(),
+            };
+        }
+
         let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
 
         let mut checker = CheckerState::with_options(
@@ -5367,19 +5406,6 @@ pub fn check_files_parallel(
             diag.message_text.clone(),
         )
     };
-    let baseline_lib_diagnostics: FxHashSet<(String, u32, u32, String)> = checker_lib_files
-        .iter()
-        .enumerate()
-        .flat_map(|(lib_idx, lib_file)| {
-            let file_result = check_one_lib_baseline(lib_idx, lib_file);
-            let file_name = file_result.file_name.clone();
-            file_result
-                .diagnostics
-                .into_iter()
-                .map(move |diag| fingerprint(&file_name, &diag))
-        })
-        .collect();
-
     // Single-file optimization: skip Rayon overhead when there's only one file.
     // For multi-file projects, use parallel iteration via Rayon's work-stealing
     // scheduler. `par_iter().enumerate()` preserves input ordering (file_idx) so
@@ -5398,19 +5424,46 @@ pub fn check_files_parallel(
             .collect()
     };
 
-    file_results.extend(
-        checker_lib_files
+    if affected_lib_interfaces.is_empty() {
+        file_results.extend(
+            checker_lib_files
+                .iter()
+                .enumerate()
+                .map(|(lib_idx, lib_file)| FileCheckResult {
+                    file_idx: program.files.len() + lib_idx,
+                    file_name: lib_file.file_name.clone(),
+                    function_results: Vec::new(),
+                    diagnostics: Vec::new(),
+                }),
+        );
+    } else {
+        let baseline_lib_diagnostics: FxHashSet<(String, u32, u32, String)> = checker_lib_files
             .iter()
             .enumerate()
-            .map(|(lib_idx, lib_file)| {
-                let mut file_result = check_one_lib(lib_idx, lib_file);
+            .flat_map(|(lib_idx, lib_file)| {
+                let file_result = check_one_lib_baseline(lib_idx, lib_file);
                 let file_name = file_result.file_name.clone();
-                file_result.diagnostics.retain(|diag| {
-                    !baseline_lib_diagnostics.contains(&fingerprint(&file_name, diag))
-                });
                 file_result
-            }),
-    );
+                    .diagnostics
+                    .into_iter()
+                    .map(move |diag| fingerprint(&file_name, &diag))
+            })
+            .collect();
+
+        file_results.extend(
+            checker_lib_files
+                .iter()
+                .enumerate()
+                .map(|(lib_idx, lib_file)| {
+                    let mut file_result = check_one_lib(lib_idx, lib_file);
+                    let file_name = file_result.file_name.clone();
+                    file_result.diagnostics.retain(|diag| {
+                        !baseline_lib_diagnostics.contains(&fingerprint(&file_name, diag))
+                    });
+                    file_result
+                }),
+        );
+    }
 
     let diagnostic_count: usize = file_results.iter().map(|r| r.diagnostics.len()).sum();
 
