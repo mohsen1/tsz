@@ -288,6 +288,32 @@ impl<'a> CheckerState<'a> {
                         crate::query_boundaries::common::TypeSubstitution::new()
                     };
                     let retry_params = if !return_sub_for_retry.is_empty() {
+                        // Compose round-1's argument-driven inference with the
+                        // return-context substitution. Round-1 inferred bindings for
+                        // type params it could see in the args (e.g. `T` in
+                        // `from<T,U>(ArrayLike<T>, ...)` — inferred from `inputB:B[]`);
+                        // the return-context substitution covers type params bound by
+                        // the contextual return type (e.g. `U` from `A[]`). Both must
+                        // contribute to the contextual types used to evaluate callback
+                        // bodies. Return-context wins on overlap so that, for
+                        // `Object.freeze<T>(o:T):Readonly<T>` with contextual
+                        // `readonly [string,number][]`, the call uses the return-bound
+                        // `T = [string,number][]` instead of round-1's widened
+                        // `T = (string|number)[][]`.
+                        let mut combined_sub = if let Some(inst) = instantiated_params.as_ref() {
+                            self.extract_arg_inference_substitution(
+                                &sig.params,
+                                inst,
+                                &sig.type_params,
+                            )
+                        } else {
+                            crate::query_boundaries::common::TypeSubstitution::new()
+                        };
+                        for tp in &sig.type_params {
+                            if let Some(ty) = return_sub_for_retry.get(tp.name) {
+                                combined_sub.insert(tp.name, ty);
+                            }
+                        }
                         Some(
                             sig.params
                                 .iter()
@@ -297,7 +323,7 @@ impl<'a> CheckerState<'a> {
                                         crate::query_boundaries::common::instantiate_type(
                                             self.ctx.types,
                                             param.type_id,
-                                            &return_sub_for_retry,
+                                            &combined_sub,
                                         );
                                     instantiated_param
                                 })
@@ -671,6 +697,21 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::TypeSubstitution::new()
                 };
                 let retry_params = if !return_sub_for_preinfer.is_empty() {
+                    // See `extract_arg_inference_substitution` for the rationale:
+                    // the contextual types used to evaluate callback bodies must
+                    // honour both round-1's argument-driven inference AND the
+                    // return-context substitution, with the latter winning on
+                    // overlap.
+                    let mut combined_sub = if let Some(inst) = instantiated_params.as_ref() {
+                        self.extract_arg_inference_substitution(&sig.params, inst, &sig.type_params)
+                    } else {
+                        crate::query_boundaries::common::TypeSubstitution::new()
+                    };
+                    for tp in &sig.type_params {
+                        if let Some(ty) = return_sub_for_preinfer.get(tp.name) {
+                            combined_sub.insert(tp.name, ty);
+                        }
+                    }
                     Some(
                         sig.params
                             .iter()
@@ -680,7 +721,7 @@ impl<'a> CheckerState<'a> {
                                     crate::query_boundaries::common::instantiate_type(
                                         self.ctx.types,
                                         param.type_id,
-                                        &return_sub_for_preinfer,
+                                        &combined_sub,
                                     );
                                 instantiated_param
                             })
@@ -798,6 +839,19 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::TypeSubstitution::new()
             };
             let retry_params = if !return_sub_for_retry.is_empty() {
+                // Compose argument-driven inference with the return-context
+                // substitution; return-context wins on overlap. See
+                // `extract_arg_inference_substitution` for the rationale.
+                let mut combined_sub = if let Some(inst) = instantiated_params.as_ref() {
+                    self.extract_arg_inference_substitution(&sig.params, inst, &sig.type_params)
+                } else {
+                    crate::query_boundaries::common::TypeSubstitution::new()
+                };
+                for tp in &sig.type_params {
+                    if let Some(ty) = return_sub_for_retry.get(tp.name) {
+                        combined_sub.insert(tp.name, ty);
+                    }
+                }
                 Some(
                     sig.params
                         .iter()
@@ -807,7 +861,7 @@ impl<'a> CheckerState<'a> {
                                 crate::query_boundaries::common::instantiate_type(
                                     self.ctx.types,
                                     param.type_id,
-                                    &return_sub_for_retry,
+                                    &combined_sub,
                                 );
                             instantiated_param
                         })

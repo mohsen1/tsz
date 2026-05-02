@@ -1234,6 +1234,46 @@ impl<'a> CheckerState<'a> {
         substitution
     }
 
+    /// Build a substitution map that, when applied to `sig.params`, reproduces
+    /// `instantiated_params`. Walks each `(sig_param, instantiated_param)` pair
+    /// structurally and records the binding for any tracked type parameter that
+    /// appears on the source side. This recovers round-1's inference as a
+    /// substitution map so that it can be composed with a return-context
+    /// substitution (where the latter takes precedence on overlap).
+    ///
+    /// Used by overload retry to retain type parameters inferred from
+    /// non-callback arguments (e.g., `T` in `from<T,U>(ArrayLike<T>, mapfn): U[]`)
+    /// alongside type parameters bound from the contextual return type
+    /// (e.g., `U` from `A[]`). Without this composition the callback body
+    /// would be evaluated with `T` still uninstantiated, producing spurious
+    /// TS2339 / TS2769 inside the callback.
+    pub(crate) fn extract_arg_inference_substitution(
+        &mut self,
+        sig_params: &[tsz_solver::ParamInfo],
+        instantiated_params: &[tsz_solver::ParamInfo],
+        type_params: &[tsz_solver::TypeParamInfo],
+    ) -> crate::query_boundaries::common::TypeSubstitution {
+        let tracked_type_params: FxHashSet<_> = type_params.iter().map(|tp| tp.name).collect();
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        if tracked_type_params.is_empty() {
+            return substitution;
+        }
+        let mut visited = FxHashSet::default();
+        for (sig_param, inst_param) in sig_params.iter().zip(instantiated_params.iter()) {
+            if sig_param.type_id == inst_param.type_id {
+                continue;
+            }
+            self.collect_return_context_substitution(
+                sig_param.type_id,
+                inst_param.type_id,
+                &tracked_type_params,
+                &mut substitution,
+                &mut visited,
+            );
+        }
+        substitution
+    }
+
     pub(crate) fn zero_param_callback_first_conditional_branch(
         &self,
         arg_idx: NodeIndex,
