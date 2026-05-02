@@ -33,6 +33,9 @@ eleventyComputed:
   <span>tsgo {% if benchmark.tsgo_time %}{{ benchmark.tsgo_time }}{% else %}n/a{% endif %}</span>
   <span>{{ benchmark.lines or 0 }} lines</span>
   <span>{{ benchmark.kb or 0 }} KB</span>
+  {% if benchmark.status_label %}
+    <span>{{ benchmark.status_label }}</span>
+  {% endif %}
 </p>
 
 <section>
