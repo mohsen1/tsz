@@ -166,10 +166,10 @@ impl<'a> Printer<'a> {
 
     /// Emit a node into a temporary buffer string, then rewind the writer.
     /// This allows pre-emitting the RHS to allocate inner temp names first.
-    fn capture_emit(&mut self, node: NodeIndex) -> String {
+    pub(in crate::emitter) fn capture_emit(&mut self, node: NodeIndex) -> String {
         let start = self.writer.len();
         self.emit(node);
-        let output = self.writer.get_output()[start..].to_string();
+        let output = self.writer.get_output()[start..].trim_start().to_string();
         self.writer.truncate(start);
         output
     }
