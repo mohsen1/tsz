@@ -82,3 +82,80 @@ fn test_variable_declaration_order() {
         "Variable declaration must come before yield: {output}"
     );
 }
+
+#[test]
+fn test_await_assignment_captures_property_target_before_yield() {
+    let output = transform_and_print("async function foo() { var o; o.a = await p; after(); }");
+
+    assert!(
+        output.contains("var o, _a;"),
+        "Object temp should be hoisted with local declarations: {output}"
+    );
+    assert!(
+        output.contains("_a = o;\n                    return [4 /*yield*/, p];"),
+        "Property assignment target should be captured before yielding: {output}"
+    );
+    assert!(
+        output.contains("_a.a = _b.sent();"),
+        "Resumed assignment should use the captured target and sent value: {output}"
+    );
+}
+
+#[test]
+fn test_await_call_argument_captures_identifier_callee_before_yield() {
+    let output =
+        transform_and_print("async function foo() { var b = fn(await p, a, a); after(); }");
+
+    assert!(
+        output.contains("var b, _a;"),
+        "Callee temp should be hoisted with local declarations: {output}"
+    );
+    assert!(
+        output.contains("_a = fn;\n                    return [4 /*yield*/, p];"),
+        "Call callee should be captured before yielding: {output}"
+    );
+    assert!(
+        output.contains("b = _a.apply(void 0, [_b.sent(), a, a]);"),
+        "Resumed call should invoke the captured callee with the sent value: {output}"
+    );
+}
+
+#[test]
+fn test_await_call_argument_preserves_prefix_arguments() {
+    let output =
+        transform_and_print("async function foo() { var b = fn(a, await p, a); after(); }");
+
+    assert!(
+        output.contains("var b, _a, _b;"),
+        "Callee and prefix-argument temps should be hoisted: {output}"
+    );
+    assert!(
+        output.contains(
+            "_a = fn;\n                    _b = [a];\n                    return [4 /*yield*/, p];"
+        ),
+        "Callee and prefix arguments should be captured before yielding: {output}"
+    );
+    assert!(
+        output.contains("b = _a.apply(void 0, _b.concat([_c.sent(), a]));"),
+        "Resumed call should concatenate the sent value after prefix args: {output}"
+    );
+}
+
+#[test]
+fn test_await_method_call_argument_captures_receiver_before_yield() {
+    let output =
+        transform_and_print("async function foo() { var b = o.fn(await p, a, a); after(); }");
+
+    assert!(
+        output.contains("var b, _a, _b;"),
+        "Receiver and method temps should be hoisted: {output}"
+    );
+    assert!(
+        output.contains("_b = (_a = o).fn;\n                    return [4 /*yield*/, p];"),
+        "Method receiver and function should be captured before yielding: {output}"
+    );
+    assert!(
+        output.contains("b = _b.apply(_a, [_c.sent(), a, a]);"),
+        "Resumed method call should use captured receiver as this: {output}"
+    );
+}

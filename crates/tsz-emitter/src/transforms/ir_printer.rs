@@ -314,6 +314,19 @@ impl<'a> IRPrinter<'a> {
         self.generator_state_name = name;
     }
 
+    pub fn generator_state_name_for_hoisted(hoisted_vars: &[String]) -> &'static str {
+        const TEMP_NAMES: [&str; 26] = [
+            "_a", "_b", "_c", "_d", "_e", "_f", "_g", "_h", "_i", "_j", "_k", "_l", "_m", "_n",
+            "_o", "_p", "_q", "_r", "_s", "_t", "_u", "_v", "_w", "_x", "_y", "_z",
+        ];
+
+        let max_hoisted_temp = hoisted_vars
+            .iter()
+            .filter_map(|name| TEMP_NAMES.iter().position(|temp| temp == name))
+            .max();
+        TEMP_NAMES[max_hoisted_temp.map_or(0, |idx| (idx + 1).min(TEMP_NAMES.len() - 1))]
+    }
+
     /// When true, suppress comment annotations like `/** @class */` in output.
     pub const fn set_remove_comments(&mut self, remove: bool) {
         self.remove_comments = remove;
@@ -1237,9 +1250,7 @@ impl<'a> IRPrinter<'a> {
                 promise_constructor,
             } => {
                 let previous_generator_state_name = self.generator_state_name;
-                if hoisted_vars.iter().any(|name| name == "_a") {
-                    self.generator_state_name = "_b";
-                }
+                self.generator_state_name = Self::generator_state_name_for_hoisted(hoisted_vars);
                 self.write("return __awaiter(");
                 self.emit_node(this_arg);
                 if let Some(ctor) = promise_constructor {
@@ -1268,13 +1279,11 @@ impl<'a> IRPrinter<'a> {
                     // Multi-line format with hoisted vars
                     self.write_line();
                     self.increase_indent();
-                    for var_name in hoisted_vars {
-                        self.write_indent();
-                        self.write("var ");
-                        self.write(var_name);
-                        self.write(";");
-                        self.write_line();
-                    }
+                    self.write_indent();
+                    self.write("var ");
+                    self.write(&hoisted_vars.join(", "));
+                    self.write(";");
+                    self.write_line();
                     self.write_indent();
                     self.emit_node(generator_body);
                     self.decrease_indent();
