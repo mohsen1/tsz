@@ -809,6 +809,7 @@ impl<'a> Printer<'a> {
         self.write("{");
         self.write_line();
         self.increase_indent();
+        self.skip_block_opening_line_comments(block_node, block);
         self.emit_param_prologue(transforms);
 
         for &stmt_idx in &block.statements.nodes {
@@ -821,7 +822,44 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
-        self.emit_trailing_comments(block_node.end);
+    }
+
+    fn skip_block_opening_line_comments(
+        &mut self,
+        block_node: &Node,
+        block: &tsz_parser::parser::node::BlockData,
+    ) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let mut open_brace = std::cmp::min(block_node.pos as usize, bytes.len().saturating_sub(1));
+        while open_brace > 0 && bytes.get(open_brace) != Some(&b'{') {
+            open_brace -= 1;
+        }
+        if bytes.get(open_brace) != Some(&b'{') {
+            return;
+        }
+
+        let mut line_end = open_brace;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+        let first_stmt_pos = block
+            .statements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(block_node.end, |node| node.pos);
+        let skip_end = std::cmp::min(line_end as u32, first_stmt_pos);
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.pos >= open_brace as u32 && comment.end <= skip_end {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
     }
 
     /// Emit function parameters for JavaScript (no types)
