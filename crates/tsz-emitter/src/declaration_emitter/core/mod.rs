@@ -18,6 +18,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeInterner;
 
+pub(crate) type JsNestedModuleExportNamespaces = FxHashMap<NodeIndex, Vec<(NodeIndex, NodeIndex)>>;
+
 /// Declaration emitter for .d.ts files
 pub struct DeclarationEmitter<'a> {
     pub(super) arena: &'a NodeArena,
@@ -151,6 +153,9 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_cjs_export_alias_statements: FxHashSet<NodeIndex>,
     /// Statements consumed by `module.exports = { Name1, Name2 }` object pattern.
     pub(super) js_module_exports_object_stmts: FxHashSet<NodeIndex>,
+    /// Top-level JS `const Local = require("mod").Export` aliases used by
+    /// exported inferred types and emitted as trailing import-equals aliases.
+    pub(super) js_require_property_import_aliases: Vec<(String, String, String)>,
     /// Deferred JS CommonJS `Root.prop = function(){}` statements re-emitted as
     /// top-level synthetic function declarations.
     /// The boolean marks whether the synthetic declaration should be exported.

@@ -35,7 +35,9 @@ pub mod usage_analyzer;
 mod tests;
 
 pub use self::core::DeclarationEmitter;
-pub(crate) use self::core::{ImportPlan, PlannedImportModule, PlannedImportSymbol};
+pub(crate) use self::core::{
+    ImportPlan, JsNestedModuleExportNamespaces, PlannedImportModule, PlannedImportSymbol,
+};
 
 // Re-export for test access
 #[cfg(test)]

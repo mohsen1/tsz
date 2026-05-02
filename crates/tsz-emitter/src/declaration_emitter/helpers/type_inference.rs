@@ -2854,7 +2854,9 @@ impl<'a> DeclarationEmitter<'a> {
         for decl_idx in symbol.declarations.iter().copied() {
             let decl_node = self.arena.get(decl_idx)?;
             if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                if let Some(import_type) = self.require_property_initializer_import_type(decl_node)
+                if self.inside_non_ambient_namespace
+                    && let Some(import_type) =
+                        self.require_property_initializer_import_type(decl_node)
                 {
                     return Some(import_type);
                 }
@@ -2872,30 +2874,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn require_property_initializer_import_type(&self, decl_node: &Node) -> Option<String> {
-        let decl = self.arena.get_variable_declaration(decl_node)?;
-        let init_node = self.arena.get(decl.initializer)?;
-        if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return None;
-        }
-
-        let access = self.arena.get_access_expr(init_node)?;
-        let export_name = self.get_identifier_text(access.name_or_argument)?;
-        let call_node = self.arena.get(access.expression)?;
-        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return None;
-        }
-        let call = self.arena.get_call_expr(call_node)?;
-        let callee = self.get_identifier_text(call.expression)?;
-        let args = call.arguments.as_ref()?;
-        if callee != "require" || args.nodes.len() != 1 {
-            return None;
-        }
-
-        let arg_node = self.arena.get(args.nodes[0])?;
-        if arg_node.kind != SyntaxKind::StringLiteral as u16 {
-            return None;
-        }
-        let module = self.arena.get_literal(arg_node)?.text.clone();
+        let (module, export_name) = self.require_property_initializer_parts(decl_node)?;
         Some(format!("import(\"{module}\").{export_name}"))
     }
 
