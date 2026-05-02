@@ -870,13 +870,22 @@ impl<'a> Printer<'a> {
             return;
         };
         let bytes = text.as_bytes();
-        let mut open_brace = std::cmp::min(block_node.pos as usize, bytes.len().saturating_sub(1));
-        while open_brace > 0 && bytes.get(open_brace) != Some(&b'{') {
-            open_brace -= 1;
-        }
-        if bytes.get(open_brace) != Some(&b'{') {
+        // Search FORWARD from `block_node.pos` for the opening `{`. In the
+        // TypeScript AST, `node.pos` includes leading trivia, so the brace
+        // is at or after `node.pos`, never before it. The previous backward
+        // search either bailed out (block at offset 0) or found a `{` from
+        // an earlier construct in the file, causing comments belonging to
+        // that earlier brace to be incorrectly skipped. Mirrors the forward
+        // scan used in `emitter/statements/core.rs::emit_block`.
+        let start = block_node.pos as usize;
+        let end = std::cmp::min(block_node.end as usize, bytes.len());
+        let Some(offset) = bytes
+            .get(start..end)
+            .and_then(|slice| slice.iter().position(|&b| b == b'{'))
+        else {
             return;
-        }
+        };
+        let open_brace = start + offset;
 
         let mut line_end = open_brace;
         while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
