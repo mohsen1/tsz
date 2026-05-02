@@ -1,5 +1,5 @@
 Task: Workstream 5 large-repo fixture - record current main guarded RSS sample
-Status: claim
+Status: ready
 Branch: `docs/large-repo-rss-main-20260502`
 
 Scope:
