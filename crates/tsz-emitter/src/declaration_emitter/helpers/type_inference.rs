@@ -2940,7 +2940,7 @@ impl<'a> DeclarationEmitter<'a> {
                 distinct.push(ty);
             }
         }
-        Self::expand_empty_object_union_arm_from_sibling_properties(&mut distinct);
+        Self::expand_object_union_arms_from_sibling_properties(&mut distinct);
 
         // tsc orders union members by `TypeFlags` when printing: for the
         // primitive intrinsics the rank is Any < Unknown < String < Number
@@ -2983,16 +2983,31 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn expand_empty_object_union_arm_from_sibling_properties(types: &mut [String]) {
-        if types.len() <= 1 || !types.iter().any(|ty| ty.trim() == "{}") {
+    fn expand_object_union_arms_from_sibling_properties(types: &mut [String]) {
+        if types.len() <= 1 {
             return;
         }
 
+        let has_empty_arm = types.iter().any(|ty| ty.trim() == "{}");
+        let object_arm_names = types
+            .iter()
+            .map(|ty| {
+                let trimmed = ty.trim();
+                if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+                    return None;
+                }
+                Some(Self::object_type_top_level_member_names(ty, true))
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(object_arm_names) = object_arm_names else {
+            return;
+        };
+
         let mut property_names = Vec::<String>::new();
-        for ty in types.iter() {
-            for name in Self::object_type_property_names(ty) {
-                if !property_names.iter().any(|existing| existing == &name) {
-                    property_names.push(name);
+        for names in &object_arm_names {
+            for name in names {
+                if !property_names.iter().any(|existing| existing == name) {
+                    property_names.push(name.clone());
                 }
             }
         }
@@ -3000,29 +3015,160 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        let members = property_names
-            .into_iter()
-            .map(|name| format!("    {name}?: undefined;"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let replacement = format!("{{\n{members}\n}}");
-        for ty in types.iter_mut() {
-            if ty.trim() == "{}" {
-                *ty = replacement.clone();
+        if has_empty_arm {
+            let members = property_names
+                .into_iter()
+                .map(|name| format!("    {name}?: undefined;"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let replacement = format!("{{\n{members}\n}}");
+            for ty in types.iter_mut() {
+                if ty.trim() == "{}" {
+                    *ty = replacement.clone();
+                }
+            }
+            return;
+        }
+
+        if !types
+            .iter()
+            .any(|ty| Self::object_type_has_top_level_method(ty))
+        {
+            return;
+        }
+
+        for (ty, present_names) in types.iter_mut().zip(object_arm_names) {
+            let missing_names = property_names
+                .iter()
+                .filter(|name| !present_names.iter().any(|present| present == *name))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing_names.is_empty() {
+                *ty = Self::append_optional_undefined_members(ty, &missing_names);
             }
         }
     }
 
-    fn object_type_property_names(type_text: &str) -> Vec<String> {
+    fn append_optional_undefined_members(type_text: &str, missing_names: &[String]) -> String {
+        let missing_members = missing_names
+            .iter()
+            .map(|name| format!("    {name}?: undefined;"))
+            .collect::<Vec<_>>();
+
+        if type_text.trim() == "{}" {
+            return format!("{{\n{}\n}}", missing_members.join("\n"));
+        }
+
+        let mut lines = type_text.lines().map(str::to_string).collect::<Vec<_>>();
+        let insert_at = lines
+            .iter()
+            .rposition(|line| line.trim() == "}")
+            .unwrap_or(lines.len());
+        lines.splice(insert_at..insert_at, missing_members);
+        lines.join("\n")
+    }
+
+    fn object_type_top_level_member_names(type_text: &str, include_methods: bool) -> Vec<String> {
         let trimmed = type_text.trim();
         if !trimmed.starts_with('{') || !trimmed.ends_with('}') || trimmed == "{}" {
             return Vec::new();
         }
 
-        trimmed
-            .lines()
-            .filter_map(Self::object_type_property_name_from_line)
-            .collect()
+        let mut depth = 0usize;
+        let mut names = Vec::new();
+        for line in trimmed.lines() {
+            if depth == 1
+                && let Some(name) = Self::object_type_member_name_from_line(line, include_methods)
+            {
+                names.push(name);
+            }
+            depth = Self::update_object_text_brace_depth(depth, line);
+        }
+        names
+    }
+
+    fn object_type_has_top_level_method(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        if !trimmed.starts_with('{') || !trimmed.ends_with('}') || trimmed == "{}" {
+            return false;
+        }
+
+        let mut depth = 0usize;
+        for line in trimmed.lines() {
+            if depth == 1
+                && Self::object_type_member_name_from_line(line, true)
+                    .is_some_and(|name| line.trim_start().starts_with(&format!("{name}(")))
+            {
+                return true;
+            }
+            depth = Self::update_object_text_brace_depth(depth, line);
+        }
+        false
+    }
+
+    fn update_object_text_brace_depth(depth: usize, line: &str) -> usize {
+        let mut depth = depth;
+        let mut quote: Option<u8> = None;
+        let mut escaped = false;
+        for byte in line.bytes() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match byte {
+                b'\'' | b'"' => quote = Some(byte),
+                b'{' => depth += 1,
+                b'}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        depth
+    }
+
+    fn object_type_member_name_from_line(line: &str, include_methods: bool) -> Option<String> {
+        if !include_methods {
+            return Self::object_type_property_name_from_line(line);
+        }
+
+        let line = line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line == "{" || line == "}" || line.starts_with('[') {
+            return None;
+        }
+
+        let colon = Self::top_level_property_type_colon(line)?;
+        let name = line
+            .get(..colon)?
+            .trim()
+            .strip_prefix("readonly ")
+            .unwrap_or_else(|| line.get(..colon).unwrap_or_default().trim())
+            .trim()
+            .trim_end_matches('?')
+            .trim();
+
+        if name.contains('(') {
+            if !include_methods {
+                return None;
+            }
+            return Self::object_type_method_name_from_prefix(name);
+        }
+
+        (!name.is_empty()).then(|| name.to_string())
+    }
+
+    fn object_type_method_name_from_prefix(prefix: &str) -> Option<String> {
+        let paren = prefix.find('(')?;
+        let name = prefix.get(..paren)?.trim().trim_end_matches('?').trim();
+        if name.is_empty() || name == "new" || name.contains(' ') {
+            return None;
+        }
+        Some(name.to_string())
     }
 
     fn object_type_property_name_from_line(line: &str) -> Option<String> {
@@ -4480,7 +4626,7 @@ mod tests {
     fn empty_object_union_arm_expands_missing_quoted_property() {
         let mut types = vec!["{\n    \"a-b\": string;\n}".to_string(), "{}".to_string()];
 
-        DeclarationEmitter::expand_empty_object_union_arm_from_sibling_properties(&mut types);
+        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
 
         assert_eq!(
             types,
@@ -4488,6 +4634,53 @@ mod tests {
                 "{\n    \"a-b\": string;\n}".to_string(),
                 "{\n    \"a-b\"?: undefined;\n}".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn object_union_arms_expand_missing_sibling_properties_and_methods() {
+        let mut types = vec![
+            "{\n    foo: number;\n    m(): void;\n}".to_string(),
+            "{\n    bar: number;\n}".to_string(),
+        ];
+
+        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
+
+        assert_eq!(
+            types,
+            vec![
+                "{\n    foo: number;\n    m(): void;\n    bar?: undefined;\n}".to_string(),
+                "{\n    bar: number;\n    foo?: undefined;\n    m?: undefined;\n}".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn object_union_arms_without_methods_are_not_expanded() {
+        let mut types = vec![
+            "{\n    a: number;\n}".to_string(),
+            "{\n    a: number;\n    b: string;\n}".to_string(),
+        ];
+
+        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
+
+        assert_eq!(
+            types,
+            vec![
+                "{\n    a: number;\n}".to_string(),
+                "{\n    a: number;\n    b: string;\n}".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn object_union_property_scan_ignores_nested_members() {
+        assert_eq!(
+            DeclarationEmitter::object_type_top_level_member_names(
+                "{\n    outer: {\n        inner: string;\n    };\n}",
+                true,
+            ),
+            vec!["outer".to_string()]
         );
     }
 
