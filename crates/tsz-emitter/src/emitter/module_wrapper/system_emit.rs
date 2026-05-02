@@ -7,6 +7,14 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    fn module_binding_access_text(module_var: &str, binding_name: &str) -> String {
+        if crate::transforms::emit_utils::is_valid_identifier_name(binding_name) {
+            format!("{module_var}.{binding_name}")
+        } else {
+            format!("{module_var}[\"{binding_name}\"]")
+        }
+    }
+
     pub(super) fn emit_wrapped_import_helpers(
         &mut self,
         source: &tsz_parser::parser::node::SourceFileData,
@@ -189,12 +197,15 @@ impl<'a> Printer<'a> {
                     continue;
                 }
                 let import_name = if spec.property_name.is_some() {
-                    self.get_identifier_text_idx(spec.property_name)
+                    self.get_specifier_name_text(spec.property_name)
+                        .unwrap_or_else(|| local_name.clone())
                 } else {
                     local_name.clone()
                 };
-                self.commonjs_named_import_substitutions
-                    .insert(local_name, format!("{dep_var}.{import_name}"));
+                self.commonjs_named_import_substitutions.insert(
+                    local_name,
+                    Self::module_binding_access_text(dep_var, &import_name),
+                );
             }
         }
     }
