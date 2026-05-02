@@ -262,6 +262,13 @@ pub(crate) fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     tsz_solver::is_primitive_type(db, type_id)
 }
 
+/// Whether this type is identity-comparable: literals, enum members,
+/// `null`/`undefined`/`void`/`never`, unique symbols. tsc's `removeSubtypes`
+/// short-circuits on these via TypeId equality, so they don't drive cost.
+pub(crate) fn is_identity_comparable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_identity_comparable_type(db, type_id)
+}
+
 /// Check if a type contains `this` type references.
 pub(crate) fn contains_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::contains_this_type(db, type_id)
