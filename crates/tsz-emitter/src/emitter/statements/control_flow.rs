@@ -664,6 +664,47 @@ impl<'a> Printer<'a> {
         self.write(") ");
         // case_block is a NodeIndex pointing to a CaseBlock node
         self.emit(switch.case_block);
+        if let Some(class_name) =
+            self.recovered_class_after_unterminated_empty_switch(node, switch.case_block)
+        {
+            self.write_line();
+            self.write("class ");
+            self.write(&class_name);
+            self.write(" {");
+            self.write_line();
+            self.write("}");
+        }
+    }
+
+    fn recovered_class_after_unterminated_empty_switch(
+        &self,
+        node: &Node,
+        case_block_idx: NodeIndex,
+    ) -> Option<String> {
+        let case_block_node = self.arena.get(case_block_idx)?;
+        let case_block = self.arena.blocks.get(case_block_node.data_index as usize)?;
+        if !case_block.statements.nodes.is_empty() {
+            return None;
+        }
+
+        let text = self.source_text?;
+        let start = std::cmp::min(node.pos as usize, text.len());
+        let end = std::cmp::min(node.end as usize, text.len());
+        let source = text.get(start..end)?;
+        for line in source.lines() {
+            let line = line.trim_start();
+            let Some(rest) = line.strip_prefix("class ") else {
+                continue;
+            };
+            let name: String = rest
+                .chars()
+                .take_while(|&ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                .collect();
+            if !name.is_empty() && rest[name.len()..].trim_start().starts_with('{') {
+                return Some(name);
+            }
+        }
+        None
     }
 
     pub(in crate::emitter) fn emit_case_block(&mut self, node: &Node) {
