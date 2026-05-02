@@ -127,6 +127,32 @@ impl<'a> CheckerState<'a> {
         let callee_missing_value = callee_type == TypeId::ERROR
             && self.callee_suppresses_contextual_any(call.expression, &callee_diag_snap);
 
+        // When the callee identifier resolves through a type-only alias chain,
+        // `report_wrong_meaning` has just emitted TS1361/TS1362 at the callee
+        // site. Even if the resolved callee_type still happens to be callable
+        // (because the alias merges a namespace value with a function type
+        // from the type-only-imported side), tsc treats `typeof <name>` as
+        // having no call signatures in this position and emits TS2349 in
+        // addition to TS1361/TS1362. Match that so the call site picks up the
+        // companion "not callable" diagnostic. See `typeOnlyMerge3.ts`.
+        let callee_emitted_type_only_value_error = self
+            .ctx
+            .speculative_diagnostics_since(&callee_diag_snap)
+            .iter()
+            .any(|diag| {
+                self.ctx
+                    .arena
+                    .get(call.expression)
+                    .is_some_and(|callee_node| {
+                        diag.start >= callee_node.pos && diag.start < callee_node.end
+                    })
+                    && matches!(
+                        diag.code,
+                        diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE
+                            | diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE
+                    )
+            });
+
         // Check for dynamic import module resolution (TS2307)
         if let Some(dynamic_import_type) = self.check_and_resolve_dynamic_import(idx, call) {
             return dynamic_import_type;
@@ -223,6 +249,28 @@ impl<'a> CheckerState<'a> {
             self.check_callee_unknown_or_never(callee_type, call.expression, args)
         {
             return early_return;
+        }
+
+        // tsc companion-emits TS2349 ("This expression is not callable. Type
+        // 'typeof X' has no call signatures.") alongside TS1361/TS1362 when a
+        // type-only-aliased identifier is used as a call target. tsz keeps
+        // the underlying callable on the resolved type (because the alias
+        // chain merged a namespace value with a function-typed type-only
+        // import), so the call would otherwise resolve to Success and the
+        // accompanying TS2349 would be missing. See `typeOnlyMerge3.ts`.
+        if callee_emitted_type_only_value_error {
+            self.error_not_callable_at(callee_type, call.expression);
+            // Still evaluate arguments so downstream definite-assignment /
+            // unresolved-name diagnostics still fire on argument sites.
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |_i, _arg_count| Some(TypeId::ANY),
+                check_excess_properties,
+                None,
+                CallableContext::none(),
+            );
+            return TypeId::ERROR;
         }
 
         let mut nullish_cause = None;
