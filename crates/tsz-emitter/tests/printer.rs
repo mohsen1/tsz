@@ -646,6 +646,27 @@ fn test_lowered_static_block_recovered_await_emits_yield() {
     );
 }
 
+#[test]
+fn test_lowered_static_block_uses_static_initializer_context() {
+    let source = "class B { static a = 1; }\nclass C extends B { static c = super.a; static { this.c; super.a; } }\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("C.c = Reflect.get("),
+        "Static field super access should use Reflect.get, got: {output}"
+    );
+    assert!(
+        output.contains("(() => { _a.c; Reflect.get(_b, \"a\", _a); })();"),
+        "Lowered static block should reuse static this/super aliases, got: {output}"
+    );
+}
+
 // =========================================================================
 // Comment skipping for erased type annotations
 // =========================================================================
