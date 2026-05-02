@@ -1355,7 +1355,7 @@ impl<'a> DeclarationEmitter<'a> {
                 return;
             }
         }
-        if self.should_skip_ns_internal_member(&var_stmt.modifiers, None) {
+        if !has_js_named_export && self.should_skip_ns_internal_member(&var_stmt.modifiers, None) {
             return;
         }
 
@@ -1486,7 +1486,13 @@ impl<'a> DeclarationEmitter<'a> {
                     if self.should_emit_declare_keyword(is_exported) {
                         self.write("declare ");
                     }
-                    let effective_keyword = if js_var_promoted_to_const {
+                    let effective_keyword = if self.source_is_js_file
+                        && self.inside_non_ambient_namespace
+                        && is_exported
+                        && !has_export_modifier
+                    {
+                        "let"
+                    } else if js_var_promoted_to_const {
                         let has_jsdoc = regular_decls[group_start..group_end].iter().any(
                             |(_, decl_idx, _, decl)| {
                                 self.jsdoc_name_like_type_expr_for_node(*decl_idx).is_some()

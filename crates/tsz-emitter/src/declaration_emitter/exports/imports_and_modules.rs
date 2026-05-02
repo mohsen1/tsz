@@ -406,8 +406,37 @@ impl<'a> DeclarationEmitter<'a> {
                         self.module_body_has_scope_marker(stmts, !is_ambient_ns);
                 }
 
+                let scoped_js_named_exports = self.js_named_export_names_for_module_body(stmts);
+                let scoped_js_named_export_targets =
+                    self.js_named_export_targets_for_module_body(stmts);
+                let prev_js_named_export_names = if scoped_js_named_exports.is_empty() {
+                    None
+                } else {
+                    let previous = self.js_named_export_names.clone();
+                    self.js_named_export_names.extend(scoped_js_named_exports);
+                    Some(previous)
+                };
+
                 for &stmt_idx in &stmts.nodes {
+                    if scoped_js_named_export_targets
+                        .iter()
+                        .any(|(_, targets)| targets.contains(&stmt_idx))
+                    {
+                        continue;
+                    }
                     self.emit_statement(stmt_idx);
+                    if let Some((_, targets)) = scoped_js_named_export_targets
+                        .iter()
+                        .find(|(export_idx, _)| *export_idx == stmt_idx)
+                    {
+                        for &target_idx in targets {
+                            self.emit_statement_with_options(target_idx, true);
+                        }
+                    }
+                }
+
+                if let Some(previous) = prev_js_named_export_names {
+                    self.js_named_export_names = previous;
                 }
 
                 // tsc emits `export {};` inside a non-ambient namespace
@@ -466,6 +495,169 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena
             .get_module_block(body_node)
             .is_none_or(|block| block.statements.as_ref().is_none_or(|s| s.nodes.is_empty()))
+    }
+
+    fn js_named_export_names_for_module_body(&self, stmts: &NodeList) -> Vec<String> {
+        if !self.source_is_js_file {
+            return Vec::new();
+        }
+
+        let mut names = Vec::new();
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.module_specifier.is_some() || export.export_clause.is_none() {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            if named.name.is_some() {
+                continue;
+            }
+
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec_node) = self.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = self.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                if spec.property_name.is_some() {
+                    continue;
+                }
+                let Some(name_node) = self.arena.get(spec.name) else {
+                    continue;
+                };
+                let Some(name_ident) = self.arena.get_identifier(name_node) else {
+                    continue;
+                };
+                if !names.iter().any(|name| name == &name_ident.escaped_text) {
+                    names.push(name_ident.escaped_text.clone());
+                }
+            }
+        }
+        names
+    }
+
+    fn js_named_export_targets_for_module_body(
+        &self,
+        stmts: &NodeList,
+    ) -> Vec<(NodeIndex, Vec<NodeIndex>)> {
+        if !self.source_is_js_file {
+            return Vec::new();
+        }
+
+        let mut declarations = Vec::<(String, NodeIndex)>::new();
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+
+            let mut names = Vec::new();
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    names.clear();
+                    break;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    names.clear();
+                    break;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        names.clear();
+                        break;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        names.clear();
+                        break;
+                    };
+                    let Some(name) = self.get_identifier_text(decl.name) else {
+                        names.clear();
+                        break;
+                    };
+                    names.push(name);
+                }
+            }
+            if names.len() == 1 {
+                declarations.push((names.remove(0), stmt_idx));
+            }
+        }
+
+        let mut exports = Vec::new();
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.module_specifier.is_some() || export.export_clause.is_none() {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            if named.name.is_some() {
+                continue;
+            }
+
+            let mut targets = Vec::new();
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec_node) = self.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = self.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                if spec.property_name.is_some() {
+                    continue;
+                }
+                let Some(name) = self.get_identifier_text(spec.name) else {
+                    continue;
+                };
+                if let Some((_, target_idx)) = declarations
+                    .iter()
+                    .find(|(decl_name, _)| decl_name == &name)
+                    && !targets.contains(target_idx)
+                {
+                    targets.push(*target_idx);
+                }
+            }
+            if !targets.is_empty() {
+                exports.push((stmt_idx, targets));
+            }
+        }
+        exports
     }
 
     pub(crate) fn emit_import_equals_declaration(

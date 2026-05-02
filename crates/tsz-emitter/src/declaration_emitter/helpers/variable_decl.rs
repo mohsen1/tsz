@@ -142,6 +142,7 @@ impl<'a> DeclarationEmitter<'a> {
             } else if has_initializer
                 && self.initializer_is_new_expression(initializer)
                 && self.new_expression_constructor_is_class_like(initializer)
+                && !(self.source_is_js_file && self.inside_non_ambient_namespace)
                 && let Some(type_text) = self.nameable_new_expression_type_text(initializer)
             {
                 self.write(": ");
