@@ -945,6 +945,8 @@ impl<'a> AsyncES5Transformer<'a> {
             // Get the awaited expression
             let operand = if await_expr.expression.is_none() {
                 IRNode::Raw("".to_string().into())
+            } else if self.generator_mode {
+                self.generator_yield_operand_to_ir(await_expr.expression)
             } else {
                 self.expression_to_ir(await_expr.expression)
             };
@@ -1834,6 +1836,105 @@ impl<'a> AsyncES5Transformer<'a> {
             return Some(trimmed.to_string());
         }
         None
+    }
+
+    fn generator_yield_operand_to_ir(&self, idx: NodeIndex) -> IRNode {
+        let operand = self.expression_to_ir(idx);
+        let Some(comment) = self.yield_operand_line_comment(idx) else {
+            return operand;
+        };
+        let operand_text = crate::transforms::ir_printer::IRPrinter::emit_to_string(&operand);
+        IRNode::Raw(format!("\n                {comment}\n                {operand_text}").into())
+    }
+
+    fn yield_operand_line_comment(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = self.arena.get_parenthesized(node)?;
+                let leaf_start = self.expression_leaf_start(paren.expression)?;
+                let text = self.source_text?;
+                let start = node.pos as usize;
+                let end = (leaf_start as usize).min(text.len());
+                if start < end {
+                    let slice = &text[start..end];
+                    if let Some(comment) = slice.lines().rev().find_map(|line| {
+                        let trimmed = line.trim_start();
+                        trimmed.starts_with("//").then(|| trimmed.to_string())
+                    }) {
+                        return Some(comment);
+                    }
+                }
+                self.yield_operand_line_comment(paren.expression)
+            }
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                let assertion = self.arena.get_type_assertion(node)?;
+                self.yield_operand_line_comment(assertion.expression)
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                let unary = self.arena.get_unary_expr_ex(node)?;
+                self.yield_operand_line_comment(unary.expression)
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let binary = self.arena.get_binary_expr(node)?;
+                self.yield_operand_line_comment(binary.left)
+                    .or_else(|| self.yield_operand_line_comment(binary.right))
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                let conditional = self.arena.get_conditional_expr(node)?;
+                self.yield_operand_line_comment(conditional.condition)
+                    .or_else(|| self.yield_operand_line_comment(conditional.when_true))
+                    .or_else(|| self.yield_operand_line_comment(conditional.when_false))
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                let access = self.arena.get_access_expr(node)?;
+                self.yield_operand_line_comment(access.expression)
+                    .or_else(|| self.yield_operand_line_comment(access.name_or_argument))
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let call = self.arena.get_call_expr(node)?;
+                self.yield_operand_line_comment(call.expression)
+                    .or_else(|| {
+                        call.arguments.as_ref().and_then(|args| {
+                            args.nodes
+                                .iter()
+                                .find_map(|&arg| self.yield_operand_line_comment(arg))
+                        })
+                    })
+            }
+            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
+                let tagged = self.arena.get_tagged_template(node)?;
+                self.yield_operand_line_comment(tagged.tag)
+            }
+            _ => None,
+        }
+    }
+
+    fn expression_leaf_start(&self, idx: NodeIndex) -> Option<u32> {
+        let node = self.arena.get(idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = self.arena.get_parenthesized(node)?;
+                self.expression_leaf_start(paren.expression)
+            }
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                let assertion = self.arena.get_type_assertion(node)?;
+                self.expression_leaf_start(assertion.expression)
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                let unary = self.arena.get_unary_expr_ex(node)?;
+                self.expression_leaf_start(unary.expression)
+            }
+            _ => Some(node.pos),
+        }
     }
     /// Extract `VarDecl` names from a `GeneratorBody` IR node and remove them
     /// from the case statements. Returns the list of variable names to hoist.

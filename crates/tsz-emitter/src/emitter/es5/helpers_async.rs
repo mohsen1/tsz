@@ -561,6 +561,7 @@ impl<'a> Printer<'a> {
         }
         let ir = transformer.transform_generator_function(function_node);
         let mut printer = IRPrinter::with_arena(self.arena);
+        printer.set_transforms(self.transforms.clone());
         if let Some(text) = self.source_text {
             printer.set_source_text(text);
         }
@@ -570,6 +571,13 @@ impl<'a> Printer<'a> {
         }
         printer.emit(&ir);
         self.write(&printer.take_output());
+        if let Some(node) = self.arena.get(function_node) {
+            while self.comment_emit_idx < self.all_comments.len()
+                && self.all_comments[self.comment_emit_idx].end <= node.end
+            {
+                self.comment_emit_idx += 1;
+            }
+        }
     }
 
     fn block_has_only_function_decls(&self, body: NodeIndex) -> bool {
