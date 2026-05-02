@@ -5,7 +5,7 @@
 //! `<MyComp<A, B>>` for a class with one type parameter), tsc emits
 //! TS2558 ("Expected N type arguments, but got M") and stops there. tsz
 //! was piling TS2604 ("JSX element type does not have any construct or
-//! call signatures") on top because the recovered_props path falls back
+//! call signatures") on top because the `recovered_props` path falls back
 //! to the no-props branch under `type_arg_count_mismatch`, which then
 //! runs `check_jsx_element_has_signatures`.
 //!
