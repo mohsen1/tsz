@@ -183,6 +183,10 @@ impl<'a> AsyncES5Transformer<'a> {
         self.temp_var_counter.set(counter);
     }
 
+    pub const fn temp_var_counter(&self) -> u32 {
+        self.temp_var_counter.get()
+    }
+
     /// Get the helpers needed after transformation
     pub(crate) const fn suspension_kind(&self) -> u16 {
         if self.generator_mode {

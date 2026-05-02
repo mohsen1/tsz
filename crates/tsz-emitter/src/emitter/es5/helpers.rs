@@ -1290,6 +1290,7 @@ impl<'a> Printer<'a> {
         } else {
             async_emitter.emit_simple_generator_body_with_hoisted_vars(func.body)
         };
+        self.ctx.destructuring_state.temp_var_counter = async_emitter.temp_var_counter();
         let generator_mappings = async_emitter.take_mappings();
 
         if has_param_transforms {
