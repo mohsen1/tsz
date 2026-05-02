@@ -231,7 +231,7 @@ fn collect_export_name_from_declaration(
     decl_node: &Node,
     exports: &mut Vec<String>,
     preserve_const_enums: bool,
-    statements: &[NodeIndex],
+    _statements: &[NodeIndex],
 ) {
     match decl_node.kind {
         k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -310,21 +310,9 @@ fn collect_export_name_from_declaration(
                 if import_decl.is_type_only {
                     return;
                 }
-                // A string-literal module_specifier means `require("...")` — always a value.
-                if let Some(ref_node) = arena.get(import_decl.module_specifier)
-                    && ref_node.kind == SyntaxKind::StringLiteral as u16
-                {
-                    exports.push(name);
-                    return;
-                }
-                if is_import_alias_referencing_value(
-                    arena,
-                    import_decl.module_specifier,
-                    statements,
-                    preserve_const_enums,
-                ) {
-                    exports.push(name);
-                }
+                // `export import A = X.Y` gets a runtime export assignment even
+                // when the alias target is type-only.
+                exports.push(name);
             }
         }
         _ => {
@@ -1129,11 +1117,9 @@ pub fn collect_inline_exported_var_names(
             // `export import b = a.foo` — the alias name becomes `exports.b`
             else if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 && let Some(import_decl) = arena.get_import_decl(clause_node)
-                && let Some(name_node) = arena.get(import_decl.import_clause)
-                && name_node.kind == SyntaxKind::Identifier as u16
-                && let Some(ident) = arena.get_identifier(name_node)
+                && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
             {
-                names.push(ident.escaped_text.clone());
+                names.push(name);
             }
         }
     }
