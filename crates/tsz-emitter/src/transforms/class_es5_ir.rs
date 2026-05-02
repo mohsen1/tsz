@@ -2866,8 +2866,11 @@ fn collect_accessor_pairs(
             if is_static != collect_static {
                 continue;
             }
-            // Skip abstract
-            if arena.has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword) {
+            // Skip abstract declarations, but keep invalid abstract accessors that
+            // still have bodies; tsc emits those bodies in recovery mode.
+            if arena.has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword)
+                && accessor_data.body.is_none()
+            {
                 continue;
             }
             // Skip private
