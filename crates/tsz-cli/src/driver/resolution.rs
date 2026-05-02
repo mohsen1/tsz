@@ -1306,12 +1306,11 @@ pub(crate) fn resolve_module_specifier(
             package_type,
         ));
     } else if matches!(resolution, ModuleResolutionKind::Classic) {
-        if options.base_url.is_some()
-            && let Some(paths) = options.paths.as_ref()
+        if let Some(paths) = options.paths.as_ref()
             && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
         {
             path_mapping_attempted = true;
-            let base = options.base_url.as_ref().expect("baseUrl present");
+            let base = options.base_url.as_deref().unwrap_or(base_dir);
             for target in &mapping.targets {
                 let substituted = substitute_path_target(target, &wildcard);
                 let path = if Path::new(&substituted).is_absolute() {
@@ -1344,32 +1343,33 @@ pub(crate) fn resolve_module_specifier(
                 }
             }
         }
-    } else if let Some(base_url) = options.base_url.as_ref() {
+    } else {
         allow_node_modules = true;
         if let Some(paths) = options.paths.as_ref()
             && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
         {
             path_mapping_attempted = true;
+            let base = options.base_url.as_deref().unwrap_or(base_dir);
             for target in &mapping.targets {
                 let substituted = substitute_path_target(target, &wildcard);
                 let path = if Path::new(&substituted).is_absolute() {
                     PathBuf::from(substituted)
                 } else {
-                    base_url.join(substituted)
+                    base.join(substituted)
                 };
                 candidates.extend(expand_module_path_candidates(&path, options, package_type));
             }
         }
 
-        if candidates.is_empty() {
+        if candidates.is_empty()
+            && let Some(base_url) = options.base_url.as_ref()
+        {
             candidates.extend(expand_module_path_candidates(
                 &base_url.join(&specifier),
                 options,
                 package_type,
             ));
         }
-    } else {
-        allow_node_modules = true;
     }
 
     for candidate in candidates {
