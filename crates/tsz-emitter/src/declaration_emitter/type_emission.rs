@@ -1035,7 +1035,12 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn emit_string_literal_type(&mut self, node: &tsz_parser::parser::node::Node) {
         if let Some(lit) = self.arena.get_literal(node) {
-            if lit.text.contains('"') && !lit.text.contains('\'') {
+            let source_quote = self
+                .get_source_slice(node.pos, node.end)
+                .and_then(|source| source.chars().next())
+                .filter(|quote| *quote == '\'' || *quote == '"');
+
+            if source_quote == Some('\'') {
                 self.write("'");
                 self.write(&escape_string_for_single_quote(&lit.text));
                 self.write("'");

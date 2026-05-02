@@ -534,6 +534,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(literal_type) = self.literal_type_from_initializer(idx) {
+                    if self.ctx.in_const_assertion {
+                        return literal_type;
+                    }
+
                     if request.contextual_type.is_some_and(|ctx_type| {
                         self.contextual_type_allows_literal(ctx_type, literal_type)
                     }) {

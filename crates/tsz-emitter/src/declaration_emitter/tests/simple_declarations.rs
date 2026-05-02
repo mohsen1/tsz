@@ -1387,7 +1387,9 @@ export declare const arrow9: {
 fn test_js_commonjs_exported_arrow_function_preserves_any_return_type() {
     let source = r#"
 const donkey = (ast) => ast;
+function funky(declaration) { return false; }
 module.exports = donkey;
+module.exports.funky = funky;
 "#;
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -1438,6 +1440,10 @@ module.exports = donkey;
     assert!(
         output.contains("declare function donkey(ast: any): any;"),
         "Expected concise-arrow CommonJS export to preserve any return type: {output}"
+    );
+    assert!(
+        output.contains("declare namespace donkey {\n    export { funky };\n}"),
+        "Expected secondary CommonJS function export to merge into the export= namespace: {output}"
     );
     assert!(
         !output.contains("declare function donkey(ast: any): void;"),
@@ -1566,6 +1572,10 @@ exports.K = NS.K;
     assert!(
         output.contains("export var K: new () => any;"),
         "Expected property-access CommonJS export to reuse the assigned initializer type: {output}"
+    );
+    assert!(
+        !output.contains("declare class K"),
+        "Did not expect an intermediate namespace class expando to leak beside the CommonJS export: {output}"
     );
 }
 

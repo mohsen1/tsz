@@ -546,7 +546,7 @@ fn test_mapped_type_in_declaration() {
 fn test_indexed_access_type() {
     let output = emit_dts("export type Name = Person['name'];");
     assert!(
-        output.contains("Person[\"name\"]"),
+        output.contains("Person['name']"),
         "Expected indexed access type: {output}"
     );
 }
@@ -563,7 +563,7 @@ export type Add<A extends number, B extends number> =
 "#,
     );
     assert!(
-        output.contains("type Add<A extends number, B extends number> = [\n    ...NTuple<A>,\n    ...NTuple<B>\n][\"length\"];"),
+        output.contains("type Add<A extends number, B extends number> = [\n    ...NTuple<A>,\n    ...NTuple<B>\n]['length'];"),
         "Expected variadic tuple indexed access to break across lines: {output}"
     );
 }
