@@ -1026,6 +1026,35 @@ fn literal_display_appropriate_for_undefined_null_target(
     if target != TypeId::UNDEFINED && target != TypeId::NULL {
         return true;
     }
-    // tsc preserves the boolean keyword source surface; everything else widens.
-    matches!(display, "true" | "false")
+    // tsc preserves the source's literal surface for `undefined` / `null`
+    // targets — `Type '1' is not assignable to type 'undefined'`,
+    // `Type '""' is not assignable to type 'undefined'`, etc. Widening to
+    // `number` / `string` here loses the information about which exact
+    // value triggered the error. Accept any syntactic literal form
+    // (boolean keyword, string/template, signed numeric, bigint).
+    if matches!(display, "true" | "false") {
+        return true;
+    }
+    let trimmed = display.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let bytes = trimmed.as_bytes();
+    let first = bytes[0];
+    let last = bytes[bytes.len() - 1];
+    if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+        return true;
+    }
+    if first == b'`' && last == b'`' {
+        return true;
+    }
+    let numeric_start = first == b'-' || first == b'+' || first == b'.' || first.is_ascii_digit();
+    if numeric_start
+        && trimmed.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '+' || c == '_' || c == 'n'
+        })
+    {
+        return true;
+    }
+    false
 }
