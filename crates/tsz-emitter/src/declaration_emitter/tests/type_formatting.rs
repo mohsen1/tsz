@@ -330,6 +330,28 @@ const bn1 = box(0);
 }
 
 #[test]
+fn test_inferred_function_array_preserves_new_expression_return_type() {
+    let output = emit_dts_with_binding(
+        r#"
+class c {
+    private p: string;
+}
+
+var y = [() => new c()];
+"#,
+    );
+
+    assert!(
+        output.contains("declare var y: (() => c)[];"),
+        "Expected inferred function array to preserve class return type: {output}"
+    );
+    assert!(
+        !output.contains("(() => any)[]"),
+        "Did not expect arrow return type to fall back to any: {output}"
+    );
+}
+
+#[test]
 fn test_non_null_call_initializer_recovers_return_type() {
     let source = r#"
 declare const fn: (() => string) | undefined;
