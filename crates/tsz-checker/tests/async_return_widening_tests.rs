@@ -63,6 +63,102 @@ g(async () => { return "y" });
     );
 }
 
+/// Inline lib stub: enough Promise / Awaited shape for the async-return
+/// unwrap path to engage. The intrinsic `Awaited<T>` lib alias is the
+/// natural conditional-type form; here we use a structurally-equivalent
+/// alias so the test does not depend on lib loading.
+const AWAITED_AND_ASYNC_GEN_PRELUDE: &str = r#"
+type Awaited<T> =
+    T extends null | undefined ? T :
+    T extends object & { then(onfulfilled: infer F, ...args: infer _): any } ?
+        F extends ((value: infer V, ...args: infer _) => any) ? Awaited<V> : never :
+        T;
+
+interface PromiseLike<T> {
+    then<TResult1 = T, TResult2 = never>(
+        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
+        onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null
+    ): PromiseLike<TResult1 | TResult2>;
+}
+interface Promise<T> {
+    then<TResult1 = T, TResult2 = never>(
+        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
+        onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null
+    ): Promise<TResult1 | TResult2>;
+}
+interface PromiseConstructor {
+    resolve<T>(value: T): Promise<Awaited<T>>;
+}
+declare var Promise: PromiseConstructor;
+
+interface IteratorYieldResult<TYield> { done?: false; value: TYield }
+interface IteratorReturnResult<TReturn> { done: true; value: TReturn }
+type IteratorResult<T, TReturn = any> = IteratorYieldResult<T> | IteratorReturnResult<TReturn>;
+interface AsyncIterator<T, TReturn = any, TNext = undefined> {
+    next(...args: [] | [TNext]): Promise<IteratorResult<T, TReturn>>;
+}
+interface AsyncGenerator<T = unknown, TReturn = any, TNext = unknown>
+    extends AsyncIterator<T, TReturn, TNext> {}
+"#;
+
+/// `Promise.resolve<T>(value: T): Promise<Awaited<T>>` returns an Awaited
+/// application. After tsz unwraps `Promise<...>` for async function bodies,
+/// the inner `Awaited<X>` must be evaluated rather than left as a raw alias
+/// application. Otherwise TS2322 messages render `Awaited<X>` instead of the
+/// underlying structural form, mismatching tsc's `getAwaitedType`.
+#[test]
+fn async_return_promise_resolve_unfolds_awaited_in_ts2322_source_display() {
+    // When the async-return assignability check fails, the source-type
+    // display must not contain a raw `Awaited<` substring — the alias
+    // must be evaluated to its conditional-type result.
+    let source = format!(
+        "{AWAITED_AND_ASYNC_GEN_PRELUDE}\n\
+         async function* g(): AsyncGenerator<any, {{ x: \"x\" }}, any> {{\n\
+           const r = {{ x: \"x\" }};\n\
+           return Promise.resolve(r);\n\
+         }}\n"
+    );
+    let diags = get_diagnostics(&source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "expected a TS2322 for async-generator return-type mismatch, got: {diags:#?}"
+    );
+    for (_, msg) in &ts2322 {
+        assert!(
+            !msg.contains("Awaited<"),
+            "async-return TS2322 source-type display must not contain raw `Awaited<` (the alias must be evaluated before display), got: {msg}"
+        );
+    }
+}
+
+/// Same invariant as above, but with `AsyncIterator` and a different
+/// property/literal name choice — the unwrap path is shared, and the test
+/// guarantees the fix is not specific to one type-alias spelling or to
+/// one bound-variable name.
+#[test]
+fn async_iterator_return_promise_resolve_unfolds_awaited_in_ts2322_source_display() {
+    let source = format!(
+        "{AWAITED_AND_ASYNC_GEN_PRELUDE}\n\
+         async function* h(): AsyncIterator<any, {{ y: \"y\" }}, any> {{\n\
+           const s = {{ y: \"y\" }};\n\
+           return Promise.resolve(s);\n\
+         }}\n"
+    );
+    let diags = get_diagnostics(&source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "expected a TS2322 for async-iterator return-type mismatch, got: {diags:#?}"
+    );
+    for (_, msg) in &ts2322 {
+        assert!(
+            !msg.contains("Awaited<"),
+            "async-iterator return TS2322 source-type display must not contain raw `Awaited<`, got: {msg}"
+        );
+    }
+}
+
 #[test]
 fn async_arrow_returning_promise_expression_preserves_inner() {
     // When an async function returns an already-Promise-wrapped value, the
