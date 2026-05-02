@@ -15,7 +15,7 @@ import pc from 'picocolors';
 import pLimit from 'p-limit';
 import ts from 'typescript';
 import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parser.js';
-import { CliTranspiler } from './cli-transpiler.js';
+import { CliTranspiler, type LinkInput } from './cli-transpiler.js';
 import { parseTarget, parseModule, inferDefaultModule } from './ts-enums.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -48,6 +48,7 @@ interface TestCase {
   testPath: string | null;
   sourceFileName: string | null;
   sourceFiles: Array<{ name: string; content: string }>;
+  links: LinkInput[];
   source: string;
   expectedJs: string | null;
   expectedJsFileName: string | null;
@@ -308,11 +309,13 @@ interface ParsedSourceTest {
   source: string | null;
   sourceFileName: string | null;
   sourceFiles: Array<{ name: string; content: string }>;
+  links: LinkInput[];
 }
 
 function parseSourceTest(content: string): ParsedSourceTest {
   const options: Record<string, unknown> = {};
   const sourceFiles: Array<{ name: string; content: string }> = [];
+  const links: LinkInput[] = [];
   const stripped = content.replace(/^\uFEFF/, '');
   const lines = stripped.split('\n');
   let currentFileName: string | null = null;
@@ -338,6 +341,13 @@ function parseSourceTest(content: string): ParsedSourceTest {
       if (lowKey === 'filename') {
         flushCurrentFile();
         currentFileName = value;
+        continue;
+      }
+      if (lowKey === 'link') {
+        const [target, link] = value.split('->').map(part => part.trim());
+        if (target && link) {
+          links.push({ target, link });
+        }
         continue;
       }
       if (value.toLowerCase() === 'true') options[lowKey] = true;
@@ -388,6 +398,7 @@ function parseSourceTest(content: string): ParsedSourceTest {
     source: entrySourceFile?.content ?? null,
     sourceFileName: entrySourceFile?.name ?? null,
     sourceFiles,
+    links,
   };
 }
 
@@ -485,10 +496,12 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     let sourceFiles = baseline.sourceFiles;
     let source = baseline.source;
     let sourceFileName = baseline.sourceFileName;
+    let links: LinkInput[] = [];
     if (baseline.testPath) {
       const cached = parsedSourceCache.get(baseline.testPath);
       if (cached) {
         directives = cached.options;
+        links = cached.links;
         if (cached.sourceFiles.length > 0) {
           sourceFiles = cached.sourceFiles;
           source = cached.source ?? source;
@@ -505,6 +518,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
             source = parsedSource.source ?? source;
             sourceFileName = parsedSource.sourceFileName ?? sourceFileName;
           }
+          links = parsedSource.links;
           parsedSourceCache.set(baseline.testPath, parsedSource);
         } catch {
           parsedSourceCache.set(baseline.testPath, {
@@ -512,6 +526,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
             source: null,
             sourceFileName: null,
             sourceFiles: [],
+            links: [],
           });
         }
       }
@@ -636,6 +651,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       testPath: baseline.testPath,
       sourceFileName,
       sourceFiles,
+      links,
       source: source ?? baseline.source!,
       expectedJs: baseline.js,
       expectedJsFileName: baseline.jsFileName,
@@ -752,7 +768,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
   try {
     loadCache();
     const emitDeclarations = !config.jsOnly && testCase.expectedDts !== null;
-    const sourceKey = buildSourceKey(testCase.sourceFiles);
+    const sourceKey = `${buildSourceKey(testCase.sourceFiles)}\n//// links\n${testCase.links.map(link => `${link.target}->${link.link}`).join('\n')}`;
     const cacheKey = getCacheKey(
       sourceKey,
       testCase.target,
@@ -835,6 +851,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         rootDir: testCase.rootDir,
         declarationMap: testCase.declarationMap,
         sourceFiles: testCase.sourceFiles,
+        links: testCase.links,
         expectedJsFileName: testCase.expectedJsFileName ?? undefined,
         expectedDtsFileName: testCase.expectedDtsFileName ?? undefined,
         expectedJsContent: testCase.expectedJs,

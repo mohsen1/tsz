@@ -31,6 +31,11 @@ interface SourceInputFile {
   content: string;
 }
 
+export interface LinkInput {
+  target: string;
+  link: string;
+}
+
 interface OutputPaths {
   jsPath: string;
   jsCandidates: string[];
@@ -252,6 +257,7 @@ export class CliTranspiler {
       outDir?: string;
       rootDir?: string;
       sourceFiles?: SourceInputFile[];
+      links?: LinkInput[];
       expectedJsFileName?: string;
       expectedDtsFileName?: string;
       expectedJsContent?: string | null;
@@ -293,6 +299,7 @@ export class CliTranspiler {
       outDir,
       rootDir,
       sourceFiles,
+      links = [],
       expectedJsFileName,
       expectedDtsFileName,
       expectedJsContent,
@@ -375,6 +382,23 @@ export class CliTranspiler {
           `${stem}.d.cts`,
         ],
       });
+    }
+
+    for (const link of links) {
+      const relTarget = link.target.replace(/^\/+/, '');
+      const relLink = link.link.replace(/^\/+/, '');
+      const targetPath = path.join(testDir, relTarget);
+      const linkPath = path.join(testDir, relLink);
+      if (!fs.existsSync(targetPath)) continue;
+
+      fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+      try {
+        fs.rmSync(linkPath, { recursive: true, force: true });
+      } catch {
+        // Best effort: the subsequent symlink call will surface any real error.
+      }
+      const type = fs.statSync(targetPath).isDirectory() ? 'dir' : 'file';
+      fs.symlinkSync(targetPath, linkPath, type);
     }
 
     try {
