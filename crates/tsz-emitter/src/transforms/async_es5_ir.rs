@@ -952,6 +952,23 @@ impl<'a> AsyncES5Transformer<'a> {
         {
             return self.find_suspension_expression(paren.expression);
         }
+        // Type-only wrappers: `(await foo()) as T`, `<T>await foo()`,
+        // `await foo() satisfies T`, `(await foo())!`. These are stripped
+        // by `expression_to_ir`, so the analysis must look through them
+        // too — otherwise we treat `var x = (await foo()) as T;` as
+        // "no await" and emit `_a.sent()` without a preceding yield.
+        if (node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+            && let Some(assertion) = self.arena.get_type_assertion(node)
+        {
+            return self.find_suspension_expression(assertion.expression);
+        }
+        if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr_ex(node)
+        {
+            return self.find_suspension_expression(unary.expression);
+        }
         if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
             && let Some(cond) = self.arena.get_conditional_expr(node)
         {
@@ -2075,6 +2092,22 @@ impl<'a> AsyncES5Transformer<'a> {
             && let Some(paren) = self.arena.get_parenthesized(node)
         {
             return self.contains_await_recursive(paren.expression);
+        }
+
+        // Type-only expression wrappers (TS-only syntax stripped by
+        // `expression_to_ir`). Analysis must look through them too so
+        // that `(await foo()) as T` is detected as containing an await.
+        if (node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+            && let Some(assertion) = self.arena.get_type_assertion(node)
+        {
+            return self.contains_await_recursive(assertion.expression);
+        }
+        if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr_ex(node)
+        {
+            return self.contains_await_recursive(unary.expression);
         }
 
         // Check try/catch/finally statements

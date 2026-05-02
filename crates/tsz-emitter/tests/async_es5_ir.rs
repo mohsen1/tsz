@@ -200,3 +200,39 @@ fn test_async_class_extends_await_preserves_private_field_weakmaps() {
         "Output must contain a `var` declaration for the private-field WeakMap.\nOutput:\n{output}"
     );
 }
+
+/// `await` wrapped in a TypeScript type-only expression
+/// (`as T`, `<T>...`, `satisfies T`, non-null `!`) must still be
+/// detected by `contains_await_recursive` and `find_suspension_expression`,
+/// otherwise the IR transformer emits `_a.sent()` without a preceding
+/// `[4 /*yield*/]` instruction in the generated state machine.
+/// Devin review: <https://github.com/mohsen1/tsz/pull/2278#discussion_r3176478496>
+#[test]
+fn test_async_await_under_as_expression_emits_yield() {
+    let output =
+        transform_and_print("async function f() { var x = (await bar()) as number; after(x); }");
+    assert!(
+        output.contains("[4 /*yield*/"),
+        "Output must contain a yield instruction for `(await bar()) as number`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_await_under_non_null_assertion_emits_yield() {
+    let output = transform_and_print("async function f() { var x = (await bar())!; after(x); }");
+    assert!(
+        output.contains("[4 /*yield*/"),
+        "Output must contain a yield instruction for `(await bar())!`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_await_under_satisfies_emits_yield() {
+    let output = transform_and_print(
+        "async function f() { var x = (await bar()) satisfies number; after(x); }",
+    );
+    assert!(
+        output.contains("[4 /*yield*/"),
+        "Output must contain a yield instruction for `(await bar()) satisfies number`.\nOutput:\n{output}"
+    );
+}
