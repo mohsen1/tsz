@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-02
 - **Branch**: `perf/binder-presize-symbol-arenas`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2218
+- **Status**: ready
 - **Workstream**: 5 (large-repo residency)
 
 ## Intent
@@ -40,3 +40,7 @@ This builds on the same shape as the recently-merged pre-size patches
 
 - `cargo check -p tsz-core` — clean
 - `cargo nextest run -p tsz-core -E 'test(test_merge)'` — 13/13
+- Rebase verification on 2026-05-02:
+  - `cargo fmt --check` — clean
+  - `cargo check -p tsz-core` — clean
+  - `cargo test -p tsz-core test_merge` — 13/13 (`cargo nextest` unavailable locally)
