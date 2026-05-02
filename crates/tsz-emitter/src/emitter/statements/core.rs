@@ -800,6 +800,7 @@ impl<'a> Printer<'a> {
             node,
             recovered_async_arrow_return.is_some(),
         );
+        self.emit_recovered_typeof_member_call_after_variable_statement(node);
 
         // CommonJS: emit exports.X = X; after the declaration
         if is_exported && !export_names.is_empty() {
@@ -948,6 +949,83 @@ impl<'a> Printer<'a> {
         self.write("}");
         self.write_line();
         self.write_semicolon();
+    }
+
+    fn emit_recovered_typeof_member_call_after_variable_statement(&mut self, node: &Node) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = std::cmp::min(node.end as usize, text.len());
+        if start >= end {
+            return;
+        }
+        let segment = &text[start..end];
+        let Some(typeof_rel) = segment.find(".typeof(") else {
+            return;
+        };
+        let open = start + typeof_rel + ".typeof".len();
+        let Some(close) = self.find_matching_source_paren(open, end) else {
+            return;
+        };
+        let argument = text[open + 1..close].trim();
+        if argument.is_empty() {
+            return;
+        }
+
+        self.write_line();
+        self.write("typeof (");
+        self.write(argument);
+        self.write(");");
+    }
+
+    fn find_matching_source_paren(&self, open: usize, limit: usize) -> Option<usize> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        if bytes.get(open) != Some(&b'(') {
+            return None;
+        }
+
+        let mut depth = 1u32;
+        let mut i = open + 1;
+        while i < limit && i < bytes.len() {
+            match bytes[i] {
+                b'\'' | b'"' | b'`' => {
+                    i = self.skip_quoted_source_text(i, limit);
+                    continue;
+                }
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn skip_quoted_source_text(&self, quote_start: usize, limit: usize) -> usize {
+        let Some(text) = self.source_text else {
+            return quote_start + 1;
+        };
+        let bytes = text.as_bytes();
+        let quote = bytes[quote_start];
+        let mut i = quote_start + 1;
+        while i < limit && i < bytes.len() {
+            if bytes[i] == b'\\' {
+                i = (i + 2).min(limit);
+                continue;
+            }
+            if bytes[i] == quote {
+                return i + 1;
+            }
+            i += 1;
+        }
+        i
     }
 
     fn recovered_async_arrow_return_name(&self, node: &Node) -> Option<String> {
