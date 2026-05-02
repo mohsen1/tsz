@@ -1448,6 +1448,15 @@ impl<'a> Printer<'a> {
                 self.write(&recovered_yield_call);
                 skip_recovered_yield_operand_statement = true;
             } else {
+                if let Some(previous_stmt) = stmt_i
+                    .checked_sub(1)
+                    .and_then(|previous_i| source.statements.nodes.get(previous_i))
+                    .and_then(|&previous_idx| self.arena.get(previous_idx))
+                    && let Some(recovered_operator) =
+                        self.recovered_trailing_binary_operator_text(previous_stmt, stmt_node)
+                {
+                    self.write(&recovered_operator);
+                }
                 self.emit(stmt_idx);
             }
             let emitted_output = self.writer.len() > before_len;
@@ -1840,6 +1849,79 @@ impl<'a> Printer<'a> {
         };
         let start = self.skip_trivia_forward(node.pos, node.end) as usize;
         text.as_bytes().get(start) == Some(&b'(')
+    }
+
+    fn recovered_trailing_binary_operator_text(
+        &self,
+        previous: &Node,
+        current: &Node,
+    ) -> Option<String> {
+        if previous.kind != syntax_kind_ext::EXPRESSION_STATEMENT
+            || current.kind != syntax_kind_ext::EXPRESSION_STATEMENT
+        {
+            return None;
+        }
+
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let previous_start = (previous.pos as usize).min(bytes.len());
+        let mut previous_end = (previous.end as usize).min(bytes.len());
+        while previous_end > previous_start
+            && matches!(bytes[previous_end - 1], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            previous_end -= 1;
+        }
+
+        let previous_text = text.get(previous_start..previous_end)?;
+        let operator = [
+            "instanceof",
+            "===",
+            "!==",
+            ">>>",
+            "&&",
+            "||",
+            "??",
+            "==",
+            "!=",
+            "<=",
+            ">=",
+            "<<",
+            ">>",
+            "**",
+            "in",
+            "|",
+            "&",
+            "^",
+            "<",
+            ">",
+            "+",
+            "-",
+            "*",
+            "/",
+            "%",
+        ]
+        .into_iter()
+        .find(|operator| previous_text.ends_with(operator))?;
+
+        let mut start = previous_end.checked_sub(operator.len())?;
+        while start > previous_start && matches!(bytes[start - 1], b' ' | b'\t') {
+            start -= 1;
+        }
+
+        let current_expr = self
+            .arena
+            .get_expression_statement(current)
+            .and_then(|stmt| self.arena.get(stmt.expression))?;
+        let end = (current_expr.pos as usize).min(bytes.len());
+        if end < previous_end {
+            return None;
+        }
+
+        let recovered = text.get(start..end)?;
+        if recovered.contains('\n') || recovered.contains('\r') {
+            return None;
+        }
+        Some(recovered.to_string())
     }
 
     fn recovered_debugger_namespace_line(&self, node: &Node) -> Option<(u32, Option<&'a str>)> {
