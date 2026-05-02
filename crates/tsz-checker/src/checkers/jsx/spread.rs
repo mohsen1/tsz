@@ -151,8 +151,7 @@ impl<'a> CheckerState<'a> {
         let props_display = match preferred_target_display {
             Some(display) if !display.is_empty() => display.to_string(),
             _ => {
-                let props_display_type =
-                    self.strip_jsx_children_injection_for_display(props_type);
+                let props_display_type = self.strip_jsx_children_injection_for_display(props_type);
                 self.format_type(props_display_type)
             }
         };
