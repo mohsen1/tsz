@@ -643,7 +643,13 @@ impl<'a> Printer<'a> {
                     }
                     self.write("export default ");
                     if let Some(cn) = self.arena.get(export.export_clause) {
-                        self.emit_class_es6_with_options(cn, export.export_clause, true, None);
+                        self.emit_class_es6_with_options(
+                            cn,
+                            export.export_clause,
+                            true,
+                            None,
+                            None,
+                        );
                     }
                 } else {
                     self.write("export default ");
@@ -840,7 +846,7 @@ impl<'a> Printer<'a> {
                 self.write("export ");
             }
             // Emit the class with modifiers suppressed (decorators already emitted)
-            self.emit_class_es6_with_options(clause_node, export.export_clause, true, None);
+            self.emit_class_es6_with_options(clause_node, export.export_clause, true, None, None);
         } else {
             if !is_merged_subsequent {
                 self.write("export ");

@@ -20,7 +20,7 @@ impl<'a> Printer<'a> {
     /// This is the pure emission logic that can be reused by both the old API
     /// and the new transform system.
     pub(in crate::emitter) fn emit_class_es6(&mut self, node: &Node, idx: NodeIndex) {
-        self.emit_class_es6_with_options(node, idx, false, None);
+        self.emit_class_es6_with_options(node, idx, false, None, None);
     }
 
     pub(in crate::emitter) fn emit_class_es6_with_options(
@@ -29,6 +29,7 @@ impl<'a> Printer<'a> {
         _idx: NodeIndex,
         suppress_modifiers: bool,
         assignment_prefix: Option<(&str, String)>,
+        static_initializer_self_alias: Option<&str>,
     ) {
         let Some(class) = self.arena.get_class(node) else {
             return;
@@ -2049,12 +2050,26 @@ impl<'a> Printer<'a> {
                     self.write("writable: true,");
                     self.write_line();
                     self.write("value: ");
+                    let before = self.writer.len();
                     self.emit_expression_with_scoped_static_initializer_mode(
                         *init_idx,
                         static_initializer_this_binding,
                         static_initializer_super_base,
                         externalized_static_initializer_uses_undefined_receiver,
                     );
+                    let after = self.writer.len();
+                    if let Some(alias) = static_initializer_self_alias
+                        && !class_name.is_empty()
+                        && class_name != alias
+                    {
+                        let full = self.writer.get_output().to_string();
+                        let segment = &full[before..after];
+                        let replaced = replace_identifier(segment, &class_name, alias);
+                        if replaced != segment {
+                            self.writer.truncate(before);
+                            self.write(&replaced);
+                        }
+                    }
                     self.write_line();
                     self.decrease_indent();
                     self.write("});");
@@ -2073,12 +2088,26 @@ impl<'a> Printer<'a> {
                         }
                     }
                     self.write(" = ");
+                    let before = self.writer.len();
                     self.emit_expression_with_scoped_static_initializer_mode(
                         *init_idx,
                         static_initializer_this_binding,
                         static_initializer_super_base,
                         externalized_static_initializer_uses_undefined_receiver,
                     );
+                    let after = self.writer.len();
+                    if let Some(alias) = static_initializer_self_alias
+                        && !class_name.is_empty()
+                        && class_name != alias
+                    {
+                        let full = self.writer.get_output().to_string();
+                        let segment = &full[before..after];
+                        let replaced = replace_identifier(segment, &class_name, alias);
+                        if replaced != segment {
+                            self.writer.truncate(before);
+                            self.write(&replaced);
+                        }
+                    }
                     self.write(";");
                 }
                 // Emit saved trailing comments (e.g. `// ok` from
