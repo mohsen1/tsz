@@ -258,6 +258,24 @@ fn test_commonjs_type_only_named_import_is_elided() {
 }
 
 #[test]
+fn test_async_generator_dynamic_import_nested_yield() {
+    let source = "async function* foo() {\n    import((await import(yield \"foo\")).default);\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("Promise.resolve(`${yield yield __await(\"foo\")}`)"),
+        "Nested dynamic import yield should be awaited for async generator lowering.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_module_temp_vars_do_not_collide() {
     let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\nconsole.log(x);\n";
     let output = parse_lower_print(
