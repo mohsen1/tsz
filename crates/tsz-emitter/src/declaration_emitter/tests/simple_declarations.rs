@@ -71,6 +71,27 @@ fn test_class_declaration() {
 }
 
 #[test]
+fn test_class_instance_variable_unwraps_synthetic_anonymous_type() {
+    let source = r#"
+class C {
+    value: number;
+    private hidden: number;
+}
+var c = new C();
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare var c: C;"),
+        "Expected class instance variable to use the constructor type name: {output}"
+    );
+    assert!(
+        !output.contains(": {\n    : C;"),
+        "Did not expect synthetic anonymous object wrapper in declaration output: {output}"
+    );
+}
+
+#[test]
 fn test_interface_declaration() {
     let source = "export interface Point { x: number; y: number; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

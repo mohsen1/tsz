@@ -1375,6 +1375,9 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(initializer)
                 .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
         {
+            if let Some(type_text) = self.preferred_expression_type_text(initializer) {
+                return Self::strip_synthetic_anonymous_object_members(&type_text);
+            }
             return Self::strip_synthetic_anonymous_object_members(printed_type_text);
         }
 
@@ -1391,21 +1394,36 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn strip_synthetic_anonymous_object_members(
         type_text: &str,
     ) -> String {
-        if !type_text.contains(": {") {
-            return type_text.to_string();
+        if let Some(unwrapped) = Self::unwrap_synthetic_anonymous_object_type(type_text) {
+            return unwrapped;
         }
-        let stripped = type_text
-            .replace("\n    : {\n", "\n")
-            .replace("{\n    : {\n", "{\n")
-            .lines()
-            .filter(|line| line.trim() != ": {")
-            .collect::<Vec<_>>()
-            .join("\n");
-        if type_text.ends_with('\n') && !stripped.ends_with('\n') {
-            format!("{stripped}\n")
+        type_text.to_string()
+    }
+
+    fn unwrap_synthetic_anonymous_object_type(type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_prefix('{')?.trim_start();
+        let member = inner.strip_prefix(':')?.trim();
+        let member = if member.ends_with('}') {
+            let without_outer = member.strip_suffix('}').unwrap_or(member).trim_end();
+            if without_outer.ends_with(';') {
+                without_outer
+            } else {
+                member
+            }
         } else {
-            stripped
+            member
+        };
+        let member = member.strip_suffix(';').unwrap_or(member).trim();
+        if member.is_empty() {
+            return None;
         }
+        if member.starts_with('{') {
+            if let Some(unwrapped) = Self::unwrap_synthetic_anonymous_object_type(member) {
+                return Some(unwrapped);
+            }
+        }
+        Some(member.to_string())
     }
 
     pub(in crate::declaration_emitter) fn explicit_asserted_type_text(
