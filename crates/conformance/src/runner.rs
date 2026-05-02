@@ -498,10 +498,10 @@ fn weighted_shard_files(
     shards
         .into_iter()
         .nth(shard_index)
-        .map(|(_, mut selected)| {
-            selected.sort();
-            selected
-        })
+        // Keep the weighted assignment order. The runner feeds this list into a
+        // bounded concurrent stream, so starting heavier tests first avoids
+        // leaving a slow test to extend the tail after lighter work has drained.
+        .map(|(_, selected)| selected)
         .unwrap_or_default()
 }
 
