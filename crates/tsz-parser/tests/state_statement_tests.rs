@@ -651,6 +651,47 @@ fn parse_reserved_word_as_var_name_emits_ts1389() {
     );
 }
 
+/// Literal reserved words (`null`, `true`, `false`) cannot be parameter
+/// names. tsc emits TS1359 ("Identifier expected. 'X' is a reserved word
+/// that cannot be used here.") at the keyword position, in addition to
+/// the TS1138 it later emits at the colon. Conformance source:
+/// `compiler/reservedWords2.ts`.
+#[test]
+fn parse_literal_reserved_word_parameter_name_emits_ts1359_and_ts1138() {
+    let source = "class C { m(null: string) {} }";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(
+            &diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE
+        ),
+        "Expected TS1359 for `null` in parameter position, got codes: {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::PARAMETER_DECLARATION_EXPECTED),
+        "Expected TS1138 at the colon following `null`, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn parse_true_keyword_as_parameter_name_emits_ts1359_and_ts1138() {
+    let source = "function f(true: number) {}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(
+            &diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE
+        ),
+        "Expected TS1359 for `true` in parameter position, got codes: {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::PARAMETER_DECLARATION_EXPECTED),
+        "Expected TS1138 at the colon following `true`, got codes: {codes:?}"
+    );
+}
+
 #[test]
 fn parse_reserved_word_parameter_names_emit_ts1390_recovery_family() {
     let source = "function f1(enum) {}\nfunction f2(class) {}\nfunction f3(function) {}\nfunction f4(while) {}\nfunction f5(for) {}";

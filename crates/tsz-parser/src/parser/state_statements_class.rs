@@ -576,7 +576,29 @@ impl ParserState {
                 },
             )
         } else if self.is_identifier_or_keyword() {
-            if parameter_name_is_reserved_word {
+            if parameter_name_is_literal_reserved_word {
+                // Literal reserved words (`null`, `true`, `false`) cannot be
+                // parameter names. tsc emits TS1359 ("Identifier expected.
+                // 'X' is a reserved word that cannot be used here.") at the
+                // keyword position in addition to the TS1138 emitted later
+                // at the colon. Without this, the keyword would silently fall
+                // into the strict-mode-reserved-word branch below and lose
+                // the TS1359 diagnostic.
+                let reserved_start = self.token_pos();
+                let reserved_end = self.token_end();
+                self.error_reserved_word_identifier();
+                self.arena.add_identifier(
+                    SyntaxKind::Identifier as u16,
+                    reserved_start,
+                    reserved_end,
+                    IdentifierData {
+                        atom: Atom::NONE,
+                        escaped_text: String::new(),
+                        original_text: None,
+                        type_arguments: None,
+                    },
+                )
+            } else if parameter_name_is_reserved_word {
                 // Strict-mode reserved parameter names are grammar-checked later.
                 // Preserve the spelling so checker diagnostics and implicit-any
                 // messages use `static`/`let` instead of an empty recovery name.
