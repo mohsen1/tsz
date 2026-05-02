@@ -4,12 +4,34 @@
 use super::*;
 use crate::apparent_primitive_member_kind;
 use crate::evaluation::evaluate_rules::apparent::make_apparent_method_type;
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_type_cached, instantiate_type_with_infer_cached,
+    substitute_this_type_cached,
+};
 use crate::types::{
     MappedType, MappedTypeId, PropertyInfo, PropertyLookup, TupleElement, TypeApplicationId,
 };
 
 impl<'a> PropertyAccessEvaluator<'a> {
+    #[inline]
+    fn instantiate_type_cached(&self, type_id: TypeId, substitution: &TypeSubstitution) -> TypeId {
+        instantiate_type_cached(self.interner(), Some(self.db), type_id, substitution)
+    }
+
+    #[inline]
+    fn instantiate_type_with_infer_cached(
+        &self,
+        type_id: TypeId,
+        substitution: &TypeSubstitution,
+    ) -> TypeId {
+        instantiate_type_with_infer_cached(self.interner(), Some(self.db), type_id, substitution)
+    }
+
+    #[inline]
+    fn substitute_this_type_cached(&self, type_id: TypeId, this_type: TypeId) -> TypeId {
+        substitute_this_type_cached(self.interner(), Some(self.db), type_id, this_type)
+    }
+
     /// Lazily resolve a single property from a mapped type without fully expanding it.
     /// This avoids OOM by only computing the property type that was requested.
     ///
@@ -82,7 +104,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Handle name remapping if present (e.g., `as` clause in mapped types)
         if let Some(name_type) = mapped.name_type {
             let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
-            let remapped = instantiate_type(self.interner(), name_type, &subst);
+            let remapped = self.instantiate_type_cached(name_type, &subst);
             let remapped = self
                 .db
                 .evaluate_type_with_options(remapped, self.no_unchecked_indexed_access);
@@ -116,7 +138,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 .evaluate_type_with_options(index_access, self.no_unchecked_indexed_access)
         } else {
             let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
-            let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
+            let instantiated = self.instantiate_type_cached(mapped.template, &subst);
             self.db
                 .evaluate_type_with_options(instantiated, self.no_unchecked_indexed_access)
         };
@@ -190,7 +212,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Get the element type mapping: instantiate template with `number` as the key
         let number_type = TypeId::NUMBER;
         let subst = TypeSubstitution::single(mapped.type_param.name, number_type);
-        let mapped_element = instantiate_type(self.interner(), mapped.template, &subst);
+        let mapped_element = self.instantiate_type_cached(mapped.template, &subst);
         let mapped_element = self
             .db
             .evaluate_type_with_options(mapped_element, self.no_unchecked_indexed_access);
@@ -501,19 +523,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // unavailable (e.g., non-Array generic interface resolved to
                 // Object). Without the always-on `this` substitution, regressions
                 // appear in patterns like `(a: Bar | Baz).doThing(): Promise<this>`.
-                use crate::instantiation::instantiate::{
-                    instantiate_type_with_infer, substitute_this_type,
-                };
                 let instantiated_prop_type = if type_params.is_empty() {
                     prop.type_id
                 } else {
                     let substitution =
                         TypeSubstitution::from_args(self.interner(), type_params, &app.args);
-                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution)
+                    self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
-                let final_type =
-                    substitute_this_type(self.interner(), instantiated_prop_type, app_type);
+                let final_type = self.substitute_this_type_cached(instantiated_prop_type, app_type);
 
                 return PropertyAccessResult::simple(final_type);
             }
@@ -541,19 +559,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     &[]
                 };
 
-                use crate::instantiation::instantiate::{
-                    instantiate_type_with_infer, substitute_this_type,
-                };
                 let instantiated_prop_type = if type_params.is_empty() {
                     prop.type_id
                 } else {
                     let substitution =
                         TypeSubstitution::from_args(self.interner(), type_params, &app.args);
-                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution)
+                    self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
-                let final_type =
-                    substitute_this_type(self.interner(), instantiated_prop_type, app_type);
+                let final_type = self.substitute_this_type_cached(instantiated_prop_type, app_type);
 
                 return PropertyAccessResult::simple(final_type);
             }
@@ -591,19 +605,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     &[]
                 };
 
-                use crate::instantiation::instantiate::{
-                    instantiate_type_with_infer, substitute_this_type,
-                };
                 let instantiated_prop_type = if type_params.is_empty() {
                     prop.type_id
                 } else {
                     let substitution =
                         TypeSubstitution::from_args(self.interner(), type_params, &app.args);
-                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution)
+                    self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
-                let final_type =
-                    substitute_this_type(self.interner(), instantiated_prop_type, app_type);
+                let final_type = self.substitute_this_type_cached(instantiated_prop_type, app_type);
 
                 return PropertyAccessResult::simple(final_type);
             }
@@ -671,7 +681,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let Some(type_params) = type_params else {
             // No type params - still rebind polymorphic `this` to the concrete application.
             let resolved_body = if crate::contains_this_type(self.interner(), body_type) {
-                crate::substitute_this_type(self.interner(), body_type, app_type)
+                self.substitute_this_type_cached(body_type, app_type)
             } else {
                 body_type
             };
@@ -704,26 +714,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                     // Instantiate both read and write types
                     let instantiated_read_type =
-                        instantiate_type(self.interner(), prop.type_id, &substitution);
+                        self.instantiate_type_cached(prop.type_id, &substitution);
                     let instantiated_write_type =
-                        instantiate_type(self.interner(), prop.write_type, &substitution);
+                        self.instantiate_type_cached(prop.write_type, &substitution);
                     let instantiated_read_type =
                         if crate::contains_this_type(self.interner(), instantiated_read_type) {
-                            crate::substitute_this_type(
-                                self.interner(),
-                                instantiated_read_type,
-                                app_type,
-                            )
+                            self.substitute_this_type_cached(instantiated_read_type, app_type)
                         } else {
                             instantiated_read_type
                         };
                     let instantiated_write_type =
                         if crate::contains_this_type(self.interner(), instantiated_write_type) {
-                            crate::substitute_this_type(
-                                self.interner(),
-                                instantiated_write_type,
-                                app_type,
-                            )
+                            self.substitute_this_type_cached(instantiated_write_type, app_type)
                         } else {
                             instantiated_write_type
                         };
@@ -755,14 +757,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     let substitution =
                         TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     let instantiated_value =
-                        instantiate_type(self.interner(), idx.value_type, &substitution);
+                        self.instantiate_type_cached(idx.value_type, &substitution);
                     let instantiated_value =
                         if crate::contains_this_type(self.interner(), instantiated_value) {
-                            crate::substitute_this_type(
-                                self.interner(),
-                                instantiated_value,
-                                app_type,
-                            )
+                            self.substitute_this_type_cached(instantiated_value, app_type)
                         } else {
                             instantiated_value
                         };
@@ -781,14 +779,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     let substitution =
                         TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     let instantiated_value =
-                        instantiate_type(self.interner(), idx.value_type, &substitution);
+                        self.instantiate_type_cached(idx.value_type, &substitution);
                     let instantiated_value =
                         if crate::contains_this_type(self.interner(), instantiated_value) {
-                            crate::substitute_this_type(
-                                self.interner(),
-                                instantiated_value,
-                                app_type,
-                            )
+                            self.substitute_this_type_cached(instantiated_value, app_type)
                         } else {
                             instantiated_value
                         };
