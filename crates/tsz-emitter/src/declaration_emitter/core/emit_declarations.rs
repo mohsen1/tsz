@@ -144,6 +144,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_js_module_exports_object_names(source_file);
         self.js_named_export_names.extend(module_exports_obj_names);
         self.js_module_exports_object_stmts = module_exports_obj_stmts;
+        self.js_require_property_import_aliases.clear();
         let (cjs_aliases, cjs_alias_stmts) = self.collect_js_cjs_export_aliases(source_file);
         self.js_cjs_export_aliases = cjs_aliases;
         self.js_cjs_export_alias_statements = cjs_alias_stmts;
@@ -217,6 +218,12 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_synthetic_dependency_symbols.clear();
         let deferred_js_namespace_objects =
             self.collect_js_namespace_object_statements(source_file);
+        let (nested_module_export_namespaces, skipped_nested_module_export_namespace_stmts) =
+            self.collect_js_module_exports_nested_namespaces(source_file);
+        for stmt_idx in &skipped_nested_module_export_namespace_stmts {
+            self.js_deferred_function_export_statements.remove(stmt_idx);
+            self.js_deferred_value_export_statements.remove(stmt_idx);
+        }
 
         debug!(
             "[DEBUG] source_file has {} comments",
@@ -300,6 +307,33 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         for &stmt_idx in &source_file.statements.nodes {
+            if let Some(members) = nested_module_export_namespaces.get(&stmt_idx) {
+                if let Some((root_name, _)) = self.js_module_exports_property_assignment(stmt_idx) {
+                    self.write_indent();
+                    self.write("export namespace ");
+                    self.write(&root_name);
+                    self.write(" {");
+                    self.write_line();
+                    self.increase_indent();
+                    for &(member_name, initializer) in members {
+                        self.emit_js_object_literal_namespace(
+                            member_name,
+                            initializer,
+                            false,
+                            false,
+                        );
+                    }
+                    self.decrease_indent();
+                    self.write_indent();
+                    self.write("}");
+                    self.write_line();
+                    self.emitted_module_indicator = true;
+                }
+                continue;
+            }
+            if skipped_nested_module_export_namespace_stmts.contains(&stmt_idx) {
+                continue;
+            }
             if deferred_js_namespace_objects.contains(&stmt_idx)
                 && !self.js_namespace_object_stmt_emits_in_source_order(stmt_idx)
             {
@@ -342,6 +376,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_pending_top_level_jsdoc_type_aliases(source_file);
         self.emit_pending_jsdoc_callback_type_aliases(source_file);
         self.emit_trailing_top_level_jsdoc_type_aliases(source_file);
+        self.emit_js_require_property_import_aliases();
         self.emit_js_local_export_aliases();
         self.emit_js_cjs_export_aliases();
         if !self.source_is_js_file

@@ -807,6 +807,40 @@ export namespace A {
 }
 
 #[test]
+fn test_js_module_exports_object_uses_require_property_import_alias() {
+    let source = r#"
+const Something = require("fs").Something;
+const thing = new Something();
+module.exports = {
+    thing
+};
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert_eq!(
+        output.trim(),
+        "export const thing: Something;\nimport Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
+    );
+}
+
+#[test]
+fn test_js_nested_module_exports_object_emits_namespace_with_import_alias() {
+    let source = r#"
+const Something = require("fs").Something;
+module.exports.A = {}
+module.exports.A.B = {
+    thing: new Something()
+}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert_eq!(
+        output.trim(),
+        "export namespace A {\n    namespace B {\n        let thing: Something;\n    }\n}\nimport Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
+    );
+}
+
+#[test]
 fn test_js_export_import_equals_drops_export_keyword() {
     let source = "export import fs2 = require(\"fs\");";
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
