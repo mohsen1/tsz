@@ -23,6 +23,18 @@ fn test_comment_between_call_arguments() {
 }
 
 #[test]
+fn template_substitution_comment_with_dollar_brace_is_preserved() {
+    let source = "var x = `${/* ${ */ value}`;\n";
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("`${/* ${ */ value}`"),
+        "Template substitution comment containing `${{` should be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_skip_whitespace_forward_only_skips_whitespace() {
     use tsz_emitter::emitter::Printer;
     use tsz_parser::parser::node::NodeArena;
