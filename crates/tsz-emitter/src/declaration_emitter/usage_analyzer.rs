@@ -88,6 +88,8 @@ pub struct UsageAnalyzer<'a> {
     memoizing_types: FxHashSet<tsz_solver::TypeId>,
     /// The current file's arena (for distinguishing local vs foreign symbols)
     current_arena: Arc<NodeArena>,
+    /// Whether the current source file is JavaScript.
+    source_is_js_file: bool,
     /// Set of symbols from other modules that need imports
     foreign_symbols: FxHashSet<SymbolId>,
     /// Context flag: true when we're in a value position (expression, typeof)
@@ -103,6 +105,7 @@ impl<'a> UsageAnalyzer<'a> {
         type_interner: &'a TypeInterner,
         current_arena: Arc<NodeArena>,
         import_name_map: &'a FxHashMap<String, SymbolId>,
+        source_is_js_file: bool,
     ) -> Self {
         Self {
             arena,
@@ -116,6 +119,7 @@ impl<'a> UsageAnalyzer<'a> {
             type_symbol_cache: FxHashMap::default(),
             memoizing_types: FxHashSet::default(),
             current_arena,
+            source_is_js_file,
             foreign_symbols: FxHashSet::default(),
             in_value_pos: false,
         }
@@ -1359,11 +1363,26 @@ impl<'a> UsageAnalyzer<'a> {
         let Some(computed) = self.arena.get_computed_property(name_node) else {
             return;
         };
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        if self.source_is_js_file && self.computed_property_name_resolves_to_literal_key(expr_idx) {
+            return;
+        }
         // The expression inside [] may be an identifier, property access, etc.
         let old_in_value_pos = self.in_value_pos;
         self.in_value_pos = true;
-        self.analyze_entity_name(computed.expression);
+        self.analyze_entity_name(expr_idx);
         self.in_value_pos = old_in_value_pos;
+    }
+
+    fn computed_property_name_resolves_to_literal_key(&self, expr_idx: NodeIndex) -> bool {
+        self.type_cache
+            .node_types
+            .get(&expr_idx.0)
+            .copied()
+            .and_then(|type_id| visitor::literal_value(self.type_interner, type_id))
+            .is_some()
     }
 
     /// Analyze an entity name to extract the leftmost symbol.

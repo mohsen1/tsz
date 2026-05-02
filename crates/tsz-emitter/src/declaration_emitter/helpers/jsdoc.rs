@@ -867,6 +867,17 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
+    pub(crate) fn jsdoc_has_protected_for_node(&self, idx: NodeIndex) -> bool {
+        self.function_like_jsdoc_for_node(idx)
+            .as_deref()
+            .is_some_and(|jsdoc| {
+                jsdoc.lines().any(|raw_line| {
+                    let line = raw_line.trim_start_matches('*').trim();
+                    line == "@protected" || line.starts_with("@protected ")
+                })
+            })
+    }
+
     pub(crate) fn emit_jsdoc_template_parameters(&mut self, type_params: &[String]) {
         if type_params.is_empty() {
             return;
