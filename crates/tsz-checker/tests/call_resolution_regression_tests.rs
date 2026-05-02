@@ -2311,3 +2311,78 @@ a.doThing().then((result: Bar | Baz) => {});
          substituted class instance assignable to the matching nominal class"
     );
 }
+
+// ============================================================================
+// Overload resolution composes argument-inferred and return-context-inferred
+// type parameters when picking contextual types for callback arguments.
+// ============================================================================
+
+#[test]
+fn overload_with_outer_contextual_type_preserves_arg_inferred_type_params() {
+    // Mirrors the failure surface from `Array.from<T,U>(arrayLike: ArrayLike<T>,
+    // mapfn: (v: T, k: number) => U): U[]` when the call site has both an outer
+    // contextual return type (binding `U` via the return type) AND non-callback
+    // arguments (binding `T` via the iterable argument). Both inferences must
+    // contribute to the contextual type used when checking the callback body —
+    // otherwise the callback parameter gets the unresolved type parameter,
+    // producing TS2339 / TS2769 instead of compiling cleanly.
+    let source = r#"
+interface I {
+    call<T>(xs: T[]): T[];
+    call<T, U>(xs: T[], f: (v: T, k: number) => U, thisArg?: any): U[];
+}
+declare const i: I;
+interface A { a: string; }
+interface B { b: string; }
+declare const inputB: B[];
+const r: A[] = i.call(inputB, ({ b }): A => ({ a: b }));
+"#;
+    assert!(
+        no_errors(source),
+        "two-arg overload `call<T,U>(T[], (v:T,k:number)=>U):U[]` with outer \
+         contextual `A[]` must compose round-1 `T=B` (from `inputB:B[]`) with \
+         return-context `U=A` (from `A[]`) when forming the callback's \
+         contextual type; got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn overload_with_outer_contextual_type_no_spurious_ts2769() {
+    // Variant of the previous test using a `(v: T) => U` callback without
+    // destructuring or a contextually-annotated return type. The inner type
+    // parameter `T` must still be inferred from the iterable argument so the
+    // `x.b` member access in the callback body resolves; otherwise tsz emits
+    // a spurious TS2339 ("Property 'b' does not exist on type 'T'") and
+    // bubbles it up to a TS2769 on the call site.
+    let source = r#"
+interface I {
+    call<T>(xs: { readonly length: number; readonly [n: number]: T }): T[];
+    call<T, U>(xs: { readonly length: number; readonly [n: number]: T },
+                f: (v: T, k: number) => U, thisArg?: any): U[];
+}
+declare const i: I;
+interface B { b: string; }
+declare const inputB: { readonly length: number; readonly [n: number]: B };
+const r: string[] = i.call(inputB, (x) => x.b);
+const r2: number[] = i.call(inputB, (x) => x.b);
+"#;
+    let codes = get_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "expected TS2322 for `string[]` not assignable to `number[]`; got: {:?}",
+        get_diagnostics(source)
+    );
+    assert!(
+        !codes.contains(&2769),
+        "must not emit TS2769 — the overload resolves; the only error is the \
+         outer-contextual return-type mismatch (TS2322); got: {:?}",
+        get_diagnostics(source)
+    );
+    assert!(
+        !codes.contains(&2339),
+        "must not emit TS2339 — `x` must be inferred as `B` (not unresolved \
+         type parameter) when the callback body is checked; got: {:?}",
+        get_diagnostics(source)
+    );
+}
