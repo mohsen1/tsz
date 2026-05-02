@@ -49,6 +49,8 @@
 //! The thin wrapper in `async_es5.rs` uses this transformer with `IRPrinter`
 //! to emit JavaScript strings.
 
+use std::cell::Cell;
+
 use crate::transforms::helpers::HelpersNeeded;
 use crate::transforms::ir::{IRGeneratorCase, IRNode, IRParam};
 use tsz_parser::parser::NodeIndex;
@@ -120,6 +122,9 @@ pub struct AsyncES5Transformer<'a> {
     helpers_needed: HelpersNeeded,
     /// When true, looks for yield instead of await.
     pub(crate) generator_mode: bool,
+    temp_var_counter: Cell<u32>,
+    lexical_this_capture: Cell<bool>,
+    capture_this_references: Cell<bool>,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -131,11 +136,41 @@ impl<'a> AsyncES5Transformer<'a> {
             state: AsyncTransformState::new(),
             helpers_needed: HelpersNeeded::default(),
             generator_mode: false,
+            temp_var_counter: Cell::new(0),
+            lexical_this_capture: Cell::new(false),
+            capture_this_references: Cell::new(false),
         }
     }
 
     pub const fn set_source_text(&mut self, source_text: &'a str) {
         self.source_text = Some(source_text);
+    }
+
+    pub(crate) fn set_lexical_this_capture(&self, capture: bool) {
+        self.lexical_this_capture.set(capture);
+    }
+
+    pub(super) const fn captures_lexical_this(&self) -> bool {
+        self.lexical_this_capture.get()
+    }
+
+    pub(super) const fn captures_this_references(&self) -> bool {
+        self.capture_this_references.get()
+    }
+
+    pub(super) fn set_capture_this_references(&self, capture: bool) {
+        self.capture_this_references.set(capture);
+    }
+
+    pub(super) fn generate_hoisted_temp(&self) -> String {
+        let counter = self.temp_var_counter.get();
+        let name = if counter < 26 {
+            format!("_{}", (b'a' + counter as u8) as char)
+        } else {
+            format!("_{counter}")
+        };
+        self.temp_var_counter.set(counter + 1);
+        name
     }
 
     /// Get the helpers needed after transformation
@@ -863,6 +898,34 @@ impl<'a> AsyncES5Transformer<'a> {
         {
             return self.find_suspension_expression(unary.operand);
         }
+        if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(node)
+        {
+            return self.find_suspension_expression(computed.expression);
+        }
+        if (node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            && let Some(literal) = self.arena.get_literal_expr(node)
+        {
+            for &elem_idx in &literal.elements.nodes {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    continue;
+                };
+
+                if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    && let Some(prop) = self.arena.get_property_assignment(elem_node)
+                {
+                    if let Some(found) = self.find_suspension_expression(prop.name) {
+                        return Some(found);
+                    }
+                    if let Some(found) = self.find_suspension_expression(prop.initializer) {
+                        return Some(found);
+                    }
+                } else if let Some(found) = self.find_suspension_expression(elem_idx) {
+                    return Some(found);
+                }
+            }
+        }
         None
     }
 
@@ -880,7 +943,11 @@ impl<'a> AsyncES5Transformer<'a> {
         // await uses UnaryExprDataEx
         if let Some(await_expr) = self.arena.get_unary_expr_ex(node) {
             // Get the awaited expression
-            let operand = self.expression_to_ir(await_expr.expression);
+            let operand = if await_expr.expression.is_none() {
+                IRNode::Raw("".to_string().into())
+            } else {
+                self.expression_to_ir(await_expr.expression)
+            };
 
             // Emit: return [4 /*yield*/, operand];
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
@@ -950,6 +1017,30 @@ impl<'a> AsyncES5Transformer<'a> {
                     initializer: None,
                 });
 
+                if let Some((temp, initial_obj, lowered_init)) =
+                    self.lower_object_literal_es5_after_computed_suspension(decl.initializer)
+                {
+                    current_statements.push(IRNode::VarDecl {
+                        name: temp.clone().into(),
+                        initializer: None,
+                    });
+                    current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                        IRNode::id(temp),
+                        initial_obj,
+                    ))));
+                    self.emit_nested_suspension(
+                        decl.initializer,
+                        cases,
+                        current_statements,
+                        current_label,
+                    );
+                    current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                        IRNode::Identifier(name.into()),
+                        lowered_init,
+                    ))));
+                    return;
+                }
+
                 // Emit the yield for the nested await
                 self.emit_nested_suspension(
                     decl.initializer,
@@ -967,6 +1058,24 @@ impl<'a> AsyncES5Transformer<'a> {
                 )));
             } else {
                 // No await in initializer - emit as normal
+                if let Some((temp, lowered_init)) =
+                    self.lower_object_literal_es5_with_computed_properties(decl.initializer)
+                {
+                    current_statements.push(IRNode::VarDecl {
+                        name: name.clone().into(),
+                        initializer: None,
+                    });
+                    current_statements.push(IRNode::VarDecl {
+                        name: temp.into(),
+                        initializer: None,
+                    });
+                    current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                        IRNode::Identifier(name.into()),
+                        lowered_init,
+                    ))));
+                    return;
+                }
+
                 let init = if decl.initializer.is_none() {
                     None
                 } else {

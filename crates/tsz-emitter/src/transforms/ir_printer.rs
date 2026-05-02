@@ -74,6 +74,7 @@ pub struct IRPrinter<'a> {
     tslib_prefix: bool,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     pub(crate) base_printer_options: Option<PrinterOptions>,
+    generator_state_name: &'static str,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -221,6 +222,7 @@ impl<'a> IRPrinter<'a> {
             tslib_prefix: false,
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
+            generator_state_name: "_a",
         }
     }
 
@@ -242,6 +244,7 @@ impl<'a> IRPrinter<'a> {
             tslib_prefix: false,
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
+            generator_state_name: "_a",
         }
     }
 
@@ -263,6 +266,7 @@ impl<'a> IRPrinter<'a> {
             tslib_prefix: false,
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
+            generator_state_name: "_a",
         }
     }
 
@@ -304,6 +308,10 @@ impl<'a> IRPrinter<'a> {
     /// Mark this printer as targeting ES5 (disables `let`/`const` emission).
     pub const fn set_target_es5(&mut self, es5: bool) {
         self.target_es5 = es5;
+    }
+
+    pub const fn set_generator_state_name(&mut self, name: &'static str) {
+        self.generator_state_name = name;
     }
 
     /// When true, suppress comment annotations like `/** @class */` in output.
@@ -1211,6 +1219,10 @@ impl<'a> IRPrinter<'a> {
                 hoisted_vars,
                 promise_constructor,
             } => {
+                let previous_generator_state_name = self.generator_state_name;
+                if hoisted_vars.iter().any(|name| name == "_a") {
+                    self.generator_state_name = "_b";
+                }
                 self.write("return __awaiter(");
                 self.emit_node(this_arg);
                 if let Some(ctor) = promise_constructor {
@@ -1253,11 +1265,14 @@ impl<'a> IRPrinter<'a> {
                     self.write_indent();
                     self.write("});");
                 }
+                self.generator_state_name = previous_generator_state_name;
             }
             IRNode::GeneratorBody { has_await, cases } => {
                 self.write("return ");
                 self.write_helper("__generator");
-                self.write("(this, function (_a) {");
+                self.write("(this, function (");
+                self.write(self.generator_state_name);
+                self.write(") {");
                 if !*has_await || cases.is_empty() {
                     // Simple body - always multi-line to match tsc
                     if cases.is_empty() {
@@ -1286,7 +1301,9 @@ impl<'a> IRPrinter<'a> {
                     self.write_line();
                     self.increase_indent();
                     self.write_indent();
-                    self.write("switch (_a.label) {");
+                    self.write("switch (");
+                    self.write(self.generator_state_name);
+                    self.write(".label) {");
                     self.write_line();
                     self.increase_indent();
 
@@ -1345,10 +1362,12 @@ impl<'a> IRPrinter<'a> {
                 self.write("]");
             }
             IRNode::GeneratorSent => {
-                self.write("_a.sent()");
+                self.write(self.generator_state_name);
+                self.write(".sent()");
             }
             IRNode::GeneratorLabel => {
-                self.write("_a.label");
+                self.write(self.generator_state_name);
+                self.write(".label");
             }
 
             IRNode::IfBreak {

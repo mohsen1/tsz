@@ -118,10 +118,12 @@ impl<'a> AsyncES5Emitter<'a> {
 
     pub fn set_lexical_this(&mut self, capture: bool) {
         self.this_capture_depth = u32::from(capture);
+        self.transformer.set_lexical_this_capture(capture);
     }
 
     pub fn set_use_this_capture(&mut self, capture: bool) {
         self.this_capture_depth = u32::from(capture);
+        self.transformer.set_lexical_this_capture(capture);
     }
 
     /// Set the class name for private field access transformations
@@ -208,6 +210,9 @@ impl<'a> AsyncES5Emitter<'a> {
         }
         printer.set_indent_level(self.indent_level);
         printer.set_tslib_prefix(self.tslib_prefix);
+        if hoisted.iter().any(|name| name == "_a") {
+            printer.set_generator_state_name("_b");
+        }
         printer.emit(&ir);
         (printer.take_output(), hoisted, directives)
     }

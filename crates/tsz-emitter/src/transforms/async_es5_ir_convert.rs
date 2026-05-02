@@ -53,7 +53,9 @@ impl<'a> AsyncES5Transformer<'a> {
             k if k == SyntaxKind::TrueKeyword as u16 => IRNode::BooleanLiteral(true),
             k if k == SyntaxKind::FalseKeyword as u16 => IRNode::BooleanLiteral(false),
             k if k == SyntaxKind::NullKeyword as u16 => IRNode::NullLiteral,
-            k if k == SyntaxKind::ThisKeyword as u16 => IRNode::This { captured: false },
+            k if k == SyntaxKind::ThisKeyword as u16 => IRNode::This {
+                captured: self.captures_this_references(),
+            },
 
             k if k == SyntaxKind::Identifier as u16 => {
                 let text = crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx);
@@ -314,6 +316,168 @@ impl<'a> AsyncES5Transformer<'a> {
         props
     }
 
+    pub(super) fn lower_object_literal_es5_with_computed_properties(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(String, IRNode)> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let literal = self.arena.get_literal_expr(node)?;
+        let first_computed_idx = literal
+            .elements
+            .nodes
+            .iter()
+            .position(|&elem_idx| self.object_element_needs_computed_lowering(elem_idx))?;
+
+        let temp = self.generate_hoisted_temp();
+        let mut parts = Vec::new();
+        let initial_obj = IRNode::object(
+            self.convert_object_properties(&literal.elements.nodes[..first_computed_idx]),
+        );
+        parts.push(IRNode::assign(IRNode::id(temp.clone()), initial_obj));
+
+        for &elem_idx in literal.elements.nodes.iter().skip(first_computed_idx) {
+            if let Some(assignment) = self.lower_object_property_es5(elem_idx, &temp) {
+                parts.push(assignment);
+            }
+        }
+        parts.push(IRNode::id(temp.clone()));
+
+        Some((temp, IRNode::CommaExpr(parts)))
+    }
+
+    pub(super) fn lower_object_literal_es5_after_computed_suspension(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(String, IRNode, IRNode)> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let literal = self.arena.get_literal_expr(node)?;
+        let first_suspending_computed_idx =
+            literal.elements.nodes.iter().position(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                if elem_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    return false;
+                }
+                self.arena
+                    .get_property_assignment(elem_node)
+                    .is_some_and(|prop| self.computed_property_name_contains_await(prop.name))
+            })?;
+
+        let temp = self.generate_hoisted_temp();
+        let initial_obj =
+            IRNode::object(self.convert_object_properties(
+                &literal.elements.nodes[..first_suspending_computed_idx],
+            ));
+
+        let mut parts = Vec::new();
+        for &elem_idx in literal
+            .elements
+            .nodes
+            .iter()
+            .skip(first_suspending_computed_idx)
+        {
+            if let Some(assignment) = self.lower_object_property_es5(elem_idx, &temp) {
+                parts.push(assignment);
+            }
+        }
+        parts.push(IRNode::id(temp.clone()));
+
+        Some((temp, initial_obj, IRNode::CommaExpr(parts)))
+    }
+
+    fn object_element_needs_computed_lowering(&self, elem_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(elem_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+            return self
+                .arena
+                .get_property_assignment(node)
+                .is_some_and(|prop| self.object_property_name_is_computed(prop.name));
+        }
+        false
+    }
+
+    fn object_property_name_is_computed(&self, name_idx: NodeIndex) -> bool {
+        self.arena
+            .get(name_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+    }
+
+    fn computed_property_name_contains_await(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        self.arena
+            .get_computed_property(name_node)
+            .is_some_and(|computed| self.body_contains_await(computed.expression))
+    }
+
+    fn lower_object_property_es5(&self, elem_idx: NodeIndex, temp: &str) -> Option<IRNode> {
+        let node = self.arena.get(elem_idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let prop = self.arena.get_property_assignment(node)?;
+                let key = self.convert_property_key_to_element_access(prop.name, temp)?;
+                let value = self.expression_to_ir(prop.initializer);
+                Some(IRNode::assign(key, value))
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                let shorthand = self.arena.get_shorthand_property(node)?;
+                let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    shorthand.name,
+                );
+                Some(IRNode::assign(
+                    IRNode::prop(IRNode::id(temp.to_string()), name.clone()),
+                    IRNode::id(name),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn convert_property_key_to_element_access(
+        &self,
+        name_idx: NodeIndex,
+        temp: &str,
+    ) -> Option<IRNode> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed = self.arena.get_computed_property(name_node)?;
+            let expr = self.expression_to_ir(computed.expression);
+            Some(IRNode::elem(IRNode::id(temp.to_string()), expr))
+        } else if name_node.kind == SyntaxKind::Identifier as u16 {
+            let ident =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, name_idx);
+            Some(IRNode::prop(IRNode::id(temp.to_string()), ident))
+        } else if name_node.kind == SyntaxKind::StringLiteral as u16 {
+            let lit = self.arena.get_literal(name_node)?;
+            Some(IRNode::elem(
+                IRNode::id(temp.to_string()),
+                IRNode::string(lit.text.clone()),
+            ))
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
+            let lit = self.arena.get_literal(name_node)?;
+            Some(IRNode::elem(
+                IRNode::id(temp.to_string()),
+                IRNode::number(lit.text.clone()),
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Convert a property name node to `IRPropertyKey`
     fn convert_property_key(&self, idx: NodeIndex) -> IRPropertyKey {
         let Some(node) = self.arena.get(idx) else {
@@ -454,6 +618,38 @@ impl<'a> AsyncES5Transformer<'a> {
             return IRNode::Undefined;
         };
 
+        if func.is_async
+            && crate::transforms::emit_utils::block_is_empty(self.arena, func.body)
+            && let Some(param_name) = crate::transforms::emit_utils::first_await_default_param_name(
+                self.arena,
+                &func.parameters.nodes,
+            )
+            && func.parameters.nodes.iter().copied().any(|param_idx| {
+                crate::transforms::emit_utils::param_initializer_has_top_level_await(
+                    self.arena, param_idx,
+                )
+            })
+        {
+            let generated = format!(
+                "function () {{\n\
+            var args_1 = [];\n\
+            for (var _i = 0; _i < arguments.length; _i++) {{\n\
+                args_1[_i] = arguments[_i];\n\
+            }}\n\
+            return __awaiter(void 0, __spreadArray([], args_1, true), void 0, function ({param_name}) {{\n\
+                if ({param_name} === void 0) {{ {param_name} = _a.sent(); }}\n\
+                return __generator(this, function (_a) {{\n\
+                    switch (_a.label) {{\n\
+                        case 0: return [4 /*yield*/, ];\n\
+                        case 1: return [2 /*return*/];\n\
+                    }}\n\
+                }});\n\
+            }});\n\
+        }}"
+            );
+            return IRNode::Raw(generated.into());
+        }
+
         // Convert parameters
         let params = self.convert_parameters(&func.parameters.nodes);
 
@@ -468,7 +664,12 @@ impl<'a> AsyncES5Transformer<'a> {
             };
         };
 
-        if body_node.kind == syntax_kind_ext::BLOCK {
+        let previous_this_capture = self.captures_this_references();
+        if self.captures_lexical_this() {
+            self.set_capture_this_references(true);
+        }
+
+        let result = if body_node.kind == syntax_kind_ext::BLOCK {
             // Block body
             let body = self.convert_function_body(func.body);
             IRNode::FunctionExpr {
@@ -488,7 +689,10 @@ impl<'a> AsyncES5Transformer<'a> {
                 is_expression_body: true,
                 body_source_range: None,
             }
-        }
+        };
+
+        self.set_capture_this_references(previous_this_capture);
+        result
     }
 
     /// Convert function parameters to `IRParam` vec
