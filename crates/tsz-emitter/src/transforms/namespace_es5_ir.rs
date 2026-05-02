@@ -434,21 +434,79 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Root name is the first part
         let name = name_parts.first().cloned().unwrap_or_default();
 
-        let default_export_merge =
-            !is_exported && self.is_commonjs && self.default_exported_func_names.contains(&name);
+        let merges_with_default_func = self.is_commonjs
+            && (self.default_exported_func_names.contains(&name)
+                || self.source_file_has_default_exported_function(ns_idx, &name));
+        let default_export_merge = !is_exported && merges_with_default_func;
 
         Some(IRNode::NamespaceIIFE {
             name: name.into(),
             name_parts: name_parts.into_iter().map(Into::into).collect(),
             body,
             is_exported,
-            attach_to_exports: is_exported && self.is_commonjs,
+            attach_to_exports: is_exported && self.is_commonjs && !merges_with_default_func,
             should_declare_var,
             default_export_merge,
             parent_name: None,
             param_name: param_name.map(Into::into),
             skip_sequence_indent: false,
         })
+    }
+
+    fn source_file_has_default_exported_function(&self, ns_idx: NodeIndex, name: &str) -> bool {
+        let mut current = ns_idx;
+        while current != NodeIndex::NONE {
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::SOURCE_FILE {
+                let Some(source_file) = self.arena.get_source_file(node) else {
+                    return false;
+                };
+                return source_file.statements.nodes.iter().any(|&stmt_idx| {
+                    self.default_exported_function_name(stmt_idx)
+                        .as_deref()
+                        .is_some_and(|func_name| func_name == name)
+                });
+            }
+            current = self.arena.parent_of(current).unwrap_or(NodeIndex::NONE);
+        }
+        false
+    }
+
+    fn default_exported_function_name(&self, stmt_idx: NodeIndex) -> Option<String> {
+        let stmt = self.arena.get(stmt_idx)?;
+        if stmt.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let export = self.arena.get_export_decl(stmt)?;
+            if export.is_type_only || !export.is_default_export || export.module_specifier.is_some()
+            {
+                return None;
+            }
+            let clause = self.arena.get(export.export_clause)?;
+            if clause.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                return None;
+            }
+            let func = self.arena.get_function(clause)?;
+            if self.arena.is_declare(&func.modifiers) || func.body.is_none() {
+                return None;
+            }
+            return get_identifier_text(self.arena, func.name);
+        }
+
+        if stmt.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            let func = self.arena.get_function(stmt)?;
+            if !self
+                .arena
+                .has_modifier(&func.modifiers, SyntaxKind::DefaultKeyword)
+                || self.arena.is_declare(&func.modifiers)
+                || func.body.is_none()
+            {
+                return None;
+            }
+            return get_identifier_text(self.arena, func.name);
+        }
+
+        None
     }
 
     /// Check if a namespace body contains any value declarations
