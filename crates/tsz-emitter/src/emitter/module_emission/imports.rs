@@ -776,28 +776,56 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn emit_import_equals_declaration(&mut self, node: &Node) {
         let before_len = self.writer.len();
-        self.emit_import_equals_declaration_inner(node);
+        self.emit_import_equals_declaration_inner(node, false);
         if self.writer.len() > before_len {
             self.write_semicolon();
         }
     }
 
-    pub(in crate::emitter) fn emit_import_equals_declaration_inner(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_exported_import_equals_declaration(&mut self, node: &Node) {
+        let before_len = self.writer.len();
+        self.emit_import_equals_declaration_inner(node, true);
+        if self.writer.len() > before_len {
+            self.write_semicolon();
+        }
+    }
+
+    pub(in crate::emitter) fn emit_import_equals_declaration_inner(
+        &mut self,
+        node: &Node,
+        force_exported: bool,
+    ) {
         let Some(import) = self.arena.get_import_decl(node) else {
             return;
         };
-
-        if !self.import_decl_has_runtime_value(import) {
-            return;
-        }
 
         if import.import_clause.is_none() {
             return;
         }
 
+        // Check if this import alias is a CJS exported name.
+        // In that case, tsc emits `exports.b = a.foo;` directly (no `var`).
+        let alias_name = self
+            .arena
+            .get(import.import_clause)
+            .and_then(|n| self.arena.get_identifier(n))
+            .map(|id| id.escaped_text.clone());
+        let has_export_modifier = self
+            .arena
+            .has_modifier(&import.modifiers, SyntaxKind::ExportKeyword);
+        let is_exported_var = force_exported
+            || has_export_modifier
+            || alias_name
+                .as_ref()
+                .is_some_and(|name| self.commonjs_exported_var_names.contains(name.as_str()));
+
         let Some(module_node) = self.arena.get(import.module_specifier) else {
             return;
         };
+
+        if !is_exported_var && !self.import_decl_has_runtime_value(import) {
+            return;
+        }
 
         // Inside namespace IIFEs, elide namespace aliases (`import X = Y;`)
         // when X is never referenced in the remaining source.  tsc uses the
@@ -810,12 +838,14 @@ impl<'a> Printer<'a> {
             module_node.is_identifier() || module_node.kind == syntax_kind_ext::QUALIFIED_NAME;
         if is_namespace_alias
             && self.in_namespace_iife
+            && !is_exported_var
             && !self.import_alias_is_referenced_after_node(node, import)
         {
             return;
         }
         if is_namespace_alias
             && self.ctx.file_is_module
+            && !is_exported_var
             && !self.import_equals_has_value_usage_after_node(node, import)
         {
             return;
@@ -852,13 +882,6 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Check if this import alias is a CJS exported name.
-        // In that case, tsc emits `exports.b = a.foo;` directly (no `var`).
-        let alias_name = self
-            .arena
-            .get(import.import_clause)
-            .and_then(|n| self.arena.get_identifier(n))
-            .map(|id| id.escaped_text.clone());
         if self.in_namespace_iife
             && alias_name
                 .as_deref()
@@ -866,9 +889,6 @@ impl<'a> Printer<'a> {
         {
             return;
         }
-        let is_exported_var = alias_name
-            .as_ref()
-            .is_some_and(|name| self.commonjs_exported_var_names.contains(name.as_str()));
 
         if is_exported_var {
             // Emit directly as `exports.b = ...;` — the identifier substitution

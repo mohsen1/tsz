@@ -379,6 +379,58 @@ fn test_commonjs_export_equals_interface_is_erased() {
 }
 
 #[test]
+fn test_amd_export_import_namespace_alias_emits_export_assignment() {
+    let source = "namespace x { interface c {} }\nexport import a = x.c;\nvar b: a;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.a = void 0;"),
+        "exported import alias should be initialized in AMD output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.a = x.c;"),
+        "exported import alias should assign directly to exports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_commonjs_export_import_namespace_alias_keeps_export_equals() {
+    let source = "namespace x { interface c {} }\nexport import a = x.c;\nexport = x;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.a = void 0;"),
+        "exported import alias should still get CJS initialization.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.a = x.c;"),
+        "exported import alias should assign directly to exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("module.exports = x;"),
+        "export = should be preserved when an exported alias references the namespace.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__esModule"),
+        "export = output should not include an __esModule marker.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_for_await_of_target_es2018_preserved() {
     let source = "async function f() {\n    const iterable = [];\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
     let output = parse_lower_print(
