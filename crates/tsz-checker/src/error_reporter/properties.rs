@@ -305,7 +305,7 @@ impl<'a> CheckerState<'a> {
             .map(|_| init_type)
     }
 
-    fn js_constructor_receiver_display_for_node(&self, idx: NodeIndex) -> Option<String> {
+    fn js_constructor_receiver_display_for_node(&mut self, idx: NodeIndex) -> Option<String> {
         if !self.is_js_file() {
             return None;
         }
@@ -330,23 +330,32 @@ impl<'a> CheckerState<'a> {
             // assignments uses the function's own name as the apparent type
             // for `this`. tsc displays `Property 'X' does not exist on type
             // 'fn-name'` rather than the inferred expando object shape.
+            //
+            // Suppress the fallback when the function has an explicit JSDoc
+            // `@type` annotation that gives it a callable type — the user
+            // typed the function so the apparent `this` is whatever the
+            // annotation declares (e.g. `(this: Foo) => void`), not the
+            // function's own name.
+            let func_idx = self.find_enclosing_non_arrow_function(receiver)?;
+            if self
+                .jsdoc_callable_type_annotation_for_node(func_idx)
+                .is_some()
+            {
+                return None;
+            }
+            let func_node = self.ctx.arena.get(func_idx)?;
+            if func_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
+                && func_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return None;
+            }
+            let func_data = self.ctx.arena.get_function(func_node)?;
+            let name_node = self.ctx.arena.get(func_data.name)?;
             return self
-                .find_enclosing_non_arrow_function(receiver)
-                .and_then(|func_idx| {
-                    let func_node = self.ctx.arena.get(func_idx)?;
-                    if func_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
-                        && func_node.kind
-                            != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
-                    {
-                        return None;
-                    }
-                    let func_data = self.ctx.arena.get_function(func_node)?;
-                    let name_node = self.ctx.arena.get(func_data.name)?;
-                    self.ctx
-                        .arena
-                        .get_identifier(name_node)
-                        .map(|ident| ident.escaped_text.clone())
-                });
+                .ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.clone());
         }
         if receiver_node.kind != SyntaxKind::Identifier as u16 {
             return None;
