@@ -340,6 +340,15 @@ impl<'a> InferenceContext<'a> {
 
     /// Get the base primitive kind for a literal type.
     fn get_literal_base_kind(&self, type_id: TypeId) -> Option<u8> {
+        // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean),
+        // so they have base kind 2. Other intrinsics resolve to Intrinsic and
+        // never match Literal — short-circuit to None.
+        if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+            return Some(2);
+        }
+        if type_id.is_intrinsic() {
+            return None;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Literal(LiteralValue::String(_))) => Some(0),
             Some(TypeData::Literal(LiteralValue::Number(_))) => Some(1),
@@ -355,6 +364,15 @@ impl<'a> InferenceContext<'a> {
     /// 1. Literal widening: `"hello"` -> `string`, `42` -> `number`
     /// 2. Nominal hierarchy: `Dog` -> `Animal` (via resolver)
     pub(crate) fn get_base_type(&self, ty: TypeId) -> Option<TypeId> {
+        // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean)
+        // and widen to BOOLEAN. Other intrinsics fall into the `_ => Some(ty)`
+        // arm — short-circuit them to skip the dyn-dispatched lookup.
+        if ty == TypeId::BOOLEAN_TRUE || ty == TypeId::BOOLEAN_FALSE {
+            return Some(TypeId::BOOLEAN);
+        }
+        if ty.is_intrinsic() {
+            return Some(ty);
+        }
         match self.interner.lookup(ty) {
             // Literal widening: extract intrinsic type
             Some(TypeData::Literal(_)) => {
@@ -1105,6 +1123,9 @@ impl<'a> InferenceContext<'a> {
     fn rest_element_type(&self, type_id: TypeId) -> TypeId {
         if type_id == TypeId::ANY {
             return TypeId::ANY;
+        }
+        if type_id.is_intrinsic() {
+            return type_id;
         }
         match self.interner.lookup(type_id) {
             Some(TypeData::Array(elem)) => elem,

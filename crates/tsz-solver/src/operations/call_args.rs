@@ -323,6 +323,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Expand a `TypeParameter` to its constraint (if it has one).
     /// This is used when a `TypeParameter` from an outer scope is used as an argument.
     pub(super) fn expand_type_param(&self, ty: TypeId) -> TypeId {
+        if ty.is_intrinsic() {
+            return ty;
+        }
         match self.interner.lookup(ty) {
             Some(TypeData::TypeParameter(tp)) => tp.constraint.unwrap_or(ty),
             _ => ty,
@@ -998,6 +1001,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Safety limit reached - return current type to prevent infinite loop
                 return type_id;
             }
+            // Intrinsics are never ReadonlyType/NoInfer wrappers — exit.
+            if type_id.is_intrinsic() {
+                return type_id;
+            }
             match self.interner.lookup(type_id) {
                 Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                     type_id = inner;
@@ -1018,6 +1025,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// (the variadic portion after the fixed prefix).
     fn remaining_rest_type_after_offset(&self, rest_type: TypeId, consumed: usize) -> TypeId {
         if consumed == 0 {
+            return rest_type;
+        }
+        if rest_type.is_intrinsic() {
             return rest_type;
         }
         if let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(rest_type) {
@@ -1199,6 +1209,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return false;
         }
 
+        // Intrinsics never evaluate to Function/Callable.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
             Some(TypeData::Union(members) | TypeData::Intersection(members)) => self
@@ -1227,6 +1241,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         substitution: &crate::instantiation::instantiate::TypeSubstitution,
     ) -> bool {
         if substitution.map().is_empty() {
+            return false;
+        }
+        if arg_type.is_intrinsic() {
             return false;
         }
         // Only check function types - the issue is specifically when contextual typing

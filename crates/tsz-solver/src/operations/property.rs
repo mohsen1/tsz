@@ -1042,6 +1042,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let mut other_members: Vec<TypeId> = Vec::new();
 
         for (i, &member) in members.iter().enumerate() {
+            if member.is_intrinsic() {
+                other_members.push(member);
+                continue;
+            }
             match self.interner().lookup(member) {
                 Some(TypeData::Union(_)) => {
                     if union_idx.is_some() {

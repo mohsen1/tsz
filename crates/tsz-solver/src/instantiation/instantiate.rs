@@ -378,14 +378,20 @@ impl<'a> TypeInstantiator<'a> {
     ) -> bool {
         crate::visitor::collect_all_types(interner, template)
             .into_iter()
-            .any(|candidate| match interner.lookup(candidate) {
-                Some(TypeData::IndexAccess(obj, idx)) if obj == source_obj => {
-                    matches!(
-                        interner.lookup(idx),
-                        Some(TypeData::TypeParameter(info)) if info.name == param_name
-                    )
+            .any(|candidate| {
+                if candidate.is_intrinsic() {
+                    return false;
                 }
-                _ => false,
+                match interner.lookup(candidate) {
+                    Some(TypeData::IndexAccess(obj, idx)) if obj == source_obj => {
+                        !idx.is_intrinsic()
+                            && matches!(
+                                interner.lookup(idx),
+                                Some(TypeData::TypeParameter(info)) if info.name == param_name
+                            )
+                    }
+                    _ => false,
+                }
             })
     }
 
@@ -1266,17 +1272,27 @@ impl<'a> TypeInstantiator<'a> {
 
                     // Check for Tuple first (tsc: instantiateMappedTupleType)
                     // Must also handle ReadonlyType wrapping Tuple
-                    let tuple_source = match self.interner.lookup(resolved) {
-                        Some(TypeData::Tuple(tid)) => Some(tid),
-                        Some(TypeData::ReadonlyType(inner)) => {
-                            let ir =
-                                crate::evaluation::evaluate::evaluate_type(self.interner, inner);
-                            match self.interner.lookup(ir) {
-                                Some(TypeData::Tuple(tid)) => Some(tid),
-                                _ => None,
+                    let tuple_source = if resolved.is_intrinsic() {
+                        None
+                    } else {
+                        match self.interner.lookup(resolved) {
+                            Some(TypeData::Tuple(tid)) => Some(tid),
+                            Some(TypeData::ReadonlyType(inner)) => {
+                                let ir = crate::evaluation::evaluate::evaluate_type(
+                                    self.interner,
+                                    inner,
+                                );
+                                if ir.is_intrinsic() {
+                                    None
+                                } else {
+                                    match self.interner.lookup(ir) {
+                                        Some(TypeData::Tuple(tid)) => Some(tid),
+                                        _ => None,
+                                    }
+                                }
                             }
+                            _ => None,
                         }
-                        _ => None,
                     };
                     if let Some(tuple_id) = tuple_source {
                         let elements = self.interner.tuple_list(tuple_id);
@@ -2214,9 +2230,13 @@ fn template_has_lazy_application_in_composite(
         TypeData::Union(members) | TypeData::Intersection(members) => {
             let list = interner.type_list(members);
             list.iter().any(|&m| {
+                if m.is_intrinsic() {
+                    return false;
+                }
                 if let Some(TypeData::Application(app_id)) = interner.lookup(m) {
                     let app = interner.type_application(app_id);
-                    matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
+                    !app.base.is_intrinsic()
+                        && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
                 } else {
                     false
                 }

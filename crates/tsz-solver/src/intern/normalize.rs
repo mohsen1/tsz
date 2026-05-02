@@ -119,25 +119,30 @@ impl TypeInterner {
             // with primitives. In TypeScript, `string & {}` is just `string`, so we must not
             // mark this as disjoint.
             let mut mark_non_primitive = false;
-            match self.lookup(member) {
-                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                    let shape = self.object_shape(shape_id);
-                    if !(shape.properties.is_empty()
-                        && shape.string_index.is_none()
-                        && shape.number_index.is_none())
-                    {
+            // Intrinsics never resolve to Object/Function/Array/Tuple/etc.
+            // — skip the dyn-dispatched lookup and leave mark_non_primitive
+            // false (matches the existing `_ => {}` fall-through).
+            if !member.is_intrinsic() {
+                match self.lookup(member) {
+                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                        let shape = self.object_shape(shape_id);
+                        if !(shape.properties.is_empty()
+                            && shape.string_index.is_none()
+                            && shape.number_index.is_none())
+                        {
+                            mark_non_primitive = true;
+                        }
+                    }
+                    Some(
+                        TypeData::Function(_)
+                        | TypeData::Callable(_)
+                        | TypeData::Array(_)
+                        | TypeData::Tuple(_),
+                    ) => {
                         mark_non_primitive = true;
                     }
+                    _ => {}
                 }
-                Some(
-                    TypeData::Function(_)
-                    | TypeData::Callable(_)
-                    | TypeData::Array(_)
-                    | TypeData::Tuple(_),
-                ) => {
-                    mark_non_primitive = true;
-                }
-                _ => {}
             }
             let Some(member_class) = self.primitive_class_for(member) else {
                 has_non_primitive = has_non_primitive || mark_non_primitive;
@@ -193,7 +198,7 @@ impl TypeInterner {
             } else if member == TypeId::OBJECT {
                 // The `object` intrinsic is itself an object type
                 has_object_type = true;
-            } else {
+            } else if !member.is_intrinsic() {
                 // Check if this is a structural object type
                 // Task #48: Empty objects ARE object types and are disjoint from null/undefined
                 // null & {} = never (null is not a non-nullish value)
@@ -238,9 +243,11 @@ impl TypeInterner {
         let mut has_primitive = false;
 
         for &member in members {
-            if member == TypeId::OBJECT {
-                has_object_intrinsic = true;
-            } else if let Some(TypeData::Intrinsic(IntrinsicKind::Object)) = self.lookup(member) {
+            // TypeId::OBJECT and PROMISE_BASE both resolve to
+            // TypeData::Intrinsic(IntrinsicKind::Object); check both directly
+            // to avoid the dyn-dispatched lookup. No other TypeId resolves
+            // to Intrinsic(Object).
+            if member == TypeId::OBJECT || member == TypeId::PROMISE_BASE {
                 has_object_intrinsic = true;
             } else if self.primitive_class_for(member).is_some() {
                 has_primitive = true;
@@ -275,7 +282,8 @@ impl TypeInterner {
         for &member in members {
             if member.is_nullable() {
                 has_nullish = true;
-            } else if let Some(TypeData::TypeParameter(ref info)) = self.lookup(member)
+            } else if !member.is_intrinsic()
+                && let Some(TypeData::TypeParameter(ref info)) = self.lookup(member)
                 && let Some(constraint) = info.constraint
                 && self.is_clearly_non_nullable_constraint(constraint)
             {
@@ -477,6 +485,18 @@ impl TypeInterner {
     }
 
     fn get_unit_value_key(&self, type_id: TypeId) -> Option<UnitValueKey> {
+        // Fast path: intrinsic IDs are unit values only for null/undefined/void/true/false.
+        // Other intrinsics (string, number, boolean, bigint, symbol, object, any, unknown,
+        // never, error, ...) have no unit value; skip the dyn-dispatched lookup.
+        if type_id.is_intrinsic() {
+            return match type_id {
+                TypeId::NULL => Some(UnitValueKey::Null),
+                TypeId::UNDEFINED | TypeId::VOID => Some(UnitValueKey::Undefined),
+                TypeId::BOOLEAN_TRUE => Some(UnitValueKey::Boolean(true)),
+                TypeId::BOOLEAN_FALSE => Some(UnitValueKey::Boolean(false)),
+                _ => None,
+            };
+        }
         match self.lookup(type_id) {
             Some(TypeData::Literal(LiteralValue::String(atom))) => Some(UnitValueKey::String(atom)),
             Some(TypeData::Literal(LiteralValue::Number(num))) => {
@@ -584,6 +604,9 @@ impl TypeInterner {
         let mut callable_shapes: Vec<Arc<CallableShape>> = Vec::new();
 
         for &member in members {
+            if member.is_intrinsic() {
+                continue;
+            }
             let Some(key) = self.lookup(member) else {
                 continue;
             };
@@ -630,6 +653,9 @@ impl TypeInterner {
         let mut brand_sets: SmallVec<[FxHashSet<Atom>; 8]> = SmallVec::new();
 
         for &member in members {
+            if member.is_intrinsic() {
+                continue;
+            }
             let Some(type_data) = self.lookup(member) else {
                 continue;
             };

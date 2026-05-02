@@ -26,6 +26,12 @@ impl TypeInterner {
             return Some(1);
         }
 
+        // Other intrinsics (NUMBER, STRING, ANY, etc.) never resolve to
+        // Literal/Union/TemplateLiteral, so they cannot be enumerated.
+        if type_id.is_intrinsic() {
+            return None;
+        }
+
         match self.lookup(type_id) {
             // Accept all literal types (String, Number, Boolean, BigInt) - they all stringify
             Some(TypeData::Literal(_)) => Some(1),
@@ -142,6 +148,12 @@ impl TypeInterner {
         // Handle the top-level type (either a single value or a union)
         if let Some(val) = to_string_val(type_id) {
             return Some(vec![val]);
+        }
+
+        // Fast path: intrinsics that aren't BOOLEAN/BOOLEAN_TRUE/BOOLEAN_FALSE/NULL/UNDEFINED/VOID
+        // resolve to TypeData::Intrinsic and never match Union/TemplateLiteral. Skip the lookup.
+        if type_id.is_intrinsic() {
+            return None;
         }
 
         match self.lookup(type_id) {

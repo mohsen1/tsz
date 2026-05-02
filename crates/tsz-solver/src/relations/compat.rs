@@ -330,6 +330,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn normalize_assignability_operand(&mut self, mut type_id: TypeId) -> TypeId {
+        // Intrinsics never resolve to Lazy/Mapped/Application/KeyOf — skip
+        // the bounded normalization loop entirely.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         // Keep normalization bounded to avoid infinite resolver/evaluator cycles.
         for _ in 0..8 {
             let next = match self.interner.lookup(type_id) {
@@ -547,7 +552,27 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn is_function_target_member(&self, member: TypeId) -> bool {
-        let is_function_object_shape = match self.interner.lookup(member) {
+        let is_function_object_shape = if member.is_intrinsic() {
+            false
+        } else {
+            self.is_function_object_shape_member(member)
+        };
+        intrinsic_kind(self.interner, member) == Some(IntrinsicKind::Function)
+            || is_function_object_shape
+            || self
+                .subtype
+                .resolver
+                .get_boxed_type(IntrinsicKind::Function)
+                .is_some_and(|boxed| boxed == member)
+            || lazy_def_id(self.interner, member).is_some_and(|def_id| {
+                self.subtype
+                    .resolver
+                    .is_boxed_def_id(def_id, IntrinsicKind::Function)
+            })
+    }
+
+    fn is_function_object_shape_member(&self, member: TypeId) -> bool {
+        match self.interner.lookup(member) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 // Function interface has ~15 properties (own + inherited Object).
@@ -564,20 +589,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 }
             }
             _ => false,
-        };
-
-        intrinsic_kind(self.interner, member) == Some(IntrinsicKind::Function)
-            || is_function_object_shape
-            || self
-                .subtype
-                .resolver
-                .get_boxed_type(IntrinsicKind::Function)
-                .is_some_and(|boxed| boxed == member)
-            || lazy_def_id(self.interner, member).is_some_and(|def_id| {
-                self.subtype
-                    .resolver
-                    .is_boxed_def_id(def_id, IntrinsicKind::Function)
-            })
+        }
     }
 
     /// Create a new compatibility checker with a resolver.
@@ -967,6 +979,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return (true, false);
         }
 
+        // Other intrinsics (STRING/NUMBER/BOOLEAN/...) resolve to TypeData::Intrinsic
+        // and never have index signatures — skip both dyn lookups below.
+        if type_id.is_intrinsic() {
+            return (false, false);
+        }
+
         let type_id = match self.interner.lookup(type_id) {
             Some(TypeData::Lazy(def_id)) => self
                 .subtype
@@ -1015,6 +1033,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn collect_target_properties(&mut self, type_id: TypeId) -> rustc_hash::FxHashSet<Atom> {
+        // Intrinsics never have named properties to collect.
+        if type_id.is_intrinsic() {
+            return rustc_hash::FxHashSet::default();
+        }
         // Handle Mapped, Application, Lazy, and Conditional types by evaluating/resolving
         // them to concrete types before property collection.
         let type_id = match self.interner.lookup(type_id) {
@@ -1711,6 +1733,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn violates_weak_union(&self, source: TypeId, target: TypeId) -> bool {
+        // Intrinsics never resolve to Union; skip the dyn lookup.
+        if target.is_intrinsic() {
+            return false;
+        }
         // Don't resolve the target - check it directly for union type
         // (resolve_weak_type_ref was converting unions to objects, which is wrong)
         let target_key = match self.interner.lookup(target) {
@@ -1934,14 +1960,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if type_id.is_intrinsic() {
             return false;
         }
-        if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
-            matches!(
-                self.interner.lookup(member_type),
-                Some(TypeData::Literal(LiteralValue::String(_)))
-            ) || member_type == TypeId::STRING
-        } else {
-            false
+        let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) else {
+            return false;
+        };
+        if member_type == TypeId::STRING {
+            return true;
         }
+        // Other intrinsics (BOOLEAN_TRUE/FALSE etc.) never resolve to
+        // `Literal(String(_))` — skip the dyn lookup.
+        if member_type.is_intrinsic() {
+            return false;
+        }
+        matches!(
+            self.interner.lookup(member_type),
+            Some(TypeData::Literal(LiteralValue::String(_)))
+        )
     }
 
     /// Check if a type is a numeric enum member.
@@ -1949,14 +1982,19 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if type_id.is_intrinsic() {
             return false;
         }
-        if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
-            matches!(
-                self.interner.lookup(member_type),
-                Some(TypeData::Literal(LiteralValue::Number(_)))
-            ) || member_type == TypeId::NUMBER
-        } else {
-            false
+        let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) else {
+            return false;
+        };
+        if member_type == TypeId::NUMBER {
+            return true;
         }
+        if member_type.is_intrinsic() {
+            return false;
+        }
+        matches!(
+            self.interner.lookup(member_type),
+            Some(TypeData::Literal(LiteralValue::Number(_)))
+        )
     }
 
     fn source_lacks_union_common_property(
@@ -2169,6 +2207,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             || source == TypeId::VOID
         {
             return false;
+        }
+
+        // Other intrinsics (STRING/NUMBER/BOOLEAN/.../BOOLEAN_TRUE/FALSE) are
+        // assignable to `{}`. They never match Union/Intersection/IndexAccess/
+        // TypeParameter — the existing match falls through to `_ => true`.
+        if source.is_intrinsic() {
+            return true;
         }
 
         let key = match self.interner.lookup(source) {

@@ -112,6 +112,10 @@ fn type_may_display_iterator_protocol_inner(
     {
         return true;
     }
+    // Intrinsics never match any of the iterator-protocol-relevant variants.
+    if type_id.is_intrinsic() {
+        return false;
+    }
 
     match db.lookup(type_id) {
         Some(TypeData::Application(_))
@@ -143,6 +147,9 @@ fn type_may_display_iterator_protocol_inner(
 /// Returns `Some(len)` for tuple types with no rest elements, `None` otherwise
 /// (arrays, non-tuples, variadic tuples with rest elements).
 pub fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> Option<usize> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     if let Some(TypeData::Tuple(tuple_list_id)) = db.lookup(type_id) {
         let elements = db.tuple_list(tuple_list_id);
         if elements.iter().all(|e| !e.rest) {

@@ -519,6 +519,9 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
             let mut call_signatures = Vec::new();
 
             for &member in members.iter() {
+                if member.is_intrinsic() {
+                    continue;
+                }
                 match db.lookup(member) {
                     Some(TypeData::Callable(shape_id)) => {
                         let shape = db.callable_shape(shape_id);
@@ -727,10 +730,11 @@ pub fn is_literal_enum_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         db.lookup(type_id),
         Some(TypeData::Enum(_, member_type))
-            if matches!(
-                db.lookup(member_type),
-                Some(TypeData::Literal(LiteralValue::Number(_) | LiteralValue::String(_)))
-            )
+            if !member_type.is_intrinsic()
+                && matches!(
+                    db.lookup(member_type),
+                    Some(TypeData::Literal(LiteralValue::Number(_) | LiteralValue::String(_)))
+                )
     )
 }
 
@@ -872,6 +876,18 @@ pub enum IndexKeyKind {
 
 /// Classify a type for index key checking.
 pub fn classify_index_key(db: &dyn TypeDatabase, type_id: TypeId) -> IndexKeyKind {
+    // Fast path: STRING/NUMBER are the only intrinsic IDs we classify
+    // beyond Other (BOOLEAN_TRUE/FALSE resolve to Literal(Boolean) which
+    // also falls through). Skip the dyn lookup for intrinsics.
+    if type_id == TypeId::STRING {
+        return IndexKeyKind::String;
+    }
+    if type_id == TypeId::NUMBER {
+        return IndexKeyKind::Number;
+    }
+    if type_id.is_intrinsic() {
+        return IndexKeyKind::Other;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Intrinsic(crate::IntrinsicKind::String)) => IndexKeyKind::String,
         Some(TypeData::Intrinsic(crate::IntrinsicKind::Number)) => IndexKeyKind::Number,

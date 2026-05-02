@@ -256,11 +256,16 @@ fn widen_type_cached(
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
             let is_fresh_member = |m: TypeId| -> bool {
+                if m == TypeId::BOOLEAN_TRUE || m == TypeId::BOOLEAN_FALSE {
+                    return true;
+                }
+                if m.is_intrinsic() {
+                    return false;
+                }
                 matches!(
                     db.lookup(m),
                     Some(TypeData::Literal(_) | TypeData::UniqueSymbol(_))
-                ) || m == TypeId::BOOLEAN_TRUE
-                    || m == TypeId::BOOLEAN_FALSE
+                )
             };
             // Allow undefined/null/void as union members — they don't need
             // widening themselves but shouldn't prevent literal siblings from
@@ -269,6 +274,9 @@ fn widen_type_cached(
                 m == TypeId::UNDEFINED || m == TypeId::NULL || m == TypeId::VOID
             };
             let is_fresh_object_member = |m: TypeId| -> bool {
+                if m.is_intrinsic() {
+                    return false;
+                }
                 match db.lookup(m) {
                     Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => db
                         .object_shape(shape_id)
@@ -278,6 +286,9 @@ fn widen_type_cached(
                 }
             };
             let is_fresh_object_or_array_member = |m: TypeId| -> bool {
+                if m.is_intrinsic() {
+                    return false;
+                }
                 match db.lookup(m) {
                     Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => {
                         is_fresh_object_member(m)
@@ -770,16 +781,9 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
     if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
         return TypeId::BOOLEAN;
     }
-    if type_id.is_intrinsic() {
-        return type_id;
-    }
-
-    // Fast path: all other intrinsics (`number`, `string`, `boolean`, `any`,
-    // …) are neither `Literal(_)` nor `Union(_)`. The match below would
-    // fall through to `_ => type_id`. Skip the lookup and three-arm
-    // dispatch entirely; `is_intrinsic()` is a free `TypeId`-range check.
-    // BOOLEAN_TRUE / BOOLEAN_FALSE are also intrinsic but were widened
-    // above, so they don't reach here.
+    // Other intrinsics resolve to TypeData::Intrinsic; the match below would
+    // fall through to `_ => type_id`. `is_intrinsic()` is a free TypeId-range
+    // check — skip the dyn lookup.
     if type_id.is_intrinsic() {
         return type_id;
     }

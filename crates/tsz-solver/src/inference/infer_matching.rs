@@ -791,6 +791,9 @@ impl<'a> InferenceContext<'a> {
         let app = self.interner.type_application(app_id);
 
         // Extract DefId from the base type (must be Lazy(DefId))
+        if app.base.is_intrinsic() {
+            return None;
+        }
         let def_id = match self.interner.lookup(app.base)? {
             TypeData::Lazy(def_id) => def_id,
             _ => return None,
@@ -1180,9 +1183,11 @@ impl<'a> InferenceContext<'a> {
         // members that did not structurally match flow to naked type variables.
         // This prevents `B | PromiseLike<B>` from inferring `T = B | PromiseLike<B>`
         // against `T | PromiseLike<T>` after the wrapper member already matched.
-        let (naked_params, structured_params): (Vec<TypeId>, Vec<TypeId>) = parameterized
-            .iter()
-            .partition(|&&t| matches!(self.interner.lookup(t), Some(TypeData::TypeParameter(_))));
+        let (naked_params, structured_params): (Vec<TypeId>, Vec<TypeId>) =
+            parameterized.iter().partition(|&&t| {
+                !t.is_intrinsic()
+                    && matches!(self.interner.lookup(t), Some(TypeData::TypeParameter(_)))
+            });
 
         let mut structurally_matched_sources = std::collections::HashSet::new();
         for &source_ty in resolved_sources.iter() {
@@ -1534,6 +1539,11 @@ impl<'a> InferenceContext<'a> {
     ///
     /// Returns None if the type is not a literal string.
     fn extract_string_literal(&self, type_id: TypeId) -> Option<String> {
+        // BOOLEAN_TRUE/FALSE are intrinsic IDs that resolve to Literal(Boolean),
+        // never Literal(String). Other intrinsics resolve to Intrinsic. Skip lookup.
+        if type_id.is_intrinsic() {
+            return None;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Literal(LiteralValue::String(s))) => Some(self.interner.resolve_atom(s)),
             _ => None,
@@ -1573,8 +1583,9 @@ impl<'a> InferenceContext<'a> {
                 }
 
                 TemplateSpan::Type(type_id) => {
-                    // Check if this is an infer variable
-                    if let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
+                    // Check if this is an infer variable. Intrinsics are never Infer.
+                    if !type_id.is_intrinsic()
+                        && let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
                         && let Some(var) = self.find_type_param(param_info.name)
                     {
                         if is_last {
@@ -1633,6 +1644,10 @@ impl<'a> InferenceContext<'a> {
     /// like `{ contains(k) { ... } }` matched against `{ [K in keyof T]: Box<T[K]> }`
     /// would infer `T[K] = any` instead of `T[K] = unknown`.
     fn get_partially_inferable_type(&self, type_id: TypeId) -> TypeId {
+        // Intrinsics are never Function/Object/Tuple — return as-is.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);

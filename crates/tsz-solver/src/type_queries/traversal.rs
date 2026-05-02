@@ -360,6 +360,11 @@ where
         if finished.contains(&type_id) {
             return false;
         }
+        // Intrinsics are leaf types — never Recursive/Lazy/Application/etc. Skip
+        // the dyn-dispatched lookup entirely.
+        if type_id.is_intrinsic() {
+            return false;
+        }
         if !active.insert(type_id) {
             // Only report cycle as non-serializable (TS5088) if the path
             // went through a conditional type branch. Cycles through

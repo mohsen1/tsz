@@ -984,15 +984,19 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Returns the original type unchanged if it is not an all-union intersection
     /// or if distribution would produce too many combinations (>25).
     fn normalize_all_union_intersection_to_dnf(&self, ty: TypeId) -> TypeId {
+        // Intrinsics are never Intersection — skip the dyn lookup.
+        if ty.is_intrinsic() {
+            return ty;
+        }
         // Only applies to intersection types
         let Some(TypeData::Intersection(members_id)) = self.interner.lookup(ty) else {
             return ty;
         };
         let members = self.interner.type_list(members_id);
         // Only applies when ALL members are union types (all-union intersection)
-        let all_are_unions = members
-            .iter()
-            .all(|&id| matches!(self.interner.lookup(id), Some(TypeData::Union(_))));
+        let all_are_unions = members.iter().all(|&id| {
+            !id.is_intrinsic() && matches!(self.interner.lookup(id), Some(TypeData::Union(_)))
+        });
         if !all_are_unions {
             return ty;
         }

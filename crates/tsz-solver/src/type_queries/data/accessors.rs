@@ -94,6 +94,9 @@ pub fn extract_type_params_for_call(
     type_id: TypeId,
     type_arg_count: usize,
 ) -> Option<Vec<crate::types::TypeParamInfo>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => {
             let shape = db.function_shape(shape_id);
@@ -278,6 +281,9 @@ fn signature_has_literal_types(db: &dyn TypeDatabase, sig: &crate::types::CallSi
 /// constructor type's `typeof X` view, including expando-augmented variants).
 /// Returns None for non-object types or types without a recorded symbol.
 pub fn get_object_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             db.object_shape(shape_id).symbol
@@ -298,6 +304,9 @@ pub fn get_raw_property_type(
     type_id: TypeId,
     prop_name: tsz_common::Atom,
 ) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     let shape_id = match db.lookup(type_id) {
         Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
         _ => return None,
@@ -389,7 +398,7 @@ fn is_keyof_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
     match db.lookup(type_id) {
         Some(TypeData::KeyOf(target)) => {
-            matches!(db.lookup(target), Some(TypeData::TypeParameter(_)))
+            !target.is_intrinsic() && matches!(db.lookup(target), Some(TypeData::TypeParameter(_)))
         }
         Some(TypeData::Intersection(members)) => {
             let member_list = db.type_list(members);
@@ -405,13 +414,22 @@ fn is_keyof_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Returns `Some(source)` for homomorphic mapped types like `{ [K in keyof T]: T[K] }`,
 /// `None` otherwise.
 pub fn homomorphic_mapped_source(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     let Some(TypeData::Mapped(mapped_id)) = db.lookup(type_id) else {
         return None;
     };
     let mapped = db.mapped_type(mapped_id);
+    if mapped.template.is_intrinsic() {
+        return None;
+    }
     let Some(TypeData::IndexAccess(source, idx)) = db.lookup(mapped.template) else {
         return None;
     };
+    if idx.is_intrinsic() {
+        return None;
+    }
     let Some(TypeData::TypeParameter(param)) = db.lookup(idx) else {
         return None;
     };
@@ -813,6 +831,9 @@ pub fn get_object_shape_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::types::ObjectShapeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
         _ => None,
@@ -826,6 +847,9 @@ pub fn get_object_shape(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::ObjectShape>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             Some(db.object_shape(shape_id))
@@ -919,7 +943,11 @@ pub fn numeric_literal_index_valid_for_object(
         return false;
     }
     for &member in &members {
-        // Each member must be a numeric literal.
+        // Each member must be a numeric literal. Intrinsics that resolve to
+        // Literal (BOOLEAN_TRUE/FALSE) are Boolean, never Number — skip lookup.
+        if member.is_intrinsic() {
+            return false;
+        }
         let num_val = match db.lookup(member) {
             Some(TypeData::Literal(LiteralValue::Number(n))) => n.0,
             _ => return false,
@@ -987,6 +1015,9 @@ pub fn find_property_in_type_by_str(
 /// For intersection types, returns `true` if ANY member has the property.
 pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
     fn member_has_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
         match db.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = db.object_shape(shape_id);
@@ -1003,6 +1034,9 @@ pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &s
         }
     }
 
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
@@ -1060,6 +1094,9 @@ pub fn has_nonpublic_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str
         })
     }
 
+    if type_id.is_intrinsic() {
+        return false;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);

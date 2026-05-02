@@ -448,6 +448,11 @@ pub fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     {
         return true;
     }
+    // Other intrinsics (STRING/NUMBER/ANY/...) resolve to TypeData::Intrinsic
+    // and never match Literal/Enum/UniqueSymbol/Union — skip the dyn lookup.
+    if type_id.is_intrinsic() {
+        return false;
+    }
 
     match db.lookup(type_id) {
         Some(TypeData::Literal(_))
@@ -513,6 +518,17 @@ pub fn extract_string_literal_keys(
 /// * `Some(TypeId)` - The return type if this is a callable type
 /// * `None` - If this is not a callable type or `type_id` is unknown
 pub fn get_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // Handle special intrinsic types first; other intrinsics resolve to
+    // TypeData::Intrinsic and never match Function/Callable/Intersection.
+    if type_id == TypeId::ANY {
+        return Some(TypeId::ANY);
+    }
+    if type_id == TypeId::NEVER {
+        return Some(TypeId::NEVER);
+    }
+    if type_id.is_intrinsic() {
+        return None;
+    }
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => Some(db.function_shape(shape_id).return_type),
         Some(TypeData::Callable(shape_id)) => {
@@ -525,16 +541,7 @@ pub fn get_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId>
             let members = db.type_list(list_id);
             members.iter().find_map(|&m| get_return_type(db, m))
         }
-        _ => {
-            // Handle special intrinsic types
-            if type_id == TypeId::ANY {
-                Some(TypeId::ANY)
-            } else if type_id == TypeId::NEVER {
-                Some(TypeId::NEVER)
-            } else {
-                None
-            }
-        }
+        _ => None,
     }
 }
 
@@ -822,6 +829,9 @@ fn types_have_common_properties_relaxed(
     depth: u32,
 ) -> bool {
     fn get_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId, bool)> {
+        if type_id.is_intrinsic() {
+            return Vec::new();
+        }
         match db.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = db.object_shape(shape_id);
@@ -1278,6 +1288,9 @@ fn types_have_common_properties(
     // Returns (name, type_id, optional) — the optional flag is needed because
     // optional properties implicitly include `undefined` for comparability.
     fn get_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId, bool)> {
+        if type_id.is_intrinsic() {
+            return Vec::new();
+        }
         match db.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = db.object_shape(shape_id);

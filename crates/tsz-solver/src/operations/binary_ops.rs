@@ -1116,9 +1116,12 @@ impl<'a> BinaryOpEvaluator<'a> {
             // key space; otherwise it can become `... | undefined` and is not key-like.
             Some(TypeData::IndexAccess(object_type, index_type)) if defer_unresolved => {
                 let evaluated = self.interner.evaluate_type(type_id);
-                if let Some(TypeData::IndexAccess(_, _)) = self.interner.lookup(evaluated) {
-                    if let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
-                        self.interner.lookup(index_type)
+                if !evaluated.is_intrinsic()
+                    && let Some(TypeData::IndexAccess(_, _)) = self.interner.lookup(evaluated)
+                {
+                    if !index_type.is_intrinsic()
+                        && let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
+                            self.interner.lookup(index_type)
                         && let Some(constraint) = info.constraint
                     {
                         return self
@@ -1157,7 +1160,9 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::UNKNOWN {
             return false;
         }
-        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
+        if !type_id.is_intrinsic()
+            && let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id)
+        {
             let members = self.interner.type_list(list_id);
             return !members.is_empty()
                 && members

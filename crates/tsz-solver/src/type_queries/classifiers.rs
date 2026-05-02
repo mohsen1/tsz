@@ -122,14 +122,18 @@ pub fn classify_for_assignability_eval(
     match key {
         TypeData::Application(_) | TypeData::Lazy(_) => AssignabilityEvalKind::Application,
         TypeData::IndexAccess(object_type, _index_type) => {
-            let object_is_deferred_type_param = match db.lookup(object_type) {
-                Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
-                    info.constraint.is_none_or(|constraint| {
-                        crate::type_queries::is_type_parameter_like(db, constraint)
-                    })
+            let object_is_deferred_type_param = if object_type.is_intrinsic() {
+                false
+            } else {
+                match db.lookup(object_type) {
+                    Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
+                        info.constraint.is_none_or(|constraint| {
+                            crate::type_queries::is_type_parameter_like(db, constraint)
+                        })
+                    }
+                    Some(TypeData::ThisType) => true,
+                    _ => false,
                 }
-                Some(TypeData::ThisType) => true,
-                _ => false,
             };
 
             if crate::type_queries::contains_type_parameters_db(db, type_id)
@@ -186,7 +190,9 @@ pub fn get_application_lazy_def_id(
     }
     if let Some(TypeData::Application(app_id)) = db.lookup(type_id) {
         let app = db.type_application(app_id);
-        if let Some(TypeData::Lazy(def_id)) = db.lookup(app.base) {
+        if !app.base.is_intrinsic()
+            && let Some(TypeData::Lazy(def_id)) = db.lookup(app.base)
+        {
             return Some(def_id);
         }
     }
@@ -263,6 +269,9 @@ pub fn indexed_access_self_keyof(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
     let TypeData::IndexAccess(obj, idx) = db.lookup(type_id)? else {
         return None;
     };
+    if idx.is_intrinsic() {
+        return None;
+    }
     let TypeData::KeyOf(idx_inner) = db.lookup(idx)? else {
         return None;
     };

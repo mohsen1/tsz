@@ -8,6 +8,9 @@ impl TypeInterner {
     /// Empty objects like `{}` represent "any non-nullish value" in TypeScript.
     /// In intersections like `string & {}`, the empty object is redundant and can be removed.
     fn is_empty_object(&self, id: TypeId) -> bool {
+        if id.is_intrinsic() {
+            return false;
+        }
         match self.lookup(id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.object_shape(shape_id);
@@ -168,15 +171,16 @@ impl TypeInterner {
         // `(S["a"] & T) | (S["a"] & undefined)`, losing the deferred constraint
         // and making `T` incorrectly assignable to `(S & State<T>)["a"]`.
         let has_unresolved = flat.iter().any(|&id| {
-            matches!(
-                self.lookup(id),
-                Some(
-                    TypeData::Lazy(_)
-                        | TypeData::Application(_)
-                        | TypeData::Mapped(_)
-                        | TypeData::IndexAccess(_, _)
+            !id.is_intrinsic()
+                && matches!(
+                    self.lookup(id),
+                    Some(
+                        TypeData::Lazy(_)
+                            | TypeData::Application(_)
+                            | TypeData::Mapped(_)
+                            | TypeData::IndexAccess(_, _)
+                    )
                 )
-            )
         });
         if has_unresolved {
             let list_id = self.intern_type_list_from_slice(&flat);
@@ -286,7 +290,7 @@ impl TypeInterner {
         // `(A|B) & (C|D)` with interfaces stays as intersection.
         let has_non_union = flat
             .iter()
-            .any(|&id| !matches!(self.lookup(id), Some(TypeData::Union(_))));
+            .any(|&id| id.is_intrinsic() || !matches!(self.lookup(id), Some(TypeData::Union(_))));
         if has_non_union {
             if let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
                 return distributed;
@@ -307,9 +311,10 @@ impl TypeInterner {
                 let is_simpler = match self.lookup(distributed) {
                     Some(TypeData::Union(members)) => {
                         let list = self.type_list(members);
-                        !list
-                            .iter()
-                            .any(|&m| matches!(self.lookup(m), Some(TypeData::Intersection(_))))
+                        !list.iter().any(|&m| {
+                            !m.is_intrinsic()
+                                && matches!(self.lookup(m), Some(TypeData::Intersection(_)))
+                        })
                     }
                     _ => true,
                 };
@@ -456,6 +461,9 @@ impl TypeInterner {
         // construct signatures treated as overloads, losing the intersection semantics.
         let mut construct_source_count = 0;
         for &member in members {
+            if member.is_intrinsic() {
+                continue;
+            }
             let has_construct = match self.lookup(member) {
                 Some(TypeData::Function(func_id)) => self.function_shape(func_id).is_constructor,
                 Some(TypeData::Callable(callable_id)) => !self
@@ -590,6 +598,9 @@ impl TypeInterner {
 
         // Check if all members are objects
         for &member in members {
+            if member.is_intrinsic() {
+                return None;
+            }
             match self.lookup(member) {
                 Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     objects.push(self.object_shape(shape_id));
