@@ -217,6 +217,14 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_import_declaration(&mut self, node: &Node) {
+        if let Some(import) = self.arena.get_import_decl(node)
+            && let Some(clause_node) = self.arena.get(import.import_clause)
+            && clause_node.kind != syntax_kind_ext::IMPORT_CLAUSE
+        {
+            self.emit_import_equals_declaration(node);
+            return;
+        }
+
         if self.ctx.is_commonjs() {
             self.emit_import_declaration_commonjs(node);
         } else {

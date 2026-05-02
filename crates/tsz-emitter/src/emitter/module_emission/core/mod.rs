@@ -1632,6 +1632,9 @@ impl<'a> Printer<'a> {
                     k if k == SyntaxKind::Identifier as u16
                         || k == syntax_kind_ext::QUALIFIED_NAME =>
                     {
+                        if self.ctx.options.verbatim_module_syntax {
+                            return true;
+                        }
                         self.namespace_alias_target_has_runtime_value(
                             import_decl.module_specifier,
                             None,
