@@ -49,6 +49,9 @@ impl<'a> DeclarationEmitter<'a> {
         let const_asserted_enum_member = has_initializer
             .then(|| self.const_asserted_enum_access_member_text(initializer))
             .flatten();
+        let const_enum_member_initializer = (keyword == "const" && !has_type_annotation)
+            .then(|| self.simple_const_enum_access_member_text(initializer))
+            .flatten();
         let widened_enum_type = (has_initializer && keyword != "const")
             .then(|| self.simple_enum_access_base_name_text(initializer))
             .flatten();
@@ -68,7 +71,10 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten();
 
         // Determine if we should emit a literal initializer for const
-        if let Some(literal_initializer_text) = literal_initializer_text {
+        if let Some(enum_member_text) = const_enum_member_initializer {
+            self.write(if self.source_is_js_file { ": " } else { " = " });
+            self.write(&enum_member_text);
+        } else if let Some(literal_initializer_text) = literal_initializer_text {
             self.write(if self.source_is_js_file { ": " } else { " = " });
             self.write(&literal_initializer_text);
         } else {
