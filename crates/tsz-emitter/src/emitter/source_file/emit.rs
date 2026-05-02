@@ -966,7 +966,10 @@ impl<'a> Printer<'a> {
                                     if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
                                         let func = self.arena.get_function(clause)?;
                                         let fn_name = self.get_identifier_text_idx(func.name);
-                                        if &fn_name == name {
+                                        if &fn_name == name
+                                            || (name == "default_1"
+                                                && (fn_name.is_empty() || fn_name == "function"))
+                                        {
                                             return Some(node.pos);
                                         }
                                     }
