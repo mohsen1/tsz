@@ -138,6 +138,31 @@ mod tests {
         );
     }
 
+    /// The ES2017 transformer rewrites non-top-level `await` expressions to
+    /// `yield` for targets below ES2017, even when the surrounding function is
+    /// missing `async` and the checker reports a recovery error.
+    #[test]
+    fn invalid_await_in_function_emits_yield_for_es2015() {
+        let source = "function f() {\n    await 1;\n}\nawait 2;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("function f() {\n    yield 1;\n}"),
+            "Non-top-level await should downlevel to yield for ES2015.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("await 2;"),
+            "Top-level await should stay as module syntax.\nOutput:\n{output}"
+        );
+    }
+
     /// Preserve spacing and ordering around comments in `yield` expressions.
     #[test]
     fn yield_expression_comments_preserve_expected_spacing() {
