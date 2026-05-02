@@ -34,9 +34,40 @@ env:
   PNPM_STORE_DIR: ${{ github.workspace }}/.ci-cache/pnpm-store
 
 jobs:
+  bench-gate:
+    name: bench-gate
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.gate.outputs.should_run }}
+    steps:
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          should_run=true
+
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+              echo "CI conclusion was '${{ github.event.workflow_run.conclusion }}'; skipping bench."
+              should_run=false
+            else
+              latest_main_sha=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" \
+                --jq '.object.sha' 2>/dev/null || true)
+              if [[ -n "$latest_main_sha" && "${BENCH_TARGET_SHA}" != "$latest_main_sha" ]]; then
+                echo "Benchmark target ${BENCH_TARGET_SHA} is stale; latest main is ${latest_main_sha}. Skipping."
+                should_run=false
+              fi
+            fi
+          fi
+
+          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+
   bench-prepare:
     name: bench-prepare
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    needs: bench-gate
+    if: needs.bench-gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 90
     steps:
