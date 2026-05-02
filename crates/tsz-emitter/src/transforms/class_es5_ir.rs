@@ -1355,6 +1355,8 @@ impl<'a> ES5ClassTransformer<'a> {
     ) -> Vec<IRNode> {
         // Snapshot hoisted temps before converting statements
         let hoisted_before = self.extra_hoisted_temps.borrow().len();
+        let saved_temp_counter = self.temp_var_counter.get();
+        self.temp_var_counter.set(0);
 
         let mut stmts = if let Some(block_node) = self.arena.get(block_idx)
             && let Some(block) = self.arena.get_block(block_node)
@@ -1374,6 +1376,7 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             vec![]
         };
+        self.temp_var_counter.set(saved_temp_counter);
 
         // Collect any hoisted temps that were created during statement conversion.
         // These belong in THIS block's scope (e.g., method body), not the class IIFE.

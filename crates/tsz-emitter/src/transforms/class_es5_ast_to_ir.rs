@@ -719,8 +719,11 @@ impl<'a> AstToIr<'a> {
 
             // Check for super.method(args) or super[expr](args) → _super.prototype.method.call(this, args)
             if self.has_super
-                && let Some(super_call) =
-                    self.try_convert_super_method_call(call.expression, args.clone())
+                && let Some(super_call) = self.try_convert_super_method_call(
+                    call.expression,
+                    args.clone(),
+                    node.is_optional_chain(),
+                )
             {
                 return super_call;
             }
@@ -741,6 +744,7 @@ impl<'a> AstToIr<'a> {
         &self,
         callee_idx: NodeIndex,
         args: Vec<IRNode>,
+        is_optional_call: bool,
     ) -> Option<IRNode> {
         let callee_node = self.arena.get(callee_idx)?;
 
@@ -767,6 +771,9 @@ impl<'a> AstToIr<'a> {
                         property: method_name.into(),
                     }
                 };
+                if is_optional_call {
+                    return Some(self.convert_optional_super_method_call(super_proto_method, args));
+                }
                 let call_method = IRNode::PropertyAccess {
                     object: Box::new(super_proto_method),
                     property: "call".to_string().into(),
@@ -801,6 +808,9 @@ impl<'a> AstToIr<'a> {
                     object: Box::new(super_base),
                     index: Box::new(index_expr),
                 };
+                if is_optional_call {
+                    return Some(self.convert_optional_super_method_call(super_proto_elem, args));
+                }
                 let call_method = IRNode::PropertyAccess {
                     object: Box::new(super_proto_elem),
                     property: "call".to_string().into(),
@@ -817,6 +827,35 @@ impl<'a> AstToIr<'a> {
         }
 
         None
+    }
+
+    fn convert_optional_super_method_call(&self, receiver: IRNode, args: Vec<IRNode>) -> IRNode {
+        let temp = self.generate_hoisted_temp();
+        let temp_ref = || IRNode::id(temp.clone());
+
+        let mut call_args = vec![IRNode::This {
+            captured: self.this_captured.get(),
+        }];
+        call_args.extend(args);
+
+        IRNode::ConditionalExpr {
+            condition: Box::new(IRNode::logical_or(
+                IRNode::binary(
+                    IRNode::assign(temp_ref(), receiver).paren(),
+                    "===",
+                    IRNode::NullLiteral,
+                ),
+                IRNode::binary(temp_ref(), "===", IRNode::Undefined),
+            )),
+            when_true: Box::new(IRNode::Undefined),
+            when_false: Box::new(IRNode::CallExpr {
+                callee: Box::new(IRNode::PropertyAccess {
+                    object: Box::new(temp_ref()),
+                    property: "call".to_string().into(),
+                }),
+                arguments: call_args,
+            }),
+        }
     }
 
     fn convert_new_expression(&self, idx: NodeIndex) -> IRNode {
