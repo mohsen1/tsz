@@ -1352,24 +1352,37 @@ impl<'a> PropertyAccessEvaluator<'a> {
         //
         // Robustness audit (PR #O, item 15 in
         // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`).
-        if let Some(boxed_type) =
+        let boxed_function_loaded = if let Some(boxed_type) =
             crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Function)
         {
             let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
             if !result.is_not_found() {
                 return result;
             }
-        }
+            true
+        } else {
+            false
+        };
 
         // STEP 2: Hardcoded well-known Function members (no-lib / bootstrap path).
         // Reached when the boxed `Function` interface is unavailable (no lib loaded)
         // or didn't resolve the property. We emit a structured trace event so
         // drift (e.g. tests inadvertently bootstrapping with no-lib semantics)
         // is visible at runtime — see robustness audit item 15 / PR #O.
+        //
+        // `name` is gated behind `!boxed_function_loaded`: it was added to the
+        // `Function` interface in lib.es2015.core.d.ts. When a lib older than
+        // es2015 is loaded explicitly, the boxed lookup correctly reports the
+        // property as absent, and the bootstrap fallback must not paper over
+        // that not-found result with the hardcoded `name => string` entry.
+        // Other entries here are core es5 members that legitimately fall
+        // back even when the boxed interface lookup misses (e.g. lookup on a
+        // synthesized constructor-signature intersection that does not
+        // navigate to the boxed `Function` interface).
         let hardcoded_match = match prop_name {
             "apply" | "call" | "bind" => Some(self.method_result(TypeId::ANY)),
             "toString" => Some(self.method_result(TypeId::STRING)),
-            "name" => Some(PropertyAccessResult::simple(TypeId::STRING)),
+            "name" if !boxed_function_loaded => Some(PropertyAccessResult::simple(TypeId::STRING)),
             "length" => Some(PropertyAccessResult::simple(TypeId::NUMBER)),
             "prototype" | "arguments" => Some(PropertyAccessResult::simple(TypeId::ANY)),
             "caller" => Some(PropertyAccessResult::simple(
