@@ -1557,6 +1557,30 @@ fn compile_inner(
         }
     }
 
+    // JS-only-syntactic short-circuit for semantic diagnostics.
+    //
+    // tsc's `emitFilesAndReportErrors` runs `getSyntacticDiagnostics` first,
+    // and only proceeds to options/global/semantic if no syntactic diagnostics
+    // were produced. For JavaScript source files,
+    // `getJSSyntacticDiagnosticsForFile` contributes a fixed set of `TS8xxx`
+    // codes (and `TS8038`) — when any of those fire, every other file in the
+    // program loses its semantic diagnostics too.
+    //
+    // tsz emits those `TS8xxx` codes from the checker, so we replicate the
+    // gate here at the program level: when any JS-only-syntactic code is
+    // present, retain only diagnostics that tsc would have surfaced via the
+    // syntactic phase or the early config-parsing phase.
+    {
+        let has_js_only_syntactic_errors = diagnostics
+            .iter()
+            .any(|d| check_utils::is_js_only_syntactic_diagnostic(d.code));
+        if has_js_only_syntactic_errors {
+            diagnostics.retain(|d| {
+                check_utils::keep_diagnostic_when_js_only_syntactic_skips_semantic(d.code)
+            });
+        }
+    }
+
     diagnostics.extend(config_diagnostics);
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.extend(type_file_diagnostics);
