@@ -339,13 +339,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let source_eval = self.interner.evaluate_type(source);
         let target_eval = self.interner.evaluate_type(target);
         let function_info = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), source),
-            Self::get_contextual_signature(self.interner.as_type_database(), target),
+            Self::get_contextual_signature_cached(self.interner, source),
+            Self::get_contextual_signature_cached(self.interner, target),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
             _ => match (
-                Self::get_contextual_signature(self.interner.as_type_database(), source_eval),
-                Self::get_contextual_signature(self.interner.as_type_database(), target_eval),
+                Self::get_contextual_signature_cached(self.interner, source_eval),
+                Self::get_contextual_signature_cached(self.interner, target_eval),
             ) {
                 (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
                 _ => None,

@@ -1,6 +1,6 @@
 use crate::contextual::extractors::extract_param_type_at_for_call;
 use crate::diagnostics::PendingDiagnostic;
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
 use crate::types::{
     CallSignature, CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue,
     ParamInfo, TypeData, TypeId, TypeListId, TypePredicate,
@@ -771,10 +771,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         Self::get_contextual_signature_for_arity(db, type_id, None)
     }
 
+    pub fn get_contextual_signature_cached(
+        db: &dyn QueryDatabase,
+        type_id: TypeId,
+    ) -> Option<FunctionShape> {
+        Self::get_contextual_signature_for_arity_inner(db, Some(db), type_id, None)
+    }
+
     /// Get the contextual signature for a type, optionally filtering by argument count.
     /// When `arg_count` is provided, selects the first overload whose arity matches.
     pub(super) fn get_contextual_signature_for_arity(
         db: &dyn TypeDatabase,
+        type_id: TypeId,
+        arg_count: Option<usize>,
+    ) -> Option<FunctionShape> {
+        Self::get_contextual_signature_for_arity_inner(db, None, type_id, arg_count)
+    }
+
+    pub(super) fn get_contextual_signature_for_arity_cached(
+        db: &dyn QueryDatabase,
+        type_id: TypeId,
+        arg_count: Option<usize>,
+    ) -> Option<FunctionShape> {
+        Self::get_contextual_signature_for_arity_inner(db, Some(db), type_id, arg_count)
+    }
+
+    fn get_contextual_signature_for_arity_inner(
+        db: &dyn TypeDatabase,
+        query_db: Option<&dyn QueryDatabase>,
         type_id: TypeId,
         arg_count: Option<usize>,
     ) -> Option<FunctionShape> {
@@ -1015,6 +1039,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         struct ContextualSignatureVisitor<'a> {
             db: &'a dyn TypeDatabase,
+            query_db: Option<&'a dyn QueryDatabase>,
             arg_count: Option<usize>,
             // Cycle guard: resolving a Lazy/Ref back into an Application whose
             // base resolves back to the same node can loop forever. Track the
@@ -1150,17 +1175,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .iter()
                     .map(|p| ParamInfo {
                         name: p.name,
-                        type_id: instantiate_type(self.db, p.type_id, &subst),
+                        type_id: instantiate_type_cached(self.db, self.query_db, p.type_id, &subst),
                         optional: p.optional,
                         rest: p.rest,
                     })
                     .collect();
 
-                let instantiated_return = instantiate_type(self.db, base_shape.return_type, &subst);
+                let instantiated_return =
+                    instantiate_type_cached(self.db, self.query_db, base_shape.return_type, &subst);
 
                 let instantiated_this = base_shape
                     .this_type
-                    .map(|t| instantiate_type(self.db, t, &subst));
+                    .map(|t| instantiate_type_cached(self.db, self.query_db, t, &subst));
 
                 // Handle type predicates (e.g., `x is T`)
                 let instantiated_predicate =
@@ -1170,7 +1196,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .map(|pred| TypePredicate {
                             asserts: pred.asserts,
                             target: pred.target,
-                            type_id: pred.type_id.map(|t| instantiate_type(self.db, t, &subst)),
+                            type_id: pred.type_id.map(|t| {
+                                instantiate_type_cached(self.db, self.query_db, t, &subst)
+                            }),
                             parameter_index: pred.parameter_index,
                         });
 
@@ -1241,6 +1269,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut visitor = ContextualSignatureVisitor {
             db,
+            query_db,
             arg_count,
             visiting: rustc_hash::FxHashSet::default(),
         };

@@ -10,18 +10,20 @@ pub(crate) use super::super::common::lazy_def_id as lazy_def_id_for_type;
 pub(crate) use super::super::common::tuple_elements as tuple_elements_for_type;
 
 pub(crate) fn get_contextual_signature(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
-    tsz_solver::get_contextual_signature_with_compat_checker(db, type_id)
+    tsz_solver::get_contextual_signature_cached_with_compat_checker(db, type_id)
 }
 
 pub(crate) fn get_contextual_signature_for_arity(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    tsz_solver::get_contextual_signature_for_arity_with_compat_checker(db, type_id, arg_count)
+    tsz_solver::get_contextual_signature_for_arity_cached_with_compat_checker(
+        db, type_id, arg_count,
+    )
 }
 
 /// Get the call signature of a type, preferring a generic one.
