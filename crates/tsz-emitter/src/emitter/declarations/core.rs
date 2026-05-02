@@ -526,6 +526,14 @@ impl<'a> Printer<'a> {
             return Vec::new();
         };
 
+        let trimmed = source.trim();
+        if let Some(after_interface) = trimmed.strip_prefix("interface") {
+            let after_interface = after_interface.trim_start();
+            if after_interface.starts_with('{') {
+                return vec!["interface;".to_string(), after_interface.to_string()];
+            }
+        }
+
         source
             .lines()
             .map(str::trim)
