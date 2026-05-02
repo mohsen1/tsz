@@ -701,6 +701,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         missing_with_order.sort_by(
             |(left_name, left_order, left_parent), (right_name, right_order, right_parent)| {
+                let name_order = || {
+                    self.interner
+                        .resolve_atom_ref(*left_name)
+                        .cmp(&self.interner.resolve_atom_ref(*right_name))
+                };
                 // For class types, own properties (where parent_id matches the target symbol)
                 // should come before inherited properties
                 let left_is_own = target_symbol.is_some() && *left_parent == target_symbol;
@@ -718,7 +723,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         // the (false, true) tie-break below; stable `sort_by`
                         // preserves their relative order.
                         match (*left_order > 0, *right_order > 0) {
-                            (true, true) => return left_order.cmp(right_order),
+                            (true, true) => {
+                                return left_order.cmp(right_order).then_with(name_order);
+                            }
                             (false, true) => return std::cmp::Ordering::Less,
                             (true, false) => return std::cmp::Ordering::Greater,
                             (false, false) => return std::cmp::Ordering::Equal,
@@ -731,13 +738,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // (1-based) comparison, with alphabetic tie-break for synthesized
                 // properties. This preserves the prior interface-merge ordering.
                 match (*left_order > 0, *right_order > 0) {
-                    (true, true) => left_order.cmp(right_order),
+                    (true, true) => left_order.cmp(right_order).then_with(name_order),
                     (true, false) => std::cmp::Ordering::Less,
                     (false, true) => std::cmp::Ordering::Greater,
-                    (false, false) => self
-                        .interner
-                        .resolve_atom_ref(*left_name)
-                        .cmp(&self.interner.resolve_atom_ref(*right_name)),
+                    (false, false) => name_order(),
                 }
             },
         );
