@@ -4,7 +4,7 @@
 
 use crate::batch_pool::{BatchOutcome, ProcessPool};
 use crate::cache::{self, load_cache};
-use crate::cli::{Args, RunMode};
+use crate::cli::{Args, RunMode, ShardStrategy};
 use crate::server_pool::{ServerOutcome, ServerPool};
 use crate::test_parser::{
     expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
@@ -22,6 +22,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
+
+#[derive(Clone, Debug)]
+struct TimedTest {
+    file: String,
+    elapsed_ms: u128,
+}
 
 /// Format a path relative to a base directory for display
 fn relative_display(path: &Path, base: &Path) -> String {
@@ -329,6 +335,151 @@ fn stable_shard_for_path(path: &Path, test_dir: &Path, shard_count: usize) -> us
     (hash as usize) % shard_count
 }
 
+fn normalized_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn path_weight_keys(path: &Path, test_dir: &Path) -> Vec<String> {
+    let full = normalized_path(path);
+    let rel = path
+        .strip_prefix(test_dir)
+        .map(normalized_path)
+        .unwrap_or_else(|_| full.clone());
+    vec![rel.clone(), format!("TypeScript/tests/cases/{rel}"), full]
+}
+
+fn load_json_weights(path: &Path) -> Option<serde_json::Value> {
+    let data = std::fs::read_to_string(path).ok()?;
+    match serde_json::from_str(&data) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            warn!(
+                "failed to parse conformance shard weights {}: {err}",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
+fn historical_path_weight(value: &serde_json::Value, path: &Path, test_dir: &Path) -> Option<f64> {
+    if let Some(paths) = value
+        .get("path_weights")
+        .and_then(serde_json::Value::as_object)
+    {
+        for key in path_weight_keys(path, test_dir) {
+            if let Some(weight) = paths.get(&key).and_then(serde_json::Value::as_f64) {
+                if weight.is_finite() && weight > 0.0 {
+                    return Some(weight);
+                }
+            }
+        }
+    }
+
+    if let Some(results) = value.get("results").and_then(serde_json::Value::as_array) {
+        for key in path_weight_keys(path, test_dir) {
+            let weight = results.iter().find_map(|result| {
+                let file = result.get("file")?.as_str()?.replace('\\', "/");
+                if file == key {
+                    result
+                        .get("elapsed_ms")
+                        .or_else(|| result.get("elapsed"))
+                        .and_then(serde_json::Value::as_f64)
+                } else {
+                    None
+                }
+            });
+            if let Some(weight) = weight {
+                if weight.is_finite() && weight > 0.0 {
+                    return Some(weight);
+                }
+            }
+        }
+    }
+
+    if let Some(bucket_weights) = value.get("hash_bucket_weights") {
+        let shard_count = bucket_weights
+            .get("shard_count")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
+        let weights = bucket_weights
+            .get("weights")
+            .and_then(serde_json::Value::as_array);
+        if shard_count > 0 {
+            if let Some(weights) = weights {
+                let bucket = stable_shard_for_path(path, test_dir, shard_count);
+                if let Some(weight) = weights.get(bucket).and_then(serde_json::Value::as_f64) {
+                    if weight.is_finite() && weight > 0.0 {
+                        return Some(weight);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn estimated_test_weight(weights: Option<&serde_json::Value>, path: &Path, test_dir: &Path) -> f64 {
+    if let Some(weight) = weights.and_then(|value| historical_path_weight(value, path, test_dir)) {
+        return weight;
+    }
+
+    let size_weight = std::fs::metadata(path)
+        .map(|metadata| (metadata.len() as f64 / 4096.0).max(1.0))
+        .unwrap_or(1.0);
+    size_weight.min(100.0)
+}
+
+fn weighted_shard_files(
+    files: Vec<PathBuf>,
+    test_dir: &Path,
+    shard_index: usize,
+    shard_count: usize,
+    weights: Option<&serde_json::Value>,
+) -> Vec<PathBuf> {
+    let mut weighted: Vec<(PathBuf, String, f64)> = files
+        .into_iter()
+        .map(|path| {
+            let key = path
+                .strip_prefix(test_dir)
+                .map(normalized_path)
+                .unwrap_or_else(|_| normalized_path(&path));
+            let weight = estimated_test_weight(weights, &path, test_dir);
+            (path, key, weight)
+        })
+        .collect();
+    weighted.sort_by(|a, b| {
+        b.2.partial_cmp(&a.2)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.cmp(&b.1))
+    });
+
+    let mut shards: Vec<(f64, Vec<PathBuf>)> =
+        (0..shard_count).map(|_| (0.0, Vec::new())).collect();
+    for (path, _key, weight) in weighted {
+        let mut best = 0;
+        for idx in 1..shards.len() {
+            if shards[idx].0 < shards[best].0
+                || (shards[idx].0 == shards[best].0 && shards[idx].1.len() < shards[best].1.len())
+            {
+                best = idx;
+            }
+        }
+        shards[best].0 += weight;
+        shards[best].1.push(path);
+    }
+
+    shards
+        .into_iter()
+        .nth(shard_index)
+        .map(|(_, mut selected)| {
+            selected.sort();
+            selected
+        })
+        .unwrap_or_default()
+}
+
 /// Collects paths of crashed, timed-out, and fingerprint-only-mismatch tests for the final summary.
 #[derive(Default)]
 struct ProblemTests {
@@ -523,6 +674,7 @@ impl Runner {
         let write_diff_artifacts = self.args.write_diff_artifacts;
         let diff_artifacts_dir = PathBuf::from(&self.args.diff_artifacts_dir);
         let test_dir: PathBuf = PathBuf::from(&self.args.test_dir);
+        let timed_tests = Arc::new(std::sync::Mutex::new(Vec::<TimedTest>::new()));
 
         stream::iter(test_files)
             .for_each_concurrent(Some(concurrency_limit), |path| {
@@ -540,10 +692,12 @@ impl Runner {
                 let base = base_path.clone();
                 let test_dir = test_dir.clone();
                 let diff_artifacts_dir = diff_artifacts_dir.clone();
+                let timed_tests = Arc::clone(&timed_tests);
 
                 async move {
                     let _permit = permit.acquire().await.unwrap();
                     let rel_path = relative_display(&path, &base);
+                    let test_start = Instant::now();
 
                     match Self::run_test(
                         &path,
@@ -558,6 +712,10 @@ impl Runner {
                     .await
                     {
                         Ok((result, file_preview)) => {
+                            timed_tests.lock().unwrap().push(TimedTest {
+                                file: rel_path.replace('\\', "/"),
+                                elapsed_ms: test_start.elapsed().as_millis(),
+                            });
                             use std::fmt::Write;
 
                             // Update stats
@@ -734,6 +892,10 @@ impl Runner {
                             }
                         }
                         Err(e) => {
+                            timed_tests.lock().unwrap().push(TimedTest {
+                                file: rel_path.replace('\\', "/"),
+                                elapsed_ms: test_start.elapsed().as_millis(),
+                            });
                             stats.total.fetch_add(1, Ordering::SeqCst);
                             stats.failed.fetch_add(1, Ordering::SeqCst);
                             println!("FAIL {} (ERROR: {})", rel_path, e);
@@ -837,6 +999,31 @@ impl Runner {
 
         println!("{}", "=".repeat(60));
 
+        if let Some(path) = &self.args.timings_file {
+            let mut results = timed_tests.lock().unwrap().clone();
+            results.sort_by(|a, b| a.file.cmp(&b.file));
+            let payload = serde_json::json!({
+                "summary": {
+                    "total": results.len(),
+                    "elapsed_ms": elapsed.as_millis(),
+                },
+                "results": results
+                    .iter()
+                    .map(|result| serde_json::json!({
+                        "file": &result.file,
+                        "elapsed_ms": result.elapsed_ms,
+                    }))
+                    .collect::<Vec<_>>(),
+            });
+            if let Some(parent) = Path::new(path).parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create timings directory {}", parent.display())
+                })?;
+            }
+            std::fs::write(path, serde_json::to_string(&payload)?)
+                .with_context(|| format!("failed to write timings file {path}"))?;
+        }
+
         // Return a summary (note: this is before the final stats are cloned)
         Ok(TestStats {
             total: AtomicUsize::new(stats.total.load(Ordering::SeqCst)),
@@ -911,18 +1098,33 @@ impl Runner {
         files.sort();
 
         if let Some((shard_index, shard_count)) = self.parse_shard_spec()? {
-            files = files
-                .into_iter()
-                .filter_map(|path| {
-                    if stable_shard_for_path(&path, std::path::Path::new(test_dir), shard_count)
-                        == shard_index
-                    {
-                        Some(path)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+            let test_dir_path = std::path::Path::new(test_dir);
+            files = match self.args.shard_strategy {
+                ShardStrategy::Hash => files
+                    .into_iter()
+                    .filter_map(|path| {
+                        if stable_shard_for_path(&path, test_dir_path, shard_count) == shard_index {
+                            Some(path)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                ShardStrategy::Weighted => {
+                    let weights = self
+                        .args
+                        .shard_weights
+                        .as_deref()
+                        .and_then(|path| load_json_weights(Path::new(path)));
+                    weighted_shard_files(
+                        files,
+                        test_dir_path,
+                        shard_index,
+                        shard_count,
+                        weights.as_ref(),
+                    )
+                }
+            };
         }
 
         // Apply offset (skip first N tests)

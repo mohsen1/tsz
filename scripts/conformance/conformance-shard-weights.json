@@ -1,0 +1,9 @@
+{
+  "default_weight": 40,
+  "hash_bucket_weights": {
+    "source": "CI run 25257365223, pre-weighted conformance shards",
+    "shard_count": 4,
+    "weights": [79, 39, 39, 41]
+  },
+  "path_weights": {}
+}
