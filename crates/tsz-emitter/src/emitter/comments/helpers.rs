@@ -305,6 +305,91 @@ impl<'a> Printer<'a> {
         token_end
     }
 
+    pub(in crate::emitter) fn find_block_opening_brace_pos(&self, node: &Node) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let end = std::cmp::min(node.end as usize, bytes.len());
+        let mut pos = self.skip_trivia_forward(node.pos, node.end) as usize;
+
+        while pos < end {
+            match bytes[pos] {
+                b'{' => return Some(pos as u32),
+                b' ' | b'\t' | b'\r' | b'\n' => pos += 1,
+                _ => break,
+            }
+        }
+
+        bytes[pos..end]
+            .iter()
+            .position(|&b| b == b'{')
+            .map(|offset| (pos + offset) as u32)
+    }
+
+    pub(in crate::emitter) fn find_block_closing_brace_end(&self, node: &Node) -> u32 {
+        let Some(text) = self.source_text else {
+            return self.find_token_end_before_trivia(node.pos, node.end);
+        };
+        let bytes = text.as_bytes();
+        let end = std::cmp::min(node.end as usize, bytes.len());
+        let Some(open_pos) = self.find_block_opening_brace_pos(node) else {
+            return self.find_token_end_before_trivia(node.pos, node.end);
+        };
+
+        let mut depth: i32 = 0;
+        let mut pos = open_pos as usize;
+        while pos < end {
+            match bytes[pos] {
+                b'{' => {
+                    depth += 1;
+                    pos += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    pos += 1;
+                    if depth == 0 {
+                        return pos as u32;
+                    }
+                    if depth < 0 {
+                        break;
+                    }
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < end {
+                        if bytes[pos] == b'\\' {
+                            pos += 2;
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < end && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < end {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+
+        self.find_token_end_before_trivia(node.pos, node.end)
+    }
+
     /// Check if there are pending comments whose end is before `pos` without
     /// advancing the cursor. Used to conditionally emit whitespace before
     /// inline comments (e.g., `( /* comment */expr`).

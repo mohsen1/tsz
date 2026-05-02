@@ -417,6 +417,13 @@ impl<'a> Printer<'a> {
                 self.emit_unemitted_comments_between(paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&valid_args);
+            if let Some(last_arg) = valid_args.last()
+                && let Some(close_paren_pos) =
+                    self.find_call_closing_paren_position(node, Some(args))
+            {
+                let last_arg_end = self.call_argument_comment_boundary(*last_arg);
+                self.emit_call_trailing_argument_comments(last_arg_end, close_paren_pos);
+            }
         }
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
@@ -443,6 +450,13 @@ impl<'a> Printer<'a> {
                 self.emit_unemitted_comments_between(paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&valid_args);
+            if let Some(last_arg) = valid_args.last()
+                && let Some(close_paren_pos) =
+                    self.find_call_closing_paren_position(node, Some(args))
+            {
+                let last_arg_end = self.call_argument_comment_boundary(*last_arg);
+                self.emit_call_trailing_argument_comments(last_arg_end, close_paren_pos);
+            }
         }
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
@@ -790,6 +804,109 @@ impl<'a> Printer<'a> {
         (start..end)
             .position(|i| bytes[i] == b'(')
             .map(|offset| (start + offset) as u32)
+    }
+
+    fn find_call_closing_paren_position(
+        &self,
+        call_node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let open_pos = self.find_call_open_paren_position(call_node, args)? as usize;
+        let mut pos = open_pos;
+        let mut depth: i32 = 0;
+
+        while pos < bytes.len() {
+            match bytes[pos] {
+                b'(' => {
+                    depth += 1;
+                    pos += 1;
+                }
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(pos as u32);
+                    }
+                    pos += 1;
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < bytes.len() {
+                        if bytes[pos] == b'\\' {
+                            pos += 2;
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                b'/' if pos + 1 < bytes.len() && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < bytes.len() && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < bytes.len() {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+
+        None
+    }
+
+    fn call_argument_comment_boundary(&self, arg_idx: NodeIndex) -> u32 {
+        let Some(arg_node) = self.arena.get(arg_idx) else {
+            return 0;
+        };
+
+        if arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            && let Some(func) = self.arena.get_function(arg_node)
+            && let Some(body_node) = self.arena.get(func.body)
+            && body_node.kind == syntax_kind_ext::BLOCK
+        {
+            return self.find_block_closing_brace_end(body_node);
+        }
+
+        self.find_token_end_before_trivia(arg_node.pos, arg_node.end)
+    }
+
+    fn emit_call_trailing_argument_comments(&mut self, from_pos: u32, close_paren_pos: u32) {
+        if self.ctx.options.remove_comments || from_pos >= close_paren_pos {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        if let Some(comment) = self.all_comments.get(self.comment_emit_idx)
+            && comment.pos >= from_pos
+            && comment.end <= close_paren_pos
+        {
+            let gap_start = std::cmp::min(from_pos as usize, bytes.len());
+            let gap_end = std::cmp::min(comment.pos as usize, bytes.len());
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r')
+            {
+                self.write_line();
+            }
+        }
+
+        self.emit_unemitted_comments_between(from_pos, close_paren_pos);
     }
 
     /// Find the position of the opening parenthesis in a call expression.
