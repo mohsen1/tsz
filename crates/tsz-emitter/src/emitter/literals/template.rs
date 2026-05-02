@@ -66,6 +66,7 @@ impl<'a> Printer<'a> {
 
         // Emit ${expression}
         self.write("${");
+        self.emit_template_span_leading_comments(span);
         self.emit(span.expression);
         if self.template_span_has_closing_brace(span) {
             self.write("}");
@@ -103,6 +104,76 @@ impl<'a> Printer<'a> {
         if self.template_tail_has_backtick(node) {
             self.write("`");
         }
+    }
+
+    fn emit_template_span_leading_comments(
+        &mut self,
+        span: &tsz_parser::parser::node::TemplateSpanData,
+    ) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let Some(expr_node) = self.arena.get(span.expression) else {
+            return;
+        };
+        let expr_pos = (expr_node.pos as usize).min(text.len());
+        let Some(open_start) = Self::find_template_substitution_open(text, expr_pos) else {
+            return;
+        };
+        let open_end = open_start + 2;
+        let Some(gap) = text.get(open_end..expr_pos) else {
+            return;
+        };
+        if !gap.contains("//") && !gap.contains("/*") {
+            return;
+        }
+
+        if gap.contains('\n') || gap.contains('\r') {
+            self.write_line();
+        }
+        self.emit_unemitted_comments_between(open_end as u32, expr_node.pos);
+    }
+
+    fn find_template_substitution_open(text: &str, expr_pos: usize) -> Option<usize> {
+        let search = text.get(..expr_pos)?;
+        let mut candidate_end = search.len();
+        while let Some(candidate) = search[..candidate_end].rfind("${") {
+            if Self::is_template_substitution_trivia(text, candidate + 2, expr_pos) {
+                return Some(candidate);
+            }
+            candidate_end = candidate;
+        }
+        None
+    }
+
+    fn is_template_substitution_trivia(text: &str, start: usize, end: usize) -> bool {
+        let bytes = text.as_bytes();
+        let mut pos = start;
+        while pos < end {
+            match bytes[pos] {
+                b' ' | b'\t' | b'\r' | b'\n' => pos += 1,
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < end && !matches!(bytes[pos], b'\r' | b'\n') {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    let Some(close_rel) = text.get(pos..end).and_then(|tail| tail.find("*/"))
+                    else {
+                        return false;
+                    };
+                    pos += close_rel + 2;
+                }
+                _ => return false,
+            }
+        }
+        true
     }
 
     pub(in crate::emitter) fn get_raw_template_part_text(&self, node: &Node) -> Option<String> {
