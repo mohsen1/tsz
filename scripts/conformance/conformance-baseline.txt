@@ -27,7 +27,6 @@ FAIL TypeScript/tests/cases/compiler/excessivelyLargeTupleSpread.ts | expected:[
 FAIL TypeScript/tests/cases/compiler/extractInferenceImprovement.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/compiler/flatArrayNoExcessiveStackDepth.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/fuzzy.ts | expected:[TS2322,TS2352,TS2420] actual:[TS2322,TS2352,TS2420]
-FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts | expected:[TS2345,TS2558] actual:[TS2345,TS2558]
 FAIL TypeScript/tests/cases/compiler/genericFunctionInference1.ts | expected:[TS2345] actual:[TS2322,TS2345,TS2362]
 FAIL TypeScript/tests/cases/compiler/genericIndexedAccessVarianceComparisonResultCorrect.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/genericTypeAssertions1.ts | expected:[TS2322,TS2352] actual:[TS2322]
@@ -3080,6 +3079,7 @@ PASS TypeScript/tests/cases/compiler/genericCallWithNonGenericArgs1.ts
 PASS TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 PASS TypeScript/tests/cases/compiler/genericCallWithinOwnBodyCastTypeParameterIdentity.ts
 PASS TypeScript/tests/cases/compiler/genericCallWithoutArgs.ts
+PASS TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
 PASS TypeScript/tests/cases/compiler/genericCapturingFunctionNarrowing.ts
 PASS TypeScript/tests/cases/compiler/genericChainedCalls.ts
