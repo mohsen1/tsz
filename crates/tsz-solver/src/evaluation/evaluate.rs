@@ -1554,6 +1554,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             // because Dict<string> has `[index: string]: string` which
                             // can fail assignability to `Record<string, number>`.
                             && !Self::has_index_signature_not_in(self.interner, members[i], members[j])
+                            // Branded-primitive idiom: literal members of a union
+                            // are NOT absorbed by `string & {}` (or friends). tsc's
+                            // union literal absorption only triggers when the union
+                            // directly contains the primitive intrinsic; an
+                            // Intersection wrapping the primitive is a distinct
+                            // type that carries the brand. Keeping the literals
+                            // alive is what makes `(string & {}) | "literal"`
+                            // retain its literal properties when used as a mapped
+                            // type constraint (e.g., `Record<Alignment, V>`).
+                            && !Self::is_literal_under_branded_primitive(
+                                self.interner,
+                                members[i],
+                                members[j],
+                            )
                     }
                     SubtypeDirection::OtherSubsumedBySource => {
                         // For intersections: member[j] <: member[i] means member[i] is
@@ -1564,6 +1578,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // but {a: string} & {b?: number} must preserve both properties.
                         checker.is_subtype_of(members[j], members[i])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
+                            // Branded-primitive idiom: keep `{}` paired with a widening
+                            // primitive intrinsic so `string & {}` (and friends) stay as
+                            // Intersection rather than collapsing to the bare primitive.
+                            // Mirrors the same exception in `intern/intersection.rs` so
+                            // unions like `(string & {}) | "literal"` retain their
+                            // literal members.
+                            && !Self::is_branded_primitive_pair(self.interner, members[i], members[j])
                     }
                 };
                 if is_subtype {
@@ -1598,6 +1619,55 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return true; // Candidate has properties but subsuming doesn't
         };
         candidate.iter().any(|name| !subsuming.contains(name))
+    }
+
+    /// Check whether a (candidate, subsuming) pair forms the branded-primitive
+    /// idiom `string & {}` (or `number & {}`, `boolean & {}`, …) — i.e. the
+    /// candidate is the empty-object brand and the subsuming member is a
+    /// widening primitive intrinsic. Such pairs must not be reduced via
+    /// subtype elimination so the Intersection shape survives and unions
+    /// like `(string & {}) | "literal"` keep their literal members.
+    fn is_branded_primitive_pair(
+        db: &dyn crate::caches::db::TypeDatabase,
+        candidate: TypeId,
+        subsuming: TypeId,
+    ) -> bool {
+        crate::visitors::visitor_predicates::is_empty_object_type(db, candidate)
+            && crate::visitors::visitor_predicates::is_widening_primitive_intrinsic(db, subsuming)
+    }
+
+    /// Check whether a union member is a literal that's only "subsumed" by a
+    /// branded-primitive intersection (`string & {}` and friends). tsc's
+    /// union literal absorption keys off the bare primitive intrinsic, not
+    /// an Intersection wrapping it, so these literals must be kept alive
+    /// for unions like `(string & {}) | "literal"`. Returns true when
+    /// `candidate` is a literal type and `subsuming` is an Intersection
+    /// whose only structural members are widening primitive intrinsics
+    /// and empty-object brands.
+    fn is_literal_under_branded_primitive(
+        db: &dyn crate::caches::db::TypeDatabase,
+        candidate: TypeId,
+        subsuming: TypeId,
+    ) -> bool {
+        if !crate::visitors::visitor_predicates::is_literal_type(db, candidate) {
+            return false;
+        }
+        let Some(TypeData::Intersection(list_id)) = db.lookup(subsuming) else {
+            return false;
+        };
+        let members = db.type_list(list_id);
+        let mut has_widening_primitive = false;
+        let mut has_empty_object = false;
+        for &m in members.iter() {
+            if crate::visitors::visitor_predicates::is_widening_primitive_intrinsic(db, m) {
+                has_widening_primitive = true;
+            } else if crate::visitors::visitor_predicates::is_empty_object_type(db, m) {
+                has_empty_object = true;
+            } else {
+                return false;
+            }
+        }
+        has_widening_primitive && has_empty_object
     }
 
     /// Check if `candidate` has an index signature that `subsuming` lacks.

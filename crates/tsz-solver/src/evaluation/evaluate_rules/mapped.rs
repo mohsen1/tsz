@@ -1127,6 +1127,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let member_list = self.interner().type_list(members);
                 let mut member_keys: Vec<MappedKeys> = Vec::with_capacity(member_list.len());
                 for &member in member_list.iter() {
+                    // Empty object brands (e.g., the `{}` in `string & {}`) are
+                    // identity elements for key iteration — `{}` represents
+                    // "any non-nullish value" and imposes no key constraint.
+                    // Skip them so the intersection inherits keys from the
+                    // remaining members, matching tsc's mapped-type expansion
+                    // for branded primitives.
+                    if crate::visitors::visitor_predicates::is_empty_object_type(
+                        self.interner(),
+                        member,
+                    ) {
+                        continue;
+                    }
                     match self.extract_mapped_keys(member) {
                         Some(mk) => member_keys.push(mk),
                         None => return None,

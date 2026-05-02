@@ -494,6 +494,132 @@ fn test_mapped_type_key_remap_with_template_literal() {
 // =============================================================================
 
 #[test]
+fn test_mapped_type_branded_string_preserves_literal_keys() {
+    // Conformance: TypeScript/tests/cases/compiler/specialIntersectionsInMappedTypes.ts
+    //
+    // type Alignment = (string & {}) | "left" | "center" | "right";
+    // type Alignments = Record<Alignment, string>;
+    //
+    // Record<K, V> = { [P in K]: V } so the constraint here is the union
+    // `(string & {}) | "left" | "center" | "right"`. tsc preserves the
+    // `string & {}` branding in the union, which keeps the literal members
+    // alive. The mapped-type expansion then yields a hybrid object with
+    // BOTH literal properties AND a string index signature:
+    //
+    //   { left: string; center: string; right: string; [x: string]: string; }
+    //
+    // Without the branded primitive idiom, the union would collapse to
+    // `string` and the result would be `{ [x: string]: string }`, which
+    // turns property accesses through known keys (e.g. `a.left`) into
+    // `string | undefined` under `noUncheckedIndexedAccess` and emits a
+    // spurious TS18048 — see the `specialIntersectionsInMappedTypes`
+    // conformance test.
+    let interner = TypeInterner::new();
+
+    let empty_obj = interner.object(vec![]);
+    let string_and_empty = interner.intersection(vec![TypeId::STRING, empty_obj]);
+    assert_ne!(
+        string_and_empty,
+        TypeId::STRING,
+        "string & {{}} must be preserved as Intersection (branded primitive idiom)"
+    );
+
+    let lit_left = interner.literal_string("left");
+    let lit_center = interner.literal_string("center");
+    let lit_right = interner.literal_string("right");
+    let alignment_union = interner.union(vec![string_and_empty, lit_left, lit_center, lit_right]);
+
+    // Sanity-check: the literals must NOT be absorbed by the branded
+    // primitive — otherwise the mapped type loses its literal properties.
+    if let Some(TypeData::Union(list_id)) = interner.lookup(alignment_union) {
+        let members = interner.type_list(list_id);
+        let names: Vec<_> = members
+            .iter()
+            .filter_map(|&m| match interner.lookup(m) {
+                Some(TypeData::Literal(crate::types::LiteralValue::String(atom))) => {
+                    Some(interner.resolve_atom(atom))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "left"),
+            "union must retain `left` literal; got {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "center"),
+            "union must retain `center` literal; got {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "right"),
+            "union must retain `right` literal; got {names:?}"
+        );
+    } else {
+        panic!("expected Union, got {:?}", interner.lookup(alignment_union));
+    }
+
+    let type_param_p = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let record_alignment = MappedType {
+        type_param: type_param_p,
+        constraint: alignment_union,
+        name_type: None,
+        template: TypeId::STRING,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+
+    let mapped_id = interner.mapped(record_alignment);
+    let result = evaluate_type(&interner, mapped_id);
+
+    let shape = match interner.lookup(result) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            interner.object_shape(shape_id)
+        }
+        other => {
+            panic!("expected Object/ObjectWithIndex for Record<Alignment, string>, got {other:?}")
+        }
+    };
+
+    let names: Vec<String> = shape
+        .properties
+        .iter()
+        .map(|p| interner.resolve_atom(p.name))
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "left"),
+        "result must contain `left` property; got {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "center"),
+        "result must contain `center` property; got {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "right"),
+        "result must contain `right` property; got {names:?}"
+    );
+    for prop in &shape.properties {
+        assert_eq!(
+            prop.type_id,
+            TypeId::STRING,
+            "literal property `{}` should have value type string",
+            interner.resolve_atom(prop.name)
+        );
+    }
+
+    let string_index = shape
+        .string_index
+        .as_ref()
+        .expect("branded primitive in constraint must produce a string index signature");
+    assert_eq!(string_index.value_type, TypeId::STRING);
+}
+
+#[test]
 fn test_mapped_type_empty_object() {
     // type Mapped = { [K in keyof {}]: never }
     // Should produce {} (empty object)
