@@ -747,6 +747,13 @@ impl<'a> Printer<'a> {
             .get(import.import_clause)
             .and_then(|n| self.arena.get_identifier(n))
             .map(|id| id.escaped_text.clone());
+        if self.in_namespace_iife
+            && alias_name
+                .as_deref()
+                .is_some_and(|name| self.namespace_has_prior_import_equals_alias(node, name))
+        {
+            return;
+        }
         let is_exported_var = alias_name
             .as_ref()
             .is_some_and(|name| self.commonjs_exported_var_names.contains(name.as_str()));
@@ -779,6 +786,33 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_entity_name(import.module_specifier);
+    }
+
+    fn namespace_has_prior_import_equals_alias(&self, node: &Node, alias_name: &str) -> bool {
+        let Some(source_text) = self.source_text else {
+            return false;
+        };
+        let end = (node.pos as usize).min(source_text.len());
+        let prefix = &source_text[..end];
+        let last_open = prefix.rfind('{').map_or(0, |pos| pos + 1);
+        let last_close = prefix.rfind('}').map_or(0, |pos| pos + 1);
+        let scope_start = last_open.max(last_close);
+        let prior = &source_text[scope_start..end];
+        prior.lines().any(|line| {
+            let trimmed = line.trim_start();
+            let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+            let Some(rest) = trimmed.strip_prefix("import ") else {
+                return false;
+            };
+            let rest = rest.trim_start();
+            let Some(after_name) = rest.strip_prefix(alias_name) else {
+                return false;
+            };
+            let next = after_name.as_bytes().first().copied();
+            let boundary =
+                next.is_none_or(|b| !b.is_ascii_alphanumeric() && b != b'_' && b != b'$');
+            boundary && after_name.trim_start().starts_with('=')
+        })
     }
 
     fn is_valid_import_equals_reference(&self, idx: NodeIndex) -> bool {
