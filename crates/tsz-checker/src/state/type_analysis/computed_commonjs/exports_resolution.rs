@@ -525,6 +525,20 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        // Widen fresh literal types that flow from the inferred getter/setter
+        // bodies into the property's read/write type, mirroring tsc behavior.
+        // Without this, `Object.defineProperty(x, "p", { get() { return 21.75 }})`
+        // gives `x.p` the literal type `21.75` instead of `number`, and assigning
+        // anything else (even a JSDoc-cast `number`) fails TS2322.
+        let widen = |ty: TypeId| -> TypeId {
+            crate::query_boundaries::common::widen_type(
+                self.ctx.types,
+                crate::query_boundaries::common::widen_freshness(self.ctx.types, ty),
+            )
+        };
+        getter_type = getter_type.map(widen);
+        setter_type = setter_type.map(widen);
+
         if has_setter && setter_type == Some(TypeId::ANY) && getter_type.is_some() {
             setter_type = getter_type;
         }

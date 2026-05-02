@@ -382,6 +382,9 @@ mod jsdoc_accessibility_tests;
 #[path = "../tests/jsdoc_callback_rest_tests.rs"]
 mod jsdoc_callback_rest_tests;
 #[cfg(test)]
+#[path = "tests/jsdoc_cast_and_define_property_widening_tests.rs"]
+mod jsdoc_cast_and_define_property_widening_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_cross_file_typedef_tests.rs"]
 mod jsdoc_cross_file_typedef_tests;
 #[cfg(test)]
