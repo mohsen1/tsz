@@ -6,9 +6,7 @@
 //! - contextual call param normalization and generic-call result finalization,
 //! - `this.property<T>(...)` TS2347 suppression helpers.
 
-use crate::query_boundaries::checkers::call::{
-    get_contextual_signature_for_arity, is_type_parameter_type,
-};
+use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
@@ -285,31 +283,14 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 expected_param
                             };
-                        let reported_expected_param = get_contextual_signature_for_arity(
-                            self.ctx.types,
-                            callee_type_for_call,
-                            args.len(),
-                        )
-                        .and_then(|shape| {
-                            shape
-                                .params
-                                .get(index)
-                                .map(|param| param.type_id)
-                                .or_else(|| {
-                                    let last = shape.params.last()?;
-                                    last.rest.then_some(last.type_id)
-                                })
-                        })
-                        .filter(|raw_expected| {
-                            common::contains_type_parameters(self.ctx.types, *raw_expected)
-                                && common::contains_type_by_id(
-                                    self.ctx.types,
-                                    expected_param,
-                                    TypeId::UNKNOWN,
-                                )
-                                && self.evaluate_type_with_env(*raw_expected) == expected_param
-                        })
-                        .unwrap_or(expected_param);
+                        // Use the substituted parameter type (with `unknown` for
+                        // unresolved type parameters) to match tsc's diagnostic
+                        // output. tsc displays the post-inference parameter type;
+                        // when inference fails for an unconstrained type parameter
+                        // it defaults to `unknown` and tsc surfaces that explicitly
+                        // (e.g. `A<unknown>` rather than the raw `A<T>` from the
+                        // signature source text).
+                        let reported_expected_param = expected_param;
                         let arg_type = args
                             .get(index)
                             .copied()
