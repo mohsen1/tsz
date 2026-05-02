@@ -3283,6 +3283,67 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(crate) fn simple_const_enum_access_member_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if !self.is_simple_enum_access(expr_node) {
+            return None;
+        }
+        let access = self.arena.get_access_expr(expr_node)?;
+        let base_name = self.get_identifier_text(access.expression)?;
+        let is_const_enum = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|source_file_node| self.arena.get_source_file(source_file_node))
+            .is_some_and(|source_file| {
+                source_file
+                    .statements
+                    .nodes
+                    .iter()
+                    .any(|&stmt_idx| self.enum_declaration_is_const_named(stmt_idx, &base_name))
+            })
+            || self.arena.nodes.iter().enumerate().any(|(idx, node)| {
+                node.kind == syntax_kind_ext::ENUM_DECLARATION
+                    && self.enum_declaration_is_const_named(NodeIndex(idx as u32), &base_name)
+            });
+
+        if !is_const_enum {
+            return None;
+        }
+
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let member_name = self.get_identifier_text(access.name_or_argument)?;
+            return Some(format!("{base_name}.{member_name}"));
+        }
+
+        if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let member_node = self.arena.get(access.name_or_argument)?;
+            let member_text = self.get_source_slice(member_node.pos, member_node.end)?;
+            return Some(format!("{base_name}[{member_text}]"));
+        }
+
+        None
+    }
+
+    fn enum_declaration_is_const_named(&self, stmt_idx: NodeIndex, base_name: &str) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+            return false;
+        }
+        let Some(enum_data) = self.arena.get_enum(stmt_node) else {
+            return false;
+        };
+        self.get_identifier_text(enum_data.name).as_deref() == Some(base_name)
+            && self
+                .arena
+                .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+    }
+
     pub(crate) fn simple_enum_access_base_name_text(&self, expr_idx: NodeIndex) -> Option<String> {
         let expr_idx = self.semantic_simple_enum_access(expr_idx)?;
         let expr_node = self.arena.get(expr_idx)?;

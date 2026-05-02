@@ -1851,7 +1851,7 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(&alias_text);
                         } else {
                             self.emit_variable_decl_type_or_initializer(
-                                keyword,
+                                effective_keyword,
                                 stmt_node.pos,
                                 *decl_idx,
                                 decl.name,

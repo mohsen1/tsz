@@ -2351,6 +2351,29 @@ class C {
 }
 
 #[test]
+fn test_const_enum_member_access_const_variable_preserves_initializer() {
+    let output = emit_dts_with_binding(
+        r#"
+export const enum E {
+    regular = 0,
+    "hyphen-member" = 1,
+}
+export const a = E["hyphen-member"];
+export const b = E.regular;
+"#,
+    );
+
+    assert!(
+        output.contains(r#"export declare const a = E["hyphen-member"];"#),
+        "Expected string-keyed const enum member initializer: {output}"
+    );
+    assert!(
+        output.contains("export declare const b = E.regular;"),
+        "Expected property const enum member initializer: {output}"
+    );
+}
+
+#[test]
 fn test_inaccessible_constructor_new_initializer_emits_any() {
     let source = r#"
 class C {
