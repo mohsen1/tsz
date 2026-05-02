@@ -1315,6 +1315,11 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(expr_idx)
             }
+            k if k == syntax_kind_ext::CLASS_EXPRESSION => self
+                .get_node_type_or_names(&[expr_idx])
+                .map(|type_id| self.print_type_id(type_id))
+                .filter(|type_text| type_text != "any")
+                .or_else(|| self.class_expression_constructor_type_text_from_ast(expr_idx)),
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.array_literal_expression_type_text(expr_idx)
             }
@@ -1328,6 +1333,77 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => None,
         }
+    }
+
+    fn class_expression_constructor_type_text_from_ast(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let class = self.arena.get_class(expr_node)?;
+
+        let mut params_text = String::new();
+        if let Some(ctor_idx) = class.members.nodes.iter().copied().find(|&member_idx| {
+            self.arena
+                .get(member_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CONSTRUCTOR)
+        }) {
+            let ctor = self
+                .arena
+                .get(ctor_idx)
+                .and_then(|node| self.arena.get_constructor(node))?;
+            let mut scratch = self.scratch_declaration_emitter();
+            scratch.in_constructor_params = true;
+            scratch.emit_parameters_with_body(&ctor.parameters, ctor.body);
+            scratch.in_constructor_params = false;
+            params_text = scratch.writer.take_output();
+        }
+
+        let mut member_scratch = self.scratch_declaration_emitter();
+        member_scratch.indent_level = self.indent_level + 2;
+        for member_idx in class.members.nodes.iter().copied() {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            member_scratch.emit_class_member(member_idx);
+        }
+        let members = member_scratch.writer.take_output();
+        let members = members.trim_end();
+
+        if members.is_empty() {
+            Some(format!("{{\n    new ({params_text}): {{}};\n}}"))
+        } else {
+            Some(format!(
+                "{{\n    new ({params_text}): {{\n{members}\n    }};\n}}"
+            ))
+        }
+    }
+
+    fn scratch_declaration_emitter(&self) -> DeclarationEmitter<'a> {
+        let mut scratch = if let (Some(type_cache), Some(type_interner), Some(binder)) =
+            (&self.type_cache, self.type_interner, self.binder)
+        {
+            DeclarationEmitter::with_type_info(
+                self.arena,
+                type_cache.clone(),
+                type_interner,
+                binder,
+            )
+        } else {
+            DeclarationEmitter::new(self.arena)
+        };
+
+        scratch.source_is_declaration_file = self.source_is_declaration_file;
+        scratch.source_is_js_file = self.source_is_js_file;
+        scratch.current_source_file_idx = self.current_source_file_idx;
+        scratch.source_file_text = self.source_file_text.clone();
+        scratch.current_file_path = self.current_file_path.clone();
+        scratch.current_arena = self.current_arena.clone();
+        scratch.arena_to_path = self.arena_to_path.clone();
+        scratch
     }
 
     pub(in crate::declaration_emitter) fn declaration_emittable_type_text(
@@ -2055,12 +2131,15 @@ impl<'a> DeclarationEmitter<'a> {
             let decl_node = source_arena.get(decl_idx)?;
             let func = source_arena.get_function(decl_node)?;
             let source_file = self.arena_source_file(source_arena)?;
-            if !source_file.is_declaration_file || !func.type_annotation.is_some() {
+            let is_ambient_function =
+                source_file.is_declaration_file || source_arena.is_declare(&func.modifiers);
+            if !is_ambient_function || !func.type_annotation.is_some() {
                 return None;
             }
 
             let mut type_text = self
-                .source_slice_from_arena(source_arena, func.type_annotation)?
+                .emit_type_node_text_from_arena(source_arena, func.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, func.type_annotation))?
                 .trim_end()
                 .trim_end_matches(';')
                 .trim_end()
@@ -2095,6 +2174,14 @@ impl<'a> DeclarationEmitter<'a> {
                         ),
                     );
                 }
+            }
+            if explicit_type_args.is_empty()
+                && type_param_substitutions.is_empty()
+                && type_param_names
+                    .iter()
+                    .any(|name| Self::contains_whole_word_in_text(&type_text, name))
+            {
+                return None;
             }
             type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
 
