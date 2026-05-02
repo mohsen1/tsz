@@ -55,14 +55,39 @@ pub(crate) fn property_access_chain_text_in_arena(
         return Some(text);
     }
     let node = arena.get(idx)?;
-    if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-        return None;
+    match node.kind {
+        syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+            let access = arena.get_access_expr(node)?;
+            let left = property_access_chain_text_in_arena(arena, access.expression)?;
+            let right = arena.get_identifier_at(access.name_or_argument)?;
+            Some(format!("{left}.{}", right.escaped_text))
+        }
+        syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+            let access = arena.get_access_expr(node)?;
+            let left = property_access_chain_text_in_arena(arena, access.expression)?;
+            let right = static_element_access_key_text_in_arena(arena, access.name_or_argument)?;
+            Some(format!("{left}.{right}"))
+        }
+        _ => None,
     }
+}
 
-    let access = arena.get_access_expr(node)?;
-    let left = property_access_chain_text_in_arena(arena, access.expression)?;
-    let right = arena.get_identifier_at(access.name_or_argument)?;
-    Some(format!("{left}.{}", right.escaped_text))
+pub(crate) fn static_element_access_key_text_in_arena(
+    arena: &NodeArena,
+    idx: NodeIndex,
+) -> Option<String> {
+    let node = arena.get(idx)?;
+    if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+        let paren = arena.get_parenthesized(node)?;
+        return static_element_access_key_text_in_arena(arena, paren.expression);
+    }
+    if node.kind == SyntaxKind::StringLiteral as u16
+        || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        || node.kind == SyntaxKind::NumericLiteral as u16
+    {
+        return arena.get_literal(node).map(|literal| literal.text.clone());
+    }
+    None
 }
 
 pub(crate) fn simple_computed_name_expr_text_in_arena(

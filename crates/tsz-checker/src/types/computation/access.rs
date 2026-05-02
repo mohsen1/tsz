@@ -1589,23 +1589,30 @@ impl<'a> CheckerState<'a> {
         }
 
         if report_no_index {
+            let is_write_target_or_base = self.property_access_is_write_target_or_base(idx);
             // Suppress TS7053 for expando bracket assignments on function types.
             // When `func["prop"] = value` and the object is callable, tsc does not emit
             // TS7053 — it treats this as a valid JS-style property expansion.
-            // We detect write context via `skip_flow_narrowing` which is set by
-            // `get_type_of_assignment_target`.
+            // We prefer the AST write-target signal here because not all assignment
+            // checking paths reach this code through `get_type_of_assignment_target`.
             let is_namespace_object = self
                 .ctx
                 .namespace_module_names
                 .contains_key(&object_type_for_access);
             let is_js_expando_object_write = self.ctx.is_js_file()
-                && crate::query_boundaries::common::is_object_like_type(self.ctx.types, object_type_for_access)
+                && (crate::query_boundaries::common::is_object_like_type(
+                    self.ctx.types,
+                    object_type_for_access,
+                ) || crate::query_boundaries::common::is_empty_object_type(
+                    self.ctx.types,
+                    object_type_for_access,
+                ))
                 && self.is_direct_expando_element_write_base(access.expression)
                 // JS expando-style element writes only suppress TS7053 when the key is a
                 // simple literal/identifier shape the binder/checker can track. Arbitrary
                 // computed expressions like `this["a" + "b"] = 0` should still report.
                 && self.expando_element_key_name(access.name_or_argument).is_some();
-            let is_expando_write = skip_flow_narrowing
+            let is_expando_write = (skip_flow_narrowing || is_write_target_or_base)
                 && !is_namespace_object
                 && (crate::query_boundaries::common::is_function_type(
                     self.ctx.types,

@@ -6,6 +6,7 @@
 
 use crate::context::is_js_file_name;
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::static_element_access_key_text_in_arena;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeArena;
 use tsz_parser::parser::NodeIndex;
@@ -67,16 +68,25 @@ impl<'a> CheckerState<'a> {
             return Some(text);
         }
         let node = arena.get(idx)?;
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let access = arena.get_access_expr(node)?;
-            let left = Self::property_access_chain_in_arena(arena, access.expression)?;
-            let right = arena
-                .get_identifier_at(access.name_or_argument)?
-                .escaped_text
-                .clone();
-            return Some(format!("{left}.{right}"));
+        match node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = arena.get_access_expr(node)?;
+                let left = Self::property_access_chain_in_arena(arena, access.expression)?;
+                let right = arena
+                    .get_identifier_at(access.name_or_argument)?
+                    .escaped_text
+                    .clone();
+                Some(format!("{left}.{right}"))
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = arena.get_access_expr(node)?;
+                let left = Self::property_access_chain_in_arena(arena, access.expression)?;
+                let right =
+                    static_element_access_key_text_in_arena(arena, access.name_or_argument)?;
+                Some(format!("{left}.{right}"))
+            }
+            _ => None,
         }
-        None
     }
 
     fn expando_assignment_access_key_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
@@ -90,6 +100,13 @@ impl<'a> CheckerState<'a> {
                 let left = Self::expando_assignment_access_key_in_arena(arena, access.expression)?;
                 let right = arena.get_identifier_at(access.name_or_argument)?;
                 Some(format!("{left}.{}", right.escaped_text))
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = arena.get_access_expr(node)?;
+                let left = Self::expando_assignment_access_key_in_arena(arena, access.expression)?;
+                let right =
+                    static_element_access_key_text_in_arena(arena, access.name_or_argument)?;
+                Some(format!("{left}.{right}"))
             }
             _ => None,
         }
@@ -1499,6 +1516,15 @@ impl<'a> CheckerState<'a> {
                 let left = self.expando_assignment_access_key(access.expression)?;
                 let right = self.ctx.arena.get_identifier_at(access.name_or_argument)?;
                 Some(format!("{left}.{}", right.escaped_text))
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                let left = self.expando_assignment_access_key(access.expression)?;
+                let right = static_element_access_key_text_in_arena(
+                    self.ctx.arena,
+                    access.name_or_argument,
+                )?;
+                Some(format!("{left}.{right}"))
             }
             _ => None,
         }

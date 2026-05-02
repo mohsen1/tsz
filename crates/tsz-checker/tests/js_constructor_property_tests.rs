@@ -662,6 +662,26 @@ let text: string = fn.answer;
     );
 }
 
+#[test]
+fn test_js_object_expando_element_access_literal_keys_infer_nested_shape() {
+    let source = r#"
+const foo = {};
+foo["baz"] = {};
+foo["baz"]["blah"] = 3;
+"#;
+
+    let diagnostics = check_js(source);
+    let ts7053: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7053)
+        .collect();
+
+    assert!(
+        ts7053.is_empty(),
+        "Expected string-literal element-access expando writes to avoid TS7053, got: {diagnostics:?}"
+    );
+}
+
 /// `var self = this; self.prop = value` alias pattern in constructor
 #[test]
 fn test_js_self_alias_this_prop_constructor() {
