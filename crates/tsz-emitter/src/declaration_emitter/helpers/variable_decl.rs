@@ -1127,7 +1127,11 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_type_parameters(type_params);
         }
         self.write("(");
+        let previous_normalize_string_literal_type_quotes =
+            self.normalize_string_literal_type_quotes;
+        self.normalize_string_literal_type_quotes = true;
         self.emit_parameters_with_body(&func.parameters, func.body);
+        self.normalize_string_literal_type_quotes = previous_normalize_string_literal_type_quotes;
         self.write(") => ");
     }
 

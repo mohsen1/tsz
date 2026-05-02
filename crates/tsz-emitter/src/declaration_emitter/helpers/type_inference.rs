@@ -3295,6 +3295,7 @@ impl<'a> DeclarationEmitter<'a> {
         scratch.current_arena = self.current_arena.clone();
         scratch.arena_to_path = self.arena_to_path.clone();
         scratch.indent_level = self.indent_level;
+        scratch.normalize_string_literal_type_quotes = true;
 
         if let Some(ref type_params) = func.type_parameters
             && !type_params.nodes.is_empty()

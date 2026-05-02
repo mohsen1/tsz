@@ -191,6 +191,11 @@ pub struct DeclarationEmitter<'a> {
     /// Scoped flag for JS `const fn = (...) => {}` emit, where `@satisfies`
     /// can supply fallback parameter types without affecting real functions.
     pub(super) use_jsdoc_satisfies_parameter_fallback: bool,
+    /// Scoped flag for synthetic function initializer signatures. Those
+    /// signatures are reconstructed by the declaration emitter, and tsc
+    /// normalizes string literal type quotes there instead of preserving source
+    /// spelling from the initializer's parameter list.
+    pub(super) normalize_string_literal_type_quotes: bool,
     /// Suppress the variable statement's leading JSDoc when re-emitting it as
     /// a synthetic JS function declaration.
     pub(super) suppress_current_statement_jsdoc_comments: bool,
