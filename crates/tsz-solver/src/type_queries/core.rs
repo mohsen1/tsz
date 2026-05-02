@@ -305,6 +305,22 @@ pub fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
+/// True for bare `TypeData::TypeParameter` only.
+///
+/// Stricter than [`is_type_parameter_like`]: excludes `TypeData::Infer`
+/// (in-flight `infer T` placeholders inside conditional types) and
+/// `TypeData::BoundParameter` (de-Bruijn indexed bound parameters).
+///
+/// Used by callers that need to detect a *named, finalized* type parameter
+/// — e.g. `T` declared on an enclosing function — as opposed to an
+/// inference placeholder that further inference might still substitute.
+pub fn is_bare_named_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(db.lookup(type_id), Some(TypeData::TypeParameter(_)))
+}
+
 /// Check if a type is a keyof type.
 ///
 /// Returns true for `TypeData::KeyOf`.

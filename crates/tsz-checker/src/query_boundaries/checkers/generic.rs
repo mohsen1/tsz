@@ -10,6 +10,14 @@ pub(crate) fn is_bare_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::visitor::is_type_parameter(db, type_id)
 }
 
+/// Check if a type is a bare *named* `TypeParameter` only — stricter than
+/// [`is_bare_type_parameter`], which also accepts `Infer`. Used to detect a
+/// finalized enclosing-scope type parameter (no further inference can
+/// substitute it). `BoundParameter` and `Infer` are excluded.
+pub(crate) fn is_bare_named_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_bare_named_type_parameter(db, type_id)
+}
+
 /// Get the base constraint of a type for TS2344 checking.
 ///
 /// For `TypeParameter` with constraint: returns the constraint.

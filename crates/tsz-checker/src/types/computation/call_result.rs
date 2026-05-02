@@ -942,6 +942,27 @@ impl<'a> CheckerState<'a> {
             if self.are_incompatible_generic_class_instances(actual, expected) {
                 return false;
             }
+            // When both sides are *bare* `TypeParameter` types with different
+            // identities, neither side is in flight. Distinct enclosing-scope
+            // type parameters never become equal under inference, so the
+            // solver's rejection is permanent — deferring would silently drop
+            // a real TS2345. Mirrors `(x: T) => void` vs `(x: U) => void` for
+            // non-callable bare type parameters.
+            //
+            // `Infer` types are excluded so in-flight `infer T` placeholders
+            // inside conditional inference still defer.
+            if actual != expected
+                && crate::query_boundaries::checkers::generic::is_bare_named_type_parameter(
+                    self.ctx.types,
+                    actual,
+                )
+                && crate::query_boundaries::checkers::generic::is_bare_named_type_parameter(
+                    self.ctx.types,
+                    expected,
+                )
+            {
+                return false;
+            }
             return true;
         }
         assign_query::is_any_type(self.ctx.types, expected)

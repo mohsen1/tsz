@@ -764,3 +764,97 @@ fn conditional_union_literal_extends_literal_or_object_takes_false_branch() {
         "0 | 1 should not be treated as extending 0 | object"
     );
 }
+
+// =============================================================================
+// is_bare_named_type_parameter — discriminator helper
+// =============================================================================
+
+/// `is_bare_named_type_parameter` must return true only for bare
+/// `TypeData::TypeParameter`, not for `Infer`, intrinsics, or wrapping types.
+/// Used by the call-result deferral logic to tell finalized enclosing-scope
+/// type parameters apart from in-flight inference placeholders.
+#[test]
+fn is_bare_named_type_parameter_accepts_only_bare_type_parameter() {
+    use crate::type_queries::is_bare_named_type_parameter;
+    use crate::types::TypeData;
+
+    let interner = TypeInterner::new();
+
+    let t = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let u_constrained = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("V"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    assert!(
+        is_bare_named_type_parameter(&interner, t),
+        "bare unconstrained TypeParameter should match"
+    );
+    assert!(
+        is_bare_named_type_parameter(&interner, u_constrained),
+        "bare constrained TypeParameter should match"
+    );
+    assert!(
+        !is_bare_named_type_parameter(&interner, infer_v),
+        "Infer must NOT match — it is an in-flight inference placeholder"
+    );
+    assert!(
+        !is_bare_named_type_parameter(&interner, TypeId::STRING),
+        "intrinsics must NOT match"
+    );
+    assert!(
+        !is_bare_named_type_parameter(&interner, TypeId::ANY),
+        "ANY must NOT match"
+    );
+    assert!(
+        !is_bare_named_type_parameter(&interner, TypeId::UNKNOWN),
+        "UNKNOWN must NOT match"
+    );
+
+    // A wrapping ReadonlyType around a TypeParameter is NOT a bare
+    // type parameter — only the inner type would be.
+    let readonly_t = interner.intern(TypeData::ReadonlyType(t));
+    assert!(
+        !is_bare_named_type_parameter(&interner, readonly_t),
+        "Readonly<T> wrapper must NOT match — only the inner T"
+    );
+}
+
+/// Subtype check between two bare unconstrained type parameters with
+/// distinct names must return false. Locks the solver invariant that
+/// `U <: T` is rejected when neither has a constraint that proves it.
+#[test]
+fn unrelated_bare_type_parameters_are_not_subtypes() {
+    use crate::relations::subtype::core::is_subtype_of;
+
+    let interner = TypeInterner::new();
+    let t = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let u = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    assert!(!is_subtype_of(&interner, u, t), "U is not assignable to T");
+    assert!(!is_subtype_of(&interner, t, u), "T is not assignable to U");
+    assert!(is_subtype_of(&interner, t, t), "T is reflexively a subtype");
+}
