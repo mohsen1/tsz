@@ -951,8 +951,18 @@ impl BinderState {
             let is_exported = Self::has_export_modifier(arena, alias.modifiers.as_ref());
 
             // If we're inside a global augmentation block, track this as an augmentation
-            // that should merge with lib.d.ts symbols at type resolution time
-            if self.in_global_augmentation {
+            // that should merge with lib.d.ts symbols at type resolution time.
+            //
+            // Skip when the type alias is nested inside a named non-global namespace
+            // (e.g. `declare global { namespace JSX { type Element = any; } }`).
+            // Those are namespace members (`JSX.Element`), not augmentations of a
+            // top-level global type — recording them by their bare name corrupts
+            // lib types that share the name. For example, lib.dom.d.ts's
+            // `interface Element` constraint check on
+            // `NodeListOf<HTMLElementTagNameMap[K]>` would otherwise emit
+            // spurious TS2344. Type aliases inside a namespace can never
+            // participate in global interface merging anyway.
+            if self.in_global_augmentation && !Self::is_inside_namespace(arena, idx) {
                 Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()

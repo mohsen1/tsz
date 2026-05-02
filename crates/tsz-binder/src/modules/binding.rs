@@ -18,7 +18,7 @@ impl BinderState {
     /// Check if the given node is inside a namespace (identifier-named `ModuleDeclaration`),
     /// as opposed to an ambient module (string-literal-named `ModuleDeclaration`) or at the
     /// file top level.
-    fn is_inside_namespace(arena: &NodeArena, idx: NodeIndex) -> bool {
+    pub(crate) fn is_inside_namespace(arena: &NodeArena, idx: NodeIndex) -> bool {
         let mut current = idx;
         for _ in 0..32 {
             let Some(ext) = arena.get_extended(current) else {
