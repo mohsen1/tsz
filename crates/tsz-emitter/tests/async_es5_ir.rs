@@ -88,7 +88,7 @@ fn test_await_assignment_captures_property_target_before_yield() {
     let output = transform_and_print("async function foo() { var o; o.a = await p; after(); }");
 
     assert!(
-        output.contains("var o, _a;"),
+        output.contains("var o;") && output.contains("var _a;"),
         "Object temp should be hoisted with local declarations: {output}"
     );
     assert!(
@@ -107,7 +107,7 @@ fn test_await_call_argument_captures_identifier_callee_before_yield() {
         transform_and_print("async function foo() { var b = fn(await p, a, a); after(); }");
 
     assert!(
-        output.contains("var b, _a;"),
+        output.contains("var b;") && output.contains("var _a;"),
         "Callee temp should be hoisted with local declarations: {output}"
     );
     assert!(
@@ -126,7 +126,7 @@ fn test_await_call_argument_preserves_prefix_arguments() {
         transform_and_print("async function foo() { var b = fn(a, await p, a); after(); }");
 
     assert!(
-        output.contains("var b, _a, _b;"),
+        output.contains("var b;") && output.contains("var _a;") && output.contains("var _b;"),
         "Callee and prefix-argument temps should be hoisted: {output}"
     );
     assert!(
@@ -147,7 +147,7 @@ fn test_await_method_call_argument_captures_receiver_before_yield() {
         transform_and_print("async function foo() { var b = o.fn(await p, a, a); after(); }");
 
     assert!(
-        output.contains("var b, _a, _b;"),
+        output.contains("var b;") && output.contains("var _a;") && output.contains("var _b;"),
         "Receiver and method temps should be hoisted: {output}"
     );
     assert!(

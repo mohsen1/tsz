@@ -426,15 +426,12 @@ impl<'a> Printer<'a> {
                     self.write("\";");
                     self.write_line();
                 }
-                self.write("var ");
-                for (i, var_name) in hoisted_vars.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
+                for var_name in &hoisted_vars {
+                    self.write("var ");
                     self.write(var_name);
+                    self.write(";");
+                    self.write_line();
                 }
-                self.write(";");
-                self.write_line();
                 if this_expr != "this" && generator_body.contains("return _this") {
                     self.write("var _this = this;");
                     self.write_line();

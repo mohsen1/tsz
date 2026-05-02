@@ -1435,11 +1435,13 @@ impl<'a> IRPrinter<'a> {
                     // Multi-line format with hoisted vars
                     self.write_line();
                     self.increase_indent();
-                    self.write_indent();
-                    self.write("var ");
-                    self.write(&hoisted_vars.join(", "));
-                    self.write(";");
-                    self.write_line();
+                    for var_name in hoisted_vars {
+                        self.write_indent();
+                        self.write("var ");
+                        self.write(var_name);
+                        self.write(";");
+                        self.write_line();
+                    }
                     self.write_indent();
                     self.emit_node(generator_body);
                     self.decrease_indent();
