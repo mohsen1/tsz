@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-02T06:03:26Z",
-  "git_sha": "58efd5a100a07c20924ec1cc805348be27db710c",
+  "timestamp": "2026-05-02T06:57:27Z",
+  "git_sha": "68a05508d2f7fe1193d3252e39b592eb7bed3bb1",
   "summary": {
     "total_tests": 12582,
-    "passed": 12335,
-    "failed": 247,
+    "passed": 12336,
+    "failed": 246,
     "pass_rate": 98.0
   },
   "areas_by_pass_rate": [
@@ -221,9 +221,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6399,
-      "failed": 121,
-      "pass_rate": 98.14
+      "passed": 6400,
+      "failed": 120,
+      "pass_rate": 98.16
     },
     {
       "area": "externalModules",
@@ -1312,11 +1312,11 @@
   ],
   "top_extra_codes": [
     {
-      "code": "TS2322",
-      "count": 9
+      "code": "TS2339",
+      "count": 8
     },
     {
-      "code": "TS2339",
+      "code": "TS2322",
       "count": 8
     },
     {
@@ -1475,9 +1475,9 @@
   "categories": {
     "false_positive": 14,
     "all_missing": 9,
-    "wrong_code": 69,
+    "wrong_code": 68,
     "fingerprint_only": 155,
     "same_code_count_drift": 0,
-    "close_to_passing": 48
+    "close_to_passing": 47
   }
 }
