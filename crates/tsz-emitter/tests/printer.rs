@@ -50,6 +50,40 @@ fn test_streaming_writer() {
 }
 
 #[test]
+fn arrow_default_nullish_temp_is_scoped_to_es2015_body() {
+    let source = "const a = (): string | undefined => undefined;\n((b = a() ?? \"d\") => {})();";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("const a = () => undefined;"),
+        "Type annotations should still be erased from the arrow initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "((b) => {\n    var _a;\n    if (b === void 0) { b = (_a = a()) !== null && _a !== void 0 ? _a : \"d\"; }\n})();"
+        ),
+        "Default initializer temp should be declared inside the generated arrow body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.starts_with("var _a;"),
+        "Default initializer temp must not leak to file scope.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn arrow_default_optional_chain_temp_is_scoped_to_es5_body() {
+    let source = "const a = (): { d: string } | undefined => undefined;\n((b = a()?.d) => {})();";
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains(
+            "(function (b) {\n    var _a;\n    if (b === void 0) { b = (_a = a()) === null || _a === void 0 ? void 0 : _a.d; }\n})();"
+        ),
+        "Default initializer optional-chain temp should be declared inside the ES5 function body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_es6_generator_param_named_yield_keeps_identifier_text() {
     let source = "function* foo(a = yield, yield) {}";
     let output = parse_lower_print(source, PrintOptions::es6());
