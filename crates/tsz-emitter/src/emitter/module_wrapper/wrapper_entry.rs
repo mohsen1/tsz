@@ -118,10 +118,7 @@ impl<'a> Printer<'a> {
                                 && (source_file.file_name == path
                                     || source_file.file_name.ends_with(&format!("/{path}")))
                         });
-                    if path.starts_with('/')
-                        || (self.ctx.options.module == ModuleKind::AMD
-                            && (path.ends_with(".d.ts") || references_compilation_dts))
-                    {
+                    if path.starts_with('/') && !references_compilation_dts {
                         refs.push(trimmed.to_string());
                     }
                 } else {
