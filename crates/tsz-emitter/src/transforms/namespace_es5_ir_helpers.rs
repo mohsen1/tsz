@@ -567,10 +567,24 @@ pub(super) fn rewrite_exported_var_refs(
                 rewrite_exported_var_refs(&mut prop.value, ns_name, names);
             }
         }
-        IRNode::FunctionExpr { body, .. }
-        | IRNode::FunctionDecl { body, .. }
-        | IRNode::NamespaceIIFE { body, .. }
-        | IRNode::ES5ClassIIFE { body, .. } => {
+        IRNode::FunctionExpr {
+            parameters, body, ..
+        }
+        | IRNode::FunctionDecl {
+            parameters, body, ..
+        } => {
+            let mut body_names = names.clone();
+            for param in parameters {
+                if let Some(default_value) = &mut param.default_value {
+                    rewrite_exported_var_refs(default_value, ns_name, names);
+                }
+                body_names.remove(param.name.as_ref());
+            }
+            for stmt in body {
+                rewrite_exported_var_refs(stmt, ns_name, &body_names);
+            }
+        }
+        IRNode::NamespaceIIFE { body, .. } | IRNode::ES5ClassIIFE { body, .. } => {
             for stmt in body {
                 rewrite_exported_var_refs(stmt, ns_name, names);
             }

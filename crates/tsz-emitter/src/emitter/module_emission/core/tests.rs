@@ -1,4 +1,5 @@
 use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
 
 /// When moduleDetection=force, a file without any import/export syntax
@@ -128,6 +129,44 @@ fn malformed_import_numeric_operand_emits_recovered_expression() {
     assert!(
         !output.contains("\n;"),
         "Malformed import recovery should not emit an empty statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_reopen_parameter_shadows_prior_exported_name() {
+    let source = r#"namespace Foo {
+    export function a() {
+        return 5;
+    }
+}
+namespace Foo {
+    export function c(a: number) {
+        return a;
+    }
+}
+export = Foo;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("return a;"),
+        "Namespace cross-block export substitution should not rewrite shadowing parameters.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return Foo.a;"),
+        "Namespace cross-block export substitution should not qualify a shadowing parameter.\nOutput:\n{output}"
     );
 }
 
