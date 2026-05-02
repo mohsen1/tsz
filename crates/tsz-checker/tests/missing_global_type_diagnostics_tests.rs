@@ -165,3 +165,37 @@ fn promise_like_type_reference_emits_ts2304_with_minimal_core_globals() {
         "Expected TS2304 for PromiseLike type reference without libs, got: {diagnostics:?}"
     );
 }
+
+/// `Function.name` was added to the lib `Function` interface in
+/// `lib.es2015.core.d.ts`. When no `Function` interface is registered
+/// at all (no-lib bootstrap), the hardcoded `name => string` fallback
+/// inside `resolve_function_property` must still fire so internal
+/// callers (Solver tests that don't load lib files) keep working —
+/// otherwise common idioms like `foo.name` start emitting spurious
+/// TS2339 in no-lib bootstrap scenarios.
+///
+/// The complementary case — when the lib is loaded and the boxed
+/// `Function` interface is missing `name` (e.g. `lib.es5.d.ts` only,
+/// pre-es2015) — is verified by the conformance suite
+/// (`compiler/modularizeLibrary_ErrorFromUsingES6FeaturesWithOnlyES5Lib.ts`,
+/// among others) where the boxed lookup correctly reports the
+/// property as absent and TS2339 fires.
+#[test]
+fn function_name_resolves_via_bootstrap_when_no_function_interface_registered() {
+    let diagnostics = check_without_lib_with_minimal_core_globals_except(
+        &["Function"],
+        r#"
+function foo() {}
+foo.name;
+"#,
+    );
+    let ts2339_for_name: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2339 && d.message_text.contains("'name'"))
+        .collect();
+    assert!(
+        ts2339_for_name.is_empty(),
+        "Expected `Function.name` to resolve via the bootstrap fallback when no \
+         Function interface is registered (no-lib path). Got: {diagnostics:?}"
+    );
+}
