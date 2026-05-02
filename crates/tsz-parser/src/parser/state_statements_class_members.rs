@@ -184,11 +184,20 @@ impl ParserState {
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
-                if seen_accessor || seen_async {
+                if seen_accessor {
+                    // Auto-accessor properties cannot be readonly. tsc emits
+                    // TS1243 (cannot-be-used-with) here, not TS1029
+                    // (must-precede), because no ordering of these two
+                    // modifiers is legal.
                     use tsz_common::diagnostics::diagnostic_codes;
-                    let other = if seen_accessor { "accessor" } else { "async" };
                     self.parse_error_at_current_token(
-                        &format!("'readonly' modifier must precede '{other}' modifier."),
+                        "'readonly' modifier cannot be used with 'accessor' modifier.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                    );
+                } else if seen_async {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'readonly' modifier must precede 'async' modifier.",
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
                 }
@@ -233,6 +242,23 @@ impl ParserState {
                     self.parse_error_at_current_token(
                         "'accessor' modifier already seen.",
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                    );
+                }
+                // Auto-accessor properties cannot be combined with `readonly`
+                // or `declare` in either order — tsc emits TS1243 on the
+                // accessor keyword when readonly/declare was seen first.
+                if seen_readonly {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'accessor' modifier cannot be used with 'readonly' modifier.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                    );
+                }
+                if seen_declare {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'accessor' modifier cannot be used with 'declare' modifier.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
                     );
                 }
                 if seen_async {
@@ -312,6 +338,16 @@ impl ParserState {
                         self.parse_error_at_current_token(
                             "'override' modifier cannot be used in an ambient context.",
                             diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
+                        );
+                    }
+                    // Auto-accessor properties cannot be `declare`d. When
+                    // `accessor` precedes `declare`, tsc emits TS1243 on the
+                    // declare keyword.
+                    if seen_accessor {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "'declare' modifier cannot be used with 'accessor' modifier.",
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
                         );
                     }
                     seen_declare = true;
