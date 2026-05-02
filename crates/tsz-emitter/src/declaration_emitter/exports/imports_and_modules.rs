@@ -712,6 +712,11 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     if let Some(rescued) = self.rescued_asserts_parameter_type_text(param_idx) {
                         self.write(&rescued);
+                    } else if self.normalize_string_literal_type_quotes
+                        && let Some(type_text) =
+                            self.emit_type_node_text_normalized(param.type_annotation)
+                    {
+                        self.write(&type_text);
                     } else {
                         self.emit_type(param.type_annotation);
                     }

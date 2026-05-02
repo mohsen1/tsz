@@ -1035,10 +1035,13 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn emit_string_literal_type(&mut self, node: &tsz_parser::parser::node::Node) {
         if let Some(lit) = self.arena.get_literal(node) {
-            let source_quote = self
-                .get_source_slice(node.pos, node.end)
-                .and_then(|source| source.chars().next())
-                .filter(|quote| *quote == '\'' || *quote == '"');
+            let source_quote = if self.normalize_string_literal_type_quotes {
+                None
+            } else {
+                self.get_source_slice(node.pos, node.end)
+                    .and_then(|source| source.chars().next())
+                    .filter(|quote| *quote == '\'' || *quote == '"')
+            };
 
             if source_quote == Some('\'') {
                 self.write("'");

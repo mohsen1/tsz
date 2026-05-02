@@ -569,6 +569,20 @@ export type Add<A extends number, B extends number> =
 }
 
 #[test]
+fn test_function_initializer_signature_normalizes_string_literal_type_quotes() {
+    let output = emit_dts(
+        r#"
+type O = { prop: string };
+export const fn = (v: O['prop'], p: Omit<O, 'prop'>) => {};
+"#,
+    );
+    assert!(
+        output.contains(r#"export declare const fn: (v: O["prop"], p: Omit<O, "prop">) => void;"#),
+        "Expected reconstructed function initializer signature to normalize string literal type quotes: {output}"
+    );
+}
+
+#[test]
 fn test_typeof_type() {
     let output = emit_dts("declare const x: number;\nexport type T = typeof x;");
     assert!(
