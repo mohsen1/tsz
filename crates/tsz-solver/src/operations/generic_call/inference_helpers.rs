@@ -776,8 +776,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target_type: TypeId,
     ) -> Option<(TypeId, TypeId)> {
         if let (Some(mut source_fn), Some(mut target_fn)) = (
-            Self::get_contextual_signature(self.interner.as_type_database(), arg_type),
-            Self::get_contextual_signature(self.interner.as_type_database(), target_type),
+            Self::get_contextual_signature_cached(self.interner, arg_type),
+            Self::get_contextual_signature_cached(self.interner, target_type),
         ) && source_fn.params.len() == target_fn.params.len()
             && let Some((source_return, target_return)) =
                 self.partial_round1_object_pair(source_fn.return_type, target_fn.return_type)
@@ -1364,13 +1364,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source_ty: TypeId,
         target_ty: TypeId,
     ) -> bool {
-        let Some(source_fn) =
-            Self::get_contextual_signature(self.interner.as_type_database(), source_ty)
+        let Some(source_fn) = Self::get_contextual_signature_cached(self.interner, source_ty)
         else {
             return false;
         };
-        let Some(target_fn) =
-            Self::get_contextual_signature(self.interner.as_type_database(), target_ty)
+        let Some(target_fn) = Self::get_contextual_signature_cached(self.interner, target_ty)
         else {
             return false;
         };

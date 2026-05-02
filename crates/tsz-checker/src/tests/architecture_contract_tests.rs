@@ -1128,7 +1128,7 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "query_boundaries/call_checker should not keep an unused direct CallEvaluator contextual-typing wrapper"
     );
     assert!(
-        call_boundary_src.contains("get_contextual_signature_with_compat_checker("),
+        call_boundary_src.contains("get_contextual_signature_cached_with_compat_checker("),
         "query_boundaries/call_checker contextual signature lookup should route through solver operations helper"
     );
 

@@ -113,14 +113,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             normalized
         };
         let source = self.instantiate_generic_function_argument_against_target(source, target);
-        let Some(source_fn) =
-            Self::get_contextual_signature(self.interner.as_type_database(), source)
-        else {
+        let Some(source_fn) = Self::get_contextual_signature_cached(self.interner, source) else {
             return false;
         };
-        let Some(target_fn) =
-            Self::get_contextual_signature(self.interner.as_type_database(), target)
-        else {
+        let Some(target_fn) = Self::get_contextual_signature_cached(self.interner, target) else {
             return false;
         };
         let source_fn = normalize(source_fn);
@@ -142,14 +138,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// This mirrors tsc's behavior where function arity is enforced even in bivariant
     /// callback positions.
     fn callback_source_has_excess_required_params(&self, source: TypeId, target: TypeId) -> bool {
-        let Some(source_fn) =
-            Self::get_contextual_signature(self.interner.as_type_database(), source)
-        else {
+        let Some(source_fn) = Self::get_contextual_signature_cached(self.interner, source) else {
             return false;
         };
-        let Some(target_fn) =
-            Self::get_contextual_signature(self.interner.as_type_database(), target)
-        else {
+        let Some(target_fn) = Self::get_contextual_signature_cached(self.interner, target) else {
             return false;
         };
 
@@ -203,14 +195,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             normalized
         };
 
-        let Some(source_fn) =
-            Self::get_contextual_signature(self.interner.as_type_database(), source)
-        else {
+        let Some(source_fn) = Self::get_contextual_signature_cached(self.interner, source) else {
             return false;
         };
-        let Some(target_fn) =
-            Self::get_contextual_signature(self.interner.as_type_database(), target)
-        else {
+        let Some(target_fn) = Self::get_contextual_signature_cached(self.interner, target) else {
             return false;
         };
 
