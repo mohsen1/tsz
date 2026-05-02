@@ -72,6 +72,8 @@ impl<'a> CheckerState<'a> {
         // Speculative attribute collection: save diagnostic checkpoint so side-effect
         // diagnostics (e.g. TS7006 from callback params without contextual typing) are
         // rolled back. Only the final TS2769 (if no overload matches) is kept.
+        // (TS2698 spread validity is emitted earlier by the JSX orchestration entry,
+        // so it survives this rollback even when no overload matches.)
         let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
 
         // Collect JSX attributes: explicit + spread-merged, with override tracking
