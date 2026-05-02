@@ -2,7 +2,14 @@
 //! Centralizes logic for converting `TypeIds` and `TypeDatas` to human-readable strings.
 
 mod compound;
-#[cfg(test)]
+// `test_tracing` exercises `debug!` / `debug_span!` / `trace_span!`. The
+// workspace `tracing` dep filters those macros out at compile time when
+// `debug_assertions` is off (via the `release_max_level_warn` feature), so
+// the capture-based assertions can never observe events under
+// `cargo test --release`. Gate the module on `debug_assertions` so the
+// release-mode test build doesn't try to run (or compile) tests that have
+// nothing to capture.
+#[cfg(all(test, debug_assertions))]
 pub mod test_tracing;
 #[cfg(test)]
 mod tests;
