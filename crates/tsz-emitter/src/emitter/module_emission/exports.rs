@@ -1,5 +1,6 @@
 use super::super::{ModuleKind, Printer};
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> Printer<'a> {
@@ -928,6 +929,14 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
+                if !self.binding_pattern_has_export_names(decl.name) {
+                    self.emit_cjs_destructuring_export_without_bindings(
+                        decl.name,
+                        decl.initializer,
+                    );
+                    continue;
+                }
+
                 // Get binding pattern elements
                 let Some(pattern) = self.arena.get_binding_pattern(name_node) else {
                     continue;
@@ -1113,6 +1122,99 @@ impl<'a> Printer<'a> {
                     self.write(";");
                 }
             }
+        }
+    }
+
+    fn binding_pattern_has_export_names(&self, pattern_idx: NodeIndex) -> bool {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return false;
+        };
+
+        if self.has_identifier_text(pattern_idx) {
+            return true;
+        }
+
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+            && pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return false;
+        }
+
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+
+        pattern.elements.nodes.iter().any(|&elem_idx| {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                return false;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                return false;
+            };
+            self.binding_pattern_has_export_names(elem.name)
+        })
+    }
+
+    fn emit_cjs_destructuring_export_without_bindings(
+        &mut self,
+        pattern_idx: NodeIndex,
+        initializer: NodeIndex,
+    ) {
+        let temp_name = self.make_unique_name_cjs_destructuring();
+        self.write(&temp_name);
+        self.write(" = ");
+        if initializer.is_none() {
+            self.write("void 0");
+        } else {
+            self.emit(initializer);
+        }
+        self.emit_cjs_empty_binding_pattern_tails(pattern_idx, &temp_name);
+        self.write(";");
+    }
+
+    fn emit_cjs_empty_binding_pattern_tails(&mut self, pattern_idx: NodeIndex, source: &str) {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        for (index, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            let Some(name_node) = self.arena.get(elem.name) else {
+                continue;
+            };
+            if name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                && name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                continue;
+            }
+
+            let nested_temp = self.make_unique_name_cjs_destructuring();
+            self.write(", ");
+            self.write(&nested_temp);
+            self.write(" = ");
+            self.write(source);
+            if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                self.write("[");
+                self.write(&index.to_string());
+                self.write("]");
+            } else {
+                let prop_name = if elem.property_name.is_some() {
+                    self.get_identifier_text_idx(elem.property_name)
+                } else {
+                    self.get_identifier_text_idx(elem.name)
+                };
+                self.write(".");
+                self.write(&prop_name);
+            }
+            self.emit_cjs_empty_binding_pattern_tails(elem.name, &nested_temp);
         }
     }
 }
