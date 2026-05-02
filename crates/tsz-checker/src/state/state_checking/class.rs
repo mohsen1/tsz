@@ -377,11 +377,26 @@ impl<'a> CheckerState<'a> {
                                 diagnostic_codes::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
                             );
                         } else if has_jsdoc_accessibility {
-                            self.error_at_node(
-                                member_idx,
-                                diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                                diagnostic_codes::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                            );
+                            // tsc anchors TS18010 at the `@public`/`@private`/
+                            // `@protected` tag inside the JSDoc comment for JS
+                            // files. Recover that span if present; fall back
+                            // to the member node otherwise.
+                            if let Some((start, len)) =
+                                self.jsdoc_accessibility_tag_span(member_idx)
+                            {
+                                self.error_at_position(
+                                    start,
+                                    len,
+                                    diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                    diagnostic_codes::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                );
+                            } else {
+                                self.error_at_node(
+                                    member_idx,
+                                    diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                    diagnostic_codes::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                );
+                            }
                         }
 
                         // TS18019: 'declare'/'abstract' modifier cannot be used with a private identifier.

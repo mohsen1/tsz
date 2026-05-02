@@ -1091,6 +1091,43 @@ impl<'a> CheckerState<'a> {
             || Self::jsdoc_contains_tag(&jsdoc, "protected")
     }
 
+    /// Source span (start, length) of the `@public`/`@private`/`@protected` tag
+    /// inside the JSDoc comment leading `idx`. Returns `None` if no JSDoc
+    /// comment with such a tag is attached to the node.
+    ///
+    /// tsc anchors TS18010 ("An accessibility modifier cannot be used with a
+    /// private identifier.") at the JSDoc accessibility tag itself for JS
+    /// files, not at the member declaration. Use this helper to recover the
+    /// absolute source position so the diagnostic underlines the tag.
+    pub(crate) fn jsdoc_accessibility_tag_span(&self, idx: NodeIndex) -> Option<(u32, u32)> {
+        use tsz_common::comments::{get_leading_comments_from_cache, is_jsdoc_comment};
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let pos = self.ctx.arena.get(idx).map(|n| n.pos)?;
+        let leading = get_leading_comments_from_cache(comments, pos, source_text);
+        for comment in leading.iter().rev() {
+            let end = comment.end as usize;
+            let check = pos as usize;
+            if end <= check
+                && source_text
+                    .get(end..check)
+                    .is_some_and(|gap| gap.chars().all(char::is_whitespace))
+                && is_jsdoc_comment(comment, source_text)
+            {
+                let comment_start = comment.pos as usize;
+                let comment_text = source_text.get(comment_start..end)?;
+                for tag in ["@public", "@private", "@protected"] {
+                    if let Some(rel) = comment_text.find(tag) {
+                        return Some(((comment_start + rel) as u32, tag.len() as u32));
+                    }
+                }
+                return None;
+            }
+        }
+        None
+    }
+
     /// Scan statements for `@extends`/`@augments` not on class declarations (TS8022).
     ///
     /// Each result is `(tag, Some((pos, len)))` when the orphan is the leading
