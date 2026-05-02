@@ -24,6 +24,8 @@ pub struct AstToIr<'a> {
     has_super: bool,
     /// Whether we're inside a static member — super access uses `_super.X` (no .prototype)
     is_static: bool,
+    /// Optional identifier substitution for class self-references in decorated class bodies.
+    identifier_substitution: Option<(String, String)>,
     /// Counter for generating unique temp variable names (shared with caller)
     temp_var_counter: Cell<u32>,
     /// Temp variable names that need `var` declarations at an enclosing scope
@@ -39,6 +41,7 @@ impl<'a> AstToIr<'a> {
             current_this_substitution: Cell::new(None),
             has_super: false,
             is_static: false,
+            identifier_substitution: None,
             temp_var_counter: Cell::new(0),
             hoisted_temps: RefCell::new(Vec::new()),
         }
@@ -53,6 +56,11 @@ impl<'a> AstToIr<'a> {
     /// Set whether we're inside a static member (affects super property access)
     pub const fn with_static(mut self, is_static: bool) -> Self {
         self.is_static = is_static;
+        self
+    }
+
+    pub fn with_identifier_substitution(mut self, name: String, replacement: String) -> Self {
+        self.identifier_substitution = Some((name, replacement));
         self
     }
 
@@ -659,6 +667,11 @@ impl<'a> AstToIr<'a> {
             .get(idx)
             .expect("NodeIndex must be valid in arena");
         if let Some(ident) = self.arena.get_identifier(node) {
+            if let Some((name, replacement)) = self.identifier_substitution.as_ref()
+                && ident.escaped_text == *name
+            {
+                return IRNode::Identifier(replacement.clone().into());
+            }
             IRNode::Identifier(ident.escaped_text.clone().into())
         } else {
             IRNode::ASTRef(idx)

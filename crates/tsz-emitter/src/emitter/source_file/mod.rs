@@ -119,6 +119,72 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn legacy_decorated_es2015_class_self_reference_uses_hoisted_alias() {
+        let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var Foo_1;\nfunction decorator()"),
+            "ES2015 decorated class self-reference alias should be hoisted before statements.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("let Foo = Foo_1 = class Foo"),
+            "ES2015 decorated class should initialize the alias with the class expression.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_1();"),
+            "ES2015 decorated class body should reference the alias.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn legacy_decorated_es5_class_self_reference_uses_iife_alias() {
+        let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("Foo_1 = Foo;\n    Foo.func = function ()"),
+            "ES5 decorated class should assign the alias before static members.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_1();"),
+            "ES5 decorated class method should reference the alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var Foo_1;\n    Foo = Foo_1 = __decorate(["),
+            "ES5 decorated class should declare the alias before decorating and update it from __decorate.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn commonjs_top_level_using_direct_exported_legacy_class_stays_inline() {
         let source =
             "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";

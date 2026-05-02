@@ -3,6 +3,7 @@
 //! Contains the `EmitDirective` enum and all methods related to applying
 //! transform directives during emission (Phase 2 architecture).
 
+use super::declarations::class::class_has_self_references;
 use super::*;
 use std::sync::Arc;
 use tracing::debug;
@@ -924,6 +925,20 @@ impl<'a> Printer<'a> {
             && let Some(class_data) = self.arena.get_class(class_node_ref)
         {
             let class_decorators = self.collect_class_decorators(&class_data.modifiers);
+            let class_self_alias = if !class_decorators.is_empty() {
+                self.get_identifier_text_opt(class_data.name)
+                    .filter(|class_name| {
+                        class_has_self_references(
+                            self.arena,
+                            self.source_text_for_map(),
+                            class_name,
+                            &class_data.members.nodes,
+                        )
+                    })
+                    .map(|class_name| format!("{class_name}_1"))
+            } else {
+                None
+            };
             let has_member_decorators = class_data.members.nodes.iter().any(|&m_idx| {
                 let Some(m_node) = self.arena.get(m_idx) else {
                     return false;
@@ -990,6 +1005,9 @@ impl<'a> Printer<'a> {
                     has_member_decorators,
                     emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
                 });
+                if let Some(alias) = class_self_alias {
+                    es5_emitter.set_class_self_reference_alias(alias);
+                }
             }
         }
 
