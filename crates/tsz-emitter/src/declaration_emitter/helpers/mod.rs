@@ -26,6 +26,23 @@ pub(crate) fn escape_string_for_double_quote(s: &str) -> String {
     out
 }
 
+/// Escape a cooked string value for embedding in a single-quoted string literal.
+pub(crate) fn escape_string_for_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 type JsFoldedNamedExports = (
     FxHashSet<String>,
     FxHashMap<NodeIndex, Vec<NodeIndex>>,
