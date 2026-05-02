@@ -1,4 +1,4 @@
-Status: claim
+Status: ready
 Branch: fix/dts-import-type-generic-arrow
 Owner: Codex
 Started: 2026-05-02

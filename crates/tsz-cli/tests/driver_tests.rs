@@ -597,6 +597,63 @@ export const f = fn;
 }
 
 #[test]
+fn declaration_emit_imported_generic_call_preserves_function_type_argument() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("module.d.ts"),
+        r#"declare module "module" {
+    export interface Modifier<T> {}
+    export function fn<T>(x: T): Modifier<T>;
+}
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import { fn } from "module";
+
+export const fail1 = fn(<T>(x: T): T => x);
+export const works1 = fn((x: number) => x);
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "strict": true,
+    "declaration": true,
+    "module": "es2015"
+  },
+  "files": ["module.d.ts", "index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:#?}",
+        result.diagnostics
+    );
+
+    let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
+    assert!(
+        dts.contains("export declare const fail1: import(\"module\").Modifier<(<T>(x: T) => T)>;"),
+        "expected imported wrapper and inferred generic function type argument: {dts}"
+    );
+    assert!(
+        dts.contains(
+            "export declare const works1: import(\"module\").Modifier<(x: number) => number>;"
+        ),
+        "expected imported wrapper and inferred arrow return type argument: {dts}"
+    );
+}
+
+#[test]
 fn declaration_emit_namespace_import_callable_member_avoids_ts7056() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
