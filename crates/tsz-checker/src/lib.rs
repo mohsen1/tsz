@@ -460,6 +460,9 @@ mod strict_null_manual;
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
 #[cfg(test)]
+#[path = "tests/ts2590_array_literal_identity_skip_tests.rs"]
+mod ts2590_array_literal_identity_skip_tests;
+#[cfg(test)]
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
 #[cfg(test)]

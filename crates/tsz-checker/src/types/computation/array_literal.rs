@@ -944,14 +944,24 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // TS2590: Pre-check element count before BCT. tsc's removeSubtypes counts
-        // pairwise iterations on the original (un-widened) types and bails at 1,000,000.
-        // tsc counts ALL pairwise comparisons regardless of type kind (including
-        // identity-comparable primitives/literals).
+        // TS2590: Pre-check element count before BCT. tsc's removeSubtypes only
+        // increments its cost counter for StructuredOrInstantiable source types —
+        // identity-comparable primitives/literals (number/string/boolean literals,
+        // null, undefined, void, never, enum members, unique symbols) short-circuit
+        // on TypeId equality and don't drive the cost. So filter them out before
+        // counting; otherwise an array of 1000+ distinct number literals (e.g.
+        // `[0 as 0, 1 as 1, ...]`) wrongly triggers TS2590 even though tsc widens
+        // them to `number` without complaint.
         {
             let mut deduped = element_types.clone();
             deduped.sort_unstable_by_key(|t| t.0);
             deduped.dedup();
+            deduped.retain(|t| {
+                !crate::query_boundaries::state::type_environment::is_identity_comparable_type(
+                    self.ctx.types,
+                    *t,
+                )
+            });
             let distinct_count = deduped.len() as u64;
             let pairwise = distinct_count * distinct_count.saturating_sub(1);
             if pairwise >= 1_000_000 {
