@@ -1,4 +1,5 @@
 use super::super::Printer;
+use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::ModuleKind;
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
@@ -96,6 +97,7 @@ impl<'a> Printer<'a> {
         &mut self,
         dependencies: &[String],
         dep_vars: &HashMap<String, String>,
+        system_plan: &SystemDependencyPlan,
     ) {
         if dependencies.is_empty() {
             self.write("setters: [],");
@@ -109,16 +111,52 @@ impl<'a> Printer<'a> {
             let Some(dep_var) = dep_vars.get(dep) else {
                 continue;
             };
+            let Some(actions) = system_plan.actions.get(dep) else {
+                continue;
+            };
             self.write("function (");
             self.write(dep_var);
             self.write("_1) {");
             self.write_line();
             self.increase_indent();
-            self.write(dep_var);
-            self.write(" = ");
-            self.write(dep_var);
-            self.write("_1;");
-            self.write_line();
+            for action in actions {
+                match action {
+                    SystemDependencyAction::Assign(local_name) => {
+                        self.write(local_name);
+                        self.write(" = ");
+                        self.write(dep_var);
+                        self.write("_1;");
+                        self.write_line();
+                    }
+                    SystemDependencyAction::NamedExports(exports) => {
+                        self.write("exports_1({");
+                        self.write_line();
+                        self.increase_indent();
+                        for (export_idx, (export_name, import_name)) in exports.iter().enumerate() {
+                            self.write("\"");
+                            self.write(export_name);
+                            self.write("\": ");
+                            let setter_arg = format!("{dep_var}_1");
+                            self.write_module_property_access(&setter_arg, import_name);
+                            if export_idx + 1 != exports.len() {
+                                self.write(",");
+                            }
+                            self.write_line();
+                        }
+                        self.decrease_indent();
+                        self.write("});");
+                        self.write_line();
+                    }
+                    SystemDependencyAction::NamespaceExport(export_name) => {
+                        self.write("exports_1(\"");
+                        self.write(export_name);
+                        self.write("\", ");
+                        self.write(dep_var);
+                        self.write("_1);");
+                        self.write_line();
+                    }
+                }
+            }
             self.decrease_indent();
             self.write("}");
             if idx + 1 != dependencies.len() {
@@ -134,6 +172,7 @@ impl<'a> Printer<'a> {
         &mut self,
         source: &tsz_parser::parser::node::SourceFileData,
         dep_vars: &HashMap<String, String>,
+        system_plan: &SystemDependencyPlan,
     ) {
         self.commonjs_named_import_substitutions.clear();
 
@@ -154,7 +193,11 @@ impl<'a> Printer<'a> {
             else {
                 continue;
             };
-            let Some(dep_var) = dep_vars.get(&module_spec) else {
+            let dep_var = if let Some(dep_var) = system_plan.import_vars.get(&stmt_node.pos) {
+                dep_var
+            } else if let Some(dep_var) = dep_vars.get(&module_spec) {
+                dep_var
+            } else {
                 continue;
             };
             let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
@@ -230,6 +273,7 @@ impl<'a> Printer<'a> {
         source_node: &tsz_parser::parser::node::Node,
         dep_vars: &HashMap<String, String>,
         hoisted_func_stmts: &HashSet<NodeIndex>,
+        system_plan: &SystemDependencyPlan,
     ) {
         let prev_module = self.ctx.options.module;
         let prev_auto_detect = self.ctx.auto_detect_module;
@@ -247,7 +291,7 @@ impl<'a> Printer<'a> {
             self.in_system_execute_body = false;
             return;
         };
-        self.register_system_import_substitutions(source, dep_vars);
+        self.register_system_import_substitutions(source, dep_vars, system_plan);
 
         let mut reexported_names: FxHashMap<String, String> = FxHashMap::default();
         for &stmt_idx in &source.statements.nodes {
@@ -357,6 +401,12 @@ impl<'a> Printer<'a> {
                 {
                     self.write_line();
                 }
+                continue;
+            }
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
+                && export_decl.module_specifier.is_some()
+            {
                 continue;
             }
             let before_len = self.writer.len();
