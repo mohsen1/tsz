@@ -1855,6 +1855,9 @@ impl<'a> CheckerState<'a> {
                 None
             }
             k if k == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if self.paren_has_jsdoc_type_cast(idx) {
+                    return None;
+                }
                 let paren = self.ctx.arena.get_parenthesized(node)?;
                 self.literal_type_from_initializer(paren.expression)
             }

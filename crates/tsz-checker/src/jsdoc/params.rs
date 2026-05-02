@@ -942,6 +942,42 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a parenthesized expression node has an immediate leading JSDoc
+    /// `@type {T}` cast. Direct lookup only — does not walk ancestors, since a
+    /// JSDoc cast must be attached right before the `(` it casts. Used by
+    /// `literal_type_from_initializer` to short-circuit walking through a
+    /// JSDoc-cast paren when extracting fresh literal types.
+    pub(crate) fn paren_has_jsdoc_type_cast(&self, idx: NodeIndex) -> bool {
+        if !self.ctx.should_resolve_jsdoc() {
+            return false;
+        }
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        if sf.comments.is_empty() || !sf.comments.iter().any(|c| c.is_multi_line) {
+            return false;
+        }
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let Some(pos) = self.effective_jsdoc_pos_for_node(idx, comments, source_text) else {
+            return false;
+        };
+        let Some(jsdoc) = self.try_leading_jsdoc(comments, pos, source_text) else {
+            return false;
+        };
+        // Match `@type` but not `@typedef` (which uses a different shape).
+        let mut search = jsdoc.as_str();
+        while let Some(pos) = search.find("@type") {
+            let after = &search[pos + "@type".len()..];
+            let next = after.chars().next();
+            if !matches!(next, Some(c) if c.is_ascii_alphanumeric() || c == '_') {
+                return true;
+            }
+            search = &after[next.map_or(0, |c| c.len_utf8())..];
+        }
+        false
+    }
+
     /// Extract the type expression text from a leading `@satisfies {TypeExpr}` JSDoc comment
     /// on `idx` or an ancestor. Returns the raw type text (e.g. `Record<Keys, unknown>`).
     pub(crate) fn jsdoc_satisfies_type_text_for_node(&self, idx: NodeIndex) -> Option<String> {
