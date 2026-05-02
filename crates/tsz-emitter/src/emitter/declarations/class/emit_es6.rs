@@ -535,10 +535,11 @@ impl<'a> Printer<'a> {
         let target_needs_field_lowering = (self.ctx.options.target as u32)
             < (tsz_common::ScriptTarget::ES2022 as u32)
             || !self.ctx.options.use_define_for_class_fields;
+        let target_needs_static_block_lowering =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
         // Positive-form predicate reads more clearly than clippy's inverted De Morgan form.
         #[allow(clippy::nonminimal_bool)]
-        let needs_static_comma_expr = is_class_expression
-            && target_needs_field_lowering
+        let has_static_field_comma_expr = target_needs_field_lowering
             && class.members.nodes.iter().any(|&member_idx| {
                 self.arena.get(member_idx).is_some_and(|m| {
                     m.kind == syntax_kind_ext::PROPERTY_DECLARATION
@@ -555,14 +556,30 @@ impl<'a> Printer<'a> {
                         })
                 })
             });
+        let has_static_block_comma_expr = target_needs_static_block_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena
+                    .get(member_idx)
+                    .is_some_and(|m| m.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION)
+            });
+        let needs_static_comma_expr =
+            is_class_expression && (has_static_field_comma_expr || has_static_block_comma_expr);
         let needs_any_comma_expr = needs_static_comma_expr || needs_private_comma_expr;
+        let class_expr_comma_needs_parens = needs_any_comma_expr
+            && self
+                .arena
+                .get_extended(_idx)
+                .and_then(|ext| self.arena.get(ext.parent))
+                .is_none_or(|parent| parent.kind != syntax_kind_ext::RETURN_STATEMENT);
         let class_expr_temp = if needs_any_comma_expr {
             let temp = if let Some(ref alias) = private_class_alias {
                 alias.clone()
             } else {
                 self.make_unique_name_hoisted()
             };
-            self.write("(");
+            if class_expr_comma_needs_parens {
+                self.write("(");
+            }
             self.write(&temp);
             self.write(" = ");
             Some(temp)
@@ -663,8 +680,7 @@ impl<'a> Printer<'a> {
             self.arena,
             &class.heritage_clauses,
         );
-        let needs_static_block_lowering =
-            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+        let needs_static_block_lowering = target_needs_static_block_lowering;
         let has_legacy_class_decorators = self.ctx.options.legacy_decorators
             && !self.collect_class_decorators(&class.modifiers).is_empty();
         let externalized_static_initializer_uses_undefined_receiver =
@@ -1855,7 +1871,6 @@ impl<'a> Printer<'a> {
         // For class expressions: use comma expression `(_a = class C {}, _a.field = value, _a)`
         // For class declarations: use separate statements `ClassName.field = value;`
         if !static_field_inits.is_empty()
-            && !class_name.is_empty()
             && let Some(temp) = class_expr_static_temp.as_ref()
         {
             // Class expression comma-expression: `(_a = class C {}, _a.a = 1, _a)`
@@ -1938,11 +1953,17 @@ impl<'a> Printer<'a> {
                 }
                 self.decrease_indent();
             }
+            if !self.defer_class_static_blocks && !deferred_static_blocks.is_empty() {
+                let blocks = std::mem::take(&mut deferred_static_blocks);
+                self.emit_static_block_iife_comma_items(blocks);
+            }
             self.write(",");
             self.write_line();
             self.increase_indent();
             self.write(temp);
-            self.write(")");
+            if class_expr_comma_needs_parens {
+                self.write(")");
+            }
             self.decrease_indent();
         } else if !static_field_inits.is_empty() && !class_name.is_empty() {
             self.write_line();
@@ -2201,7 +2222,9 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
                 self.write(temp);
-                self.write(")");
+                if class_expr_comma_needs_parens {
+                    self.write(")");
+                }
                 self.decrease_indent();
             }
         } else if has_post_class_inits {
@@ -2310,8 +2333,23 @@ impl<'a> Printer<'a> {
         }
 
         // Emit deferred static blocks as IIFEs after the class body.
-        // When defer_class_static_blocks is true, store for caller to emit later.
-        if self.defer_class_static_blocks {
+        // Class expressions lowered to comma expressions must keep static block
+        // evaluation inside that expression before returning the temp.
+        if let Some(temp) = class_expr_static_temp.as_ref()
+            && static_field_inits.is_empty()
+            && !self.defer_class_static_blocks
+            && !deferred_static_blocks.is_empty()
+        {
+            self.emit_static_block_iife_comma_items(deferred_static_blocks);
+            self.write(",");
+            self.write_line();
+            self.increase_indent();
+            self.write(temp);
+            if class_expr_comma_needs_parens {
+                self.write(")");
+            }
+            self.decrease_indent();
+        } else if self.defer_class_static_blocks {
             self.deferred_class_static_blocks
                 .extend(deferred_static_blocks);
         } else {
