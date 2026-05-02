@@ -1878,87 +1878,128 @@ impl<'a> Printer<'a> {
         {
             // Class expression comma-expression: `(_a = class C {}, _a.a = 1, _a)`
             // The `(_a = ` prefix was already emitted before the `class` keyword.
-            for (name_emit, init_idx, _member_pos, _leading_comments, _trailing_comments) in
-                &static_field_inits
-            {
-                self.write(",");
-                self.write_line();
-                self.increase_indent();
-                if self.ctx.options.use_define_for_class_fields {
-                    let define_name = match name_emit {
-                        PropertyNameEmit::Dot(s) => format!("\"{s}\""),
-                        PropertyNameEmit::Bracket(s) | PropertyNameEmit::BracketNumeric(s) => {
-                            s.clone()
+            //
+            // Static field initializers and (when not deferred) static blocks
+            // must be interleaved by source position so that observable
+            // evaluation order matches the source — e.g.
+            // `static a = 1; static { console.log(this.a); } static b = 2;`
+            // must emit the static block AFTER `_a.a = 1` and BEFORE `_a.b = 2`.
+            // Devin review: <https://github.com/mohsen1/tsz/pull/2279#discussion_r3176494185>
+            //
+            // We build a single position-keyed list. `field` items reuse the
+            // owned `StaticFieldInit` entries; `block` items consume the
+            // `(NodeIndex, usize)` deferred entries. When static blocks are
+            // deferred (via `--useDefineForClassFields` lowering deferral),
+            // they're emitted in their existing trailing batch instead.
+            let interleave_blocks = !self.defer_class_static_blocks;
+            enum CommaItem {
+                Field(StaticFieldInit),
+                Block(NodeIndex, usize),
+            }
+            let owned_field_inits = std::mem::take(&mut static_field_inits);
+            let mut comma_items: Vec<(u32, CommaItem)> = owned_field_inits
+                .into_iter()
+                .map(|init| (init.2, CommaItem::Field(init)))
+                .collect();
+            if interleave_blocks {
+                let blocks = std::mem::take(&mut deferred_static_blocks);
+                for (block_idx, comment_idx) in blocks {
+                    let pos = self.arena.get(block_idx).map_or(u32::MAX, |node| node.pos);
+                    comma_items.push((pos, CommaItem::Block(block_idx, comment_idx)));
+                }
+            }
+            comma_items.sort_by_key(|(pos, _)| *pos);
+
+            for (_pos, item) in comma_items {
+                match item {
+                    CommaItem::Field((
+                        name_emit,
+                        init_idx,
+                        _member_pos,
+                        _leading_comments,
+                        _trailing_comments,
+                    )) => {
+                        self.write(",");
+                        self.write_line();
+                        self.increase_indent();
+                        if self.ctx.options.use_define_for_class_fields {
+                            let define_name = match &name_emit {
+                                PropertyNameEmit::Dot(s) => format!("\"{s}\""),
+                                PropertyNameEmit::Bracket(s)
+                                | PropertyNameEmit::BracketNumeric(s) => s.clone(),
+                            };
+                            self.write("Object.defineProperty(");
+                            self.write(temp);
+                            self.write(", ");
+                            self.write(&define_name);
+                            self.write(", {");
+                            self.write_line();
+                            self.increase_indent();
+                            self.write("enumerable: true,");
+                            self.write_line();
+                            self.write("configurable: true,");
+                            self.write_line();
+                            self.write("writable: true,");
+                            self.write_line();
+                            self.write("value: ");
+                            // Emit the initializer, then substitute class name with temp var
+                            let before = self.writer.len();
+                            self.with_scoped_static_initializer_context_cleared(|this| {
+                                this.emit_expression(init_idx);
+                            });
+                            let after = self.writer.len();
+                            if !class_name.is_empty() && class_name != *temp {
+                                let full = self.writer.get_output().to_string();
+                                let segment = &full[before..after];
+                                let replaced = replace_identifier(segment, &class_name, temp);
+                                if replaced != segment {
+                                    self.writer.truncate(before);
+                                    self.write(&replaced);
+                                }
+                            }
+                            self.write_line();
+                            self.decrease_indent();
+                            self.write("})");
+                        } else {
+                            self.write(temp);
+                            match &name_emit {
+                                PropertyNameEmit::Dot(name) => {
+                                    self.write(".");
+                                    self.write(name);
+                                }
+                                PropertyNameEmit::Bracket(name)
+                                | PropertyNameEmit::BracketNumeric(name) => {
+                                    self.write("[");
+                                    self.write(name);
+                                    self.write("]");
+                                }
+                            }
+                            self.write(" = ");
+                            let before = self.writer.len();
+                            self.with_scoped_static_initializer_context_cleared(|this| {
+                                this.emit_expression(init_idx);
+                            });
+                            let after = self.writer.len();
+                            if !class_name.is_empty() && class_name != *temp {
+                                let full = self.writer.get_output().to_string();
+                                let segment = &full[before..after];
+                                let replaced = replace_identifier(segment, &class_name, temp);
+                                if replaced != segment {
+                                    self.writer.truncate(before);
+                                    self.write(&replaced);
+                                }
+                            }
                         }
-                    };
-                    self.write("Object.defineProperty(");
-                    self.write(temp);
-                    self.write(", ");
-                    self.write(&define_name);
-                    self.write(", {");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("enumerable: true,");
-                    self.write_line();
-                    self.write("configurable: true,");
-                    self.write_line();
-                    self.write("writable: true,");
-                    self.write_line();
-                    self.write("value: ");
-                    // Emit the initializer, then substitute class name with temp var
-                    let before = self.writer.len();
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(*init_idx);
-                    });
-                    let after = self.writer.len();
-                    if !class_name.is_empty() && class_name != *temp {
-                        let full = self.writer.get_output().to_string();
-                        let segment = &full[before..after];
-                        let replaced = replace_identifier(segment, &class_name, temp);
-                        if replaced != segment {
-                            self.writer.truncate(before);
-                            self.write(&replaced);
-                        }
+                        self.decrease_indent();
                     }
-                    self.write_line();
-                    self.decrease_indent();
-                    self.write("})");
-                } else {
-                    self.write(temp);
-                    match name_emit {
-                        PropertyNameEmit::Dot(name) => {
-                            self.write(".");
-                            self.write(name);
-                        }
-                        PropertyNameEmit::Bracket(name)
-                        | PropertyNameEmit::BracketNumeric(name) => {
-                            self.write("[");
-                            self.write(name);
-                            self.write("]");
-                        }
-                    }
-                    self.write(" = ");
-                    // Emit the initializer, then substitute class name with temp var
-                    let before = self.writer.len();
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(*init_idx);
-                    });
-                    let after = self.writer.len();
-                    if !class_name.is_empty() && class_name != *temp {
-                        let full = self.writer.get_output().to_string();
-                        let segment = &full[before..after];
-                        let replaced = replace_identifier(segment, &class_name, temp);
-                        if replaced != segment {
-                            self.writer.truncate(before);
-                            self.write(&replaced);
-                        }
+                    CommaItem::Block(block_idx, comment_idx) => {
+                        self.write(",");
+                        self.write_line();
+                        self.increase_indent();
+                        self.emit_static_block_iife_expression(block_idx, comment_idx);
+                        self.decrease_indent();
                     }
                 }
-                self.decrease_indent();
-            }
-            if !self.defer_class_static_blocks && !deferred_static_blocks.is_empty() {
-                let blocks = std::mem::take(&mut deferred_static_blocks);
-                self.emit_static_block_iife_comma_items(blocks);
             }
             self.write(",");
             self.write_line();

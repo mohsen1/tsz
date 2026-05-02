@@ -73,7 +73,7 @@ impl<'a> Printer<'a> {
         false
     }
 
-    fn emit_static_block_iife_expression(
+    pub(in crate::emitter) fn emit_static_block_iife_expression(
         &mut self,
         static_block_idx: NodeIndex,
         saved_comment_idx: usize,

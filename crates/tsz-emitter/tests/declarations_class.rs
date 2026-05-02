@@ -736,3 +736,38 @@ fn malformed_source_class_brace_scan_no_panic() {
     // Should not panic — just produce some output
     let _output = parse_and_print(source);
 }
+
+/// Class-expression comma-emission must interleave static field
+/// initializers and static block IIFEs in source order so observable
+/// evaluation order is preserved. Without the fix all static blocks
+/// were emitted after all field initializers, so a static block that
+/// reads `this.a` would see the value assigned by a later `static b = 2`
+/// initializer instead of the in-source value.
+/// Devin review: <https://github.com/mohsen1/tsz/pull/2279#discussion_r3176494185>
+#[test]
+fn test_class_expression_static_field_and_block_evaluation_order_preserved() {
+    let source = r"const X = class {
+    static a = 1;
+    static { console.log(this.a); }
+    static b = 2;
+};
+";
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2021);
+
+    // Find the comma-list portion of the comma expression.
+    let a_pos = output
+        .find(".a = 1")
+        .expect("static field `a = 1` must appear");
+    let block_pos = output
+        .find("(() =>")
+        .expect("static block IIFE must appear");
+    let b_pos = output
+        .find(".b = 2")
+        .expect("static field `b = 2` must appear");
+
+    assert!(
+        a_pos < block_pos && block_pos < b_pos,
+        "static block must be emitted between `a = 1` and `b = 2` to match source order. \
+         a_pos={a_pos}, block_pos={block_pos}, b_pos={b_pos}.\nOutput:\n{output}"
+    );
+}
