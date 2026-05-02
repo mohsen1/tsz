@@ -1044,6 +1044,10 @@ pub struct PropertyInfo {
     pub is_string_named: bool,
     /// Whether the string property name was written with single quotes in source.
     /// Declaration emit preserves this for reconstructed mapped properties.
+    /// Excluded from PartialEq/Hash since it's purely cosmetic (controls quote
+    /// style in `.d.ts` output) — `{ 'foo': string }` and `{ "foo": string }`
+    /// are semantically identical in TypeScript and must intern to the same
+    /// `TypeId`.
     pub single_quoted_name: bool,
 }
 
@@ -1058,7 +1062,6 @@ impl PartialEq for PropertyInfo {
             && self.visibility == other.visibility
             && self.parent_id == other.parent_id
             && self.is_string_named == other.is_string_named
-            && self.single_quoted_name == other.single_quoted_name
     }
 }
 
@@ -1075,7 +1078,6 @@ impl std::hash::Hash for PropertyInfo {
         self.visibility.hash(state);
         self.parent_id.hash(state);
         self.is_string_named.hash(state);
-        self.single_quoted_name.hash(state);
     }
 }
 

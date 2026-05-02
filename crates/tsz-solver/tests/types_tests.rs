@@ -545,3 +545,35 @@ fn test_process_template_escape_sequences_multiple_interpolation_markers() {
     let result = process_template_escape_sequences("\\$\\$\\$");
     assert_eq!(result, "$$$");
 }
+
+#[test]
+fn test_property_info_eq_ignores_single_quoted_name() {
+    // single_quoted_name is a purely cosmetic field controlling quote style
+    // in `.d.ts` output. It must NOT affect PartialEq/Hash so that types
+    // differing only in source quote style intern to the same TypeId.
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let interner = tsz_common::interner::ShardedInterner::new();
+    let name = interner.intern("foo");
+    let a = PropertyInfo {
+        single_quoted_name: false,
+        ..PropertyInfo::new(name, TypeId::STRING)
+    };
+    let b = PropertyInfo {
+        single_quoted_name: true,
+        ..PropertyInfo::new(name, TypeId::STRING)
+    };
+
+    assert_eq!(a, b, "PropertyInfo equality must ignore single_quoted_name");
+
+    let mut ha = DefaultHasher::new();
+    a.hash(&mut ha);
+    let mut hb = DefaultHasher::new();
+    b.hash(&mut hb);
+    assert_eq!(
+        ha.finish(),
+        hb.finish(),
+        "PropertyInfo hash must ignore single_quoted_name"
+    );
+}
