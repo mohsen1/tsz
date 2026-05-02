@@ -19,7 +19,9 @@
 //! exports.default = myFunc;
 //! ```
 
-use crate::transforms::emit_utils::{identifier_text as get_identifier_text, specifier_name_text};
+use crate::transforms::emit_utils::{
+    identifier_text as get_identifier_text, is_valid_identifier_name, specifier_name_text,
+};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -948,9 +950,14 @@ pub fn collect_export_names_categorized(
             && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             && let Some(func) = arena.get_function(clause_node)
             && !arena.is_declare(&func.modifiers)
-            && func.body.is_some() // skip overload signatures (no body)
-            && let Some(name) = get_identifier_text(arena, func.name)
+            && func.body.is_some()
+        // skip overload signatures (no body)
         {
+            let name = get_identifier_text(arena, func.name)
+                .filter(|name| {
+                    !name.is_empty() && name != "function" && is_valid_identifier_name(name)
+                })
+                .unwrap_or_else(|| "default_1".to_string());
             default_func_exports.push(name);
         }
         // Named export specifiers: export { f } where f is a function declaration

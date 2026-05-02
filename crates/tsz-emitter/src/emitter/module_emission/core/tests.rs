@@ -1,4 +1,5 @@
 use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
 
 /// When moduleDetection=force, a file without any import/export syntax
@@ -105,6 +106,70 @@ fn module_detection_force_emits_use_strict_for_cjs() {
     );
 }
 
+#[test]
+fn malformed_import_numeric_operand_emits_recovered_expression() {
+    let source = "import 10;";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("10;"),
+        "Malformed import recovery should preserve the numeric operand as a statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n;"),
+        "Malformed import recovery should not emit an empty statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_reopen_parameter_shadows_prior_exported_name() {
+    let source = r#"namespace Foo {
+    export function a() {
+        return 5;
+    }
+}
+namespace Foo {
+    export function c(a: number) {
+        return a;
+    }
+}
+export = Foo;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("return a;"),
+        "Namespace cross-block export substitution should not rewrite shadowing parameters.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return Foo.a;"),
+        "Namespace cross-block export substitution should not qualify a shadowing parameter.\nOutput:\n{output}"
+    );
+}
+
 /// `export default function f()` in CJS should emit `exports.default = f;`
 /// BEFORE the function declaration, because JS function declarations are
 /// hoisted. This matches tsc's output ordering.
@@ -193,6 +258,41 @@ var after: typeof func = func();
     assert_eq!(
         count, 1,
         "Should emit exports.default = func; exactly once.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_default_export_function_hoists_export_assignment() {
+    let source = "export default 0;\nexport default function() {}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let function_export_pos = output.find("exports.default = default_1;");
+    let value_export_pos = output.find("exports.default = 0;");
+    let function_pos = output.find("function default_1()");
+    assert!(
+        function_export_pos.is_some() && value_export_pos.is_some() && function_pos.is_some(),
+        "Should emit the hoisted function export, value export, and synthetic function declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        function_export_pos.unwrap() < value_export_pos.unwrap()
+            && value_export_pos.unwrap() < function_pos.unwrap(),
+        "Anonymous default function export should be hoisted before the earlier default expression assignment.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("exports.default = default_1;").count(),
+        1,
+        "Should emit the anonymous default function export assignment once.\nOutput:\n{output}"
     );
 }
 

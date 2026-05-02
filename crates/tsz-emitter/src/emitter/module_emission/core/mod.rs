@@ -275,10 +275,12 @@ impl<'a> Printer<'a> {
         self.anonymous_default_export_name = Some("default_1".to_string());
         if is_function {
             // Function: exports.default before declaration (functions hoist)
-            self.write_export_binding_start("default");
-            self.write("default_1");
-            self.write_export_binding_end();
-            self.write_line();
+            if !self.ctx.module_state.default_func_export_hoisted {
+                self.write_export_binding_start("default");
+                self.write("default_1");
+                self.write_export_binding_end();
+                self.write_line();
+            }
             self.emit_node_default(node, idx);
         } else {
             let before_len = self.writer.len();
