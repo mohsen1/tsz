@@ -617,5 +617,9 @@ path = "tests/global_this_property_access_diagnostics_tests.rs"
 name = "jsdoc_template_variance_function_tests"
 path = "tests/jsdoc_template_variance_function_tests.rs"
 
+[[test]]
+name = "type_param_modifier_diagnostics_tests"
+path = "tests/type_param_modifier_diagnostics_tests.rs"
+
 [lints]
 workspace = true

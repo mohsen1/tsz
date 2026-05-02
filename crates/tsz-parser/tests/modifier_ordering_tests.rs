@@ -164,3 +164,55 @@ class D extends B {
         "`override declare` should produce exactly one TS1040"
     );
 }
+
+// =========================================================================
+// TS1029 / TS1030: Variance modifier ordering on type parameters.
+//
+// `in` must precede `out`; both can appear at most once.
+// These rules must be enforced regardless of which user-chosen identifier
+// follows them, so each test exercises a different name to ensure the parser
+// is matching token kinds, not name strings.
+// =========================================================================
+
+#[test]
+fn type_param_in_out_correct_order_no_diag() {
+    let source = "type A<in out U> = (x: U) => U;";
+    assert!(!has_error(source, 1029));
+    assert!(!has_error(source, 1030));
+}
+
+#[test]
+fn type_param_out_in_emits_ts1029() {
+    // `out in` reverses the canonical order: `in` must precede `out`.
+    let source = "type A<out in V> = V;";
+    assert!(
+        has_error(source, 1029),
+        "`out in` should emit TS1029 at the second modifier"
+    );
+}
+
+#[test]
+fn type_param_duplicate_in_emits_ts1030() {
+    // The second `in` is a duplicate, reported as "modifier already seen".
+    let source = "type A<in out in W> = W;";
+    assert_eq!(count_error(source, 1030), 1);
+}
+
+#[test]
+fn type_param_duplicate_out_emits_ts1030() {
+    let source = "type A<in out out X> = X;";
+    assert_eq!(count_error(source, 1030), 1);
+}
+
+#[test]
+fn type_param_modifier_diag_independent_of_param_name() {
+    // The same diagnostic must fire whichever identifier the user picks for
+    // the type parameter — confirms the parser keys off token kind, not name.
+    for name in ["T", "K", "P", "Foo", "_"] {
+        let source = format!("type A<out in {name}> = {name};");
+        assert!(
+            has_error(&source, 1029),
+            "`out in {name}` should emit TS1029"
+        );
+    }
+}

@@ -464,6 +464,21 @@ impl ParserState {
                     modifiers.push(var_modifier);
                     return Some(self.make_node_list(modifiers));
                 }
+                // `in` / `out` are variance modifiers that only apply to type
+                // parameters (of class/interface/type alias). When they appear on a
+                // class member, `should_stop_class_member_modifier` already verified
+                // the next token looks like a property name, so consume them as
+                // modifiers and let the checker emit TS1274 — much better than the
+                // generic TS1434 we used to fall through to.
+                SyntaxKind::InKeyword => {
+                    self.next_token();
+                    self.arena.create_modifier(SyntaxKind::InKeyword, start_pos)
+                }
+                SyntaxKind::OutKeyword => {
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::OutKeyword, start_pos)
+                }
                 _ => break,
             };
             modifiers.push(modifier);
@@ -491,6 +506,8 @@ impl ParserState {
                 | SyntaxKind::AccessorKeyword
                 | SyntaxKind::ConstKeyword
                 | SyntaxKind::ExportKeyword
+                | SyntaxKind::InKeyword
+                | SyntaxKind::OutKeyword
         ) {
             return false;
         }
