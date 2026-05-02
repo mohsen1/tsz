@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-02
 - **Branch**: `chore/dead-modules-with-export-equals`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2198
+- **Status**: ready
 - **Workstream**: 8 (DRY cleanup)
 
 ## Intent
