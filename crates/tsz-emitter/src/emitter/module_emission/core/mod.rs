@@ -1809,27 +1809,30 @@ impl<'a> Printer<'a> {
     /// binder-level `commonJsModuleIndicator`.
     fn has_commonjs_module_indicator(&self, statements: &NodeList) -> bool {
         for &stmt_idx in &statements.nodes {
-            if let Some(node) = self.arena.get(stmt_idx)
-                && self.statement_has_cjs_pattern(node)
-            {
+            if self.statement_has_cjs_pattern(stmt_idx) {
                 return true;
             }
         }
         false
     }
 
-    /// Check if a statement contains CJS module patterns.
+    /// Check if a statement subtree contains CJS module patterns.
     /// Looks for:
     /// - `module.exports = ...` (`BinaryExpression` with `PropertyAccessExpression`)
     /// - `exports.foo = ...` (`BinaryExpression` with `PropertyAccessExpression`)
-    /// - Top-level `require("...")` calls
-    fn statement_has_cjs_pattern(&self, node: &Node) -> bool {
-        // Check expression statements: `module.exports = X;` or `exports.foo = X;`
-        if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            && let Some(expr_stmt) = self.arena.get_expression_statement(node)
-            && let Some(expr_node) = self.arena.get(expr_stmt.expression)
-        {
-            return self.expression_is_cjs_pattern(expr_node);
+    /// - `require("...")` calls
+    fn statement_has_cjs_pattern(&self, node_idx: NodeIndex) -> bool {
+        let mut stack = Vec::from([node_idx]);
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if self.expression_is_cjs_pattern(node) {
+                return true;
+            }
+            for child in self.arena.get_children(idx) {
+                stack.push(child);
+            }
         }
         false
     }
