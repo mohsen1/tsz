@@ -356,36 +356,6 @@ pub(super) fn collect_diagnostics(
     // Create ModuleResolver instance for proper error reporting (TS2834, TS2835, TS2792, etc.)
     let mut module_resolver = ModuleResolver::new(options);
 
-    // Build resolved_module_paths map: (source_file_idx, specifier) -> target_file_idx
-    // Also build resolved_module_errors map for specific error codes
-    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
-    // Per-resolution `resolvedUsingTsExtension` flag — populated when the
-    // resolver consumed a `.ts` extension via a literal package.json
-    // exports/imports key. Consumed by the checker's TS2877 gate.
-    let mut resolved_module_ts_extension_flags: FxHashMap<(usize, String), bool> =
-        FxHashMap::default();
-    let mut resolved_module_request_paths: FxHashMap<
-        (
-            usize,
-            String,
-            Option<tsz::checker::context::ResolutionModeOverride>,
-        ),
-        usize,
-    > = FxHashMap::default();
-    let mut resolved_module_specifiers: FxHashSet<(usize, String)> = FxHashSet::default();
-    let mut resolved_module_errors: FxHashMap<
-        (usize, String),
-        tsz::checker::context::ResolutionError,
-    > = FxHashMap::default();
-    let mut resolved_module_request_errors: FxHashMap<
-        (
-            usize,
-            String,
-            Option<tsz::checker::context::ResolutionModeOverride>,
-        ),
-        tsz::checker::context::ResolutionError,
-    > = FxHashMap::default();
-
     // Cache module specifiers per file — collected once, reused in prepare_binders
     // and check_file_for_parallel to avoid 3× redundant AST traversals.
     type CachedModuleSpecifier = (
@@ -417,6 +387,40 @@ pub(super) fn collect_diagnostics(
         let file_names: Vec<String> = program.files.iter().map(|f| f.file_name.clone()).collect();
         build_duplicate_package_redirects(&file_names, options)
     };
+    let module_specifier_count: usize = cached_module_specifiers.iter().map(Vec::len).sum();
+
+    // Build resolved_module_paths map: (source_file_idx, specifier) -> target_file_idx
+    // Also build resolved_module_errors map for specific error codes
+    let mut resolved_module_paths: FxHashMap<(usize, String), usize> =
+        FxHashMap::with_capacity_and_hasher(module_specifier_count, Default::default());
+    // Per-resolution `resolvedUsingTsExtension` flag — populated when the
+    // resolver consumed a `.ts` extension via a literal package.json
+    // exports/imports key. Consumed by the checker's TS2877 gate. This and the
+    // error maps stay sparse: most programs resolve without these entries.
+    let mut resolved_module_ts_extension_flags: FxHashMap<(usize, String), bool> =
+        FxHashMap::default();
+    let mut resolved_module_request_paths: FxHashMap<
+        (
+            usize,
+            String,
+            Option<tsz::checker::context::ResolutionModeOverride>,
+        ),
+        usize,
+    > = FxHashMap::with_capacity_and_hasher(module_specifier_count, Default::default());
+    let mut resolved_module_specifiers: FxHashSet<(usize, String)> =
+        FxHashSet::with_capacity_and_hasher(module_specifier_count, Default::default());
+    let mut resolved_module_errors: FxHashMap<
+        (usize, String),
+        tsz::checker::context::ResolutionError,
+    > = FxHashMap::default();
+    let mut resolved_module_request_errors: FxHashMap<
+        (
+            usize,
+            String,
+            Option<tsz::checker::context::ResolutionModeOverride>,
+        ),
+        tsz::checker::context::ResolutionError,
+    > = FxHashMap::default();
     // Phase 2 step 1: route the module-resolver's ambient-module check through
     // `SkeletonIndex` when present. The skeleton already captured both
     // `declared_modules` and `shorthand_ambient_modules` during the parallel
