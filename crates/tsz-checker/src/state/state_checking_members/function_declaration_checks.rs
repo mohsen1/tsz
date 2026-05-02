@@ -736,7 +736,19 @@ impl<'a> CheckerState<'a> {
         let saved_yield_collection = std::mem::take(&mut self.ctx.generator_yield_operand_types);
         let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
 
+        // A function body starts with fresh control-flow reachability. Hoisted
+        // function declarations placed after `return;` in an outer body are
+        // skipped at the unreachable check, but we still walk into their
+        // bodies — so without resetting these flags, every statement inside
+        // would falsely get TS7027.
+        let saved_is_unreachable = std::mem::replace(&mut self.ctx.is_unreachable, false);
+        let saved_has_reported_unreachable =
+            std::mem::replace(&mut self.ctx.has_reported_unreachable, false);
+
         self.check_statement_with_request(func.body, &TypingRequest::NONE);
+
+        self.ctx.is_unreachable = saved_is_unreachable;
+        self.ctx.has_reported_unreachable = saved_has_reported_unreachable;
 
         if masked_outer_this.is_some() && self.ctx.no_implicit_this() {
             let mut refs = Vec::new();
