@@ -985,3 +985,23 @@ fn recovered_unicode_identifier_initializer_emits_as_statement() {
         "Malformed unicode identifier use should recover to the valid identifier.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn recovered_typeof_member_type_tail_emits_as_statement() {
+    let source = r#"class C {
+    foo() {
+        const x: "".typeof(this.foo);
+    }
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("const x;"),
+        "Malformed declaration should still emit the declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("typeof (this.foo);"),
+        "Recovered `.typeof(...)` type tail should emit as a runtime typeof statement.\nOutput:\n{output}"
+    );
+}
