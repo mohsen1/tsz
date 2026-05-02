@@ -69,6 +69,91 @@ impl<'a> Printer<'a> {
                 return;
             };
 
+            if matches!(self.ctx.original_module_kind, Some(ModuleKind::AMD))
+                && let Some(module_var) = self
+                    .wrapped_export_module_substitutions
+                    .get(&node.pos)
+                    .cloned()
+            {
+                if export.export_clause.is_none() {
+                    self.write_helper("__exportStar");
+                    self.write("(");
+                    self.write(&module_var);
+                    self.write(", exports);");
+                    self.write_line();
+                    return;
+                }
+
+                if let Some(clause_node) = self.arena.get(export.export_clause)
+                    && clause_node.kind != syntax_kind_ext::NAMED_EXPORTS
+                {
+                    let ns_name = if clause_node.is_string_literal() {
+                        self.arena
+                            .get_literal(clause_node)
+                            .map(|lit| lit.text.clone())
+                            .unwrap_or_default()
+                    } else {
+                        self.get_identifier_text_idx(export.export_clause)
+                    };
+                    if !ns_name.is_empty() {
+                        self.write_export_property_access(&ns_name);
+                        self.write(" = ");
+                        if self.ctx.options.es_module_interop {
+                            self.write_helper("__importStar");
+                            self.write("(");
+                            self.write(&module_var);
+                            self.write(");");
+                        } else {
+                            self.write(&module_var);
+                            self.write(";");
+                        }
+                        self.write_line();
+                    }
+                    return;
+                }
+
+                if let Some(clause_node) = self.arena.get(export.export_clause)
+                    && let Some(named_exports) = self.arena.get_named_imports(clause_node)
+                {
+                    let value_specs = self.collect_value_specifiers(&named_exports.elements);
+                    if value_specs.is_empty() {
+                        return;
+                    }
+                    for &spec_idx in &named_exports.elements.nodes {
+                        if let Some(spec_node) = self.arena.get(spec_idx)
+                            && let Some(spec) = self.arena.get_specifier(spec_node)
+                        {
+                            if spec.is_type_only {
+                                continue;
+                            }
+                            let Some(export_name) = self.get_specifier_name_text(spec.name) else {
+                                continue;
+                            };
+                            let import_name = if spec.property_name.is_some() {
+                                self.get_specifier_name_text(spec.property_name)
+                                    .unwrap_or_else(|| export_name.clone())
+                            } else {
+                                export_name.clone()
+                            };
+                            self.write("Object.defineProperty(exports, \"");
+                            self.write(&export_name);
+                            self.write("\", { enumerable: true, get: function () { return ");
+                            if self.ctx.options.es_module_interop && import_name == "default" {
+                                self.write_helper("__importDefault");
+                                self.write("(");
+                                self.write(&module_var);
+                                self.write(").default");
+                            } else {
+                                self.write_module_property_access(&module_var, &import_name);
+                            }
+                            self.write("; } });");
+                            self.write_line();
+                        }
+                    }
+                    return;
+                }
+            }
+
             // Handle `export * from "mod"` -> `__exportStar(require("mod"), exports);`
             // tsc emits an inline require (no temp variable), so we do the same to
             // avoid wasting a module_var counter value.
