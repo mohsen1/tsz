@@ -277,6 +277,39 @@ export { impl as myFunc };
     );
 }
 
+#[test]
+fn inline_cjs_export_skips_initializerless_vars() {
+    let source = "export var eVar1, eVar2 = 10;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.eVar2 = exports.eVar1 = void 0;"),
+        "Initializerless export should stay in the CJS preamble.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.eVar2 = 10;"),
+        "Initialized export should be emitted inline.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var eVar1, eVar2 = 10;"),
+        "Mixed export var declarations should not keep a redundant local declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.eVar1 = eVar1;"),
+        "Initializerless export should not get a trailing self-assignment.\nOutput:\n{output}"
+    );
+}
+
 /// Merged enum declarations in ESM should only have `export` on the first
 /// declaration's `var` statement. Subsequent IIFEs should be bare.
 #[test]
