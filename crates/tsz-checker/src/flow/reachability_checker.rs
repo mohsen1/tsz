@@ -217,6 +217,16 @@ impl<'a> CheckerState<'a> {
             if func.type_annotation.is_some() {
                 return self.get_type_from_type_node(func.type_annotation) == TypeId::NEVER;
             }
+            // JS files express the return type via `@returns {never}` JSDoc
+            // instead of a TypeScript return-type annotation. Honor that as an
+            // explicit never-return so TS7027 fires for code after the call.
+            if self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && let Some(jsdoc) = self.find_jsdoc_for_function(decl_idx)
+                && self.resolve_jsdoc_return_type(&jsdoc) == Some(TypeId::NEVER)
+            {
+                return true;
+            }
             // For function/arrow expressions without an explicit return type annotation,
             // check if the body always throws (never completes normally). This handles
             // IIFEs like `(function() { throw "x" })()` which tsc recognizes as

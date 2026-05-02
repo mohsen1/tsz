@@ -189,3 +189,70 @@ function f(x: string | number) {
     // our UNREACHABLE_NEVER sentinel doesn't interfere with legitimate narrowing.
     let _ = codes;
 }
+
+/// In a JS file with `@checkJs`, a function declaration whose JSDoc says
+/// `@returns {never}` should make code after a call to it unreachable. tsc
+/// honors `@returns {never}` as the equivalent of a TypeScript `: never`
+/// return-type annotation for control-flow purposes.
+#[test]
+fn jsdoc_returns_never_marks_code_after_call_as_unreachable() {
+    let source = r#"
+/**
+ * @returns {never}
+ */
+function fail() {
+    throw "boom";
+}
+
+function f() {
+    fail();
+    let x = 1;
+}
+"#;
+    let diagnostics = crate::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            allow_unreachable_code: Some(false),
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&7027),
+        "Expected TS7027 after a call to a JSDoc @returns {{never}} function, got codes: {codes:?}"
+    );
+}
+
+/// Without `@returns {never}`, a JS function declaration whose body throws
+/// should NOT (currently) be treated as never-returning by the symbol-resolved
+/// path — body analysis only runs for direct IIFE callees. This pins the
+/// scope of the JSDoc-only fix.
+#[test]
+fn js_function_without_jsdoc_returns_never_does_not_mark_unreachable() {
+    let source = r#"
+function fail() {
+    throw "boom";
+}
+
+function f() {
+    fail();
+    let x = 1;
+}
+"#;
+    let diagnostics = crate::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            allow_unreachable_code: Some(false),
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&7027),
+        "Without @returns {{never}}, body-throws inference should not fire for symbol-resolved callees; got: {codes:?}"
+    );
+}
