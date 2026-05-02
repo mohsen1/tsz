@@ -432,3 +432,87 @@ if (import.meta.foo) {
 
     assert!(binder.is_external_module());
 }
+
+/// Regression test for `nodeModules1.ts`. Two specifiers that share a stem
+/// (`./index.js` and `./index`) are distinct user inputs in the resolution-
+/// error map. When `./index` fails with TS2835 (extensionless ESM import in
+/// node16/nodenext), that error must NOT leak into a query for `./index.js`,
+/// which the resolver succeeds for via the synthetic `.js → .ts` substitution.
+///
+/// Before the fix, `get_resolution_error` fanned out to the extension-stripped
+/// stem, so an error registered for `./index` would be returned for
+/// `./index.js`, and the checker would emit TS2835 on the import line that
+/// already used an explicit `.js` extension.
+#[test]
+fn ts2835_does_not_leak_from_extensionless_specifier_to_extensioned_sibling() {
+    let src = "import * as m1 from \"./index.js\";\nvoid m1;\nexport {};\n";
+
+    let mut parser = ParserState::new("/proj/main.mts".to_string(), src.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "/proj/main.mts".to_string(),
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::Node16,
+            ..CheckerOptions::default()
+        },
+    );
+    checker
+        .ctx
+        .set_all_arenas(Arc::new(vec![Arc::clone(&arena)]));
+    checker
+        .ctx
+        .set_all_binders(Arc::new(vec![Arc::clone(&binder)]));
+    checker.ctx.set_current_file_idx(0);
+    checker.ctx.report_unresolved_imports = true;
+    checker.ctx.file_is_esm = Some(true);
+
+    // Simulate the driver: only `./index` (the extensionless sibling that
+    // appears later in the file) has a recorded TS2835 resolution error.
+    // The line under test imports `./index.js`, which the resolver succeeded
+    // on — there must be no error entry for that exact specifier.
+    let mut resolved_module_errors: FxHashMap<(usize, String), ResolutionError> =
+        FxHashMap::default();
+    resolved_module_errors.insert(
+        (0, "./index".to_string()),
+        ResolutionError {
+            code: 2835,
+            message: "Relative import paths need explicit file extensions in ECMAScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean './index.mjs'?".to_string(),
+        },
+    );
+    checker
+        .ctx
+        .set_resolved_module_errors(Arc::new(resolved_module_errors));
+
+    // Mark the extensioned sibling as successfully resolved by the driver.
+    let mut resolved_specifiers: FxHashSet<String> = FxHashSet::default();
+    resolved_specifiers.insert("./index.js".to_string());
+    checker
+        .ctx
+        .set_resolved_modules(Arc::new(resolved_specifiers));
+
+    checker.check_source_file(root);
+
+    // The exact-key lookup must NOT match the extensionless `./index`
+    // error against the `./index.js` query. No TS2835 should fire.
+    let leaked = checker.ctx.diagnostics.iter().any(|d| d.code == 2835);
+    assert!(
+        !leaked,
+        "TS2835 leaked from `./index` resolution error onto the `./index.js` import; got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

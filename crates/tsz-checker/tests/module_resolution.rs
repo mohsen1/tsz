@@ -241,6 +241,83 @@ fn test_candidates_has_no_stem_fallback_for_plain_identifiers() {
     );
 }
 
+// ===========================================================================
+// module_specifier_error_candidates
+// ===========================================================================
+
+#[test]
+fn test_error_candidates_does_not_strip_extension() {
+    // Resolution-error lookups must NOT fan out to the extension-stripped
+    // stem. Two specifiers with the same stem but different extensions are
+    // distinct user inputs that the resolver may treat very differently
+    // (e.g. `./foo.js` succeeds via the synthetic `.js → .ts` substitution,
+    // while `./foo` fails with TS2835). If the lookup conflated them, the
+    // checker would emit the TS2835 from the extensionless variant on the
+    // line that actually wrote `./foo.js`.
+    let candidates = module_specifier_error_candidates("./foo.js");
+    assert_eq!(candidates, vec!["./foo.js".to_string()]);
+    assert!(!candidates.contains(&"./foo".to_string()));
+
+    let candidates = module_specifier_error_candidates("./index.mjs");
+    assert_eq!(candidates, vec!["./index.mjs".to_string()]);
+    assert!(!candidates.contains(&"./index".to_string()));
+
+    // Same for declaration extensions.
+    let candidates = module_specifier_error_candidates("./types.d.ts");
+    assert_eq!(candidates, vec!["./types.d.ts".to_string()]);
+    assert!(!candidates.contains(&"./types".to_string()));
+}
+
+#[test]
+fn test_error_candidates_includes_canonical_form() {
+    // When the input differs from its canonical form, callers may have
+    // recorded the error against either spelling. Both must be probed.
+    let candidates = module_specifier_error_candidates("  \"./foo.js\"  ");
+    assert!(candidates.contains(&"./foo.js".to_string()));
+    assert!(candidates.contains(&"  \"./foo.js\"  ".to_string()));
+    // Crucially, no stem fallback: an error registered against "./foo"
+    // must not be returned for a query against "./foo.js".
+    assert!(!candidates.contains(&"./foo".to_string()));
+}
+
+#[test]
+fn test_error_candidates_normalizes_backslashes() {
+    // Path separator normalization is harmless because the same target
+    // specifier is being addressed; only extension stripping changes
+    // identity.
+    let candidates = module_specifier_error_candidates(".\\foo\\bar.js");
+    assert!(candidates.contains(&"./foo/bar.js".to_string()));
+    assert!(!candidates.contains(&"./foo/bar".to_string()));
+}
+
+#[test]
+fn test_error_candidates_handles_empty_specifier() {
+    // Quotes-only / empty input: fall back to the raw string for parity
+    // with `module_specifier_candidates`.
+    let candidates = module_specifier_error_candidates("");
+    assert_eq!(candidates, vec!["".to_string()]);
+    let candidates = module_specifier_error_candidates("\"\"");
+    assert_eq!(candidates, vec!["\"\"".to_string()]);
+}
+
+#[test]
+fn test_error_candidates_dot_chain_specifiers_are_preserved() {
+    // Pure dot-chain specifiers ('.', './', '..', '../') keep their exact
+    // form — no trailing-slash normalization, no extension stripping.
+    assert_eq!(
+        module_specifier_error_candidates("./"),
+        vec!["./".to_string()]
+    );
+    assert_eq!(
+        module_specifier_error_candidates("."),
+        vec![".".to_string()]
+    );
+    assert_eq!(
+        module_specifier_error_candidates("../"),
+        vec!["../".to_string()]
+    );
+}
+
 /// Prove the new resolver does NOT rely on trying many textual aliases for
 /// the same target. Every legitimate spelling that a caller might pass in
 /// canonicalizes to a single (canonical) lookup key that is present in the

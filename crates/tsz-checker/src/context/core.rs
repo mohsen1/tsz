@@ -797,10 +797,17 @@ impl<'a> CheckerContext<'a> {
 
     /// Get the resolution error for a specifier, if any.
     /// Returns the specific error (TS2834, TS2835, TS2792, etc.) if the module resolution failed with a known error.
+    ///
+    /// The driver records errors keyed on the exact user-written specifier,
+    /// so this lookup must NOT fan out to extension-stripped stems. Two
+    /// specifiers that share a stem can resolve very differently (e.g.
+    /// `./index.js` succeeds via .js→.ts substitution while `./index`
+    /// fails with TS2835), and matching by stem would attribute one
+    /// specifier's error to the wrong import site.
     pub fn get_resolution_error(&self, specifier: &str) -> Option<&ResolutionError> {
         let errors = self.resolved_module_errors.as_ref()?;
 
-        for candidate in module_specifier_candidates(specifier) {
+        for candidate in crate::module_resolution::module_specifier_error_candidates(specifier) {
             if let Some(error) = errors.get(&(self.current_file_idx, candidate)) {
                 return Some(error);
             }
@@ -815,7 +822,8 @@ impl<'a> CheckerContext<'a> {
         resolution_mode_override: Option<ResolutionModeOverride>,
     ) -> Option<&ResolutionError> {
         if let Some(errors) = self.resolved_module_request_errors.as_ref() {
-            for candidate in module_specifier_candidates(specifier) {
+            for candidate in crate::module_resolution::module_specifier_error_candidates(specifier)
+            {
                 if let Some(error) =
                     errors.get(&(self.current_file_idx, candidate, resolution_mode_override))
                 {
