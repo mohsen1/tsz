@@ -95,7 +95,11 @@ impl<'a> DeclarationEmitter<'a> {
             // Type reference
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.arena.get_type_ref(type_node) {
-                    self.emit_node(type_ref.type_name);
+                    if self.entity_name_contains_import_call(type_ref.type_name) {
+                        self.emit_entity_name(type_ref.type_name);
+                    } else {
+                        self.emit_node(type_ref.type_name);
+                    }
                     if let Some(ref type_args) = type_ref.type_arguments {
                         self.emit_type_arguments(type_args);
                     }
@@ -790,7 +794,11 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 // Type reference in mapped type name position
                 if let Some(type_ref) = self.arena.get_type_ref(node) {
-                    self.emit_node(type_ref.type_name);
+                    if self.entity_name_contains_import_call(type_ref.type_name) {
+                        self.emit_entity_name(type_ref.type_name);
+                    } else {
+                        self.emit_node(type_ref.type_name);
+                    }
                 }
             }
             k if k == syntax_kind_ext::QUALIFIED_NAME => {
@@ -821,18 +829,55 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("import(");
                     if let Some(ref args) = call.arguments {
                         let mut first = true;
+                        let only_arg = args.nodes.len() == 1;
                         for &arg_idx in &args.nodes {
                             if !first {
                                 self.write(", ");
                             }
+                            let is_first = first;
                             first = false;
-                            self.emit_import_type_argument(arg_idx);
+                            if is_first
+                                && only_arg
+                                && self.arena.get(arg_idx).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                })
+                            {
+                                self.emit_import_type_object_literal_as_type(arg_idx);
+                            } else {
+                                self.emit_import_type_argument(arg_idx);
+                            }
                         }
                     }
                     self.write(")");
                 }
             }
             _ => {}
+        }
+    }
+
+    fn entity_name_contains_import_call(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION => true,
+            k if k == syntax_kind_ext::QUALIFIED_NAME => self
+                .arena
+                .get_qualified_name(node)
+                .is_some_and(|name| self.entity_name_contains_import_call(name.left)),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.arena
+                    .get_access_expr(node)
+                    .is_some_and(|access| self.entity_name_contains_import_call(access.expression))
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => self
+                .arena
+                .get_type_ref(node)
+                .is_some_and(|type_ref| self.entity_name_contains_import_call(type_ref.type_name)),
+            _ => false,
         }
     }
 
@@ -901,6 +946,35 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_node(elem_idx);
+    }
+
+    fn emit_import_type_object_literal_as_type(&mut self, arg_idx: NodeIndex) {
+        let Some(arg_node) = self.arena.get(arg_idx) else {
+            return;
+        };
+
+        let Some(obj) = self.arena.get_literal_expr(arg_node) else {
+            self.emit_node(arg_idx);
+            return;
+        };
+
+        if obj.elements.nodes.is_empty() {
+            self.write("{}");
+            return;
+        }
+
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+        for &elem_idx in &obj.elements.nodes {
+            self.write_indent();
+            self.emit_import_type_object_literal_member(elem_idx);
+            self.write(";");
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
     }
 
     /// Emit the inner node of a `LITERAL_TYPE`.

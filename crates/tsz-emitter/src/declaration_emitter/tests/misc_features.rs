@@ -660,6 +660,16 @@ fn test_asserted_import_type_with_resolution_mode_attributes_is_preserved() {
 }
 
 #[test]
+fn test_import_type_non_string_argument_formats_object_as_type_literal() {
+    let output = emit_dts(r#"export const x: import({x: 12}) = undefined as any;"#);
+
+    assert!(
+        output.contains("export declare const x: import({\n    x: 12;\n});"),
+        "Expected non-string import type argument to be formatted as a type literal: {output}"
+    );
+}
+
+#[test]
 fn test_invalid_resolution_mode_attribute_is_dropped_and_unused_mixed_import_is_elided() {
     let output = emit_dts_with_usage_analysis(
         r#"
