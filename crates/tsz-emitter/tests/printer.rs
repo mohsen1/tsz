@@ -276,6 +276,21 @@ fn test_async_generator_dynamic_import_nested_yield() {
 }
 
 #[test]
+fn test_invalid_export_throw_elides_recovery_export_and_keeps_strict() {
+    let source = "throw;\n\nexport throw null;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(output, "\"use strict\";\nthrow ;\nthrow null;\n");
+}
+
+#[test]
 fn test_nested_namespace_extends_parent_export_when_name_conflicts() {
     let source = "declare namespace A.B.C {\n    class B {\n    }\n}\n\nnamespace A.B {\n    export class EventManager {\n        id: number;\n    }\n}\n\nnamespace A.B.C {\n    export class ContextMenu extends EventManager {\n        name: string;\n    }\n}\n";
     let output = parse_lower_print(source, PrintOptions::default());

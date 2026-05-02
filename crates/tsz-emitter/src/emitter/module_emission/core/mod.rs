@@ -655,6 +655,9 @@ impl<'a> Printer<'a> {
         }
 
         if export.export_clause.is_none() {
+            if export.module_specifier.is_none() {
+                return;
+            }
             self.write("export *");
             if export.module_specifier.is_some() {
                 self.write(" from ");
