@@ -29,6 +29,24 @@ function formatSpeedupLabel(tszMs, tsgoMs) {
     : `tsgo ${factor.toFixed(1)}x faster`;
 }
 
+function hasTiming(value) {
+  const time = Number(value);
+  return Number.isFinite(time) && time > 0;
+}
+
+function hasSuccessfulTiming(row) {
+  return hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms);
+}
+
+function isFailedBenchmark(row) {
+  if (!row || hasSuccessfulTiming(row)) return false;
+  return Boolean(row.status) || row.winner === "error" || hasTiming(row.tsz_ms) || hasTiming(row.tsgo_ms);
+}
+
+function statusLabel(row) {
+  return String(row?.status || "timing unavailable");
+}
+
 const TINY_BENCHMARK_MAX_LINES = 200;
 
 const PROJECT_FALLBACK_CONFIG = {
@@ -264,10 +282,11 @@ function categoryMeta(category) {
 }
 
 function buildAggregateBenchmark(rows, libraryName) {
-  if (!rows.length) return null;
+  const timedRows = rows.filter(hasSuccessfulTiming);
+  if (!timedRows.length) return null;
 
-  const tszTotal = rows.reduce((sum, row) => sum + row.tsz_ms, 0);
-  const tsgoTotal = rows.reduce((sum, row) => sum + row.tsgo_ms, 0);
+  const tszTotal = timedRows.reduce((sum, row) => sum + row.tsz_ms, 0);
+  const tsgoTotal = timedRows.reduce((sum, row) => sum + row.tsgo_ms, 0);
 
   if (!Number.isFinite(tszTotal) || !Number.isFinite(tsgoTotal)) return null;
 
@@ -289,12 +308,12 @@ function buildAggregateBenchmark(rows, libraryName) {
 
   return {
     name: `${libraryName} (all files)`,
-    lines: rows.reduce((sum, row) => sum + row.lines, 0),
-    kb: rows.reduce((sum, row) => sum + row.kb, 0),
+    lines: timedRows.reduce((sum, row) => sum + row.lines, 0),
+    kb: timedRows.reduce((sum, row) => sum + row.kb, 0),
     tsz_ms: tszTotal,
     tsgo_ms: tsgoTotal,
-    tsz_lps: rows.reduce((sum, row) => sum + row.tsz_lps, 0),
-    tsgo_lps: rows.reduce((sum, row) => sum + row.tsgo_lps, 0),
+    tsz_lps: timedRows.reduce((sum, row) => sum + row.tsz_lps, 0),
+    tsgo_lps: timedRows.reduce((sum, row) => sum + row.tsgo_lps, 0),
     winner,
     factor,
     status: null,
@@ -970,6 +989,8 @@ function decorateRow(row, category, options = {}) {
     tsgo_time: row.tsgo_ms ? formatDurationMs(row.tsgo_ms, 2) : "",
     tsz_width: maxMs > 0 && row.tsz_ms ? Math.max(1, (row.tsz_ms / maxMs) * 100).toFixed(2) : "1.00",
     tsgo_width: maxMs > 0 && row.tsgo_ms ? Math.max(1, (row.tsgo_ms / maxMs) * 100).toFixed(2) : "1.00",
+    status_label: row.status ? statusLabel(row) : "",
+    failed: isFailedBenchmark(row),
     is_aggregate: Boolean(options.isAggregate),
   };
   decorated.source_files_json = escapeAttributeJson(decorated.source_files);
@@ -980,8 +1001,8 @@ function decorateRow(row, category, options = {}) {
 
 function buildGroupedBenchmarks(data) {
   const allResults = data?.results || [];
-  const results = allResults.filter((r) => r.tsz_ms != null && r.tsz_ms > 0 && r.tsgo_ms != null && r.tsgo_ms > 0);
-  const failedResults = allResults.filter((r) => !(r.tsz_ms != null && r.tsz_ms > 0) && r.tsgo_ms != null && r.tsgo_ms > 0);
+  const results = allResults.filter(hasSuccessfulTiming);
+  const failedResults = allResults.filter(isFailedBenchmark);
   const grouped = new Map();
 
   for (const row of results) {
@@ -1168,27 +1189,32 @@ function generateCharts(data) {
 
   if (failedResults.length > 0) {
     html += `<section class="bench-category bench-failures">
-  <h3 class="bench-category-title" id="failures">Failures</h3>
-  <p class="bench-category-desc">These benchmarks could not be completed by tsz. tsgo time shown for reference.</p>
+  <h3 class="bench-category-title" id="failures">Failed benchmarks</h3>
+  <p class="bench-category-desc">Rows recorded by the benchmark runner without complete timing data.</p>
   <div class="bench-chart">\n`;
-    const maxFailMs = Math.max(...failedResults.map((r) => r.tsgo_ms || 0));
+    const maxFailMs = Math.max(1, ...failedResults.flatMap((r) => [Number(r.tsz_ms) || 0, Number(r.tsgo_ms) || 0]));
     for (const r of failedResults) {
-      const decorated = decorateRow(r, categoryFor(r.name || "", r.lines));
-      const tsgoWidth = maxFailMs > 0 ? Math.max(2, (r.tsgo_ms / maxFailMs) * barMaxWidth) : 2;
-      html += `  <div class="bench-row">
+      const category = categoryFor(r.name || "", r.lines);
+      const decorated = decorateRow(r, category);
+      const tszWidth = hasTiming(r.tsz_ms) ? Math.max(2, (r.tsz_ms / maxFailMs) * barMaxWidth) : 0;
+      const tsgoWidth = hasTiming(r.tsgo_ms) ? Math.max(2, (r.tsgo_ms / maxFailMs) * barMaxWidth) : 0;
+      const metaParts = [decorated.kind, `${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`];
+      html += `  <div class="bench-row bench-row-error">
     <div class="bench-name"><a href="${decorated.url}">${escapeHtml(displayName(r.name))}</a></div>
-    <div class="bench-meta">${fmt(r.lines || 0)} lines, ${fmt(r.kb || 0)} KB</div>
+    <div class="bench-meta">${escapeHtml(metaParts.join(" · "))}</div>
+    <p class="bench-focus bench-failure-status">${escapeHtml(statusLabel(r))}</p>
     <div class="bench-bars">
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsz</span>
-        <div class="bench-bar tsz bench-bar-failed" style="width: 2px"></div>
-        <span class="bench-bar-time bench-failed-label">tsz failed</span>
+        ${hasTiming(r.tsz_ms)
+          ? `<div class="bench-bar tsz" style="width: ${tszWidth}px"><span class="bench-bar-value">${formatDurationMs(r.tsz_ms)}</span></div>`
+          : `<span class="bench-bar-status">failed</span>`}
       </div>
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsgo</span>
-        <div class="bench-bar tsgo" style="width: ${tsgoWidth}px">
-          <span class="bench-bar-value">${formatDurationMs(r.tsgo_ms)}</span>
-        </div>
+        ${hasTiming(r.tsgo_ms)
+          ? `<div class="bench-bar tsgo" style="width: ${tsgoWidth}px"><span class="bench-bar-value">${formatDurationMs(r.tsgo_ms)}</span></div>`
+          : `<span class="bench-bar-status">n/a</span>`}
       </div>
     </div>
     <a class="bench-detail-link" href="${decorated.url}">View details</a>
