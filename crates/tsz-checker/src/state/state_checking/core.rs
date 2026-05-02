@@ -244,19 +244,24 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // tsc emits TS9038 for numeric/string/template literal computed
-        // property names — the d.ts emitter cannot preserve the literal value
-        // as a property key without re-evaluating the expression. The prior
-        // classification skipped these as "simple", which inverted the rule.
-        let _ = (expr_node, syntax_kind_ext::PREFIX_UNARY_EXPRESSION);
-        let _ = (
-            SyntaxKind::NumericLiteral,
-            SyntaxKind::StringLiteral,
-            SyntaxKind::NoSubstitutionTemplateLiteral,
-            SyntaxKind::MinusToken,
-            SyntaxKind::PlusToken,
-            SyntaxKind::BigIntLiteral,
-        );
+        if expr_node.kind == SyntaxKind::NumericLiteral as u16
+            || expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || expr_node.kind == SyntaxKind::BigIntLiteral as u16
+        {
+            return true;
+        }
+
+        if expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.ctx.arena.get_unary_expr(expr_node)
+            && (unary.operator == SyntaxKind::MinusToken as u16
+                || unary.operator == SyntaxKind::PlusToken as u16)
+            && let Some(operand) = self.ctx.arena.get(unary.operand)
+        {
+            return operand.kind == SyntaxKind::NumericLiteral as u16
+                || operand.kind == SyntaxKind::BigIntLiteral as u16;
+        }
+
         false
     }
 
