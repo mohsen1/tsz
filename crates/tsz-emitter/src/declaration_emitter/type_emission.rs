@@ -384,18 +384,15 @@ impl<'a> DeclarationEmitter<'a> {
                     } else if type_op.operator == SyntaxKind::UniqueKeyword as u16 {
                         self.write("unique ");
                     }
-                    // Our parser doesn't create ParenthesizedType nodes, so we must
-                    // add parens when the operand is a union, intersection, or conditional type
-                    // (keyof/readonly bind tighter than |, &, and extends).
-                    let needs_parens = self.arena.get(type_op.type_node).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::UNION_TYPE
-                            || n.kind == syntax_kind_ext::INTERSECTION_TYPE
-                            || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                    });
+                    // Type operators print with the minimal parentheses needed
+                    // for precedence. Source-only parentheses around a stronger
+                    // operand such as `A["a"]` are not retained by tsc.
+                    let (operand, needs_parens) =
+                        self.type_operator_operand_and_parens(type_op.type_node);
                     if needs_parens {
                         self.write("(");
                     }
-                    self.emit_type(type_op.type_node);
+                    self.emit_type(operand);
                     if needs_parens {
                         self.write(")");
                     }
@@ -461,6 +458,7 @@ impl<'a> DeclarationEmitter<'a> {
                             || n.kind == syntax_kind_ext::INTERSECTION_TYPE
                             || n.kind == syntax_kind_ext::FUNCTION_TYPE
                             || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                            || n.kind == syntax_kind_ext::TYPE_QUERY
                     });
 
                     if needs_parens {
@@ -1065,6 +1063,24 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_type(index_type_idx);
+    }
+
+    fn type_operator_operand_and_parens(&self, type_idx: NodeIndex) -> (NodeIndex, bool) {
+        let mut operand = type_idx;
+        if let Some(node) = self.arena.get(operand)
+            && node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(paren) = self.arena.get_wrapped_type(node)
+        {
+            operand = paren.type_node;
+        }
+
+        let needs_parens = self.arena.get(operand).is_some_and(|n| {
+            n.kind == syntax_kind_ext::UNION_TYPE
+                || n.kind == syntax_kind_ext::INTERSECTION_TYPE
+                || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+        });
+
+        (operand, needs_parens)
     }
 
     fn emit_mapped_type_value_type(&mut self, type_idx: NodeIndex) {
