@@ -210,9 +210,7 @@ impl<'a> AsyncES5Emitter<'a> {
         }
         printer.set_indent_level(self.indent_level);
         printer.set_tslib_prefix(self.tslib_prefix);
-        if hoisted.iter().any(|name| name == "_a") {
-            printer.set_generator_state_name("_b");
-        }
+        printer.set_generator_state_name(IRPrinter::generator_state_name_for_hoisted(&hoisted));
         printer.emit(&ir);
         (printer.take_output(), hoisted, directives)
     }
