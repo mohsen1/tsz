@@ -313,14 +313,40 @@ impl<'a> CheckerState<'a> {
         let receiver = self.access_receiver_for_diagnostic_node(idx)?;
         let receiver_node = self.ctx.arena.get(receiver)?;
         if receiver_node.kind == SyntaxKind::ThisKeyword as u16 {
-            return self
+            // Prefer the prototype-owner expression when `this` lives inside a
+            // method assigned to a `Foo.prototype.x = function() { ... }` chain.
+            if let Some(owner) = self
                 .find_enclosing_non_arrow_function(receiver)
                 .and_then(|func_idx| self.js_prototype_owner_expression_for_node(func_idx))
                 .and_then(|owner_expr| {
                     self.js_prototype_owner_function_target(owner_expr)
                         .map(|_| owner_expr)
                 })
-                .and_then(|owner_expr| self.expression_text(owner_expr));
+                .and_then(|owner_expr| self.expression_text(owner_expr))
+            {
+                return Some(owner);
+            }
+            // Fallback: a top-level (or nested) JS function with expando
+            // assignments uses the function's own name as the apparent type
+            // for `this`. tsc displays `Property 'X' does not exist on type
+            // 'fn-name'` rather than the inferred expando object shape.
+            return self
+                .find_enclosing_non_arrow_function(receiver)
+                .and_then(|func_idx| {
+                    let func_node = self.ctx.arena.get(func_idx)?;
+                    if func_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
+                        && func_node.kind
+                            != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let func_data = self.ctx.arena.get_function(func_node)?;
+                    let name_node = self.ctx.arena.get(func_data.name)?;
+                    self.ctx
+                        .arena
+                        .get_identifier(name_node)
+                        .map(|ident| ident.escaped_text.clone())
+                });
         }
         if receiver_node.kind != SyntaxKind::Identifier as u16 {
             return None;
