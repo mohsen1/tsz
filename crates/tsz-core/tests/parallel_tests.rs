@@ -8595,7 +8595,6 @@ var e: Date = c.b();
             sym_to_decl_indices,
             cross_file_node_symbols: Arc::clone(&program.cross_file_node_symbols),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
-            modules_with_export_equals: Default::default(),
             flow_nodes: file1_bound.flow_nodes.clone(),
             node_flow: file1_bound.node_flow.clone(),
             switch_clause_to_switch: file1_bound.switch_clause_to_switch.clone(),

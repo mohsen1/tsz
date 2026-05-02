@@ -5507,7 +5507,6 @@ pub fn create_binder_from_bound_file(
             sym_to_decl_indices,
             cross_file_node_symbols: Arc::clone(&program.cross_file_node_symbols),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
-            modules_with_export_equals: FxHashSet::default(),
             flow_nodes: file.flow_nodes.clone(),
             // Arc::clone is O(1); cross-file lookup binders share the per-file
             // node_flow map by reference instead of deep-cloning it.
@@ -5603,7 +5602,6 @@ pub fn create_binder_from_bound_file_with_shared(
             sym_to_decl_indices,
             cross_file_node_symbols: Arc::clone(&program.cross_file_node_symbols),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
-            modules_with_export_equals: FxHashSet::default(),
             flow_nodes: file.flow_nodes.clone(),
             // Arc::clone is O(1); cross-file lookup binders share the per-file
             // node_flow map by reference instead of deep-cloning it.

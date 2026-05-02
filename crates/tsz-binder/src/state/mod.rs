@@ -504,9 +504,6 @@ pub struct BinderState {
     /// Imports from these modules should resolve to `any` type
     pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
 
-    /// Modules that use `export =` syntax (CommonJS-style exports)
-    /// Used by the import checker to validate require-style imports
-    pub modules_with_export_equals: FxHashSet<String>,
     /// Classification for modules with `export =`:
     /// true when the module resolves to a non-module entity.
     pub module_export_equals_non_module: FxHashMap<String, bool>,
@@ -967,7 +964,6 @@ pub struct BinderStateScopeInputs {
     pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
     pub cross_file_node_symbols: Arc<CrossFileNodeSymbols>,
     pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
-    pub modules_with_export_equals: FxHashSet<String>,
     pub flow_nodes: Arc<FlowNodeArena>,
     pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     pub switch_clause_to_switch: Arc<FxHashMap<u32, NodeIndex>>,
