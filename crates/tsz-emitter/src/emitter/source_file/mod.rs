@@ -153,6 +153,31 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn commonjs_preserves_source_prologue_before_export_preamble() {
+        let source = "\"hey!\"\n\" use strict \"\nexport function f() {}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::CommonJS,
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let expected_prefix = "\"use strict\";\n\"hey!\";\n\" use strict \";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.f = f;";
+        assert!(
+            output.starts_with(expected_prefix),
+            "CommonJS preamble should follow source prologue directives.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn esm_suppresses_redundant_export_empty_when_real_exports_exist() {
         // When a file has both `export {};` and `export { C };`, the empty export
         // is redundant and should be suppressed. tsc omits it.

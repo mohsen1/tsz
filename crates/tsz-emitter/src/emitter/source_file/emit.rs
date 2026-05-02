@@ -454,6 +454,11 @@ impl<'a> Printer<'a> {
         // directive during statement iteration to avoid duplication.
         let skip_source_use_strict =
             source_has_use_strict && (needs_use_strict_cjs || needs_use_strict_inside_wrapper);
+        let hoisted_source_prologue_directives = if self.ctx.is_commonjs() && is_file_module {
+            self.collect_source_prologue_directives(&source.statements.nodes)
+        } else {
+            Vec::new()
+        };
 
         // Emit "use strict" when either:
         // - we need to add it (source doesn't have it), or
@@ -714,6 +719,28 @@ impl<'a> Printer<'a> {
                     self.comment_emit_idx += 1;
                 } else {
                     break;
+                }
+            }
+        }
+
+        // In CommonJS output, tsc keeps source prologue directives before the
+        // synthetic module preamble. We already emitted or repositioned
+        // `"use strict"` above; emit the remaining prologue strings here and
+        // skip them in the normal statement pass.
+        if !hoisted_source_prologue_directives.is_empty() {
+            for &stmt_idx in &hoisted_source_prologue_directives {
+                if skip_source_use_strict && self.is_use_strict_prologue_statement(stmt_idx) {
+                    continue;
+                }
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    continue;
+                };
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                self.emit_comments_before_pos(actual_start);
+                let before_len = self.writer.len();
+                self.emit(stmt_idx);
+                if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+                    self.write_line();
                 }
             }
         }
@@ -1192,6 +1219,10 @@ impl<'a> Printer<'a> {
             }
 
             let stmt_node_pos = stmt_node.pos;
+            if hoisted_source_prologue_directives.contains(&stmt_idx) {
+                continue;
+            }
+
             // Skip source-level "use strict" prologue when we already emitted it
             // at the correct position (before __esModule/exports preamble).
             if skip_source_use_strict
@@ -1723,6 +1754,58 @@ impl<'a> Printer<'a> {
 
         // Exit root scope for block-scoped variable tracking
         self.ctx.block_scope_state.exit_scope();
+    }
+
+    fn collect_source_prologue_directives(&self, statements: &[NodeIndex]) -> Vec<NodeIndex> {
+        let mut directives = Vec::new();
+        for &stmt_idx in statements {
+            if !self.is_string_literal_expression_statement(stmt_idx) {
+                break;
+            }
+            directives.push(stmt_idx);
+        }
+        directives
+    }
+
+    fn is_string_literal_expression_statement(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return false;
+        }
+        let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+            return false;
+        };
+        self.arena
+            .get(expr_stmt.expression)
+            .is_some_and(Node::is_string_literal)
+    }
+
+    fn is_use_strict_prologue_statement(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return false;
+        }
+        let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_stmt.expression) else {
+            return false;
+        };
+        if !expr_node.is_string_literal() {
+            return false;
+        }
+        if let Some(lit) = self.arena.get_literal(expr_node) {
+            lit.text == "use strict"
+        } else if let Some(text) = self.source_text {
+            crate::safe_slice::slice(text, expr_node.pos as usize, expr_node.end as usize)
+                .is_ok_and(|s| s == "\"use strict\"" || s == "'use strict'")
+        } else {
+            false
+        }
     }
 
     fn recovered_yield_call_statement_text(&self, node: &Node) -> Option<String> {
