@@ -204,6 +204,20 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
+    fn write_embedded_output(&mut self, output: &str) {
+        let mut lines = output.split('\n');
+        if let Some(first) = lines.next() {
+            self.write(first);
+        }
+        for line in lines {
+            self.write_line();
+            if !line.is_empty() {
+                self.write_indent();
+                self.write(line);
+            }
+        }
+    }
+
     /// Create a new IR printer
     pub fn new() -> Self {
         Self {
@@ -1666,7 +1680,7 @@ impl<'a> IRPrinter<'a> {
                                     printer.set_source_text(source_text);
                                 }
                                 printer.emit_expression(*idx);
-                                self.write(printer.get_output());
+                                self.write_embedded_output(printer.get_output());
                                 return;
                             }
                             self.emit_arrow_function_es5_with_flags(arena, func_data);
