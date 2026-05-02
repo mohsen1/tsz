@@ -1373,3 +1373,112 @@ const c: true = 1 satisfies number;
         "Expected literal `1` for `let c: true = 1 satisfies number`, got: {messages:#?}"
     );
 }
+
+/// TS2345 against an optional parameter whose underlying type is
+/// literal-sensitive (`null`, a literal, etc.) must render the
+/// externally-visible parameter type with `| undefined` and preserve the
+/// argument literal — matching tsc's diagnostic surface.  Covers both
+/// parameters with explicit `?` and parameters made optional by a default
+/// initializer such as `z = null`.
+///
+/// The bound variable name in `fd` (`z`) is intentionally different from
+/// `fi` (`x`) so the fix can't be hardcoded to a particular spelling.
+#[test]
+fn ts2345_optional_parameter_with_null_default_includes_undefined_surface() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+function fi(x = null) {}
+function fd(z = null, o = { a: 0 }) {}
+
+fi("hi");
+fd("hi");
+"#,
+    );
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2345)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    let null_undefined_count = messages
+        .iter()
+        .filter(|m| {
+            m.contains(
+            "Argument of type '\"hi\"' is not assignable to parameter of type 'null | undefined'.",
+        )
+        })
+        .count();
+    assert_eq!(
+        null_undefined_count, 2,
+        "Expected two TS2345 diagnostics with `'\"hi\"'` arg and `null | undefined` \
+         param (one each for `fi` and `fd`), got: {messages:#?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("undefined | undefined")),
+        "Expected no duplicated `undefined`, got: {messages:#?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|m| m.contains("parameter of type 'null'.")),
+        "Optional null-default param must surface `null | undefined`, not bare `null`, \
+         got: {messages:#?}"
+    );
+}
+
+/// Parameters whose declared type already contains `undefined` should not
+/// double-up the surface — `union2` deduplicates, so the rendered type stays
+/// `string | undefined`, not `string | undefined | undefined`.
+#[test]
+fn ts2345_optional_parameter_already_includes_undefined_does_not_duplicate() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+function f(x?: string | undefined) {}
+f(42);
+"#,
+    );
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2345)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        !messages.iter().any(|m| m.contains("undefined | undefined")),
+        "Expected no duplicated `undefined`, got: {messages:#?}"
+    );
+}
+
+/// Optional non-rest parameters whose underlying type has at least one
+/// non-nullish member must NOT surface the synthetic `| undefined`. tsc
+/// elides it once a regular (non-spread) argument fills the slot — so a
+/// plain `number` optional param renders as `'number'`, not
+/// `'number | undefined'`. This is the inverse of the null-default case
+/// above and ensures the widen-then-strip pipeline still strips when the
+/// underlying type carries a non-nullish member.
+#[test]
+fn ts2345_optional_parameter_with_concrete_default_strips_synthetic_undefined() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+function f(x?: number) {}
+f("hi");
+"#,
+    );
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2345)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("parameter of type 'number'.")),
+        "Expected stripped `'number'` for non-spread arg landing on \
+         optional concrete param, got: {messages:#?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|m| m.contains("parameter of type 'number | undefined'")),
+        "Synthetic `| undefined` must not surface for non-spread args on \
+         optional concrete params, got: {messages:#?}"
+    );
+}
