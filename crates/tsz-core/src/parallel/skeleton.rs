@@ -650,6 +650,27 @@ pub struct SkeletonIndex {
     pub fingerprint: u64,
 }
 
+#[derive(Default)]
+struct SkeletonReductionCapacities {
+    global_augmentations: usize,
+    module_augmentations: usize,
+    augmentation_targets: usize,
+}
+
+impl SkeletonReductionCapacities {
+    fn from_skeletons(skeletons: &[FileSkeleton]) -> Self {
+        let mut capacities = Self::default();
+
+        for skeleton in skeletons {
+            capacities.global_augmentations += skeleton.global_augmentations.len();
+            capacities.module_augmentations += skeleton.module_augmentations.len();
+            capacities.augmentation_targets += skeleton.augmentation_targets.len();
+        }
+
+        capacities
+    }
+}
+
 /// Deterministically reduce a set of file skeletons into a `SkeletonIndex`.
 ///
 /// This is a pure function: the same input skeletons (in the same order) always
@@ -658,15 +679,19 @@ pub struct SkeletonIndex {
 /// # Arguments
 /// * `skeletons` - Slice of file skeletons, in file order.
 pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
+    let capacities = SkeletonReductionCapacities::from_skeletons(skeletons);
+
     let mut symbol_map: FxHashMap<String, (u32, Vec<usize>)> = FxHashMap::default();
-    let mut global_augmentation_targets: FxHashMap<String, Vec<usize>> = FxHashMap::default();
-    let mut module_augmentation_targets: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+    let mut global_augmentation_targets: FxHashMap<String, Vec<usize>> =
+        FxHashMap::with_capacity_and_hasher(capacities.global_augmentations, Default::default());
+    let mut module_augmentation_targets: FxHashMap<String, Vec<usize>> =
+        FxHashMap::with_capacity_and_hasher(capacities.module_augmentations, Default::default());
     let mut module_augmentations_by_spec: FxHashMap<String, Vec<(usize, SkeletonAugmentation)>> =
-        FxHashMap::default();
+        FxHashMap::with_capacity_and_hasher(capacities.module_augmentations, Default::default());
     let mut augmentation_targets_by_spec: FxHashMap<
         String,
         Vec<(usize, SkeletonAugmentationTarget)>,
-    > = FxHashMap::default();
+    > = FxHashMap::with_capacity_and_hasher(capacities.augmentation_targets, Default::default());
     let mut module_binder_index_by_spec: FxHashMap<String, Vec<usize>> = FxHashMap::default();
     // Phase 2 step 6: per-spec, per-export-name list of file indices.
     let mut module_exports_index_by_spec: SkeletonModuleExportsIndex = FxHashMap::default();

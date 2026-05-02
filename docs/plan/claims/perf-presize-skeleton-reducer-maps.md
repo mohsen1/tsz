@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-02
 - **Branch**: `perf/presize-skeleton-reducer-maps`
-- **PR**: TBD
+- **PR**: #2230
 - **Status**: claim
 - **Workstream**: 5 (large-repo residency/runtime)
 
