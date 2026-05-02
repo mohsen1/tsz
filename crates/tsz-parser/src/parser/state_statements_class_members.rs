@@ -507,8 +507,13 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
 
-        // ASI: if the next token is on a new line, treat the keyword as a property name
+        // ASI: if the next token is on a new line, treat the keyword as a property name.
+        // `static` is still a modifier before `accessor` even across a line break;
+        // the accessor token itself can then decide whether it is a modifier or name.
         if has_line_break {
+            if current == SyntaxKind::StaticKeyword && next == SyntaxKind::AccessorKeyword {
+                return false;
+            }
             return true;
         }
 
