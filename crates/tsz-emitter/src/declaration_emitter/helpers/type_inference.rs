@@ -1530,6 +1530,10 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
+            if node.kind == syntax_kind_ext::SATISFIES_EXPRESSION {
+                return None;
+            }
+
             let assertion = self.arena.get_type_assertion(node)?;
             let asserted_type = self.arena.get(assertion.type_node)?;
             if asserted_type.kind == SyntaxKind::ConstKeyword as u16 {

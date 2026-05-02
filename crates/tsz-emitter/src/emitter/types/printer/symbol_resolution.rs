@@ -550,7 +550,14 @@ impl<'a> TypePrinter<'a> {
         if let Some(elem_id) = visitor::array_element_type(self.interner, type_id) {
             let elem_str = self.print_type(elem_id);
             // Parenthesize complex element types (union, intersection, function, conditional, keyof, readonly)
-            let needs_parens = visitor::union_list_id(self.interner, elem_id).is_some()
+            let elem_is_parent_enum_display = visitor::union_list_id(self.interner, elem_id)
+                .is_some_and(|list_id| {
+                    let members = self.interner.type_list(list_id);
+                    self.try_print_enum_member_union_as_parent(&members)
+                        .is_some()
+                });
+            let needs_parens = (visitor::union_list_id(self.interner, elem_id).is_some()
+                && !elem_is_parent_enum_display)
                 || visitor::intersection_list_id(self.interner, elem_id).is_some()
                 || visitor::function_shape_id(self.interner, elem_id).is_some()
                 || visitor::conditional_type_id(self.interner, elem_id).is_some()
