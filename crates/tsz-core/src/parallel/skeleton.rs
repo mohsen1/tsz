@@ -650,6 +650,39 @@ pub struct SkeletonIndex {
     pub fingerprint: u64,
 }
 
+#[derive(Default)]
+struct SkeletonReductionCapacities {
+    global_augmentations: usize,
+    module_augmentations: usize,
+    augmentation_targets: usize,
+}
+
+impl SkeletonReductionCapacities {
+    fn from_skeletons(skeletons: &[FileSkeleton]) -> Self {
+        let mut global_augmentation_targets: FxHashSet<&str> = FxHashSet::default();
+        let mut module_augmentation_targets: FxHashSet<&str> = FxHashSet::default();
+        let mut augmentation_targets: FxHashSet<&str> = FxHashSet::default();
+
+        for skeleton in skeletons {
+            for aug in &skeleton.global_augmentations {
+                global_augmentation_targets.insert(&aug.target);
+            }
+            for aug in &skeleton.module_augmentations {
+                module_augmentation_targets.insert(&aug.target);
+            }
+            for target in &skeleton.augmentation_targets {
+                augmentation_targets.insert(&target.module_spec);
+            }
+        }
+
+        Self {
+            global_augmentations: global_augmentation_targets.len(),
+            module_augmentations: module_augmentation_targets.len(),
+            augmentation_targets: augmentation_targets.len(),
+        }
+    }
+}
+
 /// Deterministically reduce a set of file skeletons into a `SkeletonIndex`.
 ///
 /// This is a pure function: the same input skeletons (in the same order) always
@@ -658,15 +691,19 @@ pub struct SkeletonIndex {
 /// # Arguments
 /// * `skeletons` - Slice of file skeletons, in file order.
 pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
+    let capacities = SkeletonReductionCapacities::from_skeletons(skeletons);
+
     let mut symbol_map: FxHashMap<String, (u32, Vec<usize>)> = FxHashMap::default();
-    let mut global_augmentation_targets: FxHashMap<String, Vec<usize>> = FxHashMap::default();
-    let mut module_augmentation_targets: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+    let mut global_augmentation_targets: FxHashMap<String, Vec<usize>> =
+        FxHashMap::with_capacity_and_hasher(capacities.global_augmentations, Default::default());
+    let mut module_augmentation_targets: FxHashMap<String, Vec<usize>> =
+        FxHashMap::with_capacity_and_hasher(capacities.module_augmentations, Default::default());
     let mut module_augmentations_by_spec: FxHashMap<String, Vec<(usize, SkeletonAugmentation)>> =
-        FxHashMap::default();
+        FxHashMap::with_capacity_and_hasher(capacities.module_augmentations, Default::default());
     let mut augmentation_targets_by_spec: FxHashMap<
         String,
         Vec<(usize, SkeletonAugmentationTarget)>,
-    > = FxHashMap::default();
+    > = FxHashMap::with_capacity_and_hasher(capacities.augmentation_targets, Default::default());
     let mut module_binder_index_by_spec: FxHashMap<String, Vec<usize>> = FxHashMap::default();
     // Phase 2 step 6: per-spec, per-export-name list of file indices.
     let mut module_exports_index_by_spec: SkeletonModuleExportsIndex = FxHashMap::default();
@@ -2426,6 +2463,55 @@ mod tests {
         };
         skel.fingerprint = skel.compute_fingerprint();
         skel
+    }
+
+    #[test]
+    fn skeleton_reduction_capacities_count_distinct_map_keys() {
+        let mut skel_a = skeleton_with_module_augmentations(
+            "a.ts",
+            vec![("./shared".to_string(), vec![("Foo".to_string(), 10, 20)])],
+        );
+        skel_a.global_augmentations = vec![SkeletonAugmentation {
+            target: "global".to_string(),
+            declaration_count: 1,
+            declarations: vec![],
+        }];
+        skel_a.augmentation_targets = vec![SkeletonAugmentationTarget {
+            symbol_id: tsz_binder::SymbolId(1),
+            module_spec: "./shared".to_string(),
+            stable_location: StableLocation::with_unassigned_file(10, 20),
+        }];
+
+        let mut skel_b = skeleton_with_module_augmentations(
+            "b.ts",
+            vec![
+                ("./shared".to_string(), vec![("Bar".to_string(), 30, 40)]),
+                ("./other".to_string(), vec![("Baz".to_string(), 50, 60)]),
+            ],
+        );
+        skel_b.global_augmentations = vec![SkeletonAugmentation {
+            target: "global".to_string(),
+            declaration_count: 1,
+            declarations: vec![],
+        }];
+        skel_b.augmentation_targets = vec![
+            SkeletonAugmentationTarget {
+                symbol_id: tsz_binder::SymbolId(2),
+                module_spec: "./shared".to_string(),
+                stable_location: StableLocation::with_unassigned_file(30, 40),
+            },
+            SkeletonAugmentationTarget {
+                symbol_id: tsz_binder::SymbolId(3),
+                module_spec: "./other".to_string(),
+                stable_location: StableLocation::with_unassigned_file(50, 60),
+            },
+        ];
+
+        let capacities = SkeletonReductionCapacities::from_skeletons(&[skel_a, skel_b]);
+
+        assert_eq!(capacities.global_augmentations, 1);
+        assert_eq!(capacities.module_augmentations, 2);
+        assert_eq!(capacities.augmentation_targets, 2);
     }
 
     #[test]
