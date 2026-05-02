@@ -2047,7 +2047,10 @@ impl<'a> DeclarationEmitter<'a> {
         let sym_id = self
             .resolve_portability_import_alias(raw_sym_id, binder)
             .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
-        let type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
+        let imported_module = self
+            .imported_value_module_specifier(raw_sym_id, binder)
+            .or_else(|| self.imported_value_module_specifier_from_syntax(call.expression));
+        let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
         self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
             let decl_node = source_arena.get(decl_idx)?;
             let func = source_arena.get_function(decl_node)?;
@@ -2065,18 +2068,32 @@ impl<'a> DeclarationEmitter<'a> {
 
             let mut type_param_names = Vec::new();
             let mut type_param_substitutions = Vec::new();
-            if !type_args.is_empty()
-                && let Some(type_params) = func.type_parameters.as_ref()
-            {
-                for (&param_idx, arg_text) in type_params.nodes.iter().zip(type_args.iter()) {
+            if let Some(type_params) = func.type_parameters.as_ref() {
+                for &param_idx in &type_params.nodes {
                     if let Some(param_node) = source_arena.get(param_idx)
                         && let Some(param) = source_arena.get_type_parameter(param_node)
                         && let Some(name_text) =
                             self.identifier_text_from_arena(source_arena, param.name)
                     {
-                        type_param_names.push(name_text.clone());
-                        type_param_substitutions.push((name_text, arg_text.clone()));
+                        type_param_names.push(name_text);
                     }
+                }
+
+                if !explicit_type_args.is_empty() {
+                    for (name_text, arg_text) in
+                        type_param_names.iter().zip(explicit_type_args.iter())
+                    {
+                        type_param_substitutions.push((name_text.clone(), arg_text.clone()));
+                    }
+                } else {
+                    type_param_substitutions.extend(
+                        self.infer_call_type_param_substitutions_from_arguments(
+                            source_arena,
+                            func,
+                            call,
+                            &type_param_names,
+                        ),
+                    );
                 }
             }
             type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
@@ -2087,6 +2104,25 @@ impl<'a> DeclarationEmitter<'a> {
                     .cloned()
             });
             type_text = self.qualify_foreign_imported_names_in_text(source_arena, &type_text);
+            if let Some(module_specifier) = imported_module.as_deref() {
+                type_text = self.qualify_ambient_module_exported_names_in_text(
+                    source_arena,
+                    module_specifier,
+                    &type_text,
+                    &type_param_names,
+                );
+                if !type_text.contains("import(\"")
+                    && let Some(root_name) = Self::leading_type_reference_name(&type_text)
+                    && !type_param_names.iter().any(|name| name == root_name)
+                    && self.imported_module_exports_name(binder, module_specifier, root_name)
+                {
+                    type_text = format!(
+                        "import(\"{module_specifier}\").{}{}",
+                        root_name,
+                        &type_text[root_name.len()..]
+                    );
+                }
+            }
             if let Some(source_path) = source_path.as_deref() {
                 type_text = self.qualify_foreign_exported_names_in_text(
                     source_arena,
@@ -2115,6 +2151,292 @@ impl<'a> DeclarationEmitter<'a> {
             }
             Some(type_text)
         })
+    }
+
+    fn imported_value_module_specifier(
+        &self,
+        sym_id: SymbolId,
+        binder: &BinderState,
+    ) -> Option<String> {
+        self.import_symbol_map
+            .get(&sym_id)
+            .cloned()
+            .or_else(|| binder.symbols.get(sym_id)?.import_module.clone())
+    }
+
+    fn imported_value_module_specifier_from_syntax(&self, expr_idx: NodeIndex) -> Option<String> {
+        let local_name = self.get_identifier_text(expr_idx)?;
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_node) = self.arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(module_lit) = self.arena.get_literal(module_node) else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+
+            if clause.name.is_some()
+                && self.get_identifier_text(clause.name).as_deref() == Some(local_name.as_str())
+            {
+                return Some(module_lit.text.clone());
+            }
+
+            if clause.named_bindings.is_some()
+                && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+            {
+                if bindings.name.is_some()
+                    && self.get_identifier_text(bindings.name).as_deref()
+                        == Some(local_name.as_str())
+                {
+                    return Some(module_lit.text.clone());
+                }
+                for &spec_idx in &bindings.elements.nodes {
+                    let Some(spec_node) = self.arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = self.arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    if self.get_identifier_text(specifier.name).as_deref()
+                        == Some(local_name.as_str())
+                    {
+                        return Some(module_lit.text.clone());
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn imported_module_exports_name(
+        &self,
+        binder: &BinderState,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> bool {
+        if binder
+            .module_exports
+            .get(module_specifier)
+            .is_some_and(|exports| exports.get(export_name).is_some())
+        {
+            return true;
+        }
+
+        if let Some(current_path) = self.current_file_path.as_deref() {
+            for module_path in
+                self.matching_module_export_paths(binder, current_path, module_specifier)
+            {
+                if binder
+                    .module_exports
+                    .get(module_path)
+                    .is_some_and(|exports| exports.get(export_name).is_some())
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn leading_type_reference_name(type_text: &str) -> Option<&str> {
+        let trimmed = type_text.trim_start();
+        if trimmed.starts_with("import(\"") || trimmed.starts_with("typeof ") {
+            return None;
+        }
+        let end = trimmed
+            .char_indices()
+            .find_map(|(idx, ch)| {
+                (!(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())).then_some(idx)
+            })
+            .unwrap_or(trimmed.len());
+        if end == 0 {
+            return None;
+        }
+        let name = &trimmed[..end];
+        name.chars()
+            .next()
+            .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
+            .then_some(name)
+    }
+
+    fn infer_call_type_param_substitutions_from_arguments(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+        call: &tsz_parser::parser::node::CallExprData,
+        type_param_names: &[String],
+    ) -> Vec<(String, String)> {
+        let Some(args) = call.arguments.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut substitutions: Vec<(String, String)> = Vec::new();
+        for (&param_idx, &arg_idx) in func.parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_type_text) =
+                self.source_slice_from_arena(source_arena, param.type_annotation)
+            else {
+                continue;
+            };
+            let param_type_text = param_type_text.trim();
+            if !type_param_names
+                .iter()
+                .any(|name| name.as_str() == param_type_text)
+            {
+                continue;
+            }
+            if substitutions
+                .iter()
+                .any(|(name, _)| name.as_str() == param_type_text)
+            {
+                continue;
+            }
+            let Some(arg_type_text) = self.preferred_expression_type_text(arg_idx) else {
+                continue;
+            };
+            substitutions.push((
+                param_type_text.to_string(),
+                Self::parenthesize_generic_function_type_argument(&arg_type_text),
+            ));
+        }
+
+        substitutions
+    }
+
+    fn parenthesize_generic_function_type_argument(type_text: &str) -> String {
+        let trimmed = type_text.trim();
+        if trimmed.starts_with('<') && trimmed.contains("=>") {
+            format!("({trimmed})")
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    fn qualify_ambient_module_exported_names_in_text(
+        &self,
+        source_arena: &NodeArena,
+        module_specifier: &str,
+        text: &str,
+        excluded_names: &[String],
+    ) -> String {
+        let Some(source_file) = self.arena_source_file(source_arena) else {
+            return text.to_string();
+        };
+
+        let mut replacements = Vec::new();
+        for &stmt_idx in &source_file.statements.nodes {
+            self.collect_ambient_module_export_replacements(
+                source_arena,
+                stmt_idx,
+                module_specifier,
+                excluded_names,
+                &mut replacements,
+            );
+        }
+
+        Self::replace_whole_words_in_text(text, &replacements)
+    }
+
+    fn collect_ambient_module_export_replacements(
+        &self,
+        source_arena: &NodeArena,
+        module_idx: NodeIndex,
+        module_specifier: &str,
+        excluded_names: &[String],
+        replacements: &mut Vec<(String, String)>,
+    ) {
+        let Some(module_node) = source_arena.get(module_idx) else {
+            return;
+        };
+        let Some(module) = source_arena.get_module(module_node) else {
+            return;
+        };
+
+        let Some(name_node) = source_arena.get(module.name) else {
+            return;
+        };
+        if name_node.kind != SyntaxKind::StringLiteral as u16 {
+            return;
+        }
+        let Some(literal) = source_arena.get_literal(name_node) else {
+            return;
+        };
+        if literal.text != module_specifier {
+            return;
+        }
+
+        let Some(body_node) = source_arena.get(module.body) else {
+            return;
+        };
+        if source_arena.get_module(body_node).is_some() {
+            self.collect_ambient_module_export_replacements(
+                source_arena,
+                module.body,
+                module_specifier,
+                excluded_names,
+                replacements,
+            );
+            return;
+        }
+
+        let Some(block) = source_arena.get_module_block(body_node) else {
+            return;
+        };
+        let Some(statements) = block.statements.as_ref() else {
+            return;
+        };
+
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = source_arena.get(stmt_idx) else {
+                continue;
+            };
+            let export_name = if let Some(decl) = source_arena.get_interface(stmt_node) {
+                Some(decl.name)
+            } else if let Some(decl) = source_arena.get_type_alias(stmt_node) {
+                Some(decl.name)
+            } else if let Some(decl) = source_arena.get_class(stmt_node) {
+                Some(decl.name)
+            } else if let Some(decl) = source_arena.get_enum(stmt_node) {
+                Some(decl.name)
+            } else {
+                source_arena.get_function(stmt_node).map(|decl| decl.name)
+            }
+            .and_then(|name_idx| self.identifier_text_from_arena(source_arena, name_idx));
+
+            let Some(export_name) = export_name else {
+                continue;
+            };
+            if excluded_names.iter().any(|name| name == &export_name) {
+                continue;
+            }
+            let qualified = format!("import(\"{module_specifier}\").{export_name}");
+            replacements.push((export_name, qualified));
+        }
     }
 
     pub(in crate::declaration_emitter) fn call_expression_source_return_type_text(
@@ -2899,6 +3221,8 @@ impl<'a> DeclarationEmitter<'a> {
             scratch.emit_type(func.type_annotation);
         } else if func.body.is_some() && scratch.body_returns_void(func.body) {
             scratch.write("void");
+        } else if let Some(return_type) = scratch.expression_body_parameter_return_type_text(func) {
+            scratch.write(&return_type);
         } else if let Some(return_type) =
             scratch.function_body_preferred_return_type_text(func.body)
         {
@@ -2907,6 +3231,31 @@ impl<'a> DeclarationEmitter<'a> {
             scratch.write("any");
         }
         Some(scratch.writer.take_output())
+    }
+
+    fn expression_body_parameter_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        let body_node = self.arena.get(func.body)?;
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return None;
+        }
+        let body_name = self.get_identifier_text(func.body)?;
+        for &param_idx in &func.parameters.nodes {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            if self.get_identifier_text(param.name).as_deref() != Some(body_name.as_str()) {
+                continue;
+            }
+            if param.type_annotation.is_some() {
+                return self.emit_type_node_text_normalized(param.type_annotation);
+            }
+            return self
+                .get_node_type(param.name)
+                .map(|type_id| self.print_type_id(type_id));
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn infer_object_literal_type_text_at(
