@@ -787,6 +787,26 @@ export class Object {
 }
 
 #[test]
+fn test_js_namespace_named_export_keeps_required_constructor_import_type() {
+    let source = r#"
+export const Something = 2;
+export namespace A {
+    export namespace B {
+        const Something = require("fs").Something;
+        const thing = new Something();
+        export { thing };
+    }
+}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export namespace A {\n    namespace B {\n        export { thing };\n        export let thing: import(\"fs\").Something;\n    }\n}"),
+        "Expected namespace named export to emit a reusable import type after its export clause: {output}"
+    );
+}
+
+#[test]
 fn test_js_export_import_equals_drops_export_keyword() {
     let source = "export import fs2 = require(\"fs\");";
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
