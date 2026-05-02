@@ -1232,6 +1232,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn const_enum_access_through_namespace_import_alias_inlined() {
+        let source = "namespace Outer {\n    export var x = 1;\n}\n\nnamespace Outer {\n    export const enum A { X }\n}\n\nnamespace B {\n    import O = Outer;\n    var x = O.A.X;\n    var y = O.x;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var x = 0 /* O.A.X */;"),
+            "Const enum access through namespace import alias must be inlined.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var y = O.x;"),
+            "Non-enum namespace member access through the same alias must be preserved.\nOutput:\n{output}"
+        );
+    }
+
     /// String const enum values are inlined with proper quoting.
     #[test]
     fn const_enum_string_values_inlined() {
