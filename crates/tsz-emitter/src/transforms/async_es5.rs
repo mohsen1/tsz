@@ -116,6 +116,10 @@ impl<'a> AsyncES5Emitter<'a> {
         self.tslib_prefix = enable;
     }
 
+    pub fn set_temp_var_counter(&mut self, counter: u32) {
+        self.transformer.set_temp_var_counter(counter);
+    }
+
     pub fn set_lexical_this(&mut self, capture: bool) {
         self.this_capture_depth = u32::from(capture);
         self.transformer.set_lexical_this_capture(capture);

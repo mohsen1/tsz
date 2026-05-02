@@ -1240,24 +1240,32 @@ impl<'a> Printer<'a> {
         let param_transforms = self.emit_function_parameters_es5(&func.parameters.nodes);
         let has_param_transforms = param_transforms.has_transforms();
 
-        if has_param_transforms {
-            // If parameters need transforms (destructuring, defaults), fall back to
-            // multi-line format since we need prologue statements
-            self.write(") {");
-            self.write_line();
-            self.increase_indent();
-            self.emit_param_prologue(&param_transforms);
-        }
-
         // Check if the body references `arguments`. If so, we capture it
         // before the __awaiter call: `var arguments_1 = arguments;`
         let body_captures_arguments =
             tsz_parser::syntax::transform_utils::contains_arguments_reference(
                 self.arena, func.body,
             );
+        let has_outer_param_prologue = param_transforms.rest.is_some() || body_captures_arguments;
+
+        if has_param_transforms {
+            self.write(") {");
+            if has_outer_param_prologue {
+                self.write_line();
+                self.increase_indent();
+                self.emit_rest_param_prologue(&param_transforms);
+                if body_captures_arguments {
+                    self.write("var arguments_1 = arguments;");
+                    self.write_line();
+                }
+            } else {
+                self.write(" ");
+            }
+        }
 
         // Build the __generator body
         let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
+        async_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         // The generator body is nested inside `function () { ... }` in the __awaiter
         // callback, so render it at one extra indent level (matching tsc multi-line format).
         async_emitter.set_indent_level(self.writer.indent_level() + 1);
@@ -1285,11 +1293,6 @@ impl<'a> Printer<'a> {
         let generator_mappings = async_emitter.take_mappings();
 
         if has_param_transforms {
-            // Multi-line path (with param prologue)
-            if body_captures_arguments {
-                self.write("var arguments_1 = arguments;");
-                self.write_line();
-            }
             self.write("return ");
             self.write_helper("__awaiter");
             self.write("(");
@@ -1300,13 +1303,18 @@ impl<'a> Printer<'a> {
             self.write_line();
             self.increase_indent();
             self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
+            self.emit_param_binding_prologue(&param_transforms);
             self.write(&generator_body);
             self.decrease_indent();
             self.write_line();
             self.write("});");
-            self.write_line();
-            self.decrease_indent();
-            self.write("}");
+            if has_outer_param_prologue {
+                self.write_line();
+                self.decrease_indent();
+                self.write("}");
+            } else {
+                self.write(" }");
+            }
         } else if body_captures_arguments {
             // Arguments capture path: needs multi-line to emit var declaration
             // function () { var arguments_1 = arguments; return __awaiter(...); }

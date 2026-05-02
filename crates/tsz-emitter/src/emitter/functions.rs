@@ -259,6 +259,9 @@ impl<'a> Printer<'a> {
         self.write("(");
         self.emit_function_parameters_js(&func.parameters.nodes);
         self.write(")");
+        let object_rest_param_prologue: Vec<(String, NodeIndex)> =
+            std::mem::take(&mut self.pending_object_rest_params);
+        let has_object_rest_param_prologue = !object_rest_param_prologue.is_empty();
 
         // Check if the body references `arguments`. If so, we must capture it
         // before entering the generator: `() => { var arguments_1 = arguments; return __awaiter(...); }`
@@ -294,7 +297,7 @@ impl<'a> Printer<'a> {
                 .map(|n| self.is_single_line(n))
                 .unwrap_or(false);
 
-        if body_is_empty_single_line {
+        if body_is_empty_single_line && !has_object_rest_param_prologue {
             self.write(" => ");
             self.write_helper("__awaiter");
             self.write("(");
@@ -334,7 +337,7 @@ impl<'a> Printer<'a> {
             self.ctx.arguments_capture_name = Some(arguments_capture_name);
 
             if is_block {
-                if body_is_single_line {
+                if body_is_single_line && !has_object_rest_param_prologue {
                     if let Some(body_node) = self.arena.get(func.body)
                         && let Some(block) = self.arena.get_block(body_node)
                     {
@@ -347,6 +350,7 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write_line();
                     self.increase_indent();
+                    self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
                     if let Some(body_node) = self.arena.get(func.body)
                         && let Some(block) = self.arena.get_block(body_node)
                     {
@@ -359,9 +363,21 @@ impl<'a> Printer<'a> {
                     self.write("})");
                 }
             } else {
-                self.write(" return ");
-                self.emit_expression(func.body);
-                self.write("; })");
+                if has_object_rest_param_prologue {
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
+                    self.write("return ");
+                    self.emit_expression(func.body);
+                    self.write(";");
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write("})");
+                } else {
+                    self.write(" return ");
+                    self.emit_expression(func.body);
+                    self.write("; })");
+                }
             }
 
             self.ctx.emit_await_as_yield = saved_yield;
@@ -375,7 +391,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if body_is_single_line {
+        if body_is_single_line && !has_object_rest_param_prologue {
             // Single-line body: emit inline like TSC
             // e.g., () => __awaiter(this, void 0, void 0, function* () { return yield this; })
             self.write(" => ");
@@ -399,17 +415,28 @@ impl<'a> Printer<'a> {
         }
 
         if !is_block {
-            // Concise expression body: emit single-line
-            // e.g., () => __awaiter(this, void 0, void 0, function* () { return yield expr; })
+            // Concise expression body: emit single-line unless parameter
+            // lowering needs a generator prologue.
             self.write(" => ");
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_arg);
-            self.write(", void 0, void 0, function* () { ");
+            self.write(", void 0, void 0, function* () {");
             self.ctx.emit_await_as_yield = true;
-            self.write("return ");
-            self.emit_expression(func.body);
-            self.write(";");
+            if has_object_rest_param_prologue {
+                self.write_line();
+                self.increase_indent();
+                self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
+                self.write("return ");
+                self.emit_expression(func.body);
+                self.write(";");
+                self.write_line();
+                self.decrease_indent();
+            } else {
+                self.write(" return ");
+                self.emit_expression(func.body);
+                self.write(";");
+            }
             self.ctx.emit_await_as_yield = false;
             self.write(" })");
             return;
@@ -425,6 +452,7 @@ impl<'a> Printer<'a> {
 
         // Emit body with await→yield substitution
         self.ctx.emit_await_as_yield = true;
+        self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
 
         // Block body: emit statements directly
         if let Some(body_node) = self.arena.get(func.body)
@@ -440,6 +468,15 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("})");
+    }
+
+    fn emit_object_rest_param_prologue_entries(&mut self, entries: &[(String, NodeIndex)]) {
+        for (temp_name, pattern_idx) in entries {
+            self.write("var ");
+            self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
+            self.write(";");
+            self.write_line();
+        }
     }
 
     fn emit_async_arrow_await_param_recovery(
