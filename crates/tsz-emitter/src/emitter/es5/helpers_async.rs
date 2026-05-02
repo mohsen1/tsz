@@ -214,6 +214,7 @@ impl<'a> Printer<'a> {
                 self.write_awaiter_promise_arg(&promise_ctor);
                 self.write(", function (");
                 self.emit_function_parameter_names_only(params);
+                self.emit_recovered_async_await_arrow_parameter(params);
                 self.write(") {");
                 self.write_line();
                 self.increase_indent();
@@ -477,6 +478,7 @@ impl<'a> Printer<'a> {
             let saved = self.ctx.emit_await_as_yield;
             self.ctx.emit_await_as_yield = true;
             self.emit_function_parameters_js(params);
+            self.emit_recovered_async_await_arrow_parameter(params);
             self.ctx.emit_await_as_yield = saved;
             if body_is_empty_single_line {
                 self.write(") { });");
