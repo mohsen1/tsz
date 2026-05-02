@@ -266,6 +266,85 @@ var methodValue = C.s2;
 }
 
 #[test]
+fn test_function_initializer_prefers_asserted_return_type_with_typeof_members() {
+    let source = r#"
+export const nImported = "nImported";
+export const nNotImported = "nNotImported";
+const nPrivate = "private";
+export const o = (p1: typeof nImported, p2: typeof nNotImported, p3: typeof nPrivate) => null! as { foo: typeof nImported, bar: typeof nPrivate, baz: typeof nNotImported };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let var_stmt = source_file
+        .statements
+        .nodes
+        .iter()
+        .filter_map(|&stmt_idx| {
+            let stmt_node = parser.arena.get(stmt_idx)?;
+            if let Some(var_stmt) = parser.arena.get_variable(stmt_node) {
+                return Some(var_stmt);
+            }
+            let export = parser.arena.get_export_decl(stmt_node)?;
+            let clause_node = parser.arena.get(export.export_clause)?;
+            parser.arena.get_variable(clause_node)
+        })
+        .next_back()
+        .expect("missing o variable statement");
+    let var_decl = parser
+        .arena
+        .get(var_stmt.declarations.nodes[0])
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing o declaration");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let return_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![
+            PropertyInfo::new(interner.intern_string("foo"), TypeId::STRING),
+            PropertyInfo::new(interner.intern_string("bar"), TypeId::STRING),
+            PropertyInfo::new(interner.intern_string("baz"), TypeId::STRING),
+        ],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let function_type = interner.function(FunctionShape::new(Vec::new(), return_type));
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(var_decl.initializer.0, function_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("foo: typeof nImported;"),
+        "Expected asserted return type to preserve imported typeof member: {output}"
+    );
+    assert!(
+        output.contains("bar: typeof nPrivate;"),
+        "Expected asserted return type to preserve private typeof member: {output}"
+    );
+    assert!(
+        output.contains("baz: typeof nNotImported;"),
+        "Expected asserted return type to preserve non-imported typeof member: {output}"
+    );
+}
+
+#[test]
 fn test_const_call_initializer_does_not_collapse_to_literal_argument() {
     let source = r#"
 type Box<T> = {
