@@ -27,7 +27,7 @@
 //! justifications).
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::path::Path;
+use std::path::{Component, Path};
 use std::sync::Arc;
 
 use tsz_parser::parser::node::NodeArena;
@@ -505,6 +505,12 @@ fn register_canonical_forms(
             insert(map, modules, src_idx, bare, target.tgt_idx);
         }
     }
+
+    if let Some(idx_dir) = target.index_dir
+        && let Some(package_specifier) = node_modules_package_specifier(src_dir, idx_dir)
+    {
+        insert(map, modules, src_idx, package_specifier, target.tgt_idx);
+    }
 }
 
 /// Return a bare alias for a specifier of the form `./<name>` where `<name>`
@@ -516,6 +522,54 @@ fn same_directory_bare_alias(spec: &str) -> Option<String> {
         return None;
     }
     Some(rest.to_string())
+}
+
+fn node_modules_package_specifier(src_dir: &Path, package_dir: &Path) -> Option<String> {
+    let mut current = Some(src_dir);
+    while let Some(dir) = current {
+        if dir.file_name().is_some_and(|name| name == "node_modules")
+            && let Some(package_specifier) = package_specifier_under_node_modules(dir, package_dir)
+        {
+            return Some(package_specifier);
+        }
+
+        let child_node_modules = dir.join("node_modules");
+        if let Some(package_specifier) =
+            package_specifier_under_node_modules(&child_node_modules, package_dir)
+        {
+            return Some(package_specifier);
+        }
+
+        current = dir.parent();
+    }
+
+    None
+}
+
+fn package_specifier_under_node_modules(node_modules: &Path, package_dir: &Path) -> Option<String> {
+    let rel = package_dir.strip_prefix(node_modules).ok()?;
+    let mut components = rel.components();
+    let first = match components.next()? {
+        Component::Normal(part) => part.to_str()?,
+        _ => return None,
+    };
+
+    if first.starts_with('@') {
+        let second = match components.next()? {
+            Component::Normal(part) => part.to_str()?,
+            _ => return None,
+        };
+        if components.next().is_none() {
+            return Some(format!("{first}/{second}"));
+        }
+        return None;
+    }
+
+    if components.next().is_none() {
+        return Some(first.to_string());
+    }
+
+    None
 }
 
 fn insert(
