@@ -78,6 +78,7 @@ export function parseBaseline(content: string): BaselineContent {
     start: number;
     end: number;
     missingFromOriginalEmit?: boolean;
+    missingFromOriginalEmitMarkerStart?: number;
     differsFromOriginalEmit?: boolean;
     differsFromOriginalEmitMarkerStart?: number;
   }
@@ -90,9 +91,11 @@ export function parseBaseline(content: string): BaselineContent {
   // expected content to null (no output expected).
   const missingFromOriginalEmitRegex = /^!!!! File (\S+) missing from original emit/gm;
   const missingFromOriginalEmitFiles = new Set<string>();
+  const missingFromOriginalEmitMarkers: Array<{ file: string; index: number }> = [];
   let missingMatch: RegExpExecArray | null;
   while ((missingMatch = missingFromOriginalEmitRegex.exec(content)) !== null) {
     missingFromOriginalEmitFiles.add(missingMatch[1]);
+    missingFromOriginalEmitMarkers.push({ file: missingMatch[1], index: missingMatch.index });
   }
   if (missingFromOriginalEmitFiles.size > 0) {
     result.noEmitExpected = true;
@@ -122,6 +125,11 @@ export function parseBaseline(content: string): BaselineContent {
     const name = match[1];
     const markerStart = match.index;
     const segmentStart = match.index + match[0].length;
+    const missingFromOriginalEmitMarker = missingFromOriginalEmitMarkers.find(marker => {
+      if (marker.file !== name || marker.index >= markerStart) return false;
+      const between = content.slice(marker.index, markerStart).trim();
+      return between === `!!!! File ${name} missing from original emit, but present in noCheck emit`;
+    });
     const differsFromOriginalEmitMarker = differsFromOriginalEmitMarkers.find(marker => {
       if (marker.file !== name || marker.index >= markerStart) return false;
       const between = content.slice(marker.index, markerStart).trim();
@@ -134,6 +142,7 @@ export function parseBaseline(content: string): BaselineContent {
       start: segmentStart,
       end: content.length, // Will be updated
       missingFromOriginalEmit: missingFromOriginalEmitFiles.has(name),
+      missingFromOriginalEmitMarkerStart: missingFromOriginalEmitMarker?.index,
       differsFromOriginalEmit,
       differsFromOriginalEmitMarkerStart: differsFromOriginalEmitMarker?.index,
     });
@@ -142,11 +151,12 @@ export function parseBaseline(content: string): BaselineContent {
   // Update end positions
   for (let i = 0; i < segments.length - 1; i++) {
     // Next marker start marks the end of the current segment content.
-    // For "differs from original emit in noCheck emit" metadata blocks,
+    // For noCheck metadata blocks,
     // trim the preceding real output before the metadata marker line.
-    segments[i].end = segments[i + 1].differsFromOriginalEmit
-      ? (segments[i + 1].differsFromOriginalEmitMarkerStart ?? segments[i + 1].markerStart)
-      : segments[i + 1].markerStart;
+    segments[i].end =
+      segments[i + 1].missingFromOriginalEmitMarkerStart
+      ?? segments[i + 1].differsFromOriginalEmitMarkerStart
+      ?? segments[i + 1].markerStart;
   }
 
   const isTsSourceLike = (name: string): boolean => {
