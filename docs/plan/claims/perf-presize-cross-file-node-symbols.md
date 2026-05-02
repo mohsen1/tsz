@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-02
 - **Branch**: `perf/presize-cross-file-node-symbols`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2211
+- **Status**: ready
 - **Workstream**: 5 (large-repo residency)
 
 ## Intent
