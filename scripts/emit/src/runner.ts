@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
 import pLimit from 'p-limit';
+import ts from 'typescript';
 import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parser.js';
 import { CliTranspiler } from './cli-transpiler.js';
 import { parseTarget, parseModule, inferDefaultModule } from './ts-enums.js';
@@ -85,6 +86,8 @@ interface TestCase {
   removeComments: boolean;
   stripInternal: boolean;
   outFile?: string;
+  outDir?: string;
+  rootDir?: string;
   emitDeclarationOnly: boolean;
   declarationMap: boolean;
 }
@@ -180,6 +183,8 @@ function getCacheKey(
   removeComments: boolean = false,
   stripInternal: boolean = false,
   outFile: string = '',
+  outDir: string = '',
+  rootDir: string = '',
   declarationMap: boolean = false,
 ): string {
   const tszBin = process.env.TSZ_BIN;
@@ -232,6 +237,8 @@ function getCacheKey(
     removeComments,
     stripInternal,
     outFile,
+    outDir,
+    rootDir,
     declarationMap,
     engineSalt,
     runnerSalt,
@@ -518,7 +525,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     for (const sf of sourceFiles) {
       if (sf.name.endsWith('tsconfig.json')) {
         try {
-          const parsed = JSON.parse(sf.content);
+          const parsed = ts.parseConfigFileTextToJson(sf.name, sf.content).config;
           if (parsed?.compilerOptions) {
             Object.assign(tsconfigOptions, parsed.compilerOptions);
           }
@@ -612,6 +619,8 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     // only handles `out.js` by default, so we fix up the expected output for
     // custom outFile names (e.g., dummy.js, output.js).
     const outFile = typeof directives.outfile === 'string' ? directives.outfile : undefined;
+    const outDir = typeof tsconfigOptions.outDir === 'string' ? tsconfigOptions.outDir : undefined;
+    const rootDir = typeof tsconfigOptions.rootDir === 'string' ? tsconfigOptions.rootDir : undefined;
     if (outFile && outFile !== 'out.js' && baseline.files.has(outFile)) {
       baseline.js = baseline.files.get(outFile) ?? baseline.js;
       baseline.jsFileName = outFile;
@@ -665,6 +674,8 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       removeComments,
       stripInternal,
       outFile,
+      outDir,
+      rootDir,
       emitDeclarationOnly,
       declarationMap,
     } as TestCase;
@@ -775,6 +786,8 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.removeComments,
       testCase.stripInternal,
       testCase.outFile ?? '',
+      testCase.outDir ?? '',
+      testCase.rootDir ?? '',
       testCase.declarationMap,
     );
     let tszJs: string;
@@ -818,6 +831,8 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         removeComments: testCase.removeComments,
         stripInternal: testCase.stripInternal,
         outFile: testCase.outFile,
+        outDir: testCase.outDir,
+        rootDir: testCase.rootDir,
         declarationMap: testCase.declarationMap,
         sourceFiles: testCase.sourceFiles,
         expectedJsFileName: testCase.expectedJsFileName ?? undefined,
