@@ -300,7 +300,7 @@ impl<'a> Printer<'a> {
                         self.emit_rewrite_helper_call(first);
                     }
                 } else if let Some(first) = first_arg {
-                    self.emit(first);
+                    self.emit_dynamic_import_template_specifier(first);
                 }
                 self.write("}`).then(s => ");
                 self.write_helper("__importStar");
@@ -907,6 +907,32 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_unemitted_comments_between(from_pos, close_paren_pos);
+    }
+
+    fn emit_dynamic_import_template_specifier(&mut self, expr: NodeIndex) {
+        let Some(node) = self.arena.get(expr) else {
+            return;
+        };
+
+        if self.ctx.emit_await_as_yield_await
+            && node.kind == syntax_kind_ext::YIELD_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr_ex(node)
+            && !unary.asterisk_token
+        {
+            self.write("yield ");
+            self.write("yield ");
+            self.write_helper("__await");
+            self.write("(");
+            if unary.expression.is_some() {
+                self.emit_expression(unary.expression);
+            } else {
+                self.write("void 0");
+            }
+            self.write(")");
+            return;
+        }
+
+        self.emit(expr);
     }
 
     /// Find the position of the opening parenthesis in a call expression.
