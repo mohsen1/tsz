@@ -844,6 +844,33 @@ fn test_cjs_exported_namespace_uses_var_at_es5() {
 }
 
 #[test]
+fn test_cjs_exported_namespace_reopen_declares_var_once_es5() {
+    let source = r#"export namespace N {
+    export class A {}
+}
+export namespace N {
+    export class B {}
+}"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..PrintOptions::es5()
+        },
+    )
+    .code;
+
+    assert_eq!(
+        output.matches("var N;").count(),
+        1,
+        "Reopened exported namespace should only declare the namespace var once.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_comment_preserved_after_erased_type_annotation() {
     // When a type annotation is erased during emit, comments that follow
     // the annotation in trailing trivia should not be consumed.
