@@ -342,13 +342,85 @@ impl<'a> DeclarationEmitter<'a> {
         if Self::is_unquoted_property_name(text)
             && !tsz_solver::utils::is_numeric_literal_name(text)
         {
-            (text.to_string(), Some(text.to_string()))
+            (
+                text.to_string(),
+                Self::late_bound_namespace_member_name(text),
+            )
         } else {
             (
                 format!("\"{}\"", Self::escape_non_ascii_for_double_quote(text)),
                 None,
             )
         }
+    }
+
+    fn late_bound_namespace_member_name(text: &str) -> Option<String> {
+        (!Self::is_late_bound_reserved_binding_name(text)).then(|| text.to_string())
+    }
+
+    fn is_late_bound_reserved_binding_name(text: &str) -> bool {
+        matches!(
+            text,
+            "break"
+                | "case"
+                | "catch"
+                | "class"
+                | "const"
+                | "continue"
+                | "debugger"
+                | "default"
+                | "delete"
+                | "do"
+                | "else"
+                | "enum"
+                | "export"
+                | "extends"
+                | "false"
+                | "finally"
+                | "for"
+                | "function"
+                | "if"
+                | "import"
+                | "in"
+                | "instanceof"
+                | "new"
+                | "null"
+                | "return"
+                | "super"
+                | "switch"
+                | "this"
+                | "throw"
+                | "true"
+                | "try"
+                | "typeof"
+                | "var"
+                | "void"
+                | "while"
+                | "with"
+                | "implements"
+                | "interface"
+                | "let"
+                | "package"
+                | "private"
+                | "protected"
+                | "public"
+                | "static"
+                | "yield"
+        )
+    }
+
+    fn late_bound_synthetic_member_name(index: usize) -> String {
+        if index < 26 {
+            format!("_{}", (b'a' + index as u8) as char)
+        } else {
+            format!("_a{}", index - 25)
+        }
+    }
+
+    fn should_emit_late_bound_export_alias(property_name_text: &str) -> bool {
+        Self::is_unquoted_property_name(property_name_text)
+            && !tsz_solver::utils::is_numeric_literal_name(property_name_text)
+            && Self::is_late_bound_reserved_binding_name(property_name_text)
     }
 
     fn resolved_const_late_bound_assignment_key(
@@ -435,7 +507,7 @@ impl<'a> DeclarationEmitter<'a> {
         match access_node.kind {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let name = self.get_identifier_text(access.name_or_argument)?;
-                Some((name.clone(), Some(name)))
+                Some((name.clone(), Self::late_bound_namespace_member_name(&name)))
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let key_idx = self
@@ -618,6 +690,53 @@ impl<'a> DeclarationEmitter<'a> {
         members
     }
 
+    pub(in crate::declaration_emitter) fn should_emit_ts_late_bound_function_namespace(
+        &self,
+        func_idx: NodeIndex,
+        name_idx: NodeIndex,
+        is_overload: bool,
+    ) -> bool {
+        if !is_overload {
+            return true;
+        }
+
+        let Some(root_name) = self.get_identifier_text(name_idx) else {
+            return true;
+        };
+        let Some(source_file) = self.arena.source_files.first() else {
+            return true;
+        };
+
+        let mut found_current = false;
+        for &stmt_idx in &source_file.statements.nodes {
+            if stmt_idx == func_idx {
+                found_current = true;
+                continue;
+            }
+            if !found_current {
+                continue;
+            }
+
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                continue;
+            }
+            let Some(func) = self.arena.get_function(stmt_node) else {
+                continue;
+            };
+            let Some(name_text) = self.get_identifier_text(func.name) else {
+                continue;
+            };
+            if name_text == root_name && func.body.is_none() {
+                return false;
+            }
+        }
+
+        true
+    }
+
     pub(in crate::declaration_emitter) fn emit_ts_late_bound_function_initializer_type_annotation(
         &mut self,
         decl_name: NodeIndex,
@@ -666,7 +785,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let namespace_members: Vec<LateBoundAssignmentMember> = members
             .iter()
-            .filter(|&member| member.namespace_member_name.is_some())
+            .filter(|&member| {
+                member.namespace_member_name.is_some()
+                    || !member.property_name_text.is_empty()
+                        && Self::should_emit_late_bound_export_alias(&member.property_name_text)
+            })
             .cloned()
             .collect();
 
@@ -689,20 +812,44 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(" {");
         self.write_line();
         self.increase_indent();
+        let has_export_aliases = namespace_members
+            .iter()
+            .any(|member| member.namespace_member_name.is_none());
+        let mut export_aliases: Vec<(String, String)> = Vec::new();
+        let mut synthetic_member_count = 0usize;
         for member in namespace_members {
-            let Some(namespace_member_name) = member.namespace_member_name.as_deref() else {
-                continue;
+            let namespace_member_name = if let Some(namespace_member_name) =
+                member.namespace_member_name.as_deref()
+            {
+                namespace_member_name.to_string()
+            } else {
+                let synthetic_name = Self::late_bound_synthetic_member_name(synthetic_member_count);
+                synthetic_member_count += 1;
+                export_aliases.push((synthetic_name.clone(), member.property_name_text.clone()));
+                synthetic_name
             };
             self.write_indent();
+            if has_export_aliases && member.namespace_member_name.is_some() {
+                self.write("export ");
+            }
             if self.source_is_js_file {
                 self.write("let ");
             } else {
                 self.write("var ");
             }
-            self.write(namespace_member_name);
+            self.write(&namespace_member_name);
             self.write(": ");
             self.write(&member.type_text);
             self.write(";");
+            self.write_line();
+        }
+        for (local_name, exported_name) in export_aliases {
+            self.write_indent();
+            self.write("export { ");
+            self.write(&local_name);
+            self.write(" as ");
+            self.write(&exported_name);
+            self.write(" };");
             self.write_line();
         }
         self.decrease_indent();
