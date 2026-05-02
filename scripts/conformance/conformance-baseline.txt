@@ -11,6 +11,9 @@ FAIL TypeScript/tests/cases/compiler/controlFlowArrayErrors.ts | expected:[TS234
 FAIL TypeScript/tests/cases/compiler/controlFlowForFunctionLike1.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expected:[TS1155,TS2345,TS2355,TS2393,TS2411,TS2448,TS2451,TS2454,TS2456,TS2502,TS2554,TS2749] actual:[TS1155,TS2355,TS2448,TS2451,TS2454,TS2502,TS2749]
 FAIL TypeScript/tests/cases/compiler/customAsyncIterator.ts | expected:[] actual:[TS2416]
+FAIL TypeScript/tests/cases/compiler/declarationEmitMappedTypeTemplateTypeofSymbol.ts | expected:[TS4118] actual:[TS4118]
+FAIL TypeScript/tests/cases/compiler/declarationEmitMonorepoBaseUrl.ts | expected:[] actual:[TS2883]
+FAIL TypeScript/tests/cases/compiler/declarationEmitUnsafeImportSymbolName.ts | expected:[TS2883] actual:[TS2883]
 FAIL TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts | expected:[] actual:[TS2339,TS2345]
 FAIL TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts | expected:[] actual:[TS2339,TS2345]
 FAIL TypeScript/tests/cases/compiler/declarationEmitWithInvalidPackageJsonTypings.ts | expected:[TS2345] actual:[TS2345]
@@ -85,6 +88,7 @@ FAIL TypeScript/tests/cases/compiler/strictModeReservedWord.ts | expected:[TS121
 FAIL TypeScript/tests/cases/compiler/strictOptionalProperties1.ts | expected:[TS2322,TS2375,TS2411,TS2412,TS2451] actual:[TS2322,TS2375,TS2411,TS2412,TS2451]
 FAIL TypeScript/tests/cases/compiler/strictOptionalProperties3.ts | expected:[TS2375] actual:[TS2375]
 FAIL TypeScript/tests/cases/compiler/superCallsInConstructor.ts | expected:[TS1101,TS2410,TS2564] actual:[TS1101]
+FAIL TypeScript/tests/cases/compiler/symbolLinkDeclarationEmitModuleNamesImportRef.ts | expected:[TS2883] actual:[TS2883]
 FAIL TypeScript/tests/cases/compiler/temporal.ts | expected:[TS2339,TS2552] actual:[TS2339,TS2345]
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts | expected:[TS2345,TS2820] actual:[TS2345,TS2820]
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts | expected:[TS2353,TS2783] actual:[TS2345,TS2353]
@@ -93,7 +97,6 @@ FAIL TypeScript/tests/cases/compiler/typeGuardConstructorClassAndNumber.ts | exp
 FAIL TypeScript/tests/cases/compiler/typeInferenceConflictingCandidates.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts | expected:[TS1005,TS1068,TS1127,TS1128,TS1134,TS1351,TS1389,TS1434,TS2809] actual:[TS1127,TS1128,TS1434]
 FAIL TypeScript/tests/cases/compiler/unionTypeWithRecursiveSubtypeReduction3.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/unresolvableSelfReferencingAwaitedUnion.ts | expected:[TS1062,TS2322] actual:[TS1062,TS2322]
 FAIL TypeScript/tests/cases/compiler/unusedLocalsAndParameters.ts | expected:[TS1005,TS1109] actual:[TS1005,TS1109]
 FAIL TypeScript/tests/cases/compiler/valueOfTypedArray.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesUnique-4.ts | expected:[TS2564,TS2741] actual:[TS2564,TS2741]
@@ -145,7 +148,6 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution2.tsx |
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution6.tsx | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload4.tsx | expected:[TS2769] actual:[TS2769]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents2.tsx | expected:[TS2322,TS2339,TS2551,TS2564] actual:[TS2322,TS2339,TS2551,TS2564]
-FAIL TypeScript/tests/cases/conformance/jsx/tsxTypeArgumentResolution.tsx | expected:[TS1099,TS2322,TS2344,TS2558] actual:[TS1099,TS2322,TS2344,TS2558,TS2604]
 FAIL TypeScript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx | expected:[TS17021] actual:[TS2304,TS2339,TS17002]
 FAIL TypeScript/tests/cases/conformance/moduleResolution/bundler/bundlerNodeModules1.ts | expected:[] actual:[TS2305]
 FAIL TypeScript/tests/cases/conformance/node/nodeModules1.ts | expected:[TS1471,TS1479,TS2307,TS2834,TS2835] actual:[TS1471,TS1479,TS2307,TS2834,TS2835]
@@ -1837,12 +1839,10 @@ PASS TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParamet
 PASS TypeScript/tests/cases/compiler/declarationEmitMappedTypeDistributivityPreservesConstraints.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMappedTypePreservesTypeParameterConstraint.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMappedTypePropertyFromNumericStringKey.ts
-PASS TypeScript/tests/cases/compiler/declarationEmitMappedTypeTemplateTypeofSymbol.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMergedAliasWithConst.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMethodDeclaration.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMixinPrivateProtected.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitModuleWithScopeMarker.ts
-PASS TypeScript/tests/cases/compiler/declarationEmitMonorepoBaseUrl.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMultipleComputedNamesSameDomain.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitNameConflicts.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitNameConflicts2.ts
@@ -1932,7 +1932,6 @@ PASS TypeScript/tests/cases/compiler/declarationEmitTypeofThisInClass.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitUnknownImport.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitUnknownImport2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitUnnessesaryTypeReferenceNotAdded.ts
-PASS TypeScript/tests/cases/compiler/declarationEmitUnsafeImportSymbolName.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitUsingTypeAlias1.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitUsingTypeAlias2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitVarInElidedBlock.ts
@@ -2351,7 +2350,6 @@ PASS TypeScript/tests/cases/compiler/enumBasics3.ts
 PASS TypeScript/tests/cases/compiler/enumCodeGenNewLines1.ts
 PASS TypeScript/tests/cases/compiler/enumConflictsWithGlobalIdentifier.ts
 PASS TypeScript/tests/cases/compiler/enumDecl1.ts
-PASS TypeScript/tests/cases/compiler/enumDeclarationEmitInitializerHasImport.ts
 PASS TypeScript/tests/cases/compiler/enumFromExternalModule.ts
 PASS TypeScript/tests/cases/compiler/enumGenericTypeClash.ts
 PASS TypeScript/tests/cases/compiler/enumIdentifierLiterals.ts
@@ -5892,7 +5890,6 @@ PASS TypeScript/tests/cases/compiler/switchFallThroughs.ts
 PASS TypeScript/tests/cases/compiler/switchStatementsWithMultipleDefaults.ts
 PASS TypeScript/tests/cases/compiler/switchStatementsWithMultipleDefaults1.ts
 PASS TypeScript/tests/cases/compiler/symbolLinkDeclarationEmitModuleNames.ts
-PASS TypeScript/tests/cases/compiler/symbolLinkDeclarationEmitModuleNamesImportRef.ts
 PASS TypeScript/tests/cases/compiler/symbolLinkDeclarationEmitModuleNamesRootDir.ts
 PASS TypeScript/tests/cases/compiler/symbolMergeValueAndImportedType.ts
 PASS TypeScript/tests/cases/compiler/symbolObserverMismatchingPolyfillsWorkTogether.ts
@@ -6380,6 +6377,7 @@ PASS TypeScript/tests/cases/compiler/unreachableJavascriptChecked.ts
 PASS TypeScript/tests/cases/compiler/unreachableJavascriptUnchecked.ts
 PASS TypeScript/tests/cases/compiler/unreachableSwitchTypeofAny.ts
 PASS TypeScript/tests/cases/compiler/unreachableSwitchTypeofUnknown.ts
+PASS TypeScript/tests/cases/compiler/unresolvableSelfReferencingAwaitedUnion.ts
 PASS TypeScript/tests/cases/compiler/unresolvedTypeAssertionSymbol.ts
 PASS TypeScript/tests/cases/compiler/unspecializedConstraints.ts
 PASS TypeScript/tests/cases/compiler/unterminatedRegexAtEndOfSource1.ts
@@ -10163,6 +10161,7 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentsWithTy
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments4.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments5.tsx
+PASS TypeScript/tests/cases/conformance/jsx/tsxTypeArgumentResolution.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxTypeArgumentsJsxPreserveOutput.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxTypeErrors.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxUnionElementType1.tsx
