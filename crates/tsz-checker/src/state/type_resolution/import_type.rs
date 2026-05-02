@@ -325,25 +325,17 @@ impl<'a> CheckerState<'a> {
     }
 
     fn import_type_missing_member_node(&self, idx: NodeIndex) -> NodeIndex {
-        let mut current = idx;
-        loop {
-            let Some(node) = self.ctx.arena.get(current) else {
-                return idx;
-            };
-            if node.kind != syntax_kind_ext::QUALIFIED_NAME {
-                return current;
-            }
-            let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
-                return current;
-            };
-            let Some(left_node) = self.ctx.arena.get(qn.left) else {
-                return qn.right;
-            };
-            if left_node.kind == syntax_kind_ext::CALL_EXPRESSION {
-                return qn.right;
-            }
-            current = qn.left;
+        // Anchor at the rightmost (innermost-accessed) member segment.
+        // For `import("foo").Bar.Q` where `Bar` resolves but `Q` doesn't,
+        // tsc anchors at `Q` (the outermost QualifiedName's right child),
+        // not at the first segment after the call expression.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::QUALIFIED_NAME
+            && let Some(qn) = self.ctx.arena.get_qualified_name(node)
+        {
+            return qn.right;
         }
+        idx
     }
 
     fn import_type_member_segments(&self, idx: NodeIndex) -> Option<Vec<String>> {
