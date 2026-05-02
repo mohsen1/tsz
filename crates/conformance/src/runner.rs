@@ -29,6 +29,13 @@ struct TimedTest {
     elapsed_ms: u128,
 }
 
+#[derive(Clone, Debug, Default)]
+struct ShardWeights {
+    path_weights: HashMap<String, f64>,
+    hash_bucket_shard_count: usize,
+    hash_bucket_weights: Vec<f64>,
+}
+
 /// Format a path relative to a base directory for display
 fn relative_display(path: &Path, base: &Path) -> String {
     path.strip_prefix(base)
@@ -348,79 +355,97 @@ fn path_weight_keys(path: &Path, test_dir: &Path) -> Vec<String> {
     vec![rel.clone(), format!("TypeScript/tests/cases/{rel}"), full]
 }
 
-fn load_json_weights(path: &Path) -> Option<serde_json::Value> {
+fn valid_weight(value: f64) -> Option<f64> {
+    if value.is_finite() && value > 0.0 {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn load_json_weights(path: &Path) -> Option<ShardWeights> {
     let data = std::fs::read_to_string(path).ok()?;
-    match serde_json::from_str(&data) {
-        Ok(value) => Some(value),
+    let value: serde_json::Value = match serde_json::from_str(&data) {
+        Ok(value) => value,
         Err(err) => {
             warn!(
                 "failed to parse conformance shard weights {}: {err}",
                 path.display()
             );
-            None
+            return None;
         }
-    }
-}
+    };
 
-fn historical_path_weight(value: &serde_json::Value, path: &Path, test_dir: &Path) -> Option<f64> {
+    let mut weights = ShardWeights::default();
+
     if let Some(paths) = value
         .get("path_weights")
         .and_then(serde_json::Value::as_object)
     {
-        for key in path_weight_keys(path, test_dir) {
-            if let Some(weight) = paths.get(&key).and_then(serde_json::Value::as_f64) {
-                if weight.is_finite() && weight > 0.0 {
-                    return Some(weight);
-                }
+        for (path, weight) in paths {
+            if let Some(weight) = weight.as_f64().and_then(valid_weight) {
+                weights.path_weights.insert(path.replace('\\', "/"), weight);
             }
         }
     }
 
     if let Some(results) = value.get("results").and_then(serde_json::Value::as_array) {
-        for key in path_weight_keys(path, test_dir) {
-            let weight = results.iter().find_map(|result| {
-                let file = result.get("file")?.as_str()?.replace('\\', "/");
-                if file == key {
-                    result
-                        .get("elapsed_ms")
-                        .or_else(|| result.get("elapsed"))
-                        .and_then(serde_json::Value::as_f64)
-                } else {
-                    None
-                }
-            });
-            if let Some(weight) = weight {
-                if weight.is_finite() && weight > 0.0 {
-                    return Some(weight);
-                }
-            }
+        for result in results {
+            let Some(file) = result.get("file").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let Some(weight) = result
+                .get("elapsed_ms")
+                .or_else(|| result.get("elapsed"))
+                .and_then(serde_json::Value::as_f64)
+                .and_then(valid_weight)
+            else {
+                continue;
+            };
+            weights
+                .path_weights
+                .entry(file.replace('\\', "/"))
+                .or_insert(weight);
         }
     }
 
     if let Some(bucket_weights) = value.get("hash_bucket_weights") {
-        let shard_count = bucket_weights
+        weights.hash_bucket_shard_count = bucket_weights
             .get("shard_count")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0) as usize;
-        let weights = bucket_weights
+        if let Some(items) = bucket_weights
             .get("weights")
-            .and_then(serde_json::Value::as_array);
-        if shard_count > 0 {
-            if let Some(weights) = weights {
-                let bucket = stable_shard_for_path(path, test_dir, shard_count);
-                if let Some(weight) = weights.get(bucket).and_then(serde_json::Value::as_f64) {
-                    if weight.is_finite() && weight > 0.0 {
-                        return Some(weight);
-                    }
-                }
-            }
+            .and_then(serde_json::Value::as_array)
+        {
+            weights.hash_bucket_weights = items
+                .iter()
+                .filter_map(|weight| weight.as_f64().and_then(valid_weight))
+                .collect();
+        }
+    }
+
+    Some(weights)
+}
+
+fn historical_path_weight(weights: &ShardWeights, path: &Path, test_dir: &Path) -> Option<f64> {
+    for key in path_weight_keys(path, test_dir) {
+        if let Some(weight) = weights.path_weights.get(&key) {
+            return Some(*weight);
+        }
+    }
+
+    if weights.hash_bucket_shard_count > 0 {
+        let bucket = stable_shard_for_path(path, test_dir, weights.hash_bucket_shard_count);
+        if let Some(weight) = weights.hash_bucket_weights.get(bucket) {
+            return Some(*weight);
         }
     }
 
     None
 }
 
-fn estimated_test_weight(weights: Option<&serde_json::Value>, path: &Path, test_dir: &Path) -> f64 {
+fn estimated_test_weight(weights: Option<&ShardWeights>, path: &Path, test_dir: &Path) -> f64 {
     if let Some(weight) = weights.and_then(|value| historical_path_weight(value, path, test_dir)) {
         return weight;
     }
@@ -436,7 +461,7 @@ fn weighted_shard_files(
     test_dir: &Path,
     shard_index: usize,
     shard_count: usize,
-    weights: Option<&serde_json::Value>,
+    weights: Option<&ShardWeights>,
 ) -> Vec<PathBuf> {
     let mut weighted: Vec<(PathBuf, String, f64)> = files
         .into_iter()
