@@ -926,6 +926,13 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
+            if !self.ctx.options.verbatim_module_syntax
+                && !self.source_is_js_file
+                && !self.import_has_value_usage_after_node(stmt_node, clause)
+            {
+                continue;
+            }
+
             if clause.name.is_some() {
                 let local_name = self.get_identifier_text_idx(clause.name);
                 if !local_name.is_empty()
