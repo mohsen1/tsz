@@ -14,6 +14,16 @@ pub enum RunMode {
     Server,
 }
 
+/// Strategy for assigning tests to conformance shards.
+#[derive(Clone, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum ShardStrategy {
+    /// Stable path hash. Keeps historical behavior and maximizes assignment stability.
+    #[default]
+    Hash,
+    /// Greedy weighted packing using historical timings when available.
+    Weighted,
+}
+
 /// TypeScript Conformance Test Runner
 ///
 /// High-performance Rust implementation for testing tsz TypeScript compiler
@@ -33,6 +43,18 @@ pub struct Args {
     /// Round-robin shard spec, formatted as index/count after sorting and filtering
     #[arg(long)]
     pub shard: Option<String>,
+
+    /// Shard assignment strategy.
+    #[arg(long, default_value = "hash", value_enum)]
+    pub shard_strategy: ShardStrategy,
+
+    /// JSON file with historical conformance test weights.
+    #[arg(long)]
+    pub shard_weights: Option<String>,
+
+    /// Write per-test timing data as JSON for future weighted shard planning.
+    #[arg(long)]
+    pub timings_file: Option<String>,
 
     /// Number of parallel workers
     #[arg(short = 'w', long, default_value_t = num_cpus::get().saturating_sub(1))]

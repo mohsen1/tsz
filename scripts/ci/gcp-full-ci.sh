@@ -159,6 +159,7 @@ FOURSLASH_WORKERS="${TSZ_CI_FOURSLASH_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default
 CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-$(default_conformance_workers)}"
 CONFORMANCE_SHARD_INDEX="${_TSZ_CI_CONFORMANCE_SHARD_INDEX:-${TSZ_CI_CONFORMANCE_SHARD_INDEX:-0}}"
 CONFORMANCE_SHARD_COUNT="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-1}}"
+CONFORMANCE_SHARD_STRATEGY="${TSZ_CI_CONFORMANCE_SHARD_STRATEGY:-hash}"
 EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-4000}"
 EMIT_TIMEOUT_MS="${TSZ_CI_EMIT_TIMEOUT_MS:-60000}"
 METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
@@ -772,13 +773,16 @@ run_with_heartbeat() {
 }
 
 conformance_shard_plan() {
-  local shard_index="$1" shard_count="$2"
-  python3 - "$shard_index" "$shard_count" <<'PY'
+  local shard_index="$1" shard_count="$2" strategy="${3:-hash}" weights_file="${4:-}"
+  python3 - "$shard_index" "$shard_count" "$strategy" "$weights_file" <<'PY'
+import json
 import sys
 from pathlib import Path
 
 index = int(sys.argv[1])
 count = int(sys.argv[2])
+strategy = sys.argv[3]
+weights_file = Path(sys.argv[4]) if sys.argv[4] else None
 baseline = Path("scripts/conformance/conformance-baseline.txt")
 if count < 1:
     count = 1
@@ -819,9 +823,72 @@ def stable_shard(path):
         h = (h * 1099511628211) & 0xffffffffffffffff
     return h % count
 
-selected = [path.as_posix() for path in files if stable_shard(path) == index]
+def stable_shard_count(path, bucket_count):
+    rel = path.relative_to(test_dir).as_posix()
+    h = 1469598103934665603
+    for byte in rel.encode("utf-8"):
+        h ^= byte
+        h = (h * 1099511628211) & 0xffffffffffffffff
+    return h % bucket_count
+
+weights = {}
+default_weight = 1.0
+hash_bucket = None
+if weights_file and weights_file.is_file():
+    try:
+        data = json.loads(weights_file.read_text(encoding="utf-8"))
+        default_weight = float(data.get("default_weight", default_weight) or default_weight)
+        weights.update({
+            str(key).replace("\\", "/"): float(value)
+            for key, value in (data.get("path_weights") or {}).items()
+            if float(value) > 0
+        })
+        for result in data.get("results") or []:
+            file = str(result.get("file") or "").replace("\\", "/")
+            value = result.get("elapsed_ms", result.get("elapsed"))
+            if file and value is not None and float(value) > 0:
+                weights[file] = float(value)
+        hb = data.get("hash_bucket_weights") or {}
+        hb_count = int(hb.get("shard_count") or 0)
+        hb_weights = [float(value) for value in hb.get("weights") or []]
+        if hb_count > 0 and len(hb_weights) >= hb_count:
+            hash_bucket = (hb_count, hb_weights)
+    except Exception as exc:
+        print(f"warning: failed to read conformance shard weights {weights_file}: {exc}", file=sys.stderr)
+
+def path_keys(path):
+    rel = path.relative_to(test_dir).as_posix()
+    return [rel, f"TypeScript/tests/cases/{rel}", path.as_posix()]
+
+def weight_for(path):
+    for key in path_keys(path):
+        if key in weights:
+            return weights[key]
+    if hash_bucket:
+        hb_count, hb_weights = hash_bucket
+        return hb_weights[stable_shard_count(path, hb_count)]
+    try:
+        return min(max(path.stat().st_size / 4096.0, 1.0), 100.0)
+    except OSError:
+        return default_weight
+
+if strategy == "weighted":
+    shards = [{"weight": 0.0, "tests": []} for _ in range(count)]
+    weighted = [(weight_for(path), path.relative_to(test_dir).as_posix(), path) for path in files]
+    weighted.sort(key=lambda item: (-item[0], item[1]))
+    for weight, _rel, path in weighted:
+        best = min(range(count), key=lambda shard: (shards[shard]["weight"], len(shards[shard]["tests"]), shard))
+        shards[best]["weight"] += weight
+        shards[best]["tests"].append(path)
+    selected_paths = sorted(shards[index]["tests"])
+    selected_weight = shards[index]["weight"]
+else:
+    selected_paths = [path for path in files if stable_shard(path) == index]
+    selected_weight = sum(weight_for(path) for path in selected_paths)
+
+selected = [path.as_posix() for path in selected_paths]
 passed = sum(1 for path in selected if baseline_status.get(path) == "PASS")
-print(passed, len(selected))
+print(passed, len(selected), int(selected_weight))
 PY
 }
 
@@ -832,24 +899,47 @@ run_conformance() {
   local last_run="scripts/conformance/conformance-last-run.txt"
   rm -f "$last_run"
 
-  local shard_index shard_count shard_offset shard_max shard_expected_passed shard_expected_total
+  local shard_index shard_count shard_offset shard_max shard_expected_passed shard_expected_total shard_expected_weight
+  local shard_weights_file timings_file
   local conformance_args=()
   shard_index="$(num_or_zero "$CONFORMANCE_SHARD_INDEX")"
   shard_count="$(num_or_zero "$CONFORMANCE_SHARD_COUNT")"
+  shard_weights_file=""
+  timings_file="$METRICS_DIR/conformance-timings-${shard_index}.json"
   if [[ "$shard_count" -lt 1 ]]; then
     shard_count=1
   fi
   if [[ "$shard_count" -gt 1 ]]; then
-    read -r shard_expected_passed shard_expected_total < <(conformance_shard_plan "$shard_index" "$shard_count")
+    if [[ "$CONFORMANCE_SHARD_STRATEGY" == "weighted" ]]; then
+      shard_weights_file="$METRICS_DIR/conformance-shard-weights.json"
+      local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+      if [[ -n "$bucket" ]] && command -v gsutil >/dev/null 2>&1 && \
+          gsutil -q cp "${bucket%/}/metrics/latest/conformance-timings.json" "$shard_weights_file" 2>/dev/null; then
+        echo "Using latest conformance timing weights from cache."
+      else
+        cp scripts/conformance/conformance-shard-weights.json "$shard_weights_file"
+        echo "Using checked-in conformance shard weights."
+      fi
+    fi
+    read -r shard_expected_passed shard_expected_total shard_expected_weight < <(
+      conformance_shard_plan "$shard_index" "$shard_count" "$CONFORMANCE_SHARD_STRATEGY" "$shard_weights_file"
+    )
     shard_offset=0
     shard_max=0
     conformance_args+=(--shard "${shard_index}/${shard_count}")
-    echo "Conformance shard: ${shard_index}/${shard_count} expected=${shard_expected_passed}/${shard_expected_total}"
+    conformance_args+=(--shard-strategy "$CONFORMANCE_SHARD_STRATEGY")
+    if [[ -n "$shard_weights_file" ]]; then
+      conformance_args+=(--shard-weights "$shard_weights_file")
+    fi
+    conformance_args+=(--timings-file "$timings_file")
+    echo "Conformance shard: ${shard_index}/${shard_count} strategy=${CONFORMANCE_SHARD_STRATEGY} expected=${shard_expected_passed}/${shard_expected_total} weight=${shard_expected_weight:-0}"
   else
     shard_offset=0
     shard_max=0
     shard_expected_passed=0
     shard_expected_total=0
+    shard_expected_weight=0
+    conformance_args+=(--timings-file "$timings_file")
   fi
 
   set +e
@@ -870,9 +960,9 @@ run_conformance() {
   skipped_tests="$(awk '/^[[:space:]]*Skipped:/ { value=$2 } END { print value + 0 }' "$log_file")"
   skipped_tests="$(num_or_zero "$skipped_tests")"
 
-  printf '{"rc":%s,"passed":%s,"total":%s,"skipped":%s,"workers":%s,"shard_index":%s,"shard_count":%s,"offset":%s,"max":%s,"expected_passed":%s,"expected_total":%s}\n' \
+  printf '{"rc":%s,"passed":%s,"total":%s,"skipped":%s,"workers":%s,"shard_index":%s,"shard_count":%s,"offset":%s,"max":%s,"expected_passed":%s,"expected_total":%s,"expected_weight":%s,"strategy":"%s"}\n' \
     "$rc" "$total_passed" "$total_tests" "$skipped_tests" "$CONFORMANCE_WORKERS" \
-    "$shard_index" "$shard_count" "$shard_offset" "$shard_max" "$shard_expected_passed" "$shard_expected_total" \
+    "$shard_index" "$shard_count" "$shard_offset" "$shard_max" "$shard_expected_passed" "$shard_expected_total" "$(num_or_zero "$shard_expected_weight")" "$CONFORMANCE_SHARD_STRATEGY" \
     > "$METRICS_DIR/conformance.json"
   echo "Conformance workers: ${CONFORMANCE_WORKERS}"
   echo "Conformance wrapper exit: ${rc}"
@@ -895,6 +985,13 @@ run_conformance() {
         "${bucket%/}/conformance-runs/${run_key}/shard-${shard_index}.json" 2>/dev/null \
         && echo "Uploaded shard result: shard-${shard_index}.json" \
         || echo "warning: failed to upload shard result (non-fatal)" >&2
+
+      if [[ -f "$timings_file" ]]; then
+        gsutil -q cp "$timings_file" \
+          "${bucket%/}/conformance-runs/${run_key}/timings-shard-${shard_index}.json" 2>/dev/null \
+          && echo "Uploaded shard timings: timings-shard-${shard_index}.json" \
+          || echo "warning: failed to upload shard timings (non-fatal)" >&2
+      fi
 
       # Upload per-shard FAIL list so aggregate can show which tests regressed.
       local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
@@ -988,6 +1085,21 @@ run_conformance_aggregate() {
     '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards}' \
     > "$METRICS_DIR/conformance.json"
   publish_latest_metric conformance "$METRICS_DIR/conformance.json"
+
+  if gsutil -q cp "${prefix}/timings-shard-*.json" "$tmp_dir/" 2>/dev/null; then
+    jq -s '
+      {
+        summary: {
+          total: ([.[].summary.total // 0] | add),
+          elapsed_ms: ([.[].summary.elapsed_ms // 0] | max)
+        },
+        results: ([.[].results[]?] | sort_by(.file))
+      }
+    ' "$tmp_dir"/timings-shard-*.json > "$METRICS_DIR/conformance-timings.json"
+    publish_latest_metric conformance-timings "$METRICS_DIR/conformance-timings.json"
+  else
+    echo "warning: no conformance timing shards available to publish (non-fatal)" >&2
+  fi
   echo "Conformance gate passed: ${total_passed} >= ${baseline} (baseline)"
 }
 
