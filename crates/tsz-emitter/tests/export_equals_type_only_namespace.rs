@@ -109,6 +109,24 @@ export = X;
 }
 
 #[test]
+fn export_equals_declare_namespace_with_value_members_emits_module_exports() {
+    let source = r#"declare namespace X {
+    export var value: string;
+    export function read(): string;
+}
+
+export = X;
+"#;
+
+    let output = parse_and_print_with_opts(source, cjs_opts());
+
+    assert!(
+        output.contains("module.exports = X"),
+        "declare namespace with ambient value members must be assigned to module.exports, got:\n{output}"
+    );
+}
+
+#[test]
 fn export_equals_namespace_with_only_interfaces_is_type_only() {
     // Pure interface-only namespace.
     let source = r#"namespace X {
