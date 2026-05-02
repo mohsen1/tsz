@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-05-02T13:53:24.305Z",
+  "timestamp": "2026-05-02T15:08:05.605Z",
   "summary": {
     "jsTotal": 13526,
-    "jsPass": 12424,
-    "jsFail": 1102,
+    "jsPass": 12427,
+    "jsFail": 1099,
     "jsSkip": 1,
     "jsTimeout": 0,
     "jsPassRate": 91.9,
@@ -6930,10 +6930,9 @@
       "name": "asyncAliasReturnType_es5(target=es5)",
       "baselineFile": "asyncAliasReturnType_es5(target=es5).js",
       "testPath": "tests/cases/conformance/async/es5/asyncAliasReturnType_es5.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-1 lines",
-      "elapsed": 15
+      "elapsed": 0
     },
     {
       "name": "asyncAliasReturnType_es5(target=es2015)",
@@ -6995,10 +6994,9 @@
       "name": "asyncArrowFunction11_es5(target=es5)",
       "baselineFile": "asyncArrowFunction11_es5(target=es5).js",
       "testPath": "tests/cases/conformance/async/es5/asyncArrowFunction/asyncArrowFunction11_es5.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+17/-18 lines",
-      "elapsed": 17
+      "elapsed": 0
     },
     {
       "name": "asyncArrowFunction1_es5(target=es2015)",
@@ -7252,10 +7250,9 @@
       "name": "asyncArrowFunction8_es5(target=es5)",
       "baselineFile": "asyncArrowFunction8_es5(target=es5).js",
       "testPath": "tests/cases/conformance/async/es5/asyncArrowFunction/asyncArrowFunction8_es5.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-2 lines",
-      "elapsed": 11
+      "elapsed": 0
     },
     {
       "name": "asyncArrowFunction8_es6",
@@ -7365,19 +7362,17 @@
       "name": "asyncArrowInClassES5(target=es5)",
       "baselineFile": "asyncArrowInClassES5(target=es5).js",
       "testPath": "tests/cases/compiler/asyncArrowInClassES5.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+5/-5 lines",
-      "elapsed": 11
+      "elapsed": 0
     },
     {
       "name": "asyncArrowInClassES5(target=es2015)",
       "baselineFile": "asyncArrowInClassES5(target=es2015).js",
       "testPath": "tests/cases/compiler/asyncArrowInClassES5.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+0/-2 lines",
-      "elapsed": 13
+      "elapsed": 0
     },
     {
       "name": "asyncAwaitIsolatedModules_es2017",
@@ -7407,10 +7402,9 @@
       "name": "asyncAwaitIsolatedModules_es5(target=es5)",
       "baselineFile": "asyncAwaitIsolatedModules_es5(target=es5).js",
       "testPath": "tests/cases/conformance/async/es5/asyncAwaitIsolatedModules_es5.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+63/-54 lines",
-      "elapsed": 16
+      "elapsed": 0
     },
     {
       "name": "asyncAwaitWithCapturedBlockScopeVar(target=es2015)",
@@ -7426,8 +7420,8 @@
       "testPath": "tests/cases/conformance/async/es5/asyncAwaitNestedClasses_es5.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+20/-16 lines",
-      "elapsed": 15
+      "jsError": "+24/-22 lines",
+      "elapsed": 1
     },
     {
       "name": "asyncAwaitNestedClasses_es5(target=es2015)",
@@ -7460,8 +7454,8 @@
       "testPath": "tests/cases/conformance/async/es5/asyncAwait_es5.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+67/-55 lines",
-      "elapsed": 12
+      "jsError": "+14/-12 lines",
+      "elapsed": 1
     },
     {
       "name": "asyncAwait_es5(target=es2015)",
@@ -8301,8 +8295,8 @@
       "testPath": "tests/cases/conformance/async/es5/asyncMethodWithSuper_es5.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+14/-25 lines",
-      "elapsed": 11
+      "jsError": "+20/-35 lines",
+      "elapsed": 0
     },
     {
       "name": "asyncMethodWithSuper_es5(target=es2015)",
@@ -9736,8 +9730,8 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.1.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+292/-423 lines",
-      "elapsed": 36
+      "jsError": "+294/-427 lines",
+      "elapsed": 13
     },
     {
       "name": "awaitUsingDeclarations.1(target=es2022)",
@@ -25619,9 +25613,9 @@
       "testPath": "tests/cases/compiler/declarationEmitMonorepoBaseUrl.ts",
       "jsStatus": "fail",
       "dtsStatus": "fail",
-      "jsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --declaration --alwaysStrict true --esModuleInterop --target es2015 --module nodenext /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_3177/node_modules/.pnpm/@babel+parser@7.23.6/node_modules/@babel/parser/typings/babel-parser.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_3177/packages/compiler-core/src/index.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_3177/packages/compiler-sfc/src/index.ts",
-      "dtsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --declaration --alwaysStrict true --esModuleInterop --target es2015 --module nodenext /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_3177/node_modules/.pnpm/@babel+parser@7.23.6/node_modules/@babel/parser/typings/babel-parser.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_3177/packages/compiler-core/src/index.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_3177/packages/compiler-sfc/src/index.ts",
-      "elapsed": 57
+      "jsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --declaration --alwaysStrict true --esModuleInterop --target es2015 --module nodenext /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_0/node_modules/.pnpm/@babel+parser@7.23.6/node_modules/@babel/parser/typings/babel-parser.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_0/packages/compiler-core/src/index.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_0/packages/compiler-sfc/src/index.ts",
+      "dtsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --declaration --alwaysStrict true --esModuleInterop --target es2015 --module nodenext /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_0/node_modules/.pnpm/@babel+parser@7.23.6/node_modules/@babel/parser/typings/babel-parser.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_0/packages/compiler-core/src/index.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_0/packages/compiler-sfc/src/index.ts",
+      "elapsed": 1086
     },
     {
       "name": "declarationEmitMultipleComputedNamesSameDomain",
@@ -49997,8 +49991,8 @@
       "testPath": "tests/cases/conformance/dynamicImport/importCallExpressionAsyncES5AMD.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+30/-32 lines",
-      "elapsed": 12
+      "jsError": "+36/-40 lines",
+      "elapsed": 1
     },
     {
       "name": "importCallExpressionAsyncES5CJS(target=es5)",
@@ -50006,8 +50000,8 @@
       "testPath": "tests/cases/conformance/dynamicImport/importCallExpressionAsyncES5CJS.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+27/-29 lines",
-      "elapsed": 11
+      "jsError": "+33/-37 lines",
+      "elapsed": 0
     },
     {
       "name": "importCallExpressionAsyncES5System(target=es2015)",
@@ -50050,8 +50044,8 @@
       "testPath": "tests/cases/conformance/dynamicImport/importCallExpressionAsyncES5UMD.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+38/-41 lines",
-      "elapsed": 12
+      "jsError": "+44/-49 lines",
+      "elapsed": 0
     },
     {
       "name": "importCallExpressionAsyncES6AMD",
@@ -51511,9 +51505,10 @@
       "name": "importMeta(module=commonjs,target=es5)",
       "baselineFile": "importMeta(module=commonjs,target=es5).js",
       "testPath": "tests/cases/conformance/es2019/importMeta/importMeta.ts",
-      "jsStatus": "pass",
+      "jsStatus": "fail",
       "dtsStatus": "skip",
-      "elapsed": 12
+      "jsError": "+4/-1 lines",
+      "elapsed": 0
     },
     {
       "name": "importMeta(module=commonjs,target=esnext)",
@@ -51527,9 +51522,10 @@
       "name": "importMeta(module=es2020,target=es5)",
       "baselineFile": "importMeta(module=es2020,target=es5).js",
       "testPath": "tests/cases/conformance/es2019/importMeta/importMeta.ts",
-      "jsStatus": "pass",
+      "jsStatus": "fail",
       "dtsStatus": "skip",
-      "elapsed": 14
+      "jsError": "+4/-1 lines",
+      "elapsed": 0
     },
     {
       "name": "importMeta(module=es2020,target=esnext)",
@@ -51551,9 +51547,10 @@
       "name": "importMeta(module=esnext,target=es5)",
       "baselineFile": "importMeta(module=esnext,target=es5).js",
       "testPath": "tests/cases/conformance/es2019/importMeta/importMeta.ts",
-      "jsStatus": "pass",
+      "jsStatus": "fail",
       "dtsStatus": "skip",
-      "elapsed": 17
+      "jsError": "+4/-1 lines",
+      "elapsed": 1
     },
     {
       "name": "importMeta(module=system,target=es5)",
@@ -51561,8 +51558,8 @@
       "testPath": "tests/cases/conformance/es2019/importMeta/importMeta.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+56/-64 lines",
-      "elapsed": 14
+      "jsError": "+59/-64 lines",
+      "elapsed": 0
     },
     {
       "name": "importMeta(module=system,target=esnext)",
@@ -67656,9 +67653,9 @@
       "testPath": "tests/cases/conformance/node/allowJs/nodeAllowJsPackageSelfName2.ts",
       "jsStatus": "fail",
       "dtsStatus": "fail",
-      "jsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --declaration --allowJs --alwaysStrict true --esModuleInterop --target es2015 --module es2015 /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_8343/types/src/foo.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_8343/types/test/foo.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_8343/src/foo.js /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_8343/test/foo.js",
-      "dtsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --declaration --allowJs --alwaysStrict true --esModuleInterop --target es2015 --module es2015 /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_8343/types/src/foo.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_8343/types/test/foo.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_8343/src/foo.js /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_8343/test/foo.js",
-      "elapsed": 65
+      "jsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --declaration --allowJs --alwaysStrict true --esModuleInterop --target es2015 --module es2015 /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_1/types/src/foo.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_1/types/test/foo.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_1/src/foo.js /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_1/test/foo.js",
+      "dtsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --declaration --allowJs --alwaysStrict true --esModuleInterop --target es2015 --module es2015 /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_1/types/src/foo.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_1/types/test/foo.d.ts /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_1/src/foo.js /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_1/test/foo.js",
+      "elapsed": 877
     },
     {
       "name": "nodeAllowJsPackageSelfName(module=node16)",
@@ -82087,9 +82084,9 @@
       "testPath": "tests/cases/compiler/pathsValidation5.ts",
       "jsStatus": "fail",
       "dtsStatus": "fail",
-      "jsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --noCheck --noLib --alwaysStrict true --esModuleInterop --target es2015 --module commonjs /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_10109/src/main.ts",
-      "dtsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --noCheck --noLib --alwaysStrict true --esModuleInterop --target es2015 --module commonjs /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-mbLvia/test_10109/src/main.ts",
-      "elapsed": 11
+      "jsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --noCheck --noLib --alwaysStrict true --esModuleInterop --target es2015 --module commonjs /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_2/src/main.ts",
+      "dtsError": "Command failed: /private/tmp/tsz-emit-class-static-name-export-order/.target/release/tsz --noCheck --noLib --alwaysStrict true --esModuleInterop --target es2015 --module commonjs /var/folders/6z/0t45jh2169jfw8zhfcnf093w0000gn/T/tsz-emit-LR75gN/test_2/src/main.ts",
+      "elapsed": 774
     },
     {
       "name": "pickOfLargeObjectUnionWorks",
@@ -106459,8 +106456,8 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarations.1.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+286/-434 lines",
-      "elapsed": 41
+      "jsError": "+287/-437 lines",
+      "elapsed": 14
     },
     {
       "name": "usingDeclarations.1(target=es2022)",

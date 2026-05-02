@@ -56,6 +56,7 @@ use namespace_es5_ir_helpers::*;
 
 use std::cell::RefCell;
 
+use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::class_es5_ir::{AstToIr, ES5ClassTransformer};
 use crate::transforms::enum_es5_ir::transform_enum_to_ir;
 use crate::transforms::ir::{EnumMemberValue, IRNode, IRParam, IRPropertyKey};
@@ -973,15 +974,19 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .arena
                 .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
 
-        let body_source_range = self.arena.pos_end_at(func_data.body);
+        let func_decl = if func_data.is_async && !func_data.asterisk_token {
+            AsyncES5Transformer::new(self.arena).transform_async_function(func_idx)
+        } else {
+            let body_source_range = self.arena.pos_end_at(func_data.body);
 
-        // Convert function to IR (stripping type annotations)
-        let func_decl = IRNode::FunctionDecl {
-            name: func_name.clone().into(),
-            parameters: convert_function_parameters(self.arena, &func_data.parameters),
-            body: convert_function_body(self.arena, func_data.body),
-            body_source_range,
-            leading_comment: None,
+            // Convert function to IR (stripping type annotations)
+            IRNode::FunctionDecl {
+                name: func_name.clone().into(),
+                parameters: convert_function_parameters(self.arena, &func_data.parameters),
+                body: convert_function_body(self.arena, func_data.body),
+                body_source_range,
+                leading_comment: None,
+            }
         };
 
         if is_exported {

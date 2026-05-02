@@ -110,6 +110,8 @@ impl<'a> ClassES5Emitter<'a> {
         &mut self,
         subs: rustc_hash::FxHashMap<String, String>,
     ) {
+        self.transformer
+            .set_commonjs_import_substitutions(subs.clone());
         self.commonjs_import_substitutions = subs;
     }
 

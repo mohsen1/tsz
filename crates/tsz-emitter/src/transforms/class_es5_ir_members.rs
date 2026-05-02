@@ -71,7 +71,9 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 // Capture body source range for single-line detection
                 // If we have destructuring prologue, force multi-line
-                let body_source_range = if destructuring_prologue.is_empty() {
+                let body_source_range = if is_async {
+                    None
+                } else if destructuring_prologue.is_empty() {
                     self.arena
                         .get(method_data.body)
                         .map(|body_node| (body_node.pos, body_node.end))
@@ -89,7 +91,8 @@ impl<'a> ES5ClassTransformer<'a> {
                         this_arg: Box::new(IRNode::this()),
                         generator_body: Box::new(generator_body),
                         hoisted_vars: Vec::new(),
-                        promise_constructor: None,
+                        promise_constructor: self
+                            .async_method_promise_constructor(method_data.type_annotation),
                     }]
                 } else {
                     let mut method_body = self.convert_block_body(method_data.body);
@@ -589,7 +592,8 @@ impl<'a> ES5ClassTransformer<'a> {
                         this_arg: Box::new(IRNode::this()),
                         generator_body: Box::new(generator_body),
                         hoisted_vars: Vec::new(),
-                        promise_constructor: None,
+                        promise_constructor: self
+                            .async_method_promise_constructor(method_data.type_annotation),
                     }]
                 } else {
                     let class_alias = self.get_class_alias_for_static_method(method_data.body);
@@ -604,14 +608,14 @@ impl<'a> ES5ClassTransformer<'a> {
                 };
 
                 // Force multi-line when destructuring prologue exists
-                let body_source_range = if self.has_destructured_parameters(&method_data.parameters)
-                {
-                    None
-                } else {
-                    self.arena
-                        .get(method_data.body)
-                        .map(|body_node| (body_node.pos, body_node.end))
-                };
+                let body_source_range =
+                    if is_async || self.has_destructured_parameters(&method_data.parameters) {
+                        None
+                    } else {
+                        self.arena
+                            .get(method_data.body)
+                            .map(|body_node| (body_node.pos, body_node.end))
+                    };
 
                 // Extract leading JSDoc comment
                 let leading_comment = self.extract_leading_comment(member_node);
@@ -971,7 +975,8 @@ impl<'a> ES5ClassTransformer<'a> {
                             this_arg: Box::new(IRNode::this()),
                             generator_body: Box::new(generator_body),
                             hoisted_vars: Vec::new(),
-                            promise_constructor: None,
+                            promise_constructor: self
+                                .async_method_promise_constructor(method_data.type_annotation),
                         }]
                     } else {
                         let local_class_alias =
@@ -989,7 +994,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     };
 
                     let body_source_range =
-                        if self.has_destructured_parameters(&method_data.parameters) {
+                        if is_async || self.has_destructured_parameters(&method_data.parameters) {
                             None
                         } else {
                             self.arena
@@ -1043,7 +1048,9 @@ impl<'a> ES5ClassTransformer<'a> {
                         .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword)
                         && !method_data.asterisk_token;
 
-                    let body_source_range = if destructuring_prologue.is_empty() {
+                    let body_source_range = if is_async {
+                        None
+                    } else if destructuring_prologue.is_empty() {
                         self.arena
                             .get(method_data.body)
                             .map(|body_node| (body_node.pos, body_node.end))
@@ -1060,7 +1067,8 @@ impl<'a> ES5ClassTransformer<'a> {
                             this_arg: Box::new(IRNode::this()),
                             generator_body: Box::new(generator_body),
                             hoisted_vars: Vec::new(),
-                            promise_constructor: None,
+                            promise_constructor: self
+                                .async_method_promise_constructor(method_data.type_annotation),
                         }]
                     } else {
                         let mut method_body = self.convert_block_body(method_data.body);
@@ -1487,5 +1495,72 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
         false
+    }
+
+    fn async_method_promise_constructor(&self, type_annotation: NodeIndex) -> Option<String> {
+        let type_node = self.arena.get(type_annotation)?;
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+
+        let type_ref = self.arena.get_type_ref(type_node)?;
+        let type_name_node = self.arena.get(type_ref.type_name)?;
+        if type_name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            return Some(self.qualified_type_name_to_expr(type_ref.type_name));
+        }
+
+        if type_name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let name =
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, type_ref.type_name);
+        if name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+            && name != "Promise"
+            && name != "PromiseLike"
+            && !self.is_type_only_declaration_name(&name)
+        {
+            self.commonjs_import_substitutions
+                .get(&name)
+                .cloned()
+                .or(Some(name))
+        } else {
+            None
+        }
+    }
+
+    fn qualified_type_name_to_expr(&self, idx: NodeIndex) -> String {
+        let Some(node) = self.arena.get(idx) else {
+            return String::new();
+        };
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME
+            && let Some(qn) = self.arena.get_qualified_name(node)
+        {
+            let left = self.qualified_type_name_to_expr(qn.left);
+            let right =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, qn.right);
+            return format!("{left}.{right}");
+        }
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
+    }
+
+    fn is_type_only_declaration_name(&self, name: &str) -> bool {
+        self.arena.nodes.iter().any(|node| {
+            if node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                self.arena.get_type_alias(node).is_some_and(|alias| {
+                    crate::transforms::emit_utils::identifier_text_or_empty(self.arena, alias.name)
+                        == name
+                })
+            } else if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                self.arena.get_interface(node).is_some_and(|interface| {
+                    crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        interface.name,
+                    ) == name
+                })
+            } else {
+                false
+            }
+        })
     }
 }

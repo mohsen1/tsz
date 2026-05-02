@@ -617,7 +617,10 @@ impl<'a> Printer<'a> {
     }
 
     /// Extract a qualified promise constructor from a function's return type annotation.
-    fn extract_awaiter_promise_constructor(&self, type_annotation: NodeIndex) -> Option<String> {
+    pub(in crate::emitter) fn extract_awaiter_promise_constructor(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
         use tsz_parser::parser::syntax_kind_ext;
         let type_node = self.arena.get(type_annotation)?;
         if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
@@ -634,7 +637,10 @@ impl<'a> Printer<'a> {
                 && name != "PromiseLike"
                 && !self.is_type_only_declaration_name(&name)
             {
-                Some(name)
+                self.commonjs_named_import_substitutions
+                    .get(&name)
+                    .cloned()
+                    .or(Some(name))
             } else {
                 None
             }
@@ -676,7 +682,7 @@ impl<'a> Printer<'a> {
 
     /// Write the third argument for `__awaiter`: either the qualified promise constructor
     /// or `void 0` (default).
-    fn write_awaiter_promise_arg(&mut self, promise_ctor: &Option<String>) {
+    pub(in crate::emitter) fn write_awaiter_promise_arg(&mut self, promise_ctor: &Option<String>) {
         if let Some(ctor) = promise_ctor {
             self.write(ctor);
         } else {
