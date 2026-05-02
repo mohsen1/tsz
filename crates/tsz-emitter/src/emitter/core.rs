@@ -468,6 +468,10 @@ pub struct Printer<'a> {
     /// Used to match tsc emit where named imports are referenced via module temps.
     pub(crate) commonjs_named_import_substitutions: FxHashMap<String, String>,
 
+    /// Module expressions for wrapped AMD re-export declarations, keyed by node start.
+    /// AMD binds dependencies as factory parameters instead of body-local `require()` calls.
+    pub(crate) wrapped_export_module_substitutions: FxHashMap<u32, String>,
+
     /// Pre-allocated return-temp names for iterator for-of nodes.
     /// This lets nested loops reserve their return temp before outer loop
     /// iterator/result temps, matching tsc temp ordering.
@@ -801,6 +805,7 @@ impl<'a> Printer<'a> {
             preallocated_temp_names: VecDeque::new(),
             hoisted_for_of_temps: Vec::new(),
             commonjs_named_import_substitutions: FxHashMap::default(),
+            wrapped_export_module_substitutions: FxHashMap::default(),
             reserved_iterator_return_temps: FxHashMap::default(),
             iterator_for_of_depth: 0,
             destructuring_read_depth: 0,

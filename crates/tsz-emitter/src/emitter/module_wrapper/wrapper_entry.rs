@@ -5,6 +5,9 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+type WrappedValueDeps = Vec<(String, String)>;
+type WrappedDependencyGroups = (WrappedValueDeps, Vec<String>, HashMap<String, String>);
+
 impl<'a> Printer<'a> {
     fn hoist_decorate_helper_before_wrapper(&mut self) -> bool {
         if self.ctx.options.no_emit_helpers
@@ -201,7 +204,7 @@ impl<'a> Printer<'a> {
             self.write(path);
             self.write("\"");
         }
-        for dep in &value_deps {
+        for (dep, _) in &value_deps {
             self.write(", \"");
             self.write(dep);
             self.write("\"");
@@ -224,8 +227,8 @@ impl<'a> Printer<'a> {
                 self.write(n);
             }
         }
-        for dep in &value_deps {
-            if let Some(name) = dep_vars.get(dep) {
+        for (_, name) in &value_deps {
+            if !name.is_empty() {
                 self.write(", ");
                 self.write(name);
             }
@@ -242,7 +245,9 @@ impl<'a> Printer<'a> {
             self.ctx.options.suppress_use_strict = true;
         }
 
-        self.register_system_import_substitutions(source, &dep_vars);
+        if self.ctx.options.module != ModuleKind::AMD {
+            self.register_system_import_substitutions(source, &dep_vars);
+        }
 
         self.emit_module_wrapper_body(source_node, source_idx);
         self.ctx.options.suppress_use_strict = false;
@@ -283,6 +288,7 @@ impl<'a> Printer<'a> {
             self.write(original_line);
             self.write_line();
         }
+        self.emit_wrapped_import_helpers(source);
 
         self.write("(function (factory) {");
         self.write_line();
@@ -332,7 +338,7 @@ impl<'a> Printer<'a> {
             self.write(path);
             self.write("\"");
         }
-        for dep in &value_deps {
+        for (dep, _) in &value_deps {
             self.write(", \"");
             self.write(dep);
             self.write("\"");
@@ -1121,11 +1127,80 @@ impl<'a> Printer<'a> {
         dep_vars
     }
 
+    fn register_wrapped_import_substitutions(
+        &mut self,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+        module_var: &str,
+    ) {
+        let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+            return;
+        };
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return;
+        };
+        if clause.is_type_only {
+            return;
+        }
+
+        if clause.name.is_some() {
+            let local_name = self.get_identifier_text_idx(clause.name);
+            if !local_name.is_empty() {
+                self.commonjs_named_import_substitutions
+                    .insert(local_name, format!("{module_var}.default"));
+            }
+        }
+
+        let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+            return;
+        };
+        let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
+            return;
+        };
+
+        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+            let local_name = self.get_identifier_text_idx(named_imports.name);
+            if !local_name.is_empty() {
+                self.commonjs_named_import_substitutions
+                    .insert(local_name, module_var.to_string());
+            }
+            return;
+        }
+
+        for &spec_idx in &named_imports.elements.nodes {
+            let Some(spec_node) = self.arena.get(spec_idx) else {
+                continue;
+            };
+            let Some(spec) = self.arena.get_specifier(spec_node) else {
+                continue;
+            };
+            if spec.is_type_only {
+                continue;
+            }
+            let local_name = self.get_identifier_text_idx(spec.name);
+            if local_name.is_empty() {
+                continue;
+            }
+            let import_name = if spec.property_name.is_some() {
+                self.get_specifier_name_text(spec.property_name)
+                    .unwrap_or_else(|| local_name.clone())
+            } else {
+                local_name.clone()
+            };
+            let substitution = if super::super::is_valid_identifier_name(&import_name) {
+                format!("{module_var}.{import_name}")
+            } else {
+                format!("{module_var}[\"{import_name}\"]")
+            };
+            self.commonjs_named_import_substitutions
+                .insert(local_name, substitution);
+        }
+    }
+
     fn collect_amd_dependency_groups(
         &mut self,
         dependencies: &[String],
         source: &tsz_parser::parser::node::SourceFileData,
-    ) -> (Vec<String>, Vec<String>, HashMap<String, String>) {
+    ) -> WrappedDependencyGroups {
         let mut value_deps = Vec::new();
         let mut side_effect_deps = Vec::new();
         let mut dep_vars = HashMap::new();
@@ -1134,6 +1209,8 @@ impl<'a> Printer<'a> {
         // Track deps that were explicitly rejected (type-only usage) so they
         // don't get re-added from the `dependencies` fallback list.
         let mut rejected_deps: HashSet<String> = HashSet::new();
+        let collect_for_amd = self.ctx.options.module == ModuleKind::AMD;
+        let collect_for_umd = self.ctx.options.module == ModuleKind::UMD;
 
         for &stmt_idx in &source.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1186,10 +1263,39 @@ impl<'a> Printer<'a> {
                 if local_name.is_empty() {
                     continue;
                 }
-                if seen_value.insert(module_spec.clone()) {
-                    value_deps.push(module_spec.clone());
+                if collect_for_umd {
+                    seen_value.insert(module_spec.clone());
+                    value_deps.push((module_spec, String::new()));
+                } else if collect_for_amd {
+                    seen_value.insert(module_spec.clone());
+                    value_deps.push((module_spec, local_name));
+                } else if seen_value.insert(module_spec.clone()) {
+                    value_deps.push((module_spec.clone(), local_name.clone()));
+                    dep_vars.entry(module_spec).or_insert(local_name);
                 }
-                dep_vars.entry(module_spec).or_insert(local_name);
+                continue;
+            }
+
+            if (collect_for_amd || collect_for_umd)
+                && stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
+            {
+                if !self.export_decl_has_runtime_value(export_decl) {
+                    continue;
+                }
+                if let Some(module_spec) =
+                    self.system_module_specifier_text(export_decl.module_specifier)
+                {
+                    seen_value.insert(module_spec.clone());
+                    if collect_for_amd {
+                        let dep_var = self.next_commonjs_module_var(&module_spec);
+                        value_deps.push((module_spec, dep_var.clone()));
+                        self.wrapped_export_module_substitutions
+                            .insert(stmt_node.pos, dep_var);
+                    } else {
+                        value_deps.push((module_spec, String::new()));
+                    }
+                }
                 continue;
             }
 
@@ -1290,15 +1396,27 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            if seen_value.insert(module_spec.clone()) {
-                value_deps.push(module_spec.clone());
+            if collect_for_umd {
+                seen_value.insert(module_spec.clone());
+                value_deps.push((module_spec, String::new()));
+            } else if collect_for_amd {
+                seen_value.insert(module_spec.clone());
+                let dep_var = if let Some(ns_name) = namespace_name {
+                    ns_name
+                } else {
+                    self.next_commonjs_module_var(&module_spec)
+                };
+                self.register_wrapped_import_substitutions(import_decl, &dep_var);
+                value_deps.push((module_spec, dep_var));
+            } else if seen_value.insert(module_spec.clone()) {
+                let dep_var = if let Some(ns_name) = namespace_name {
+                    ns_name
+                } else {
+                    self.next_commonjs_module_var(&module_spec)
+                };
+                value_deps.push((module_spec.clone(), dep_var.clone()));
+                dep_vars.entry(module_spec).or_insert(dep_var);
             }
-            let dep_var = if let Some(ns_name) = namespace_name {
-                ns_name
-            } else {
-                self.next_commonjs_module_var(&module_spec)
-            };
-            dep_vars.entry(module_spec).or_insert(dep_var);
         }
 
         for dep in dependencies {

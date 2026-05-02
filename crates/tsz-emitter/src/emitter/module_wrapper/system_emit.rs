@@ -58,6 +58,26 @@ impl<'a> Printer<'a> {
             }
         }
 
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export_decl.is_type_only || export_decl.module_specifier.is_none() {
+                continue;
+            }
+            if let Some(clause_node) = self.arena.get(export_decl.export_clause)
+                && clause_node.kind != syntax_kind_ext::NAMED_EXPORTS
+            {
+                needs_import_star = true;
+            }
+        }
+
         if needs_import_star {
             self.write(crate::transforms::helpers::CREATE_BINDING_HELPER);
             self.write_line();
@@ -189,12 +209,18 @@ impl<'a> Printer<'a> {
                     continue;
                 }
                 let import_name = if spec.property_name.is_some() {
-                    self.get_identifier_text_idx(spec.property_name)
+                    self.get_specifier_name_text(spec.property_name)
+                        .unwrap_or_else(|| local_name.clone())
                 } else {
                     local_name.clone()
                 };
+                let substitution = if super::super::is_valid_identifier_name(&import_name) {
+                    format!("{dep_var}.{import_name}")
+                } else {
+                    format!("{dep_var}[\"{import_name}\"]")
+                };
                 self.commonjs_named_import_substitutions
-                    .insert(local_name, format!("{dep_var}.{import_name}"));
+                    .insert(local_name, substitution);
             }
         }
     }
@@ -249,11 +275,12 @@ impl<'a> Printer<'a> {
             for &spec_idx in &named_exports.elements.nodes {
                 if let Some(spec) = self.arena.get_specifier_at(spec_idx) {
                     let local_name = if spec.property_name.is_some() {
-                        self.get_identifier_text_idx(spec.property_name)
+                        self.get_specifier_name_text(spec.property_name)
                     } else {
-                        self.get_identifier_text_idx(spec.name)
-                    };
-                    let export_name = self.get_identifier_text_idx(spec.name);
+                        self.get_specifier_name_text(spec.name)
+                    }
+                    .unwrap_or_default();
+                    let export_name = self.get_specifier_name_text(spec.name).unwrap_or_default();
                     if !local_name.is_empty() && !export_name.is_empty() {
                         reexported_names.insert(local_name, export_name);
                     }
@@ -463,11 +490,12 @@ impl<'a> Printer<'a> {
             for &spec_idx in &named_exports.elements.nodes {
                 if let Some(spec) = self.arena.get_specifier_at(spec_idx) {
                     let local_name = if spec.property_name.is_some() {
-                        self.get_identifier_text_idx(spec.property_name)
+                        self.get_specifier_name_text(spec.property_name)
                     } else {
-                        self.get_identifier_text_idx(spec.name)
-                    };
-                    let export_name = self.get_identifier_text_idx(spec.name);
+                        self.get_specifier_name_text(spec.name)
+                    }
+                    .unwrap_or_default();
+                    let export_name = self.get_specifier_name_text(spec.name).unwrap_or_default();
                     if !local_name.is_empty() && !export_name.is_empty() {
                         deferred_named_exports.insert(local_name, export_name);
                     }
@@ -1210,16 +1238,18 @@ impl<'a> Printer<'a> {
             && let Some(named_exports) = self.arena.get_named_imports(clause_node)
         {
             let mut emitted_any = false;
-            for &spec_idx in &named_exports.elements.nodes {
+            let value_specs = self.collect_local_export_value_specifiers(&named_exports.elements);
+            for &spec_idx in &value_specs {
                 let Some(spec) = self.arena.get_specifier_at(spec_idx) else {
                     continue;
                 };
                 let local_name = if spec.property_name.is_some() {
-                    self.get_identifier_text_idx(spec.property_name)
+                    self.get_specifier_name_text(spec.property_name)
                 } else {
-                    self.get_identifier_text_idx(spec.name)
-                };
-                let export_name = self.get_identifier_text_idx(spec.name);
+                    self.get_specifier_name_text(spec.name)
+                }
+                .unwrap_or_default();
+                let export_name = self.get_specifier_name_text(spec.name).unwrap_or_default();
                 if local_name.is_empty() || export_name.is_empty() {
                     continue;
                 }

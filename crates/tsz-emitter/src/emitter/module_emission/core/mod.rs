@@ -722,6 +722,23 @@ impl<'a> Printer<'a> {
             && (clause_node.kind == SyntaxKind::Identifier as u16
                 || clause_node.kind == SyntaxKind::StringLiteral as u16)
         {
+            if self.ctx.options.module == ModuleKind::ES2015
+                && clause_node.kind == SyntaxKind::StringLiteral as u16
+            {
+                let temp_name = self.make_unique_name();
+                self.write("import * as ");
+                self.write(&temp_name);
+                self.write(" from ");
+                self.emit_module_specifier(export.module_specifier);
+                self.write_semicolon();
+                self.write_line();
+                self.write("export { ");
+                self.write(&temp_name);
+                self.write(" as ");
+                self.emit(export.export_clause);
+                self.write(" };");
+                return;
+            }
             self.write("export * as ");
             self.emit(export.export_clause);
             self.write(" from ");
