@@ -556,11 +556,33 @@ impl<'a> LoweringPass<'a> {
         if name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
             && name != "Promise"
             && name != "PromiseLike"
+            && !self.is_type_only_declaration_name(&name)
         {
             Some(name)
         } else {
             None
         }
+    }
+
+    /// Returns true when `name` matches a top-level type alias or interface
+    /// declaration in this source. Used to avoid mistakenly treating a
+    /// `PascalCase` user-defined type for as a runtime promise constructor in
+    /// async return-type analysis. Mirrors `is_type_only_declaration_name`
+    /// in `crates/tsz-emitter/src/emitter/es5/helpers_async.rs`.
+    fn is_type_only_declaration_name(&self, name: &str) -> bool {
+        self.arena.nodes.iter().any(|node| {
+            if node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                self.arena.get_type_alias(node).is_some_and(|alias| {
+                    emit_utils::identifier_text_or_empty(self.arena, alias.name) == name
+                })
+            } else if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                self.arena.get_interface(node).is_some_and(|interface| {
+                    emit_utils::identifier_text_or_empty(self.arena, interface.name) == name
+                })
+            } else {
+                false
+            }
+        })
     }
 
     fn visit_export_declaration(&mut self, node: &Node, _idx: NodeIndex) {
