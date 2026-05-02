@@ -640,6 +640,9 @@ impl<'a> NarrowingContext<'a> {
     /// - `narrow_to_array(unknown)` → `any[]`
     /// - `narrow_to_array(any)` → `any`
     /// - `narrow_to_array(readonly [number, string])` → `readonly [number, string]`
+    /// - `narrow_to_array(Record<string, any>)` → `any[]`
+    ///   (mutual-subtype with `any[]` — tsc's `mapType` substitutes the
+    ///   predicate type when `any[] <: source` structurally)
     pub(crate) fn narrow_to_array(&self, source_type: TypeId) -> TypeId {
         // Handle ANY and UNKNOWN first
         if source_type == TypeId::ANY {
@@ -660,23 +663,69 @@ impl<'a> NarrowingContext<'a> {
             return self.narrow_to_array(resolved);
         }
 
+        let any_array = self.db.array(TypeId::ANY);
+
         // Handle Union: filter members, keeping only array-like types
         if let Some(members) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
-            let array_like: Vec<TypeId> = members
+            let mut has_any_compat = false;
+            let mut array_like: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
-                    let narrowed = self.narrow_to_array(member);
-                    if narrowed == TypeId::NEVER
-                        || self.union_has_array_member_for_element(&members, member)
-                            && self.is_type_parameter_array_intersection(member, narrowed)
+                    // tsc's `mapType(matching, t => isRelated(c, t) ? c : ...)`
+                    // substitutes the predicate type `c = any[]` when the
+                    // candidate is structurally a subtype of the source
+                    // member. We approximate `any[] <: member` via
+                    // "member has a string index signature with `any`
+                    // value type" — the structural rule that lets `any[]`'s
+                    // any-typed contents satisfy the index signature
+                    // (e.g. `Record<string, any>`, `{ [k: string]: any }`).
+                    // Check BEFORE recursing so the substitution is detected
+                    // at the union level (not swallowed inside the recursive
+                    // `narrow_to_array` call) and `has_any_compat` is set
+                    // correctly for the array-like retention pass below.
+                    let resolved_member = self.resolve_type(member);
+                    if !self.is_array_like(resolved_member)
+                        && self.has_any_typed_string_index(resolved_member)
                     {
-                        None
-                    } else {
-                        Some(narrowed)
+                        has_any_compat = true;
+                        return Some(any_array);
                     }
+                    let narrowed = self.narrow_to_array(member);
+                    if narrowed == TypeId::NEVER {
+                        return None;
+                    }
+                    if self.union_has_array_member_for_element(&members, member)
+                        && self.is_type_parameter_array_intersection(member, narrowed)
+                    {
+                        return None;
+                    }
+                    Some(narrowed)
                 })
                 .collect();
+
+            // tsc's narrow result for `Record<string, any> | Record<string, any>[]`
+            // is `any[]`, not `any[] | Record<string, any>[]` — `Record<string,
+            // any>[]` is removed by union subtype reduction because
+            // `Record<string, any> <: any` makes `Record<string, any>[] <: any[]`.
+            // tsz's structural subtype reduction for arrays-of-any-valued types
+            // is direction-flipped from tsc's, so we explicitly drop array-likes
+            // whose element is itself any-compat when an any-compat sibling
+            // contributed `any[]`. This keeps `narrow_to_array(R | R[])` =
+            // `any[]` (matching tsc) while preserving non-any-compat array-likes
+            // (e.g. `Record<string, any> | Foo[]` keeps `Foo[]` alongside
+            // `any[]`).
+            if has_any_compat && array_like.len() > 1 {
+                array_like.retain(|&t| {
+                    if t == any_array {
+                        return true;
+                    }
+                    let Some(elem) = crate::type_queries::get_array_element_type(self.db, t) else {
+                        return true;
+                    };
+                    elem != TypeId::ANY && !self.has_any_typed_string_index(elem)
+                });
+            }
 
             if array_like.is_empty() {
                 return TypeId::NEVER;
@@ -702,7 +751,6 @@ impl<'a> NarrowingContext<'a> {
 
         // Handle Type Parameters: intersect with any[]
         if let Some(_info) = type_param_info(self.db, source_type) {
-            let any_array = self.db.array(TypeId::ANY);
             return self.db.intersection2(source_type, any_array);
         }
 
@@ -711,8 +759,44 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
+        // Non-array source where `any[]` is structurally a subtype (mutual
+        // subtype via any-typed string index signature). tsc's predicate
+        // narrowing replaces such sources with the predicate type itself.
+        // Note: at the *flow-narrowing* layer this substitution is gated by
+        // `usage::check_flow_usage`'s `is_assignable_to_no_weak_checks`
+        // check — for a bare `Record<string, any>` source, tsz currently
+        // considers `any[]` not assignable to it and falls back to the
+        // declared type. Inside the union path above, the same predicate
+        // substitution survives because `any[]` IS assignable to the array
+        // member of the union.
+        if self.has_any_typed_string_index(source_type) {
+            return any_array;
+        }
+
         // Not array-like
         TypeId::NEVER
+    }
+
+    /// True iff `type_id` is a non-array, non-tuple type whose string index
+    /// signature value type is `any`.
+    ///
+    /// This is the structural prerequisite for `any[] <: type_id`: an
+    /// `any`-valued string index signature is satisfied by any source's
+    /// properties (everything is assignable to `any`), so types like
+    /// `Record<string, any>` and `{ [k: string]: any }` are mutual subtypes
+    /// of `any[]` in tsc's strict-subtype check used by `getNarrowedType`.
+    /// Restricting to non-array types keeps the check focused on the
+    /// "Record-like" pattern; `is_array_like` members are handled by the
+    /// regular array-narrowing path.
+    fn has_any_typed_string_index(&self, type_id: TypeId) -> bool {
+        let resolved = self.resolve_type(type_id);
+        if self.is_array_like(resolved) {
+            return false;
+        }
+        let resolver = crate::objects::index_signatures::IndexSignatureResolver::new(
+            self.db.as_type_database(),
+        );
+        resolver.resolve_string_index(resolved) == Some(TypeId::ANY)
     }
 
     /// Task 10: Exclude array-like types from a type.
