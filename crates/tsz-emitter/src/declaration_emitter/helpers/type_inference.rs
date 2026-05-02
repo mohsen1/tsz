@@ -2459,6 +2459,7 @@ impl<'a> DeclarationEmitter<'a> {
                 distinct.push(ty);
             }
         }
+        Self::expand_empty_object_union_arm_from_sibling_properties(&mut distinct);
 
         // tsc orders union members by `TypeFlags` when printing: for the
         // primitive intrinsics the rank is Any < Unknown < String < Number
@@ -2499,6 +2500,98 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(format!("{elem_text}[]"))
         }
+    }
+
+    fn expand_empty_object_union_arm_from_sibling_properties(types: &mut [String]) {
+        if types.len() <= 1 || !types.iter().any(|ty| ty.trim() == "{}") {
+            return;
+        }
+
+        let mut property_names = Vec::<String>::new();
+        for ty in types.iter() {
+            for name in Self::object_type_property_names(ty) {
+                if !property_names.iter().any(|existing| existing == &name) {
+                    property_names.push(name);
+                }
+            }
+        }
+        if property_names.is_empty() {
+            return;
+        }
+
+        let members = property_names
+            .into_iter()
+            .map(|name| format!("    {name}?: undefined;"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let replacement = format!("{{\n{members}\n}}");
+        for ty in types.iter_mut() {
+            if ty.trim() == "{}" {
+                *ty = replacement.clone();
+            }
+        }
+    }
+
+    fn object_type_property_names(type_text: &str) -> Vec<String> {
+        let trimmed = type_text.trim();
+        if !trimmed.starts_with('{') || !trimmed.ends_with('}') || trimmed == "{}" {
+            return Vec::new();
+        }
+
+        trimmed
+            .lines()
+            .filter_map(Self::object_type_property_name_from_line)
+            .collect()
+    }
+
+    fn object_type_property_name_from_line(line: &str) -> Option<String> {
+        let line = line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line == "{" || line == "}" || line.starts_with('[') {
+            return None;
+        }
+        let colon = Self::top_level_property_type_colon(line)?;
+        let name = line
+            .get(..colon)?
+            .trim()
+            .strip_prefix("readonly ")
+            .unwrap_or_else(|| line.get(..colon).unwrap_or_default().trim())
+            .trim()
+            .trim_end_matches('?')
+            .trim();
+        if name.contains('(') {
+            return None;
+        }
+        (!name.is_empty()).then(|| name.to_string())
+    }
+
+    fn top_level_property_type_colon(line: &str) -> Option<usize> {
+        let mut quote: Option<u8> = None;
+        let mut escaped = false;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        for (index, byte) in line.bytes().enumerate() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match byte {
+                b'\'' | b'"' => quote = Some(byte),
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b':' if paren_depth == 0 && bracket_depth == 0 => return Some(index),
+                _ => {}
+            }
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn short_circuit_expression_type_text(
@@ -3865,5 +3958,36 @@ mod tests {
         );
 
         assert_eq!(rewritten, "Promise<U> | string");
+    }
+
+    #[test]
+    fn empty_object_union_arm_expands_missing_quoted_property() {
+        let mut types = vec!["{\n    \"a-b\": string;\n}".to_string(), "{}".to_string()];
+
+        DeclarationEmitter::expand_empty_object_union_arm_from_sibling_properties(&mut types);
+
+        assert_eq!(
+            types,
+            vec![
+                "{\n    \"a-b\": string;\n}".to_string(),
+                "{\n    \"a-b\"?: undefined;\n}".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn object_type_property_name_scan_handles_quoted_colons_and_skips_methods() {
+        assert_eq!(
+            DeclarationEmitter::object_type_property_name_from_line("\"a:b\": string;"),
+            Some("\"a:b\"".to_string())
+        );
+        assert_eq!(
+            DeclarationEmitter::object_type_property_name_from_line("foo(x: number): void;"),
+            None
+        );
+        assert_eq!(
+            DeclarationEmitter::object_type_property_name_from_line("readonly \"a:b\"?: string;"),
+            Some("\"a:b\"".to_string())
+        );
     }
 }
