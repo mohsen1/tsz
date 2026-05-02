@@ -92,6 +92,11 @@ impl<'a> CheckerState<'a> {
         if !in_arith_compound
             && self.is_literal_sensitive_assignment_target(target)
             && let Some(display) = self.literal_expression_display(anchor_idx)
+            && literal_display_appropriate_for_undefined_null_target(
+                self.ctx.types,
+                target,
+                &display,
+            )
         {
             return display;
         }
@@ -106,6 +111,11 @@ impl<'a> CheckerState<'a> {
             if !in_arith_compound
                 && self.is_literal_sensitive_assignment_target(target)
                 && let Some(display) = self.literal_expression_display(expr_idx)
+                && literal_display_appropriate_for_undefined_null_target(
+                    self.ctx.types,
+                    target,
+                    &display,
+                )
             {
                 return display;
             }
@@ -230,6 +240,11 @@ impl<'a> CheckerState<'a> {
                 // `"bar"` vs `"foo"` keep the literal display.
                 && !self.property_elaboration_widening_required_for_display(
                     expr_idx, source, target,
+                )
+                && literal_display_appropriate_for_undefined_null_target(
+                    self.ctx.types,
+                    target,
+                    &display,
                 )
             {
                 return display;
@@ -983,4 +998,34 @@ fn target_accepts_literal_primitive_kind_inner(
     // AST literal display compatible by default. We only widen when the target
     // is concretely a literal of a different primitive kind.
     true
+}
+
+/// Mirror tsc's `getBaseTypeOfLiteralTypeForComparison` for TS2322 messages
+/// against `undefined` / `null` targets: the AST literal display is kept for
+/// boolean keyword sources (`true` / `false`) but a string / number / bigint
+/// literal source widens to its primitive base. Returns `true` when it is
+/// safe to keep the literal display, `false` when the caller should fall
+/// through to the type-formatter widening path.
+///
+/// Examples (target `undefined`):
+/// - source AST `true`            -> keep `true`           (returns true)
+/// - source AST `false`           -> keep `false`          (returns true)
+/// - source AST `1`               -> widen to `number`     (returns false)
+/// - source AST `"abc"`           -> widen to `string`     (returns false)
+/// - source AST `1n`              -> widen to `bigint`     (returns false)
+///
+/// For non-`undefined` / non-`null` targets the original literal-display
+/// behavior is preserved unchanged.
+fn literal_display_appropriate_for_undefined_null_target(
+    db: &dyn tsz_solver::TypeDatabase,
+    target: TypeId,
+    display: &str,
+) -> bool {
+    use crate::query_boundaries::common;
+    let target = common::evaluate_type(db, target);
+    if target != TypeId::UNDEFINED && target != TypeId::NULL {
+        return true;
+    }
+    // tsc preserves the boolean keyword source surface; everything else widens.
+    matches!(display, "true" | "false")
 }
