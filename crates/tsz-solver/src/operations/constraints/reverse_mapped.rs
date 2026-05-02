@@ -3,6 +3,7 @@
 //! Contains reverse inference through homomorphic mapped types, iterator result
 //! union handling, template literal reversal, and discriminant-based filtering.
 
+use crate::caches::db::QueryDatabase;
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
@@ -12,6 +13,23 @@ use crate::types::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
+
+/// Detect a property source type shaped `Inferable | null | undefined | void` —
+/// the union pattern produced by DOM types like `Document | null` for
+/// `XMLHttpRequest.responseXML`. When the property reverse-inference fails for
+/// such a property, we substitute `any` for `unknown` so a downstream
+/// `out.<prop>.<sub>` access doesn't raise TS18046, while still letting the
+/// outer assignability check (e.g. `Document | null` against `Deep<any>`) catch
+/// the nullish member and emit TS2345 the way tsc's lazy `ReverseMappedType` does.
+fn prop_source_has_nullish_union(interner: &dyn QueryDatabase, ty: TypeId) -> bool {
+    let Some(TypeData::Union(members_id)) = interner.lookup(ty) else {
+        return false;
+    };
+    let members = interner.type_list(members_id);
+    members
+        .iter()
+        .any(|m| matches!(*m, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID))
+}
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// IteratorResult-specific inference: infer from yield branches only.
@@ -204,8 +222,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // tsc's getPartiallyInferableType behavior: implicit `any` params
                     // don't contribute to inference, producing `unknown` instead of
                     // falling through to the reverse-keyof `{ key: any }` path.
+                    //
+                    // Exception: when the source property type is a Union containing
+                    // a nullish member (`null` / `undefined` / `void`), use `any`
+                    // rather than `unknown`. tsc's lazy `ReverseMappedType` materialises
+                    // such properties as deep structural objects (matching the
+                    // non-nullish members) so subsequent property accesses on the
+                    // inferred T see a non-error type. We approximate that policy
+                    // structurally here: `any` lets `out2.responseXML.activeElement`
+                    // resolve without TS18046, while still letting the outer
+                    // assignability check reject `null` against `Deep<any>` so the
+                    // expected TS2345 still fires (e.g. mappedTypeRecursiveInference).
                     any_reversed = true;
-                    TypeId::UNKNOWN
+                    if prop_source_has_nullish_union(self.interner, prop.type_id) {
+                        TypeId::ANY
+                    } else {
+                        TypeId::UNKNOWN
+                    }
                 }
             };
 
@@ -513,6 +546,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // First try expanding the type alias without evaluation — this preserves
             // inference variables in the body (e.g., Wrap<T[K]> → {primitive: T[K]}).
             // Falls back to evaluate_type which may resolve inference variables.
+            //
+            // Coinductive cycle detection: a recursive type alias like
+            //   type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+            // applied to a self-referential source like `interface A { a: A }` produces
+            // an unbounded chain of distinct mapped templates (Deep<T["a"]>,
+            // Deep<T["a"]["a"]>, ...). The Case 6 visited-pair cycle key uses the
+            // template id, which is fresh at every level, so it cannot detect the
+            // cycle. Key on the stable application base instead: re-entering Case 2's
+            // expansion fallback for the same `(alias_base, source)` indicates a
+            // coinductive fixed point. tsc handles this lazily via `ReverseMappedType`;
+            // we converge to the source itself, which satisfies the recursive equation
+            // (Deep<source> ≡ source for `interface A { a: A }` style inputs).
+            let alias_cycle_key = (template_app.base, source_value);
+            let inserted_alias_key = self
+                .reverse_alias_expansion_visited
+                .borrow_mut()
+                .insert(alias_cycle_key);
+            if !inserted_alias_key {
+                return Some(source_value);
+            }
             let expanded = self.checker.expand_type_alias_application(template);
             let evaluated_template =
                 expanded.unwrap_or_else(|| self.checker.evaluate_type(template));
@@ -523,9 +576,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     target_placeholder,
                 );
                 if reversed.is_some() {
+                    self.reverse_alias_expansion_visited
+                        .borrow_mut()
+                        .remove(&alias_cycle_key);
                     return reversed;
                 }
             }
+            self.reverse_alias_expansion_visited
+                .borrow_mut()
+                .remove(&alias_cycle_key);
 
             // When expansion produced an intermediate form (e.g., a mapped type body)
             // that couldn't be reversed, also try full evaluation. This handles cases

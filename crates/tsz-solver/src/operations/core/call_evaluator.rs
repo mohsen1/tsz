@@ -216,6 +216,16 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// Distinct pairs (different source sub-objects) are still allowed to recurse so that
     /// finite sources like `{Test: {Test1: {Test2: leaf}}}` reverse-map through every level.
     pub(crate) reverse_mapped_visited: RefCell<FxHashSet<(TypeId, TypeId)>>,
+    /// Set of `(application_base_id, source_value_id)` pairs currently being expanded
+    /// during reverse-mapped inference Case 2 (Application template fallback).
+    /// When `Deep<T> = { [K in keyof T]: Deep<T[K]> }` is reverse-applied to a recursive
+    /// source like `interface A { a: A }`, each recursive expansion produces a new mapped
+    /// type with a fresh `TypeId` (because instantiation rewrites `T[K]` to `T["a"]`,
+    /// `T["a"]["a"]`, etc.). The `reverse_mapped_visited` pair-key (template, source) never
+    /// repeats, so cycle detection there cannot fire. This set keys on the stable alias
+    /// base instead: re-entering Case 2's fallback for the same `(alias_base, source)`
+    /// indicates a coinductive fixed point, and we converge to the source.
+    pub(crate) reverse_alias_expansion_visited: RefCell<FxHashSet<(TypeId, TypeId)>>,
 }
 
 #[derive(Clone, Copy)]
@@ -268,6 +278,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             contextual_sensitivity_cache: RefCell::new(FxHashMap::default()),
             reverse_mapped_depth: Cell::new(0),
             reverse_mapped_visited: RefCell::new(FxHashSet::default()),
+            reverse_alias_expansion_visited: RefCell::new(FxHashSet::default()),
         }
     }
 

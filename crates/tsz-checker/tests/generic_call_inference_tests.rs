@@ -1709,3 +1709,96 @@ const result: string = f(input);
         "symbol property in intersection must not cause false type error. Got: {diags:#?}"
     );
 }
+
+// ─── Recursive homomorphic mapped type inference ─────────────────────────────
+
+#[test]
+fn recursive_homomorphic_mapped_against_self_referential_interface_no_unknown_property() {
+    // Regression for `mappedTypeRecursiveInference.ts`.
+    //
+    // `Deep<T> = { [K in keyof T]: Deep<T[K]> }` applied to a self-referential
+    // interface like `interface A { a: A }` must converge to a structural
+    // candidate for T (so accesses `out.a`, `out.a.a` resolve to a real object
+    // type, not `unknown`). Before the alias-cycle fix in
+    // `reverse_infer_through_template`, every recursive expansion produced a
+    // fresh mapped TypeId, so the per-template visited set never detected the
+    // cycle and the depth cap was reached only after the instantiation depth
+    // limit had already collapsed the template to `error`. The result was T =
+    // `{ a: unknown }`, which raised a spurious TS18046 on `out.a.a`.
+    let source = r#"
+interface A { a: A }
+declare let a: A;
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+const out = foo(a);
+out.a;
+out.a.a;
+out.a.a.a.a.a.a.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 18046),
+        "recursive Deep<A> inference must not leave nested accesses as unknown. Got: {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345 || *code == 2322),
+        "recursive Deep<A> inference must not raise an assignability error for the self-referential source. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn recursive_homomorphic_mapped_against_index_signature_interface_no_unknown_property() {
+    // Sibling to the named-property case: `interface B { [s: string]: B }`
+    // reverse-maps via the index-signature path. Both paths must converge to a
+    // structural candidate so `oub.b.a.n.a` is well-typed.
+    let source = r#"
+interface B { [s: string]: B }
+declare let b: B;
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+const oub = foo(b);
+oub.b;
+oub.b.b;
+oub.b.a.n.a.n.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 18046),
+        "recursive Deep<B> inference must not leave nested accesses as unknown. Got: {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345 || *code == 2322),
+        "recursive Deep<B> inference must not raise an assignability error for the self-referential source. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn recursive_homomorphic_mapped_with_nullable_property_lets_outer_check_reject_null() {
+    // Companion case: when the recursively-inferred property has a `T1 | null`
+    // source type, reverse inference falls back to `any` (not `unknown`) so
+    // subsequent property accesses on the inferred T resolve without
+    // TS18046, while the *outer* assignability check (e.g. against
+    // `Deep<any>`) still rejects the `null` member and reports TS2345 for
+    // the original `foo(...)` call, matching tsc's behaviour for
+    // `XMLHttpRequest.responseXML: Document | null`.
+    let source = r#"
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+interface DocLike { url: string }
+interface XLike {
+    responseXML: DocLike | null;
+}
+declare let xhr: XLike;
+const out = foo(xhr);
+const ok = out.responseXML.url; // must NOT raise TS18046
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 18046),
+        "Nullable property reverse inference must materialise as `any` so chained accesses are well-typed. Got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2345),
+        "Outer Deep<...> assignability must still reject the `null` constituent. Got: {diags:#?}"
+    );
+}
