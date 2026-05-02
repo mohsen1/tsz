@@ -1320,6 +1320,9 @@ impl<'a> Printer<'a> {
             let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
 
             if is_erased {
+                if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                    self.emit_recovered_interface_body_statements(stmt_node);
+                }
                 if let Some(recovered_tail) =
                     self.recovered_ambient_class_parenthesized_tail_text(stmt_node)
                 {

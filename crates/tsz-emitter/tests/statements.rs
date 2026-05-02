@@ -985,3 +985,51 @@ fn recovered_unicode_identifier_initializer_emits_as_statement() {
         "Malformed unicode identifier use should recover to the valid identifier.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn recovered_typeof_member_type_tail_emits_as_statement() {
+    let source = r#"class C {
+    foo() {
+        const x: "".typeof(this.foo);
+    }
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("const x;"),
+        "Malformed declaration should still emit the declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("typeof (this.foo);"),
+        "Recovered `.typeof(...)` type tail should emit as a runtime typeof statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn recovered_interface_function_type_body_return_emits() {
+    let source = r#"class Foo {
+    get Z() {
+        return 1;
+    }
+}
+
+interface I2 extends Foo {
+    a: {
+        toString: () => {
+            return 1;
+        };
+    }
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("get Z()"),
+        "Value-side class should still emit.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return 1;\n;"),
+        "Recovered return from erased interface type body should emit before the leftover semicolon.\nOutput:\n{output}"
+    );
+}
