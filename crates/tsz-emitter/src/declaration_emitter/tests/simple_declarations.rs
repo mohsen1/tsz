@@ -319,6 +319,23 @@ export interface Box {
 }
 
 #[test]
+fn test_trailing_top_level_jsdoc_after_export_is_preserved() {
+    let output = emit_dts(
+        r#"
+export const value = 1;
+/**
+ * wat
+ */
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const value = 1;\n/**\n * wat\n */"),
+        "Expected trailing top-level JSDoc to be preserved after export: {output}"
+    );
+}
+
+#[test]
 fn test_multiline_parameter_comments_keep_interface_signature_indent() {
     let output = emit_dts(
         r#"

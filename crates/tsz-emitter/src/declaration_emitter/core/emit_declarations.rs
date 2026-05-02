@@ -344,6 +344,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_trailing_top_level_jsdoc_type_aliases(source_file);
         self.emit_js_local_export_aliases();
         self.emit_js_cjs_export_aliases();
+        if !self.source_is_js_file
+            && let Ok(eof_pos) = u32::try_from(source_file.text.len())
+        {
+            self.emit_leading_jsdoc_comments(eof_pos);
+        }
 
         // Add `export {};` scope fix marker when needed (mirrors tsc's transformDeclarations).
         // Uses emission-time tracking instead of source-file analysis.
