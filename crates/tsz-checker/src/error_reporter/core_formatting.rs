@@ -821,6 +821,23 @@ impl<'a> CheckerState<'a> {
                     self.ctx.definition_store.find_def_for_type(evaluated)
                 })?;
         let def = self.ctx.definition_store.get(def_id)?;
+        // Type aliases register their body TypeId in `find_def_for_type`. For
+        // an alias whose body is a generic `Application`, the body TypeId is
+        // interned and is shared with any direct write of the same application
+        // form (e.g., `let a: T<A>` and `type C = T<A>` both produce
+        // `Application(T, [A])`). When `ty` itself arrives here as an
+        // `Application` — i.e., the user wrote the application form — using
+        // the alias's name would surface an unrelated sibling alias in the
+        // diagnostic. Preserve the application form by returning None so the
+        // upstream formatter renders `T<A>` rather than `C`.
+        if def.kind == tsz_solver::def::DefKind::TypeAlias
+            && crate::query_boundaries::common::is_generic_application(
+                self.ctx.types.as_type_database(),
+                ty,
+            )
+        {
+            return None;
+        }
         if def.kind == tsz_solver::def::DefKind::TypeAlias
             && (def
                 .body
