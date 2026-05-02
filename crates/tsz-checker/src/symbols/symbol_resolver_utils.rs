@@ -1197,6 +1197,33 @@ impl<'a> CheckerState<'a> {
             return Some((class_idx, false));
         }
 
+        // `this: T extends Foo` in a free function: object_type is the type
+        // parameter `T`. Walk through its constraint to find the underlying
+        // class declaration so private/protected accessibility is enforced.
+        // Without this, `function ext<T extends Foo>(this: T) { this.priv }`
+        // silently accepts the private access. Try the constraint via
+        // `get_class_decl_from_type` first (covers brand-bearing instance
+        // types), then fall back to the constraint's lazy-symbol class
+        // declaration (covers merged interface+class where the constraint
+        // resolves to the interface lazy without brand props).
+        if object_type != TypeId::ANY
+            && object_type != TypeId::ERROR
+            && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                object_type,
+            )
+            && constraint != object_type
+        {
+            if let Some(class_idx) = self.get_class_decl_from_type(constraint) {
+                return Some((class_idx, false));
+            }
+            if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(constraint)
+                && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+            {
+                return Some((class_idx, false));
+            }
+        }
+
         None
     }
 
