@@ -583,6 +583,58 @@ interface HTMLTrackElement extends HTMLElement {
 }
 
 #[test]
+fn affected_lib_interface_names_empty_skips_lib_interface_pass() {
+    let files = vec![("main.ts".to_string(), "export const value = 1;".to_string())];
+    let lib_files = vec![std::sync::Arc::new(
+        crate::lib_loader::LibFile::from_source(
+            "lib.dom.d.ts".to_string(),
+            "interface Node { kind: string; }".to_string(),
+        ),
+    )];
+    let program = merge_bind_results(parse_and_bind_parallel_with_libs(files, &lib_files));
+
+    let affected = affected_lib_interface_names(&program, &lib_files);
+    assert!(
+        affected.is_empty(),
+        "module-only user files should not schedule lib interface validation"
+    );
+
+    let result = check_files_parallel(&program, &CheckerOptions::default(), &lib_files);
+    let lib_result = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name.ends_with("lib.dom.d.ts"))
+        .expect("lib files should still get empty result entries");
+
+    assert!(
+        lib_result.diagnostics.is_empty(),
+        "empty affected-interface pass should not produce lib diagnostics"
+    );
+}
+
+#[test]
+fn lib_file_contains_affected_interface_filters_unrelated_lib_files() {
+    let affected = ["Node".to_string()].into_iter().collect();
+    let matching_lib = crate::lib_loader::LibFile::from_source(
+        "lib.dom.d.ts".to_string(),
+        "interface Node { kind: string; }".to_string(),
+    );
+    let unrelated_lib = crate::lib_loader::LibFile::from_source(
+        "lib.es5.d.ts".to_string(),
+        "interface Array<T> { length: number; }".to_string(),
+    );
+
+    assert!(lib_file_contains_affected_interface(
+        &matching_lib,
+        &affected
+    ));
+    assert!(!lib_file_contains_affected_interface(
+        &unrelated_lib,
+        &affected
+    ));
+}
+
+#[test]
 fn test_merged_program_residency_stats_track_unique_file_arenas() {
     let files = vec![
         ("a.ts".to_string(), "export const a = 1;".to_string()),
