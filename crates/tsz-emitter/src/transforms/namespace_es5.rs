@@ -166,7 +166,9 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     /// Emit an exported namespace declaration (`CommonJS` attach-to-exports form).
     pub fn emit_exported_namespace(&mut self, ns_idx: NodeIndex) -> String {
-        let ir = self.transformer.transform_exported_namespace(ns_idx);
+        let ir = self
+            .transformer
+            .transform_exported_namespace_with_var_flag(ns_idx, self.should_declare_var);
         let ir = match ir {
             Some(ir) => ir,
             None => return String::new(),
