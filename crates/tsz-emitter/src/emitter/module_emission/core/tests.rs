@@ -196,6 +196,41 @@ var after: typeof func = func();
     );
 }
 
+#[test]
+fn anonymous_default_export_function_hoists_export_assignment() {
+    let source = "export default 0;\nexport default function() {}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let function_export_pos = output.find("exports.default = default_1;");
+    let value_export_pos = output.find("exports.default = 0;");
+    let function_pos = output.find("function default_1()");
+    assert!(
+        function_export_pos.is_some() && value_export_pos.is_some() && function_pos.is_some(),
+        "Should emit the hoisted function export, value export, and synthetic function declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        function_export_pos.unwrap() < value_export_pos.unwrap()
+            && value_export_pos.unwrap() < function_pos.unwrap(),
+        "Anonymous default function export should be hoisted before the earlier default expression assignment.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("exports.default = default_1;").count(),
+        1,
+        "Should emit the anonymous default function export assignment once.\nOutput:\n{output}"
+    );
+}
+
 /// Non-default function exports should NOT have the export hoisted before
 /// the function — they are handled in the preamble instead.
 #[test]
