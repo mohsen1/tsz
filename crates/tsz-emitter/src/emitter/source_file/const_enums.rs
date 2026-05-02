@@ -287,27 +287,54 @@ impl<'a> Printer<'a> {
     }
 
     fn collect_const_enum_import_aliases(&mut self, statements: &NodeList) {
+        self.collect_const_enum_import_aliases_recursive(statements);
+    }
+
+    fn collect_const_enum_import_aliases_recursive(&mut self, statements: &NodeList) {
         for &stmt_idx in &statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import_data) = self.arena.get_import_decl(stmt_node)
+                && !import_data.is_type_only
+            {
+                let alias_name = self.get_identifier_text_idx(import_data.import_clause);
+                let target = self.qualified_name_to_string(import_data.module_specifier);
+                if !alias_name.is_empty() && !target.is_empty() {
+                    self.const_enum_import_aliases.insert(alias_name, target);
+                }
                 continue;
             }
-            let Some(import_data) = self.arena.get_import_decl(stmt_node) else {
-                continue;
-            };
-            if import_data.is_type_only {
-                continue;
-            }
-            let alias_name = self.get_identifier_text_idx(import_data.import_clause);
-            if alias_name.is_empty() {
+
+            if let Some(module_data) = self.arena.get_module(stmt_node) {
+                self.collect_const_enum_import_aliases_from_module_body(module_data.body);
                 continue;
             }
-            let target = self.qualified_name_to_string(import_data.module_specifier);
-            if !target.is_empty() {
-                self.const_enum_import_aliases.insert(alias_name, target);
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export_data) = self.arena.get_export_decl(stmt_node)
+                && let Some(clause_node) = self.arena.get(export_data.export_clause)
+                && let Some(module_data) = self.arena.get_module(clause_node)
+            {
+                self.collect_const_enum_import_aliases_from_module_body(module_data.body);
             }
+        }
+    }
+
+    fn collect_const_enum_import_aliases_from_module_body(&mut self, body_idx: NodeIndex) {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return;
+        };
+        if let Some(block) = self.arena.get_block(body_node) {
+            self.collect_const_enum_import_aliases_recursive(&block.statements);
+            return;
+        }
+        if let Some(module_block) = self.arena.get_module_block(body_node)
+            && let Some(statements) = &module_block.statements
+        {
+            self.collect_const_enum_import_aliases_recursive(statements);
         }
     }
 
