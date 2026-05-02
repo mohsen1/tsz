@@ -26,6 +26,35 @@ fn module_detection_force_emits_esmodule_marker() {
     );
 }
 
+/// JS files with CommonJS indicators should not get `__esModule`, even when
+/// moduleDetection=force made the file an external module.
+#[test]
+fn js_nested_require_with_module_detection_force_skips_esmodule_marker() {
+    let source = r#"{
+require("./foo.ts");
+import("./foo.ts");
+}
+"#;
+
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        module_detection_force: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("__esModule"),
+        "JS file with nested require should NOT get __esModule.\nOutput:\n{output}"
+    );
+}
+
 /// Without moduleDetection=force, a file without import/export syntax
 /// should NOT get the CJS __esModule preamble.
 #[test]
