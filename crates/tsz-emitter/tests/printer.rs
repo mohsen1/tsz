@@ -629,6 +629,23 @@ fn test_commonjs_class_export_before_static_block_iife() {
     );
 }
 
+#[test]
+fn test_lowered_static_block_recovered_await_emits_yield() {
+    let source = "class C {\n    static {\n        await 1;\n        yield 1;\n    }\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("(() => {\n    yield 1;\n    yield 1;\n})();"),
+        "Lowered static block should emit recovered await as yield, got: {output}"
+    );
+}
+
 // =========================================================================
 // Comment skipping for erased type annotations
 // =========================================================================
