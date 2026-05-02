@@ -443,6 +443,7 @@ pub(crate) fn emit_outputs(
                         &context.program.type_interner,
                         std::sync::Arc::clone(&file.arena),
                         &import_name_map,
+                        is_js_input,
                     );
 
                     // Clone used_symbols before calling another method on analyzer

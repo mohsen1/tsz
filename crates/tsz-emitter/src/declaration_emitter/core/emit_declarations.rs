@@ -71,6 +71,10 @@ impl<'a> DeclarationEmitter<'a> {
                     interner,
                     std::sync::Arc::clone(current_arena),
                     &self.import_name_map,
+                    self.arena
+                        .get(root_idx)
+                        .and_then(|node| self.arena.get_source_file(node))
+                        .is_some_and(|source_file| self.source_file_is_js(source_file)),
                 );
                 let used = analyzer.analyze(root_idx).clone();
                 let foreign = analyzer.get_foreign_symbols();
@@ -1488,12 +1492,27 @@ impl<'a> DeclarationEmitter<'a> {
         let is_private = self
             .arena
             .has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword);
+        let has_explicit_accessibility = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword)
+            || self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::ProtectedKeyword)
+            || self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::PublicKeyword);
 
         let has_explicit_readonly = self
             .arena
             .has_modifier(&prop.modifiers, SyntaxKind::ReadonlyKeyword);
 
         // Modifiers
+        if self.source_is_js_file
+            && !has_explicit_accessibility
+            && self.jsdoc_has_protected_for_node(prop_idx)
+        {
+            self.write("protected ");
+        }
         self.emit_member_modifiers(&prop.modifiers);
         if !has_explicit_readonly
             && self.source_is_js_file
@@ -1503,7 +1522,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Name
-        self.emit_node(prop.name);
+        if self.source_is_js_file
+            && let Some(name_text) = self.resolved_computed_property_name_text(prop.name)
+        {
+            self.write(&name_text);
+        } else {
+            self.emit_node(prop.name);
+        }
 
         // Optional marker
         if prop.question_token {
