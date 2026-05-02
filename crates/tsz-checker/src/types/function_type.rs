@@ -1674,6 +1674,24 @@ impl<'a> CheckerState<'a> {
                 self.ctx.in_const_assertion = prev_const_assertion;
                 return_type = jsdoc_return_context.unwrap_or(inferred);
 
+                // TS 5.5+ inferred type predicates: when a function expression
+                // or arrow has no explicit predicate, no return-type annotation,
+                // and an inferred boolean return type, see whether its body is a
+                // single guard expression that narrows one of its parameters.
+                if type_predicate.is_none()
+                    && !has_type_annotation
+                    && return_type == TypeId::BOOLEAN
+                {
+                    let analyzer = self.flow_analyzer();
+                    if let Some(pred) = analyzer.try_infer_type_predicate_from_body(
+                        body,
+                        &parameters.nodes,
+                        &params,
+                    ) {
+                        type_predicate = Some(pred);
+                    }
+                }
+
                 if let Some(instance_type) = js_constructor_instance_type
                     && (return_type == TypeId::UNDEFINED || return_type == TypeId::VOID)
                 {

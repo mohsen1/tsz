@@ -1490,3 +1490,141 @@ function f(obj: { kind: 'foo', foo?: string } | { kind: 'bar', bar?: number }) {
          ts2339={ts2339:#?}, ts2322={ts2322:#?}"
     );
 }
+
+#[test]
+fn inferred_type_predicate_narrows_discriminated_union_via_arrow_body() {
+    // TS 5.5+ inferred type predicates: an arrow function whose body is a
+    // single discriminant comparison should be inferred as a type predicate
+    // and narrow the discriminated union at the call site.
+    let source = r#"
+declare const foobar:
+  | { type: "foo"; foo: number }
+  | { type: "bar"; bar: string };
+
+const foobarPred = (fb: typeof foobar) => fb.type === "foo";
+if (foobarPred(foobar)) {
+  foobar.foo;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2339: Vec<&(u32, String)> = diags.iter().filter(|d| d.0 == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Inferred predicate should narrow `foobar` so `.foo` is allowed; ts2339={ts2339:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_works_when_iteration_var_is_renamed() {
+    // The inference rule must not depend on the spelling of the parameter.
+    // Renaming `fb` -> `payload` must produce the same predicate.
+    let source = r#"
+declare const foobar:
+  | { type: "foo"; foo: number }
+  | { type: "bar"; bar: string };
+
+const isFoo = (payload: typeof foobar) => payload.type === "foo";
+if (isFoo(foobar)) {
+  foobar.foo;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2339: Vec<&(u32, String)> = diags.iter().filter(|d| d.0 == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Inferred predicate should be name-independent; ts2339={ts2339:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_skipped_when_body_does_not_narrow() {
+    // When the body cannot narrow the parameter (e.g. a constant boolean), no
+    // predicate is inferred. The discriminated union must remain wide and
+    // accessing a variant-only property should still error.
+    let source = r#"
+declare const foobar:
+  | { type: "foo"; foo: number }
+  | { type: "bar"; bar: string };
+
+const alwaysTrue = (_fb: typeof foobar) => true;
+if (alwaysTrue(foobar)) {
+  foobar.foo; // should error - no narrowing
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2339: Vec<&(u32, String)> = diags.iter().filter(|d| d.0 == 2339).collect();
+    assert!(
+        !ts2339.is_empty(),
+        "Without a narrowing body, .foo should still error on the union; diags={diags:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_block_body_with_single_return() {
+    // A function with a block body that consists of just `return <guard>;`
+    // is also eligible for predicate inference.
+    let source = r#"
+declare const foobar:
+  | { type: "foo"; foo: number }
+  | { type: "bar"; bar: string };
+
+function isFooBlock(fb: typeof foobar) {
+  return fb.type === "foo";
+}
+if (isFooBlock(foobar)) {
+  foobar.foo;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2339: Vec<&(u32, String)> = diags.iter().filter(|d| d.0 == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Block body with single return should also infer a predicate; ts2339={ts2339:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_typeof_guard() {
+    // `(x) => typeof x === "string"` should infer `x is string`.
+    let source = r#"
+const isString = (x: string | number) => typeof x === "string";
+declare let v: string | number;
+if (isString(v)) {
+  const s: string = v;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<&(u32, String)> = diags.iter().filter(|d| d.0 == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "typeof inference should narrow v to string; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_explicit_annotation_still_wins() {
+    // When the user wrote a return type, we must NOT override their
+    // intent with an inferred predicate. `: boolean` is an explicit choice.
+    let source = r#"
+declare const foobar:
+  | { type: "foo"; foo: number }
+  | { type: "bar"; bar: string };
+
+const annotated = (fb: typeof foobar): boolean => fb.type === "foo";
+if (annotated(foobar)) {
+  foobar.foo; // should error - annotated boolean prevents predicate inference
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2339: Vec<&(u32, String)> = diags.iter().filter(|d| d.0 == 2339).collect();
+    assert!(
+        !ts2339.is_empty(),
+        "Explicit `: boolean` annotation must suppress predicate inference; diags={diags:#?}"
+    );
+}
