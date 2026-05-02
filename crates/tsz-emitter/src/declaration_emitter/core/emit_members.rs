@@ -1358,6 +1358,12 @@ impl<'a> DeclarationEmitter<'a> {
         if !has_js_named_export && self.should_skip_ns_internal_member(&var_stmt.modifiers, None) {
             return;
         }
+        if !has_export_modifier
+            && !has_js_named_export
+            && self.record_js_require_property_import_alias_statement(stmt_idx)
+        {
+            return;
+        }
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {

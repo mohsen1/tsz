@@ -355,6 +355,9 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         stmt_idx: NodeIndex,
     ) -> Option<NodeIndex> {
+        if self.js_module_exports_object_stmts.contains(&stmt_idx) {
+            return None;
+        }
         if self
             .js_anonymous_export_equals_class_expression_initializer(stmt_idx)
             .is_some()
@@ -1058,6 +1061,16 @@ impl<'a> DeclarationEmitter<'a> {
         decl_name: NodeIndex,
         initializer: NodeIndex,
     ) -> bool {
+        self.emit_js_object_literal_namespace(decl_name, initializer, true, true)
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_object_literal_namespace(
+        &mut self,
+        decl_name: NodeIndex,
+        initializer: NodeIndex,
+        is_exported: bool,
+        is_declare: bool,
+    ) -> bool {
         if !self.source_is_js_file {
             return false;
         }
@@ -1117,7 +1130,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
-        self.write("export declare namespace ");
+        if is_exported {
+            self.write("export ");
+        }
+        if is_declare {
+            self.write("declare ");
+        }
+        self.write("namespace ");
         self.emit_node(decl_name);
         self.write(" {");
         self.write_line();
@@ -1151,6 +1170,9 @@ impl<'a> DeclarationEmitter<'a> {
                     } else if let Some(type_text) =
                         self.js_namespace_value_member_type_text(prop.initializer)
                     {
+                        self.record_js_require_property_import_alias_for_new_expression(
+                            prop.initializer,
+                        );
                         self.emit_js_namespace_value_member(prop.name, &type_text);
                     }
                 }
@@ -1787,6 +1809,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => Some("boolean".to_string()),
             k if k == SyntaxKind::NullKeyword as u16 => Some("null".to_string()),
             k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined".to_string()),
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                self.nameable_new_expression_type_text(initializer)
+            }
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 if self.is_negative_literal(init_node) {
                     Some("number".to_string())
