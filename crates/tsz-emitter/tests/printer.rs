@@ -276,6 +276,17 @@ fn test_async_generator_dynamic_import_nested_yield() {
 }
 
 #[test]
+fn test_nested_namespace_extends_parent_export_when_name_conflicts() {
+    let source = "declare namespace A.B.C {\n    class B {\n    }\n}\n\nnamespace A.B {\n    export class EventManager {\n        id: number;\n    }\n}\n\nnamespace A.B.C {\n    export class ContextMenu extends EventManager {\n        name: string;\n    }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("class ContextMenu extends B.EventManager"),
+        "Nested namespace heritage should qualify parent namespace export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_module_temp_vars_do_not_collide() {
     let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\nconsole.log(x);\n";
     let output = parse_lower_print(
