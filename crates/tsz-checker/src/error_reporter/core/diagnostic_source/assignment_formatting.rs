@@ -199,7 +199,22 @@ impl<'a> CheckerState<'a> {
                 if let Some(display) = self.rebuilt_array_source_display(display_type, target) {
                     return display;
                 }
-                return self.format_assignability_type_for_message(display_type, target);
+                // When widening rebuilt the type into a structurally-equivalent but
+                // distinct `TypeId`, the new id does not carry the original
+                // `TypeAlias` registration (`find_def_for_type`). The diagnostic
+                // formatter relies on that registration to render the alias name
+                // (`SimpleType`) instead of the expanded body
+                // (`string | Promise<SimpleType>`). When the original is a
+                // registered `TypeAlias`, format the original `TypeId` so the
+                // printer recovers the alias name.
+                let formatting_type = if display_type != expr_display_type
+                    && self.is_registered_type_alias_for_display(expr_display_type)
+                {
+                    expr_display_type
+                } else {
+                    display_type
+                };
+                return self.format_assignability_type_for_message(formatting_type, target);
             }
 
             if node_type_matches_source

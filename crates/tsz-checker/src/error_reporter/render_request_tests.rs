@@ -487,6 +487,47 @@ b = a;
     );
 }
 
+/// Regression: TS2322 messages must preserve the alias name for a
+/// self-referencing union type alias (e.g. `type SimpleType = string |
+/// Promise<SimpleType>`) instead of expanding to the union body.
+///
+/// Source pattern (covers `unresolvableSelfReferencingAwaitedUnion.ts`):
+///   type `SimpleType` = string | Promise<SimpleType>;
+///   declare const simple: `SimpleType`;
+///   const env: <T>() => T = () => simple;
+/// tsc emits: "Type '`SimpleType`' is not assignable to type 'T'."
+/// Bug: tsz emitted: "Type 'string | Promise<SimpleType>' is not
+/// assignable to type 'T'." — losing the alias identity.
+#[test]
+fn ts2322_preserves_self_referencing_union_alias_name() {
+    // Inline `Promise` as a minimal generic stand-in because the test
+    // harness runs without lib types.
+    let source = r#"
+interface Promise<T> {
+    then<U>(onFulfilled: (value: T) => U | Promise<U>): Promise<U>;
+}
+type EnvFunction = <T>() => T;
+type SimpleType = string | Promise<SimpleType>;
+declare const simple: SimpleType;
+const env: EnvFunction = () => simple;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("Expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        ts2322.message_text.contains("'SimpleType'"),
+        "TS2322 should reference the alias name `SimpleType`, got: {}",
+        ts2322.message_text
+    );
+    assert!(
+        !ts2322.message_text.contains("string | Promise"),
+        "TS2322 should not expand the alias body, got: {}",
+        ts2322.message_text
+    );
+}
+
 /// Verify deterministic type formatting — same source always produces
 /// the same message text.
 #[test]
