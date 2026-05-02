@@ -2587,6 +2587,10 @@ impl<'a> DeclarationEmitter<'a> {
             if func.type_annotation.is_some() {
                 if let Some(type_text) =
                     self.source_slice_from_arena(source_arena, func.type_annotation)
+                    && self.source_return_type_annotation_is_reusable(
+                        source_arena,
+                        func.type_annotation,
+                    )
                 {
                     return Some(
                         type_text
@@ -2628,6 +2632,58 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn source_return_type_annotation_is_reusable(
+        &self,
+        source_arena: &NodeArena,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        let Some(binder) = self.binder else {
+            return true;
+        };
+        let Some(type_node) = source_arena.get(type_annotation) else {
+            return true;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return true;
+        }
+        let Some(type_ref) = source_arena.get_type_ref(type_node) else {
+            return true;
+        };
+        let Some(name_node) = source_arena.get(type_ref.type_name) else {
+            return true;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return true;
+        }
+
+        let Some(sym_id) = binder
+            .get_node_symbol(type_ref.type_name)
+            .or_else(|| binder.resolve_identifier(source_arena, type_ref.type_name))
+        else {
+            return true;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return true;
+        };
+        let parent_id = symbol.parent;
+        if parent_id == SymbolId::NONE
+            || self.enclosing_namespace_symbol == Some(parent_id)
+            || symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
+        {
+            return true;
+        }
+        let Some(parent) = binder.symbols.get(parent_id) else {
+            return true;
+        };
+        if !parent.has_any_flags(symbol_flags::NAMESPACE | symbol_flags::ENUM) {
+            return true;
+        }
+        if !symbol.is_exported && !symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
+            return false;
+        }
+        parent.is_exported || parent.has_any_flags(symbol_flags::EXPORT_VALUE)
     }
 
     pub(in crate::declaration_emitter) fn tagged_template_declared_return_type_text(
