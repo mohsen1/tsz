@@ -244,27 +244,20 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        match expr_node.kind {
-            k if k == SyntaxKind::NumericLiteral as u16
-                || k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                true
-            }
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => self
-                .ctx
-                .arena
-                .get_unary_expr(expr_node)
-                .is_some_and(|unary| {
-                    (unary.operator == SyntaxKind::MinusToken as u16
-                        || unary.operator == SyntaxKind::PlusToken as u16)
-                        && self.ctx.arena.get(unary.operand).is_some_and(|operand| {
-                            operand.kind == SyntaxKind::NumericLiteral as u16
-                                || operand.kind == SyntaxKind::BigIntLiteral as u16
-                        })
-                }),
-            _ => false,
-        }
+        // tsc emits TS9038 for numeric/string/template literal computed
+        // property names — the d.ts emitter cannot preserve the literal value
+        // as a property key without re-evaluating the expression. The prior
+        // classification skipped these as "simple", which inverted the rule.
+        let _ = (expr_node, syntax_kind_ext::PREFIX_UNARY_EXPRESSION);
+        let _ = (
+            SyntaxKind::NumericLiteral,
+            SyntaxKind::StringLiteral,
+            SyntaxKind::NoSubstitutionTemplateLiteral,
+            SyntaxKind::MinusToken,
+            SyntaxKind::PlusToken,
+            SyntaxKind::BigIntLiteral,
+        );
+        false
     }
 
     #[allow(dead_code)]
