@@ -629,6 +629,44 @@ fn test_commonjs_class_export_before_static_block_iife() {
     );
 }
 
+#[test]
+fn test_lowered_static_block_recovered_await_emits_yield() {
+    let source = "class C {\n    static {\n        await 1;\n        yield 1;\n    }\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("(() => {\n    yield 1;\n    yield 1;\n})();"),
+        "Lowered static block should emit recovered await as yield, got: {output}"
+    );
+}
+
+#[test]
+fn test_lowered_static_block_uses_static_initializer_context() {
+    let source = "class B { static a = 1; }\nclass C extends B { static c = super.a; static { this.c; super.a; } }\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("C.c = Reflect.get("),
+        "Static field super access should use Reflect.get, got: {output}"
+    );
+    assert!(
+        output.contains("(() => { _a.c; Reflect.get(_b, \"a\", _a); })();"),
+        "Lowered static block should reuse static this/super aliases, got: {output}"
+    );
+}
+
 // =========================================================================
 // Comment skipping for erased type annotations
 // =========================================================================
