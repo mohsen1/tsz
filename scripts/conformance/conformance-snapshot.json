@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-05-02T06:57:27Z",
-  "git_sha": "68a05508d2f7fe1193d3252e39b592eb7bed3bb1",
+  "timestamp": "2026-05-02T08:27:55Z",
+  "git_sha": "de99e324aeabf0c898e9c560e1d3d2890ba8622b",
   "summary": {
     "total_tests": 12582,
-    "passed": 12336,
-    "failed": 246,
-    "pass_rate": 98.0
+    "passed": 12337,
+    "failed": 245,
+    "pass_rate": 98.1
   },
   "areas_by_pass_rate": [
     {
@@ -135,18 +135,18 @@
       "pass_rate": 94.12
     },
     {
-      "area": "types/typeRelationships",
-      "total": 264,
-      "passed": 249,
-      "failed": 15,
-      "pass_rate": 94.32
-    },
-    {
       "area": "types/rest",
       "total": 18,
       "passed": 17,
       "failed": 1,
       "pass_rate": 94.44
+    },
+    {
+      "area": "types/typeRelationships",
+      "total": 264,
+      "passed": 250,
+      "failed": 14,
+      "pass_rate": 94.7
     },
     {
       "area": "salsa",
@@ -1094,10 +1094,6 @@
       "count": 1
     },
     {
-      "code": "TS18046",
-      "count": 1
-    },
-    {
       "code": "TS2538",
       "count": 1
     }
@@ -1452,10 +1448,6 @@
       "count": 1
     },
     {
-      "code": "TS18046",
-      "count": 1
-    },
-    {
       "code": "TS2722",
       "count": 1
     },
@@ -1470,14 +1462,18 @@
     {
       "code": "TS2370",
       "count": 1
+    },
+    {
+      "code": "TS2554",
+      "count": 1
     }
   ],
   "categories": {
     "false_positive": 14,
     "all_missing": 9,
-    "wrong_code": 68,
+    "wrong_code": 67,
     "fingerprint_only": 155,
     "same_code_count_drift": 0,
-    "close_to_passing": 47
+    "close_to_passing": 46
   }
 }
