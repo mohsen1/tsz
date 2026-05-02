@@ -964,3 +964,24 @@ fn namespace_export_declaration_inline_comment_erased() {
         "Trailing comment on erased `export as namespace` should not leak.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn recovered_unicode_identifier_initializer_emits_as_statement() {
+    let subscript_one = '\u{2081}';
+    let source = format!("var a{subscript_one} = \"hello\"; alert(a{subscript_one})");
+
+    let output = parse_and_print(&source);
+
+    assert!(
+        output.contains("var a;"),
+        "Malformed unicode identifier declaration should still emit the declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("\"hello\";"),
+        "Recovered initializer literal should emit as its own statement.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("alert(a);"),
+        "Malformed unicode identifier use should recover to the valid identifier.\nOutput:\n{output}"
+    );
+}
