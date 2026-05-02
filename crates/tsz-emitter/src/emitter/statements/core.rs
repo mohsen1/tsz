@@ -863,6 +863,30 @@ impl<'a> Printer<'a> {
         let Ok(line) = std::str::from_utf8(&bytes[start..line_end]) else {
             return;
         };
+
+        if line.contains("= @") && line.contains("=>") {
+            let Some(arrow_rel) = line.find("=>") else {
+                return;
+            };
+            let after_arrow = start + arrow_rel + 2;
+            let Some(open_rel) = bytes[after_arrow..line_end].iter().position(|&b| b == b'{')
+            else {
+                return;
+            };
+            let open = after_arrow + open_rel;
+            let mut pos = open + 1;
+            while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if bytes.get(pos) == Some(&b'}') {
+                self.write_line();
+                self.write("{");
+                self.write_line();
+                self.write("}");
+            }
+            return;
+        }
+
         let Some(arrow_rel) = line.find("): =>").or_else(|| line.find("):=>")) else {
             return;
         };
