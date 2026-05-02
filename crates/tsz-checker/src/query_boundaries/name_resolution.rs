@@ -358,6 +358,16 @@ impl<'a> CheckerState<'a> {
 
         let parent_name = parent_symbol
             .map(|s| {
+                // UMD `export as namespace Foo` exposes a module's exports
+                // under the global name `Foo`. For TS2694 ("namespace has no
+                // exported member"), tsc identifies the namespace by the
+                // underlying module's quoted basename (e.g. `'"foo"'`), not
+                // by the alias. Match that so the diagnostic message lines up.
+                if s.is_umd_export
+                    && let Some(module_display) = self.external_module_display_name_for_symbol(s)
+                {
+                    return module_display;
+                }
                 // Build the fully qualified name by walking the parent chain.
                 // This matches tsc behavior: when the parent is nested (e.g., foo.bar.baz),
                 // display the full path rather than just the last segment.
@@ -516,25 +526,30 @@ impl<'a> CheckerState<'a> {
         // TS2694 message. Check the declaration modifiers so we match both cases.
 
         let arena = self.ctx.get_arena_for_file(symbol.decl_file_idx);
-        let declaration_has_export_modifier = symbol.declarations.iter().any(|&decl_idx| {
-            // `export namespace Foo {}` carries modifiers on the declaration
-            // itself.
-            let own_has_export = arena.get(decl_idx).is_some_and(|node| {
-                arena.get_declaration_modifiers(node).is_some_and(|mods| {
-                    arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
-                })
+        // `export as namespace Foo` (UMD) makes the file's exports globally
+        // accessible under the alias `Foo`. tsc identifies this namespace by
+        // the underlying module's path string in TS2694 messages, so accept
+        // the UMD-export marker as the export-modifier equivalent.
+        let declaration_has_export_modifier = symbol.is_umd_export
+            || symbol.declarations.iter().any(|&decl_idx| {
+                // `export namespace Foo {}` carries modifiers on the declaration
+                // itself.
+                let own_has_export = arena.get(decl_idx).is_some_and(|node| {
+                    arena.get_declaration_modifiers(node).is_some_and(|mods| {
+                        arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
+                    })
+                });
+                if own_has_export {
+                    return true;
+                }
+                // `export namespace Foo {}` is parsed as an EXPORT_DECLARATION
+                // wrapper around a modifier-less ModuleDeclaration, so also check
+                // whether the declaration's immediate parent is that wrapper.
+                arena
+                    .get_extended(decl_idx)
+                    .and_then(|ext| arena.get(ext.parent))
+                    .is_some_and(|parent| parent.kind == syntax_kind_ext::EXPORT_DECLARATION)
             });
-            if own_has_export {
-                return true;
-            }
-            // `export namespace Foo {}` is parsed as an EXPORT_DECLARATION
-            // wrapper around a modifier-less ModuleDeclaration, so also check
-            // whether the declaration's immediate parent is that wrapper.
-            arena
-                .get_extended(decl_idx)
-                .and_then(|ext| arena.get(ext.parent))
-                .is_some_and(|parent| parent.kind == syntax_kind_ext::EXPORT_DECLARATION)
-        });
         if !declaration_has_export_modifier {
             return None;
         }
@@ -559,6 +574,10 @@ impl<'a> CheckerState<'a> {
             .rsplit_once('.')
             .map(|(base, _)| base)
             .unwrap_or(file_name.as_str());
+        // Declaration files (`foo.d.ts`) have a `.d` "second extension"
+        // that tsc strips when displaying the module identifier in
+        // diagnostics: `foo.d.ts` → `"foo"`, not `"foo.d"`.
+        let stem = stem.strip_suffix(".d").unwrap_or(stem);
         let basename = stem.rsplit_once('/').map(|(_, name)| name).unwrap_or(stem);
         if basename.is_empty() {
             return None;
