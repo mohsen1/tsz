@@ -358,10 +358,28 @@ impl<'a> CheckerState<'a> {
             let sym_res = if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
                 self.resolve_qualified_symbol_in_type_position(qn.left)
             } else if left_node.kind == SyntaxKind::Identifier as u16 {
-                let initial = self
+                let mut initial = self
                     .resolve_identifier_symbol_as_qualified_type_anchor(qn.left)
                     .map(TypeSymbolResolution::Type)
                     .unwrap_or_else(|| self.resolve_identifier_symbol_in_type_position(qn.left));
+
+                // UMD `export as namespace Foo` makes Foo available as both a
+                // value and a type-position namespace anchor. The type-position
+                // resolver doesn't see UMD globals, so a bare `Foo.Thing`
+                // reference would otherwise emit TS2503 ("Cannot find namespace")
+                // even though the runtime/value side resolves fine. Promote to
+                // Type(umd_sym_id) so the existing namespace-member machinery
+                // downstream emits the correct TS2694 ("no exported member")
+                // for missing members.
+                if matches!(
+                    initial,
+                    TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound
+                ) && !left_name.is_empty()
+                    && let Some(umd_sym_id) =
+                        self.resolve_umd_global_symbol_by_name(left_name.as_str())
+                {
+                    initial = TypeSymbolResolution::Type(umd_sym_id);
+                }
 
                 // When the left side of a qualified name resolves to a type parameter,
                 // it cannot serve as a namespace (no exports). In tsc, type parameters
@@ -657,13 +675,21 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol_with_libs(left_sym_id, &lib_binders)
-            && symbol.flags
+            && (symbol.flags
                 & (symbol_flags::MODULE
                     | symbol_flags::CLASS
                     | symbol_flags::REGULAR_ENUM
                     | symbol_flags::CONST_ENUM
                     | symbol_flags::INTERFACE)
                 != 0
+                // UMD `export as namespace Foo` produces an ALIAS symbol whose
+                // import_module points at the source file. tsc treats Foo as a
+                // namespace anchor in type position, so a missing member emits
+                // TS2694 ("no exported member") rather than TS2503 ("cannot
+                // find namespace"). Accept the UMD alias here so the
+                // member-resolution failure below routes through the TS2694
+                // branch.
+                || symbol.is_umd_export)
         {
             // If the left symbol is a pure interface (no namespace meaning) and a
             // local declaration shadows an outer namespace, the member might exist
