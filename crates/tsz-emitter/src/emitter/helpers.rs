@@ -941,6 +941,12 @@ impl<'a> Printer<'a> {
                 {
                     return true;
                 }
+                if inner_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    && let Some(import_data) = self.arena.get_import_decl(inner_node)
+                    && !import_data.is_type_only
+                {
+                    return false;
+                }
                 self.is_erased_statement(inner_node)
             }
             syntax_kind_ext::IMPORT_DECLARATION => {
