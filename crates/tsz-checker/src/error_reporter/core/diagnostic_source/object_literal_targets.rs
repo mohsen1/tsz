@@ -171,13 +171,100 @@ impl<'a> CheckerState<'a> {
             && self
                 .collapsed_index_access_intersection_display(contextual_target)
                 .is_some();
-        if !has_generic_surface
-            || (contextual_target == current_target && !same_target_but_recoverable)
+        // The contextual target for an object-literal property at a call site
+        // (e.g. `test({ method: 'z' })` against `{ method?: 'x' | 'y' }`)
+        // carries `| undefined` from the optional-property modifier. tsc
+        // displays the optional-aware target verbatim in TS2322; tsz's
+        // downstream `strip_nullish_for_assignability_display` would
+        // otherwise drop the `| undefined` arm because the source value is
+        // non-nullable, mismatching tsc's display.
+        //
+        // Two shapes need preservation:
+        // - `contextual_target == current_target` and both already include
+        //   `| undefined`: short-circuit past the strip by returning the
+        //   target unchanged.
+        // - `contextual_target` adds `| undefined` that `current_target`
+        //   lacks (the assignability gateway used the bare type but the
+        //   diagnostic side tracked the optional shape): use the contextual.
+        // tsc preserves `| undefined` only when the stripped form is a
+        // multi-member union (e.g. `'x' | 'y' | undefined` stays as such);
+        // for a plain optional primitive like `name?: string` the stripped
+        // form is a single primitive `string` and tsc renders just `string`,
+        // matching tsz's downstream `strip_nullish_for_assignability_display`.
+        let stripped_is_multi_member_union = |this: &mut Self, t: TypeId| -> bool {
+            let stripped = crate::query_boundaries::common::remove_undefined(this.ctx.types, t);
+            crate::query_boundaries::common::union_members(this.ctx.types, stripped)
+                .is_some_and(|members| members.len() >= 2)
+        };
+        let optional_property_target_with_undefined = self.ctx.strict_null_checks()
+            && contextual_target == current_target
+            && crate::query_boundaries::class_type::type_includes_undefined(
+                self.ctx.types,
+                contextual_target,
+            )
+            && stripped_is_multi_member_union(self, contextual_target)
+            && self
+                .target_property_is_optional_in_object_literal_context(property_elem, &prop_name);
+        let contextual_adds_only_undefined = self.ctx.strict_null_checks()
+            && contextual_target != current_target
+            && crate::query_boundaries::class_type::type_includes_undefined(
+                self.ctx.types,
+                contextual_target,
+            )
+            && !crate::query_boundaries::class_type::type_includes_undefined(
+                self.ctx.types,
+                current_target,
+            )
+            && stripped_is_multi_member_union(self, contextual_target)
+            && {
+                let stripped = crate::query_boundaries::common::remove_undefined(
+                    self.ctx.types,
+                    contextual_target,
+                );
+                stripped == current_target
+            };
+        if (!has_generic_surface
+            || (contextual_target == current_target && !same_target_but_recoverable))
+            && !contextual_adds_only_undefined
+            && !optional_property_target_with_undefined
         {
             return None;
         }
 
         Some(contextual_target)
+    }
+
+    /// True when the property at `property_elem` (a `PropertyAssignment` node
+    /// inside an object literal) is `optional` in the object literal's
+    /// contextual target type. Used to detect "this TS2322 target came from
+    /// an optional-property modifier" so the synthesized `| undefined` is
+    /// preserved in the diagnostic display.
+    fn target_property_is_optional_in_object_literal_context(
+        &mut self,
+        property_elem: NodeIndex,
+        prop_name: &str,
+    ) -> bool {
+        let Some(object_literal_idx) = self.ctx.arena.parent_of(property_elem) else {
+            return false;
+        };
+        let Some(&object_contextual_target) = self
+            .ctx
+            .object_literal_contextual_targets
+            .get(&object_literal_idx)
+        else {
+            return false;
+        };
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            object_contextual_target,
+        )
+        .is_some_and(|shape| {
+            shape
+                .properties
+                .iter()
+                .any(|p| p.name == prop_atom && p.optional)
+        })
     }
 
     pub(in crate::error_reporter) fn format_object_literal_property_diag_target(
