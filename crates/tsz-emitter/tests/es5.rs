@@ -156,6 +156,35 @@ fn test_es5_async_transformer_detects_await_in_body() {
     );
 }
 
+/// Regression test: the `can_inline_wrapper` early-return path in
+/// `emit_async_function_es5_body` must call `pop_temp_scope()` to restore
+/// the temp-variable state pushed by `emit_function_parameters_es5`.
+/// Without it, the printer leaks state across functions, leaving the
+/// scope stack non-empty after a top-level async function has been emitted.
+/// Devin review: <https://github.com/mohsen1/tsz/pull/2305#discussion_r3176690840>
+#[test]
+fn test_es5_async_inline_wrapper_pops_temp_scope() {
+    use crate::emitter::{Printer, PrinterOptions};
+    use tsz_common::ScriptTarget;
+    let source = "async function f() { return 1; }\n";
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    assert!(
+        printer.temp_scope_stack.is_empty(),
+        "Top-level emit must leave the temp-scope stack empty; got len={}",
+        printer.temp_scope_stack.len()
+    );
+}
+
 #[test]
 fn test_es5_async_transformer_no_await_in_sync_body() {
     let source = "function f() { return 42; }";

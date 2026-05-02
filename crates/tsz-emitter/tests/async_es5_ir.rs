@@ -177,3 +177,26 @@ fn test_await_method_call_argument_captures_receiver_before_yield() {
         "Resumed method call should use captured receiver as this: {output}"
     );
 }
+
+/// `class C extends (await base())` lowered to ES5 must still emit the
+/// `WeakMap` declarations and instantiations for any private fields on the
+/// class body. Previously `es5_class_factory` destructured only the
+/// IIFE body and silently dropped `weakmap_decls` and `weakmap_inits`,
+/// causing the generated code to reference undeclared `WeakMap` names.
+/// Devin review: <https://github.com/mohsen1/tsz/pull/2306#discussion_r3176720196>
+#[test]
+fn test_async_class_extends_await_preserves_private_field_weakmaps() {
+    let output = transform_and_print(
+        "async function f() { class Foo extends (await base()) { #x = 1; getX() { return this.#x; } } }",
+    );
+
+    assert!(
+        output.contains("new WeakMap()"),
+        "Output must contain WeakMap instantiation for private field `#x`. Without it, the IIFE references an undeclared WeakMap.\nOutput:\n{output}"
+    );
+    // The generator body should declare the private-field weakmap as a var.
+    assert!(
+        output.contains("var _Foo_x") || output.contains("var _x"),
+        "Output must contain a `var` declaration for the private-field WeakMap.\nOutput:\n{output}"
+    );
+}
