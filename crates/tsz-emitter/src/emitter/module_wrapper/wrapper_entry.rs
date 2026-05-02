@@ -1,4 +1,5 @@
 use super::super::{JsxEmit, Printer};
+use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::ModuleKind;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
@@ -246,7 +247,8 @@ impl<'a> Printer<'a> {
         }
 
         if self.ctx.options.module != ModuleKind::AMD {
-            self.register_system_import_substitutions(source, &dep_vars);
+            let empty_system_plan = SystemDependencyPlan::default();
+            self.register_system_import_substitutions(source, &dep_vars, &empty_system_plan);
         }
 
         self.emit_module_wrapper_body(source_node, source_idx);
@@ -413,17 +415,19 @@ impl<'a> Printer<'a> {
         self.increase_indent();
         self.write("\"use strict\";");
         self.write_line();
-        let dep_vars = self.collect_system_dependency_vars(dependencies, source);
-        let mut hoisted_names = self.collect_system_hoisted_names(source);
-        let func_names_to_exclude = self.collect_system_hoisted_function_names(source);
-        hoisted_names.retain(|n| !func_names_to_exclude.contains(n));
-        for dep in dependencies {
-            if let Some(dep_var) = dep_vars.get(dep)
-                && !hoisted_names.iter().any(|n| n == dep_var)
+        let system_plan = self.collect_system_dependency_plan(dependencies, source);
+        let mut dep_vars = self.collect_system_dependency_vars(dependencies, source);
+        for (dep, actions) in &system_plan.actions {
+            if let Some(SystemDependencyAction::Assign(dep_var)) = actions
+                .iter()
+                .find(|action| matches!(action, SystemDependencyAction::Assign(_)))
             {
-                hoisted_names.insert(0, dep_var.clone());
+                dep_vars.insert(dep.clone(), dep_var.clone());
             }
         }
+        let mut hoisted_names = self.collect_system_hoisted_names(source, &system_plan);
+        let func_names_to_exclude = self.collect_system_hoisted_function_names(source);
+        hoisted_names.retain(|n| !func_names_to_exclude.contains(n));
         if !hoisted_names.is_empty() {
             self.write("var ");
             self.write(&hoisted_names.join(", "));
@@ -433,7 +437,7 @@ impl<'a> Printer<'a> {
         self.write("var __moduleName = context_1 && context_1.id;");
         self.write_line();
 
-        self.register_system_import_substitutions(source, &dep_vars);
+        self.register_system_import_substitutions(source, &dep_vars, &system_plan);
 
         // Hoist exported function declarations to the outer module scope,
         // before the `return { setters, execute }` block.  TSC does the same:
@@ -444,7 +448,7 @@ impl<'a> Printer<'a> {
         self.write("return {");
         self.write_line();
         self.increase_indent();
-        self.emit_system_setters(dependencies, &dep_vars);
+        self.emit_system_setters(dependencies, &dep_vars, &system_plan);
         self.write_line();
         let execute_is_async = source.statements.nodes.iter().any(|&stmt_idx| {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -470,7 +474,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.emit_system_execute_body(source_node, &dep_vars, &hoisted_func_stmts);
+        self.emit_system_execute_body(source_node, &dep_vars, &hoisted_func_stmts, &system_plan);
 
         self.decrease_indent();
         self.write("}");
@@ -703,6 +707,7 @@ impl<'a> Printer<'a> {
     fn collect_system_hoisted_names(
         &mut self,
         source: &tsz_parser::parser::node::SourceFileData,
+        system_plan: &SystemDependencyPlan,
     ) -> Vec<String> {
         let mut names = Vec::new();
         let mut deferred_named_export_names = Vec::new();
@@ -723,6 +728,11 @@ impl<'a> Printer<'a> {
             };
             if self.statement_is_top_level_using(stmt_node) {
                 seen_top_level_using = true;
+            }
+            if let Some(dep_var) = system_plan.import_vars.get(&stmt_node.pos)
+                && seen.insert(dep_var.clone())
+            {
+                names.push(dep_var.clone());
             }
             if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
                 if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
@@ -1079,6 +1089,144 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    fn collect_system_dependency_plan(
+        &mut self,
+        dependencies: &[String],
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> SystemDependencyPlan {
+        let dependency_set: HashSet<&str> = dependencies.iter().map(String::as_str).collect();
+        let mut plan = SystemDependencyPlan::default();
+
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                    continue;
+                };
+                if !self.import_decl_has_runtime_value(import_decl) {
+                    continue;
+                }
+                let Some(module_spec) =
+                    self.system_module_specifier_text(import_decl.module_specifier)
+                else {
+                    continue;
+                };
+                if !dependency_set.contains(module_spec.as_str()) {
+                    continue;
+                }
+                let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+                    continue;
+                };
+                let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                    continue;
+                };
+                if clause.is_type_only {
+                    continue;
+                }
+
+                let mut has_value_binding = clause.name.is_some();
+                let mut namespace_name = None;
+                if clause.named_bindings.is_some()
+                    && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                {
+                    if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
+                        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+                            let local_name = self.get_identifier_text_idx(named_imports.name);
+                            if !local_name.is_empty() {
+                                namespace_name = Some(local_name);
+                            }
+                            has_value_binding = true;
+                        } else {
+                            has_value_binding |= !self
+                                .collect_value_specifiers(&named_imports.elements)
+                                .is_empty();
+                        }
+                    } else {
+                        has_value_binding = true;
+                    }
+                }
+                if !has_value_binding {
+                    continue;
+                }
+
+                let dep_var =
+                    namespace_name.unwrap_or_else(|| self.next_commonjs_module_var(&module_spec));
+                plan.import_vars.insert(stmt_node.pos, dep_var.clone());
+                plan.actions
+                    .entry(module_spec)
+                    .or_default()
+                    .push(SystemDependencyAction::Assign(dep_var));
+                continue;
+            }
+
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if !self.export_decl_has_runtime_value(export_decl) {
+                continue;
+            }
+            let Some(module_spec) = self.system_module_specifier_text(export_decl.module_specifier)
+            else {
+                continue;
+            };
+            if !dependency_set.contains(module_spec.as_str()) {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                continue;
+            };
+            if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
+                && let Some(named_exports) = self.arena.get_named_imports(clause_node)
+            {
+                let mut exports = Vec::new();
+                for &spec_idx in &self.collect_value_specifiers(&named_exports.elements) {
+                    let Some(spec) = self.arena.get_specifier_at(spec_idx) else {
+                        continue;
+                    };
+                    let Some(export_name) = self.get_specifier_name_text(spec.name) else {
+                        continue;
+                    };
+                    let import_name = if spec.property_name.is_some() {
+                        self.get_specifier_name_text(spec.property_name)
+                            .unwrap_or_else(|| export_name.clone())
+                    } else {
+                        export_name.clone()
+                    };
+                    exports.push((export_name, import_name));
+                }
+                if !exports.is_empty() {
+                    plan.actions
+                        .entry(module_spec)
+                        .or_default()
+                        .push(SystemDependencyAction::NamedExports(exports));
+                }
+                continue;
+            }
+
+            if clause_node.kind == SyntaxKind::Identifier as u16
+                || clause_node.kind == SyntaxKind::StringLiteral as u16
+            {
+                let export_name = self
+                    .get_specifier_name_text(export_decl.export_clause)
+                    .unwrap_or_else(|| self.get_identifier_text_idx(export_decl.export_clause));
+                if !export_name.is_empty() {
+                    plan.actions
+                        .entry(module_spec)
+                        .or_default()
+                        .push(SystemDependencyAction::NamespaceExport(export_name));
+                }
+            }
+        }
+
+        plan
     }
 
     fn collect_system_dependency_vars(
