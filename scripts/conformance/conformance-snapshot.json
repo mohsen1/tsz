@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-02T09:28:07Z",
-  "git_sha": "b1690770f31c63e84fafad3dcfb872c94b5c5f37",
+  "timestamp": "2026-05-02T10:56:54Z",
+  "git_sha": "71afed27acd5b76412c7f127f86253b3252c38db",
   "summary": {
     "total_tests": 12582,
-    "passed": 12338,
-    "failed": 244,
+    "passed": 12339,
+    "failed": 243,
     "pass_rate": 98.1
   },
   "areas_by_pass_rate": [
@@ -221,9 +221,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6401,
-      "failed": 119,
-      "pass_rate": 98.17
+      "passed": 6402,
+      "failed": 118,
+      "pass_rate": 98.19
     },
     {
       "area": "externalModules",
@@ -722,6 +722,10 @@
       "count": 2
     },
     {
+      "code": "TS2345",
+      "count": 2
+    },
+    {
       "code": "TS2589",
       "count": 1
     },
@@ -1000,6 +1004,10 @@
       "count": 2
     },
     {
+      "code": "TS2345",
+      "count": 2
+    },
+    {
       "code": "TS2320",
       "count": 1
     },
@@ -1058,10 +1066,6 @@
       "count": 2
     },
     {
-      "code": "TS2589",
-      "count": 1
-    },
-    {
       "code": "TS2416",
       "count": 1
     },
@@ -1110,10 +1114,6 @@
     {
       "code": "TS2322",
       "count": 3
-    },
-    {
-      "code": "TS2589",
-      "count": 1
     },
     {
       "code": "TS2769",
@@ -1320,15 +1320,7 @@
       "count": 6
     },
     {
-      "code": "TS2684",
-      "count": 3
-    },
-    {
       "code": "TS2769",
-      "count": 2
-    },
-    {
-      "code": "TS2589",
       "count": 2
     },
     {
@@ -1357,6 +1349,10 @@
     },
     {
       "code": "TS2741",
+      "count": 1
+    },
+    {
+      "code": "TS2589",
       "count": 1
     },
     {
@@ -1466,14 +1462,18 @@
     {
       "code": "TS2554",
       "count": 1
+    },
+    {
+      "code": "TS2684",
+      "count": 1
     }
   ],
   "categories": {
-    "false_positive": 14,
-    "all_missing": 9,
-    "wrong_code": 67,
+    "false_positive": 13,
+    "all_missing": 11,
+    "wrong_code": 65,
     "fingerprint_only": 154,
     "same_code_count_drift": 0,
-    "close_to_passing": 46
+    "close_to_passing": 44
   }
 }
