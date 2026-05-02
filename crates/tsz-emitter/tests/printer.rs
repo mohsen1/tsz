@@ -779,3 +779,39 @@ fn test_comment_preserved_after_erased_function_return_type() {
         "Comment inside function body should be preserved after return type erasure.\nOutput: {output}"
     );
 }
+
+#[test]
+fn test_async_arrow_destructuring_default_param_temp_var_no_collision() {
+    // Regression: async arrow with a destructuring default param AND an
+    // awaited call must not produce two `var _a;` hoists or two `_a = ...`
+    // assignments in the same `__awaiter` scope. The temp var counter from
+    // the AsyncES5Emitter must be synced back to the main emitter so the
+    // destructuring prologue and the awaiter generator body use disjoint
+    // temp names.
+    let source = "var f = async ({x} = {x: 1}) => { return fn(await p); };\n";
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    // Sanity: output should still use the awaiter/generator pipeline.
+    assert!(
+        output.contains("__awaiter"),
+        "Expected __awaiter in output:\n{output}"
+    );
+
+    // Each underscore-prefixed temp identifier should have at most one
+    // `var <name>` declaration inside a single __awaiter callback. Prior
+    // to the fix, the destructuring prologue and the generator body both
+    // chose `_b`, producing both `var _b;` (hoisted) and a separate
+    // `var _b = _a === void 0 ? ...` in the same scope.
+    for letter in b'a'..=b'z' {
+        let name = format!("_{}", letter as char);
+        let var_decl = format!("var {name}");
+        let count = output.matches(var_decl.as_str()).count();
+        assert!(
+            count <= 1,
+            "Expected at most one `var {name}` declaration, got {count}.\n\
+             This indicates the AsyncES5 temp var counter was not synced back \
+             to the main emitter, causing the destructuring prologue and the \
+             awaiter body to collide on the same temp name.\nOutput:\n{output}"
+        );
+    }
+}
