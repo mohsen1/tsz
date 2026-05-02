@@ -1675,6 +1675,41 @@ fn test_resolver_package_without_package_json_uses_index_file() {
 }
 
 #[test]
+fn test_resolver_bare_specifier_from_node_modules_package_finds_sibling_package() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_node_modules_sibling");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules").join("baz")).unwrap();
+    fs::create_dir_all(dir.join("node_modules").join("foo")).unwrap();
+
+    fs::write(
+        dir.join("node_modules").join("baz").join("index.d.ts"),
+        "export { T } from \"foo\";",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules").join("foo").join("index.d.ts"),
+        "export type T = number;",
+    )
+    .unwrap();
+
+    let mut resolver = ModuleResolver::node_resolver();
+    let result = resolver.resolve(
+        "foo",
+        &dir.join("node_modules").join("baz").join("index.d.ts"),
+        Span::new(16, 21),
+    );
+
+    let resolved = result.expect("bare specifier should resolve to sibling package");
+    assert_eq!(
+        resolved.resolved_path,
+        dir.join("node_modules").join("foo").join("index.d.ts")
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_invalid_types_field_falls_back_to_main_declaration() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_invalid_types_field");

@@ -455,6 +455,30 @@ fn test_nested_bare_alias_is_not_registered() {
 }
 
 #[test]
+fn test_node_modules_sibling_package_bare_alias_is_registered() {
+    let files = vec![
+        "/tmp/test/node_modules/baz/index.d.ts".to_string(),
+        "/tmp/test/node_modules/foo/index.d.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "foo".to_string())), Some(&1));
+    assert!(modules.contains("foo"));
+}
+
+#[test]
+fn test_scoped_node_modules_package_bare_alias_is_registered() {
+    let files = vec![
+        "/tmp/test/src/app.ts".to_string(),
+        "/tmp/test/node_modules/@scope/pkg/index.d.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "@scope/pkg".to_string())), Some(&1));
+    assert!(modules.contains("@scope/pkg"));
+}
+
+#[test]
 fn test_parent_directory_import() {
     let files = vec![
         "/tmp/test/src/app.ts".to_string(),

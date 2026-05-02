@@ -688,6 +688,66 @@ pub(crate) fn collect_module_specifiers(
                     None,
                 ));
             }
+            if let Some(body_node) = arena.get(module_decl.body)
+                && let Some(block) = arena.get_module_block(body_node)
+                && let Some(statements) = &block.statements
+            {
+                for &inner_idx in &statements.nodes {
+                    if inner_idx.is_none() {
+                        continue;
+                    }
+                    let Some(inner_stmt) = arena.get(inner_idx) else {
+                        continue;
+                    };
+                    if let Some(import_decl) = arena.get_import_decl(inner_stmt) {
+                        let is_import_equals = inner_stmt.kind
+                            == tsz::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION;
+                        if let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
+                            specifiers.push((
+                                strip_quotes(text),
+                                import_decl.module_specifier,
+                                if is_import_equals {
+                                    ImportKind::CjsRequire
+                                } else {
+                                    ImportKind::EsmImport
+                                },
+                                import_attributes_resolution_mode(arena, import_decl.attributes),
+                            ));
+                        } else if let Some(spec_text) =
+                            extract_require_specifier(arena, import_decl.module_specifier)
+                        {
+                            specifiers.push((
+                                spec_text,
+                                import_decl.module_specifier,
+                                ImportKind::CjsRequire,
+                                import_attributes_resolution_mode(arena, import_decl.attributes),
+                            ));
+                        }
+                    }
+
+                    if let Some(export_decl) = arena.get_export_decl(inner_stmt) {
+                        if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
+                            specifiers.push((
+                                strip_quotes(text),
+                                export_decl.module_specifier,
+                                ImportKind::EsmReExport,
+                                import_attributes_resolution_mode(arena, export_decl.attributes),
+                            ));
+                        } else if export_decl.export_clause.is_some()
+                            && let Some(import_decl) =
+                                arena.get_import_decl_at(export_decl.export_clause)
+                            && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
+                        {
+                            specifiers.push((
+                                strip_quotes(text),
+                                import_decl.module_specifier,
+                                ImportKind::EsmReExport,
+                                import_attributes_resolution_mode(arena, export_decl.attributes),
+                            ));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1993,8 +2053,19 @@ fn resolve_node_module_specifier(
 
     loop {
         // 1. Look for the package itself in node_modules
-        let node_modules = current.join("node_modules");
-        if resolution_cache.node_modules_dir_exists(&node_modules) {
+        let child_node_modules = current.join("node_modules");
+        let mut node_modules_roots = Vec::new();
+        if current
+            .file_name()
+            .is_some_and(|name| name == "node_modules")
+        {
+            node_modules_roots.push(current.to_path_buf());
+        }
+        if resolution_cache.node_modules_dir_exists(&child_node_modules) {
+            node_modules_roots.push(child_node_modules);
+        }
+
+        for node_modules in node_modules_roots {
             let package_root = node_modules.join(&package_name);
             if resolution_cache.package_root_dir_exists(&package_root) {
                 let package_json =

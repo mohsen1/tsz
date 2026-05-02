@@ -122,6 +122,60 @@ fn test_normalize_resolved_path_preserves_symlink_ancestor_identity() {
 }
 
 #[test]
+fn test_resolve_module_specifier_from_node_modules_package_finds_sibling_package() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_node_modules_sibling");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/baz")).unwrap();
+    fs::create_dir_all(dir.join("node_modules/foo")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/baz/index.d.ts"),
+        "export { T } from \"foo\";",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/foo/index.d.ts"),
+        "export type T = number;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    let resolved = resolve_module_specifier(
+        &dir.join("node_modules/baz/index.d.ts"),
+        "foo",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved,
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/foo/index.d.ts")
+        ))
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_normalize_resolved_path_collapses_segments_for_symlinked_package_identity() {
     use std::fs;
     use std::os::unix::fs::symlink;
@@ -692,6 +746,31 @@ export { bar } from "./re-export";
     assert!(
         re_exports.contains(&"./re-export"),
         "Should find re-export, got: {re_exports:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_finds_re_exports_inside_ambient_module_blocks() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"
+declare module "baz" {
+  export { T } from "foo";
+}
+"#;
+    let file_name = "index.d.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+
+    let re_exports: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::EsmReExport)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+    assert!(
+        re_exports.contains(&"foo"),
+        "Should find ambient module re-export, got: {specifiers:?}"
     );
 }
 

@@ -198,7 +198,6 @@ fn find_tsz_binary() -> Option<PathBuf> {
 #[test]
 fn batch_mode_uses_project_cwd_for_jsdoc_required_constructor_types() {
     let Some(tsz_bin) = find_tsz_binary() else {
-        eprintln!("skipping: tsz binary not found");
         return;
     };
     let temp = TempDir::new("batch_jsdoc_required_constructor").expect("temp dir");
