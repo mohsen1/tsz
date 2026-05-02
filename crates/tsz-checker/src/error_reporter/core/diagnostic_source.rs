@@ -1405,10 +1405,22 @@ impl<'a> CheckerState<'a> {
                 });
             !is_control_flow_typed_any
         } else {
-            let expr_is_strictly_narrower = expr_display_type != declared_type
+            // The expression type is "strictly narrower" if narrowing produced
+            // a subtype, or if narrowing eliminated members of a declared union
+            // (a strict union-member subset). The union-subset path matters
+            // when one of the eliminated members happens to be structurally
+            // assignable to the surviving member — e.g., `A | B` narrowed to
+            // `B` where `class A { private a }` is assignable to `class B {}`
+            // because `B` requires nothing. Without the subset check, the
+            // is_assignable_to-only path would treat `B` as not strictly
+            // narrower than `A | B` and the broad declared display would leak
+            // into the diagnostic.
+            let expr_is_assignability_narrower = expr_display_type != declared_type
                 && self.is_assignable_to(expr_display_type, declared_type)
                 && !self.is_assignable_to(declared_type, expr_display_type);
-            !expr_is_strictly_narrower
+            let expr_is_union_subset_narrower = expr_display_type != declared_type
+                && self.is_strict_union_member_subset(expr_display_type, declared_type);
+            !(expr_is_assignability_narrower || expr_is_union_subset_narrower)
         };
 
         // If flow narrowing narrowed a nullable union to specifically null or
@@ -1551,6 +1563,39 @@ impl<'a> CheckerState<'a> {
         let expr_display = self.format_assignability_type_for_message(expr_display_type, target);
 
         (prefer_declared_display && declared_display != expr_display).then_some(declared_display)
+    }
+
+    /// Returns `true` when `narrowed`'s union members are a strict subset of
+    /// `declared`'s union members. Single non-union types are treated as a
+    /// one-element membership set against the declared union.
+    ///
+    /// This is the "narrowing eliminated some union members" check used by
+    /// `declared_identifier_source_display` to recognise that flow narrowing
+    /// produced a strictly smaller type even when the surviving member is
+    /// structurally compatible with the eliminated ones (so plain
+    /// `is_assignable_to(declared, narrowed)` returns true).
+    pub(in crate::error_reporter) fn is_strict_union_member_subset(
+        &mut self,
+        narrowed: TypeId,
+        declared: TypeId,
+    ) -> bool {
+        let Some(declared_members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, declared)
+        else {
+            return false;
+        };
+        if declared_members.len() < 2 {
+            return false;
+        }
+        let narrowed_members =
+            crate::query_boundaries::common::union_members(self.ctx.types, narrowed)
+                .unwrap_or_else(|| vec![narrowed]);
+        if narrowed_members.is_empty() || narrowed_members.len() >= declared_members.len() {
+            return false;
+        }
+        narrowed_members
+            .iter()
+            .all(|m| declared_members.contains(m))
     }
 
     fn narrowed_string_literal_residual_union_display(

@@ -530,6 +530,10 @@ name = "ts2339_union_narrow_display_tests"
 path = "tests/ts2339_union_narrow_display_tests.rs"
 
 [[test]]
+name = "ts2345_instanceof_narrowed_union_display_tests"
+path = "tests/ts2345_instanceof_narrowed_union_display_tests.rs"
+
+[[test]]
 name = "jsdoc_constructor_typeof_source_display_tests"
 path = "tests/jsdoc_constructor_typeof_source_display_tests.rs"
 
