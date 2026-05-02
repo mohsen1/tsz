@@ -68,7 +68,7 @@ impl TypeSubstitution {
     /// Create a substitution containing a single `name -> type_id` binding.
     /// Equivalent to `let mut s = TypeSubstitution::new(); s.insert(name, type_id);`.
     pub fn single(name: Atom, type_id: TypeId) -> Self {
-        let mut map = FxHashMap::default();
+        let mut map = FxHashMap::with_capacity_and_hasher(1, Default::default());
         map.insert(name, type_id);
         Self { map }
     }
@@ -94,7 +94,7 @@ impl TypeSubstitution {
         type_params: &[TypeParamInfo],
         type_args: &[TypeId],
     ) -> Self {
-        let mut map = FxHashMap::default();
+        let mut map = FxHashMap::with_capacity_and_hasher(type_params.len(), Default::default());
 
         // Phase 1: Insert explicitly-provided type arguments.
         for (i, param) in type_params.iter().enumerate() {
