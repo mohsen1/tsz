@@ -218,6 +218,34 @@ fn test_keyof_type() {
     assert!(output.contains("keyof T"), "Expected keyof type: {output}");
 }
 
+#[test]
+fn test_indexed_access_typeof_object_is_parenthesized() {
+    let output = emit_dts(
+        r#"
+const a = { a: "value of a" } as const;
+export type Value = typeof a["a"];
+"#,
+    );
+    assert!(
+        output.contains("export type Value = (typeof a)[\"a\"];"),
+        "typeof object in indexed access needs parens: {output}"
+    );
+}
+
+#[test]
+fn test_keyof_indexed_access_drops_unnecessary_source_parens() {
+    let output = emit_dts(
+        r#"
+type A = { a: { b: string } };
+export type Keys = keyof (A["a"]);
+"#,
+    );
+    assert!(
+        output.contains("export type Keys = keyof A[\"a\"];"),
+        "keyof indexed access should not retain source-only parens: {output}"
+    );
+}
+
 // =============================================================================
 // 25. Type operator (readonly arrays)
 // =============================================================================
