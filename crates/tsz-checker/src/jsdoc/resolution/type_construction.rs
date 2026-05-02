@@ -829,6 +829,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                         declaration_order: (properties.len() + 1) as u32,
                         is_string_named: false,
+                        single_quoted_name: false,
                     });
                 }
             }
@@ -1191,6 +1192,7 @@ impl<'a> CheckerState<'a> {
             parent_id: None,
             declaration_order: (existing_props.len() + 1) as u32,
             is_string_named: false,
+            single_quoted_name: false,
         })
     }
     /// Resolve a `@typedef` referenced by name from JSDoc comments.
@@ -1595,6 +1597,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                single_quoted_name: false,
             });
         }
         let object_type = if !prop_infos.is_empty() {

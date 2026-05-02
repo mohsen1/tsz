@@ -49,6 +49,7 @@ fn test_collect_properties_single_object() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
 
     let obj_type = interner.object(props);
@@ -83,6 +84,7 @@ fn test_collect_properties_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create object { y: number }
@@ -98,6 +100,7 @@ fn test_collect_properties_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create intersection obj1 & obj2
@@ -142,6 +145,7 @@ fn test_collect_properties_any_commutative() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Test: obj & any
@@ -173,6 +177,7 @@ fn test_collect_properties_conflicting_property_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create object { x: number }
@@ -188,6 +193,7 @@ fn test_collect_properties_conflicting_property_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create intersection obj1 & obj2
@@ -225,6 +231,7 @@ fn test_collect_properties_optionality_merging() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create object { x: number }
@@ -240,6 +247,7 @@ fn test_collect_properties_optionality_merging() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create intersection obj1 & obj2
@@ -276,6 +284,7 @@ fn test_collect_properties_readonly_mutable_wins() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create object { readonly x: string }
@@ -291,6 +300,7 @@ fn test_collect_properties_readonly_mutable_wins() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create intersection obj1 & obj2
@@ -328,6 +338,7 @@ fn test_collect_properties_nested_intersections() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -342,6 +353,7 @@ fn test_collect_properties_nested_intersections() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let obj3 = interner.object(vec![PropertyInfo {
@@ -356,6 +368,7 @@ fn test_collect_properties_nested_intersections() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create nested intersections: (obj1 & obj2) & obj3

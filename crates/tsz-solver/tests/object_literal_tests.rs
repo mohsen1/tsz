@@ -19,6 +19,7 @@ fn test_build_object_type() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
 
     let obj_type = builder.build_object_type(properties);
@@ -45,6 +46,7 @@ fn test_merge_spread() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
 
     // Create spread object { y: string, x: boolean }
@@ -61,6 +63,7 @@ fn test_merge_spread() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: db.intern_string("x"),
@@ -74,6 +77,7 @@ fn test_merge_spread() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ];
     let spread_type = db.object(spread_props);
@@ -114,6 +118,7 @@ fn test_apply_contextual_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create properties { x: 1 } (where 1 is a literal number type)
@@ -130,6 +135,7 @@ fn test_apply_contextual_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
 
     let contextualized = builder.apply_contextual_types(properties, ctx_type);
@@ -156,6 +162,7 @@ fn test_extract_properties_from_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let type2 = db.object(vec![PropertyInfo {
@@ -170,6 +177,7 @@ fn test_extract_properties_from_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let intersection = db.intersection2(type1, type2);
@@ -207,6 +215,7 @@ fn test_collect_spread_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }],
         ObjectFlags::FRESH_LITERAL,
     );

@@ -8,8 +8,8 @@ use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{
-    MappedModifier, ObjectShape, PropertyInfo, TupleElement, TypeData, TypeId, TypeListId,
-    Visibility,
+    LiteralValue, MappedModifier, ObjectShape, PropertyInfo, TupleElement, TypeData, TypeId,
+    TypeListId, Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
@@ -29,6 +29,26 @@ fn prop_source_has_nullish_union(interner: &dyn QueryDatabase, ty: TypeId) -> bo
     members
         .iter()
         .any(|m| matches!(*m, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID))
+}
+
+fn template_includes_string_primitive(interner: &dyn QueryDatabase, template: TypeId) -> bool {
+    if template == TypeId::STRING {
+        return true;
+    }
+    let Some(TypeData::Union(members_id)) = interner.lookup(template) else {
+        return false;
+    };
+    interner
+        .type_list(members_id)
+        .iter()
+        .any(|&member| template_includes_string_primitive(interner, member))
+}
+
+fn is_number_literal(interner: &dyn QueryDatabase, ty: TypeId) -> bool {
+    matches!(
+        interner.lookup(ty),
+        Some(TypeData::Literal(LiteralValue::Number(_)))
+    )
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -206,7 +226,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let instantiated_template = instantiate_type(self.interner, template, &subst);
 
             // Reverse-infer through the template: find what T[K] should be.
-            let reversed_value = match self.reverse_infer_through_template(
+            let mut reversed_value = match self.reverse_infer_through_template(
                 prop.type_id,
                 instantiated_template,
                 target_placeholder,
@@ -241,6 +261,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
             };
+            if template_includes_string_primitive(self.interner, instantiated_template)
+                && is_number_literal(self.interner, reversed_value)
+            {
+                reversed_value =
+                    crate::operations::widening::widen_type(self.interner, reversed_value);
+            }
 
             // Reverse the mapped type's modifier directives to reconstruct T's modifiers.
             // If the mapped type adds a modifier, the reverse removes it (and vice versa).
@@ -276,7 +302,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // `{ x: number; y: "y"; }` for
                 // reverseMappedTypeLimitedConstraint.ts).
                 declaration_order: prop.declaration_order,
-                is_string_named: false,
+                is_string_named: prop.is_string_named,
+                single_quoted_name: prop.single_quoted_name,
             });
         }
 
@@ -860,6 +887,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         parent_id: None,
                         declaration_order: 0,
                         is_string_named: false,
+                        single_quoted_name: false,
                     });
                 }
 

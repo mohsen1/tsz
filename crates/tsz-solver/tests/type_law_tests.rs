@@ -574,6 +574,7 @@ fn test_coinductive_recursive_type_reflexivity() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Register the type in the environment
@@ -613,6 +614,7 @@ fn test_coinductive_mutually_recursive_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // B = { a: A }
@@ -628,6 +630,7 @@ fn test_coinductive_mutually_recursive_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     env.insert(sym_a, type_a);

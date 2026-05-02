@@ -282,6 +282,7 @@ fn test_indexed_access_intersection_with_unconstrained_type_param() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create intersection S & State<T>

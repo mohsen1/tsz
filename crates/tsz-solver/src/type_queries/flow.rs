@@ -1830,6 +1830,7 @@ mod tests {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }]);
 
         // Target has Lazy property type — solver cannot resolve it
@@ -1846,6 +1847,7 @@ mod tests {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }]);
 
         // Solver returns false because Lazy types are opaque here.
@@ -1879,6 +1881,7 @@ mod tests {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }]);
 
         // Target: { mode: AutomationMode } (enum with string members)
@@ -1900,6 +1903,7 @@ mod tests {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }]);
 
         // When both sides are resolved, the comparable check succeeds

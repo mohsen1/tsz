@@ -312,6 +312,7 @@ fn test_variance_invariant_explicit_write_type() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let t_atom = interner.intern_string("T");

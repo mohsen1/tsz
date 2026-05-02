@@ -917,6 +917,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order,
                     is_string_named: false,
+                    single_quoted_name: false,
                 });
             }
             self.append_export_equals_import_type_namespace_props(

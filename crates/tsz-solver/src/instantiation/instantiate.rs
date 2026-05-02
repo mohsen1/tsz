@@ -411,6 +411,7 @@ impl<'a> TypeInstantiator<'a> {
                 parent_id: p.parent_id,
                 declaration_order: p.declaration_order,
                 is_string_named: p.is_string_named,
+                single_quoted_name: p.single_quoted_name,
             })
             .collect()
     }

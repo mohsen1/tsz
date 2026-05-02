@@ -62,6 +62,7 @@ fn test_generic_remapped_mapped_type_does_not_expand_to_source_keys() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: atom_b,
@@ -75,6 +76,7 @@ fn test_generic_remapped_mapped_type_does_not_expand_to_source_keys() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ]);
 
@@ -563,6 +565,7 @@ fn test_apparent_symbol_member_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
     let mismatch = interner.object(vec![PropertyInfo {
         name,
@@ -576,6 +579,7 @@ fn test_apparent_symbol_member_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(checker.is_subtype_of(TypeId::SYMBOL, target));
@@ -1053,6 +1057,7 @@ fn test_weak_type_detection_not_weak_if_has_required() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ]);
 
@@ -1084,6 +1089,7 @@ fn test_split_accessor_variance() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let narrow_accessor = interner.object(vec![PropertyInfo {
@@ -1098,6 +1104,7 @@ fn test_split_accessor_variance() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(checker.is_subtype_of(wide_accessor, narrow_accessor));
@@ -1122,6 +1129,7 @@ fn test_exact_optional_property_types_toggle() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
     let source = interner.object(vec![PropertyInfo {
         name,
@@ -1135,6 +1143,7 @@ fn test_exact_optional_property_types_toggle() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -1414,6 +1423,7 @@ fn test_readonly_property_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
     let mutable_obj = interner.object(vec![PropertyInfo {
         name,
@@ -1427,6 +1437,7 @@ fn test_readonly_property_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // TypeScript allows readonly property → mutable property assignment
@@ -4161,6 +4172,7 @@ fn test_method_source_bivariant_against_function_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -4175,6 +4187,7 @@ fn test_method_source_bivariant_against_function_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -4231,6 +4244,7 @@ fn test_function_source_bivariant_against_method_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -4245,6 +4259,7 @@ fn test_function_source_bivariant_against_method_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -5133,6 +5148,7 @@ fn test_this_parameter_method_source_bivariant_against_function_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -5147,6 +5163,7 @@ fn test_this_parameter_method_source_bivariant_against_function_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -5193,6 +5210,7 @@ fn test_this_parameter_function_source_bivariant_against_method_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -5207,6 +5225,7 @@ fn test_this_parameter_function_source_bivariant_against_method_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -6126,6 +6145,7 @@ fn test_mapped_type_over_number_keys_optional_readonly_add_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
     let required_readonly =
         interner.object(vec![PropertyInfo::readonly(to_fixed, TypeId::BOOLEAN)]);
@@ -6459,6 +6479,7 @@ fn test_mapped_type_optional_readonly_add_subtyping() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: name_b,
@@ -6472,6 +6493,7 @@ fn test_mapped_type_optional_readonly_add_subtyping() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ]);
     let mutable_required_target = interner.object(vec![
@@ -6519,6 +6541,7 @@ fn test_mapped_type_optional_readonly_remove_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(checker.is_subtype_of(mapped, mutable_required_target));
@@ -6841,6 +6864,7 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
     let required_readonly_b =
         interner.object(vec![PropertyInfo::readonly(prop_b.name, TypeId::NUMBER)]);
@@ -6870,6 +6894,7 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     };
     let obj = interner.object(vec![prop_a, prop_b.clone()]);
 
@@ -7177,6 +7202,7 @@ fn test_generic_covariant_return_position() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let producer_union = interner.object(vec![PropertyInfo {
@@ -7191,6 +7217,7 @@ fn test_generic_covariant_return_position() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Covariant: Producer<string> <: Producer<string | number>
@@ -7302,6 +7329,7 @@ fn test_generic_mixed_variance_positions() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let transform_b = interner.object(vec![PropertyInfo {
@@ -7316,6 +7344,7 @@ fn test_generic_mixed_variance_positions() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Transform with wider input and narrower output is subtype
@@ -7571,6 +7600,7 @@ fn test_mutable_property_split_accessor_wider_write() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let obj_normal = interner.object(vec![PropertyInfo::new(prop_name, TypeId::STRING)]);
@@ -8732,6 +8762,7 @@ fn test_invariant_ref_cell_pattern() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: set_name,
@@ -8745,6 +8776,7 @@ fn test_invariant_ref_cell_pattern() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ]);
 
@@ -8786,6 +8818,7 @@ fn test_invariant_ref_cell_pattern() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: set_name,
@@ -8799,6 +8832,7 @@ fn test_invariant_ref_cell_pattern() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ]);
 
@@ -11379,6 +11413,7 @@ fn test_readonly_with_optional() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let obj_readonly_required =
@@ -11437,6 +11472,7 @@ fn test_readonly_method_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let obj_mutable_method = interner.object(vec![PropertyInfo::method(method_name, method)]);
@@ -12857,6 +12893,7 @@ fn test_implements_optional_method() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Empty class
@@ -14221,6 +14258,7 @@ fn test_never_is_bottom_type_for_object_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // never <: { name: string }
@@ -14343,6 +14381,7 @@ fn test_unknown_is_top_type_for_object_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // { name: string } <: unknown
@@ -16750,6 +16789,7 @@ fn test_variance_method_bivariant_params() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }],
         string_index: None,
         number_index: None,
@@ -16786,6 +16826,7 @@ fn test_variance_method_bivariant_params() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }],
         string_index: None,
         number_index: None,
@@ -16830,6 +16871,7 @@ fn test_variance_function_property_contravariant() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Object with function property taking wide param
@@ -16858,6 +16900,7 @@ fn test_variance_function_property_contravariant() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Wide param function <: narrow param function (contravariant)
@@ -18584,6 +18627,7 @@ fn test_symbol_keyed_object_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(iterable_obj != TypeId::ERROR);
@@ -18737,6 +18781,7 @@ fn test_iterable_protocol_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Iterator is valid object type
@@ -18771,6 +18816,7 @@ fn test_async_iterable_protocol_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // AsyncIterator<number> = { next(): Promise<AsyncIteratorResult<number>> }
@@ -18796,6 +18842,7 @@ fn test_async_iterable_protocol_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // AsyncIterator is valid object type
@@ -20987,6 +21034,7 @@ fn test_constructor_with_static_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }],
         string_index: None,
         number_index: None,
@@ -21884,6 +21932,7 @@ fn test_this_type_with_getter_setter() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(obj != TypeId::ERROR);
@@ -22370,6 +22419,7 @@ fn test_readonly_optional_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(readonly_optional != TypeId::ERROR);
@@ -22488,6 +22538,7 @@ fn test_readonly_method_is_always_readonly() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     assert!(obj != TypeId::ERROR);
@@ -24405,6 +24456,7 @@ fn test_overload_constructor_overloads() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: interner.intern_string("toISOString"),
@@ -24426,6 +24478,7 @@ fn test_overload_constructor_overloads() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ]);
 

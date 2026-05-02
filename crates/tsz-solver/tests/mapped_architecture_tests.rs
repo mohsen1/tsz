@@ -71,6 +71,7 @@ fn classify_source_plain_object() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
     assert_eq!(
         classify_mapped_source(&interner, obj),
@@ -280,6 +281,7 @@ fn collect_source_props_from_object() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: b_name,
@@ -293,6 +295,7 @@ fn collect_source_props_from_object() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ]);
     let props = collect_homomorphic_source_properties(&interner, obj);

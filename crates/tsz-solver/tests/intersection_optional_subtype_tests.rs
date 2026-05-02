@@ -23,6 +23,7 @@ fn make_optional_object(interner: &TypeInterner, name: &str, type_id: TypeId) ->
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
     interner.object(props)
 }
@@ -44,6 +45,7 @@ fn make_two_optional_object(interner: &TypeInterner) -> TypeId {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: y_atom,
@@ -57,6 +59,7 @@ fn make_two_optional_object(interner: &TypeInterner) -> TypeId {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ];
     props.sort_by_key(|p| p.name);
@@ -182,6 +185,7 @@ fn test_global_object_interface_exempt_from_weak_type_check() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }
     };
 
@@ -213,6 +217,7 @@ fn test_global_object_interface_exempt_from_weak_type_check() {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                single_quoted_name: false,
             },
             PropertyInfo {
                 name: legs,
@@ -226,6 +231,7 @@ fn test_global_object_interface_exempt_from_weak_type_check() {
                 parent_id: None,
                 declaration_order: 1,
                 is_string_named: false,
+                single_quoted_name: false,
             },
         ];
         interner.object(props)

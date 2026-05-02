@@ -24,6 +24,7 @@ fn prop(interner: &TypeInterner, name: &str, type_id: TypeId) -> PropertyInfo {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }
 }
 

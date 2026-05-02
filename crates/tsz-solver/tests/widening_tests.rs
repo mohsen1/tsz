@@ -94,6 +94,7 @@ fn test_widen_object_properties() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
     let obj_type = interner.object(props);
 
@@ -132,6 +133,7 @@ fn test_widen_nested_object_properties() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
     let inner_obj = interner.object(inner_props);
 
@@ -147,6 +149,7 @@ fn test_widen_nested_object_properties() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
     let outer_obj = interner.object(outer_props);
 
@@ -195,6 +198,7 @@ fn test_widen_readonly_property_preserved() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -208,6 +212,7 @@ fn test_widen_readonly_property_preserved() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ];
     let obj_type = interner.object(props);
@@ -520,6 +525,7 @@ fn test_widen_object_literal_properties_widens_mutable_props() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
     let obj = interner.object(props);
     let widened = widen_object_literal_properties(&interner, obj);
@@ -568,6 +574,7 @@ fn test_widen_object_literal_properties_preserves_readonly() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
     let obj = interner.object(props);
     let widened = widen_object_literal_properties(&interner, obj);
@@ -701,6 +708,7 @@ fn test_get_base_type_for_comparison_passthrough_for_unrelated() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
     let obj = interner.object(props);
     assert_eq!(get_base_type_for_comparison(&interner, obj), obj);
@@ -779,6 +787,7 @@ fn test_widen_literal_type_object_passthrough() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
     let obj = interner.object(props);
     assert_eq!(widen_literal_type(&interner, obj), obj);
@@ -907,6 +916,7 @@ fn test_apply_const_assertion_object_marks_props_readonly() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }];
     let obj = interner.object(props);
     let result = apply_const_assertion(&interner, obj);

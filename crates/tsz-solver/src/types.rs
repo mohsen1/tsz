@@ -1042,6 +1042,9 @@ pub struct PropertyInfo {
     /// (e.g. `"404"` vs `404`). Included in PartialEq/Hash because `"100"` and
     /// `100` are semantically different property keys in TypeScript.
     pub is_string_named: bool,
+    /// Whether the string property name was written with single quotes in source.
+    /// Declaration emit preserves this for reconstructed mapped properties.
+    pub single_quoted_name: bool,
 }
 
 impl PartialEq for PropertyInfo {
@@ -1055,6 +1058,7 @@ impl PartialEq for PropertyInfo {
             && self.visibility == other.visibility
             && self.parent_id == other.parent_id
             && self.is_string_named == other.is_string_named
+            && self.single_quoted_name == other.single_quoted_name
     }
 }
 
@@ -1071,6 +1075,7 @@ impl std::hash::Hash for PropertyInfo {
         self.visibility.hash(state);
         self.parent_id.hash(state);
         self.is_string_named.hash(state);
+        self.single_quoted_name.hash(state);
     }
 }
 
@@ -1090,6 +1095,7 @@ impl PropertyInfo {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }
     }
 

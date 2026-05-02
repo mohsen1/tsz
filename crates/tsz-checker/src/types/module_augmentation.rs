@@ -684,6 +684,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: aug_member_order,
                             is_string_named: false,
+                            single_quoted_name: false,
                         });
                     }
                 }
@@ -754,6 +755,7 @@ impl<'a> CheckerState<'a> {
                                                 parent_id: None,
                                                 declaration_order: 0,
                                                 is_string_named: false,
+                                                single_quoted_name: false,
                                             });
                                         }
                                     } else if let Some(decl_node) = arena.get(decl_idx)
@@ -785,6 +787,7 @@ impl<'a> CheckerState<'a> {
                                             parent_id: None,
                                             declaration_order: 0,
                                             is_string_named: false,
+                                            single_quoted_name: false,
                                         });
                                     }
                                 }
@@ -807,6 +810,7 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                     declaration_order: 0,
                                     is_string_named: false,
+                                    single_quoted_name: false,
                                 });
                             }
                         }
@@ -827,6 +831,7 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                     declaration_order: 0,
                                     is_string_named: false,
+                                    single_quoted_name: false,
                                 });
                             }
                         }
@@ -881,6 +886,7 @@ impl<'a> CheckerState<'a> {
                                                 parent_id: None,
                                                 declaration_order: 0,
                                                 is_string_named: false,
+                                                single_quoted_name: false,
                                             });
                                         }
                                     } else if let Some(decl_node) = arena.get(decl_idx)
@@ -912,6 +918,7 @@ impl<'a> CheckerState<'a> {
                                             parent_id: None,
                                             declaration_order: 0,
                                             is_string_named: false,
+                                            single_quoted_name: false,
                                         });
                                     }
                                 }

@@ -131,6 +131,7 @@ impl<'a> InferSubstitutor<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
+                        single_quoted_name: prop.single_quoted_name,
                     });
                 }
                 if changed {
@@ -165,6 +166,7 @@ impl<'a> InferSubstitutor<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
+                        single_quoted_name: prop.single_quoted_name,
                     });
                 }
                 let string_index = shape.string_index.as_ref().map(|index| {
@@ -445,6 +447,7 @@ impl<'a> InferSubstitutor<'a> {
                             parent_id: prop.parent_id,
                             declaration_order: prop.declaration_order,
                             is_string_named: prop.is_string_named,
+                            single_quoted_name: prop.single_quoted_name,
                         }
                     })
                     .collect();

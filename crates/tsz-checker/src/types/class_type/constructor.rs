@@ -479,6 +479,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    single_quoted_name: false,
                 });
             }
             if inst_props.is_empty() {
@@ -632,6 +633,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: current_sym,
                                 declaration_order: 0,
                                 is_string_named: false,
+                                single_quoted_name: false,
                             }),
                             &inherited_static_props,
                             &all_static_member_names,
@@ -749,6 +751,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: current_sym,
                                 declaration_order: 0,
                                 is_string_named: false,
+                                single_quoted_name: false,
                             }),
                             &inherited_static_props,
                             &all_static_member_names,
@@ -825,6 +828,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order: 0,
                             is_string_named: false,
+                            single_quoted_name: false,
                         },
                     );
                 }
@@ -1115,6 +1119,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    single_quoted_name: false,
                 },
             );
         }
@@ -1160,6 +1165,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    single_quoted_name: false,
                 },
             );
         }
@@ -1251,6 +1257,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: current_sym,
                         declaration_order: 0,
                         is_string_named: false,
+                        single_quoted_name: false,
                     });
                 }
 
@@ -1306,6 +1313,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: current_sym,
                         declaration_order: 0,
                         is_string_named: false,
+                        single_quoted_name: false,
                     });
                 }
                 if !inst_props.is_empty() {
@@ -1375,6 +1383,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: current_sym,
                 declaration_order: 0,
                 is_string_named: false,
+                single_quoted_name: false,
             },
         );
 
@@ -1980,6 +1989,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: current_sym,
                 declaration_order: 0,
                 is_string_named: false,
+                single_quoted_name: false,
             });
         }
 
@@ -2011,6 +2021,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: current_sym,
                 declaration_order: 0,
                 is_string_named: false,
+                single_quoted_name: false,
             });
         }
 
@@ -2045,6 +2056,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    single_quoted_name: false,
                 });
             }
         }

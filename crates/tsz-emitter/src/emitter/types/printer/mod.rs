@@ -282,6 +282,10 @@ fn quote_property_name(name: &str) -> String {
     format!("\"{}\"", escape_string_for_double_quote(name))
 }
 
+fn quote_property_name_single(name: &str) -> String {
+    format!("'{}'", name.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
 /// Check if a property name needs quoting, with an `is_string_named` flag
 /// for properties that were declared with a string key that looks numeric.
 fn needs_property_name_quoting_with_flag(name: &str, is_string_named: bool) -> bool {

@@ -214,6 +214,7 @@ fn query_cache_caches_object_spread_properties() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let second_obj = db.object_with_flags(
@@ -229,6 +230,7 @@ fn query_cache_caches_object_spread_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }],
         ObjectFlags::FRESH_LITERAL,
     );

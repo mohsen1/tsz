@@ -18,6 +18,7 @@ fn make_object(interner: &TypeInterner, count: usize) -> TypeId {
             readonly: false,
             is_method: false,
             is_string_named: false,
+            single_quoted_name: false,
             is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,

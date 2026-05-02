@@ -1068,6 +1068,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 parent_id: None,
                                 declaration_order: (properties.len() + 1) as u32,
                                 is_string_named: false,
+                                single_quoted_name: false,
                             });
                         } else {
                             let type_id = if sig.type_annotation.is_some() {
@@ -1090,6 +1091,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 parent_id: None,
                                 declaration_order: (properties.len() + 1) as u32,
                                 is_string_named: false,
+                                single_quoted_name: false,
                             });
                         }
                     }
@@ -1254,6 +1256,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             parent_id: None,
                             declaration_order: (properties.len() + 1) as u32,
                             is_string_named: false,
+                            single_quoted_name: false,
                         });
                     }
                 } else {
@@ -1284,6 +1287,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             parent_id: None,
                             declaration_order: (properties.len() + 1) as u32,
                             is_string_named: false,
+                            single_quoted_name: false,
                         });
                     }
                 }
