@@ -55,33 +55,57 @@ message embeds the symbol's display name. We resolve that name to the
 binding? — needs trace) instead of the original `timestampSymbol`
 declaration name.
 
-## Likely culprit window
+## Bisect result
 
-Recent merges that touched dts emit / symbol name resolution:
+Confirmed by manual bisect (2026-05-03):
 
-- 5b4e3bfeb05 fix(dts): preserve symlinked package import names (#2421)
-- 15897b69816 fix(dts): alias reserved function namespace properties (#2425)
-- 2dc7165af50 fix(dts): emit js commonjs type reference aliases (#2413)
+- `71a4f93ecda` (#2419 merge): PASS
+- `5b4e3bfeb05` (#2421 merge): PASS
+- `15897b69816` (#2425 merge): **FAIL** — regression introduced here
 
-The `[import]` literal in our output strongly suggests one of these
-changed how an import-side symbol's display name is resolved when
-walking through `typeof X` where X is itself imported.
+PR #2425 (`fix(dts): alias reserved function namespace properties`)
+introduces the regression. The PR adds
+`is_late_bound_reserved_binding_name` checks in
+`crates/tsz-emitter/src/declaration_emitter/helpers/function_analysis.rs`
+that filter out reserved words (`import`, `in`, `typeof`, etc.) from
+namespace member names — returning `None` instead of `Some(text)`.
+
+## Hypothesis
+
+The printed-type text for the test now contains
+`[TKey in typeof import("./a").timestampSymbol]` (or similar),
+where `import` appears as a keyword. The TS4118 resolver
+(`find_non_serializable_property_name_in_printed_type` in
+`portability_resolve.rs:31`) looks for ` in typeof ` and grabs the
+next identifier-like sequence — which is now `import` (truncated at
+the `"` because `(` and `"` are not in the allowed-char set).
+
+PR #2425's changes appear to make the emitter prefer the
+rewritten `import("X").Y` form for the late-bound member's printed
+type, but the TS4118 resolver assumed the printed form is
+`typeof Symbol`, not `typeof import("X").Symbol`.
+
+## Fix sketch
+
+Update `find_non_serializable_property_name_in_printed_type` in
+`portability_resolve.rs:31` to skip past `import("…").` between
+`in typeof ` and the actual symbol name, so the extracted
+`symbol_expr` is `timestampSymbol`, not `import`.
+
+Specifically: after `in typeof `, if the next token starts with
+`import("`, advance past the closing `")` and the following `.`,
+then extract the identifier from there.
 
 ## Next-iteration approach
 
-1. `git bisect` between #2417 (snapshot refresh, baseline known good)
-   and current main on this single test:
-   ```
-   tsz-conformance --filter declarationEmitMappedTypeTemplateTypeofSymbol \
-     --cache-file scripts/conformance/tsc-cache-full.json
-   ```
-2. Once the offending commit is identified, fix the symbol-name
-   resolution OR update the snapshot guard if the change is
-   intentional and tsc parity isn't expected here.
-3. Refresh `scripts/conformance/conformance-snapshot.json` so other
-   PRs unblock at the snapshot gate.
+1. Implement the resolver fix in `portability_resolve.rs:31`, with
+   a regression unit test.
+2. Re-run full conformance to confirm 5-6 dts tests flip back to
+   PASS.
+3. Refresh `scripts/conformance/conformance-snapshot.json` to
+   unblock other PRs at the snapshot gate.
 
 ## Status
 
-Ready for investigation. Affects multiple in-flight PRs at the
-snapshot guard; high-leverage to bisect and either fix or refresh.
+Ready for fix — bisect complete and hypothesis specific. Affects
+multiple in-flight PRs at the snapshot guard.
