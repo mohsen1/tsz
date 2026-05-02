@@ -677,7 +677,11 @@ impl<'a> CheckerState<'a> {
 
                 // TS2604: JSX element type does not have any construct or call signatures.
                 // Emit when the component type is concrete but lacks call/construct signatures.
-                self.check_jsx_element_has_signatures(resolved_component_type, tag_name_idx);
+                // Skip when explicit type-argument arity is wrong — TS2558 already
+                // points at the real problem and tsc does not pile TS2604 on top.
+                if !type_arg_count_mismatch {
+                    self.check_jsx_element_has_signatures(resolved_component_type, tag_name_idx);
+                }
 
                 // Even when we can't extract component props (e.g., no ElementAttributesProperty),
                 // check IntrinsicAttributes / IntrinsicClassAttributes<T> for required
