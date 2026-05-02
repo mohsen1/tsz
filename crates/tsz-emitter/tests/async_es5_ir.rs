@@ -121,6 +121,24 @@ fn test_await_call_argument_captures_identifier_callee_before_yield() {
 }
 
 #[test]
+fn test_return_await_call_argument_captures_identifier_callee_before_yield() {
+    let output = transform_and_print("async function foo() { return fn(await p); }");
+
+    assert!(
+        output.contains("var _a;"),
+        "Callee temp should be hoisted for suspended return calls: {output}"
+    );
+    assert!(
+        output.contains("_a = fn;\n                    return [4 /*yield*/, p];"),
+        "Return call callee should be captured before yielding: {output}"
+    );
+    assert!(
+        output.contains("[2 /*return*/, _a.apply(void 0, [_b.sent()])]"),
+        "Resumed return should invoke the captured callee with the sent value: {output}"
+    );
+}
+
+#[test]
 fn test_await_call_argument_preserves_prefix_arguments() {
     let output =
         transform_and_print("async function foo() { var b = fn(a, await p, a); after(); }");

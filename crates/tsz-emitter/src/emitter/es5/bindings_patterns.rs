@@ -539,6 +539,14 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_param_prologue(&mut self, transforms: &ParamTransformPlan) {
+        self.emit_param_binding_prologue(transforms);
+        self.emit_rest_param_prologue(transforms);
+    }
+
+    pub(in crate::emitter) fn emit_param_binding_prologue(
+        &mut self,
+        transforms: &ParamTransformPlan,
+    ) {
         for param in &transforms.params {
             if let Some(initializer) = param.initializer {
                 if let Some(pattern) = param.pattern {
@@ -600,7 +608,9 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
 
+    pub(in crate::emitter) fn emit_rest_param_prologue(&mut self, transforms: &ParamTransformPlan) {
         if let Some(rest) = &transforms.rest {
             if !rest.name.is_empty() {
                 self.write("var ");

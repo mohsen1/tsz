@@ -179,6 +179,10 @@ impl<'a> AsyncES5Transformer<'a> {
         name
     }
 
+    pub(super) fn set_temp_var_counter(&self, counter: u32) {
+        self.temp_var_counter.set(counter);
+    }
+
     /// Get the helpers needed after transformation
     pub(crate) const fn suspension_kind(&self) -> u16 {
         if self.generator_mode {
@@ -615,8 +619,17 @@ impl<'a> AsyncES5Transformer<'a> {
                 },
             ))));
         } else if self.contains_await_recursive(idx) {
-            self.emit_nested_suspension(idx, cases, current_statements, current_label);
-            let value = self.expression_to_ir(idx);
+            let value = if let Some(lowered_call) = self.lower_call_callee_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_call
+            } else {
+                self.emit_nested_suspension(idx, cases, current_statements, current_label);
+                self.expression_to_ir(idx)
+            };
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
                     opcode: opcodes::RETURN,
@@ -688,13 +701,23 @@ impl<'a> AsyncES5Transformer<'a> {
                             },
                         ))));
                     } else if self.contains_await_recursive(ret.expression) {
-                        self.emit_nested_suspension(
-                            ret.expression,
-                            cases,
-                            current_statements,
-                            current_label,
-                        );
-                        let value = self.expression_to_ir(ret.expression);
+                        let value = if let Some(lowered_call) = self
+                            .lower_call_callee_before_suspension(
+                                ret.expression,
+                                cases,
+                                current_statements,
+                                current_label,
+                            ) {
+                            lowered_call
+                        } else {
+                            self.emit_nested_suspension(
+                                ret.expression,
+                                cases,
+                                current_statements,
+                                current_label,
+                            );
+                            self.expression_to_ir(ret.expression)
+                        };
                         current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                             IRNode::GeneratorOp {
                                 opcode: opcodes::RETURN,
