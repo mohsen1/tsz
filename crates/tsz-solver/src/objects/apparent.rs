@@ -13,9 +13,18 @@ pub struct ApparentMember {
     pub kind: ApparentMemberKind,
 }
 
+// `at` (es2022) is intentionally absent: when a real lib is loaded that
+// predates es2022, the bootstrap fallback must not paper over the
+// property-not-found result, so the checker can emit the correct TS2550
+// "change your target library" suggestion. Other version-specific methods
+// remain for now to preserve existing fallback behavior; remove them
+// individually as their conformance regressions are addressed.
+//
+// Also note that `at` returns `string | undefined`, not `string`, so it
+// would have been incorrect to keep here even setting the lib question
+// aside.
 const STRING_METHODS_RETURN_STRING: &[&str] = &[
     "anchor",
-    "at",
     "big",
     "blink",
     "bold",

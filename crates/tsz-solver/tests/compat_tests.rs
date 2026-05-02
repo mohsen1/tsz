@@ -2218,6 +2218,37 @@ fn test_apparent_string_members_reject_mismatch() {
 }
 
 #[test]
+fn test_apparent_string_members_exclude_at() {
+    // `at` is es2022. The bootstrap apparent type for `string` must not
+    // include it, so that property access falls through to the
+    // checker's TS2550 ("change your target library") suggestion when
+    // the loaded lib predates es2022.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let at = interner.intern_string("at");
+    let at_type = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("index")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let target = interner.object(vec![PropertyInfo::method(at, at_type)]);
+
+    assert!(!checker.is_assignable(TypeId::STRING, target));
+    let literal = interner.literal_string("hello");
+    assert!(!checker.is_assignable(literal, target));
+}
+
+#[test]
 fn test_apparent_number_method_assignable() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
