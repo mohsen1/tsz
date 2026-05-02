@@ -129,6 +129,57 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or(type_id)
     }
 
+    fn apply_display_aliases_to_preserved_application_args(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        interner: &tsz_solver::TypeInterner,
+        preserve_named_application: fn(
+            &Self,
+            tsz_solver::types::TypeId,
+            &tsz_solver::TypeInterner,
+        ) -> bool,
+    ) -> tsz_solver::types::TypeId {
+        let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) else {
+            return type_id;
+        };
+        let app = interner.type_application(app_id);
+        if app.args.is_empty() {
+            return type_id;
+        }
+
+        let mut changed = false;
+        let args = app
+            .args
+            .iter()
+            .copied()
+            .map(|arg| {
+                let evaluated = if let Some(cache) = &self.type_cache {
+                    let resolver = DtsCacheResolver { cache };
+                    let mut evaluator =
+                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver)
+                            .with_expanded_application_display_alias_args();
+                    evaluator.set_max_mapped_keys(1_024);
+                    evaluator.evaluate(arg)
+                } else {
+                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner)
+                        .with_expanded_application_display_alias_args();
+                    evaluator.set_max_mapped_keys(1_024);
+                    evaluator.evaluate(arg)
+                };
+                let aliased =
+                    self.display_alias_for_policy(evaluated, interner, preserve_named_application);
+                changed |= aliased != arg;
+                aliased
+            })
+            .collect::<Vec<_>>();
+
+        if changed {
+            interner.application(app.base, args)
+        } else {
+            type_id
+        }
+    }
+
     fn reduce_conditional_alias_application_for_inferred_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
@@ -316,7 +367,31 @@ impl<'a> DeclarationEmitter<'a> {
             // `{ar?: T; bg?: T}`).  This matches tsc's behavior in declaration
             // emit where mapped types are fully resolved.
             let type_id = if preserve_named_application(self, type_id, interner) {
-                type_id
+                let evaluated = if let Some(cache) = &self.type_cache {
+                    let resolver = DtsCacheResolver { cache };
+                    let mut evaluator =
+                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver)
+                            .with_expanded_application_display_alias_args();
+                    evaluator.set_max_mapped_keys(1_024);
+                    evaluator.evaluate(type_id)
+                } else {
+                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner)
+                        .with_expanded_application_display_alias_args();
+                    evaluator.set_max_mapped_keys(1_024);
+                    evaluator.evaluate(type_id)
+                };
+                let alias =
+                    self.display_alias_for_policy(evaluated, interner, preserve_named_application);
+                let alias = if preserve_named_application(self, alias, interner) {
+                    alias
+                } else {
+                    type_id
+                };
+                self.apply_display_aliases_to_preserved_application_args(
+                    alias,
+                    interner,
+                    preserve_named_application,
+                )
             } else if let Some(cache) = &self.type_cache {
                 let resolver = DtsCacheResolver { cache };
                 let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
@@ -383,7 +458,10 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> String {
         if let Some(reduced) = self.reduce_conditional_alias_application_for_inferred_emit(type_id)
         {
-            return self.print_type_id(reduced);
+            return self.print_type_id_with_policy(
+                reduced,
+                Self::should_preserve_named_application_for_inferred_emit,
+            );
         }
         self.print_type_id_with_policy(
             type_id,
@@ -715,10 +793,38 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Determine the "original" symbol (following import aliases).
-        let original_sym_id = binder
+        let import_resolved_sym_id = binder
             .resolve_import_symbol(sym_id)
             .filter(|resolved| *resolved != sym_id)
             .unwrap_or(sym_id);
+        let original_sym_id = self
+            .resolve_alias_in_source_context(sym_id, binder)
+            .or_else(|| {
+                if import_resolved_sym_id != sym_id {
+                    self.resolve_alias_in_source_context(import_resolved_sym_id, binder)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(import_resolved_sym_id);
+
+        if let Some(symbol) = binder.symbols.get(sym_id)
+            && symbol.has_any_flags(symbol_flags::ALIAS)
+            && let Some(import_module) = symbol.import_module.as_deref()
+            && !import_module.starts_with('.')
+            && !import_module.starts_with('/')
+        {
+            return Some(import_module.to_string());
+        }
+
+        if let Some(path) =
+            self.resolve_public_export_module_path(original_sym_id, binder, current_path)
+        {
+            if self.symbol_is_globally_accessible(binder, sym_id, original_sym_id) {
+                return None;
+            }
+            return Some(path);
+        }
 
         if let Some(path) =
             self.resolve_symbol_module_path_from_source(original_sym_id, binder, current_path)
@@ -749,6 +855,48 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         binder.symbols.get(sym_id)?.import_module.clone()
+    }
+
+    fn resolve_public_export_module_path(
+        &self,
+        sym_id: SymbolId,
+        binder: &BinderState,
+        current_path: &str,
+    ) -> Option<String> {
+        let symbol = binder.symbols.get(sym_id)?;
+        let export_name = symbol.escaped_name.as_str();
+        let mut candidates = Vec::new();
+
+        for (module_path, exports) in binder.module_exports.iter() {
+            let Some(exported_sym_id) = exports.get(export_name) else {
+                continue;
+            };
+
+            let exported_resolves_to_symbol = exported_sym_id == sym_id
+                || binder.resolve_import_symbol(exported_sym_id) == Some(sym_id)
+                || self.resolve_alias_in_source_context(exported_sym_id, binder) == Some(sym_id);
+            if !exported_resolves_to_symbol {
+                continue;
+            }
+
+            if self.paths_refer_to_same_source_file(current_path, module_path) {
+                continue;
+            }
+
+            let module_specifier = if let Some(package_specifier) =
+                self.package_specifier_for_node_modules_path(current_path, module_path)
+            {
+                package_specifier
+            } else {
+                let rel_path = self.calculate_relative_path(current_path, module_path);
+                self.strip_ts_extensions(&rel_path)
+            };
+
+            candidates.push(module_specifier);
+        }
+
+        candidates.sort_by_key(|specifier| (specifier.matches('/').count(), specifier.len()));
+        candidates.into_iter().next()
     }
 
     /// Check whether a foreign symbol has a local import alias in this file

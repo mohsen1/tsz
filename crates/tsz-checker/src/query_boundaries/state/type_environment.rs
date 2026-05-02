@@ -343,8 +343,12 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::TypeResolver>(
     type_id: TypeId,
     seed: impl Iterator<Item = (TypeId, TypeId)>,
     has_seed: bool,
+    expand_application_display_alias_args: bool,
 ) -> EvalWithCacheResult {
     let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(db, resolver);
+    if expand_application_display_alias_args {
+        evaluator = evaluator.with_expanded_application_display_alias_args();
+    }
     if has_seed {
         evaluator.seed_cache(seed);
     }

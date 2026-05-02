@@ -215,6 +215,7 @@ impl<'a> CheckerState<'a> {
                 type_id,
                 seed_iter.into_iter(),
                 has_seed,
+                self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
@@ -261,6 +262,7 @@ impl<'a> CheckerState<'a> {
                 type_id,
                 seed_iter.into_iter(),
                 use_cache,
+                self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
