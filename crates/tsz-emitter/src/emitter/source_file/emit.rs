@@ -1316,6 +1316,12 @@ impl<'a> Printer<'a> {
             let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
 
             if is_erased {
+                if let Some(recovered_tail) =
+                    self.recovered_ambient_class_parenthesized_tail_text(stmt_node)
+                {
+                    self.write(&recovered_tail);
+                    self.write_line();
+                }
                 // Skip erased declarations. Their leading comments were already
                 // filtered out of all_comments during initialization.
                 // Also consume trailing same-line comments for the erased statement
@@ -1769,6 +1775,52 @@ impl<'a> Printer<'a> {
             end += 1;
         }
         if depth != 0 {
+            return None;
+        }
+
+        let recovered = crate::safe_slice::slice(text, start, end).ok()?.trim_end();
+        Some(format!("{recovered};"))
+    }
+
+    fn recovered_ambient_class_parenthesized_tail_text(&self, node: &Node) -> Option<String> {
+        if node.kind != syntax_kind_ext::CLASS_DECLARATION {
+            return None;
+        }
+
+        let class = self.arena.get_class(node)?;
+        if !self.arena.is_declare(&class.modifiers) || class.heritage_clauses.is_some() {
+            return None;
+        }
+
+        let text = self.source_text?;
+        let cursor = class.type_parameters.as_ref().map_or_else(
+            || self.arena.get(class.name).map(|name| name.end),
+            |params| Some(params.end),
+        )?;
+        let start = self.skip_trivia_forward(cursor, node.end) as usize;
+        let bytes = text.as_bytes();
+        if bytes.get(start) != Some(&b'(') {
+            return None;
+        }
+
+        let mut depth = 0_i32;
+        let mut end = start;
+        while end < bytes.len() {
+            match bytes[end] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end += 1;
+                        break;
+                    }
+                }
+                b'\n' | b'\r' => return None,
+                _ => {}
+            }
+            end += 1;
+        }
+        if depth != 0 || end > node.end as usize {
             return None;
         }
 
