@@ -712,10 +712,17 @@ impl<'a> ES5ClassTransformer<'a> {
 
                     // Use class alias for the initializer value if needed
                     let value = if !self.class_decorators.is_empty() {
-                        self.convert_expression_static_with_raw_this_substitution(
-                            prop_data.initializer,
-                            "(void 0)",
-                        )
+                        if let Some(alias) = self.class_self_reference_alias.as_ref() {
+                            self.convert_expression_static_with_decorator_self_alias(
+                                prop_data.initializer,
+                                alias,
+                            )
+                        } else {
+                            self.convert_expression_static_with_raw_this_substitution(
+                                prop_data.initializer,
+                                "(void 0)",
+                            )
+                        }
                     } else if let Some(ref alias) = class_alias {
                         self.convert_expression_static_with_class_alias(
                             prop_data.initializer,
@@ -1318,10 +1325,17 @@ impl<'a> ES5ClassTransformer<'a> {
                             }
                         };
                         let value = if !self.class_decorators.is_empty() {
-                            self.convert_expression_static_with_raw_this_substitution(
-                                prop_data.initializer,
-                                "(void 0)",
-                            )
+                            if let Some(alias) = self.class_self_reference_alias.as_ref() {
+                                self.convert_expression_static_with_decorator_self_alias(
+                                    prop_data.initializer,
+                                    alias,
+                                )
+                            } else {
+                                self.convert_expression_static_with_raw_this_substitution(
+                                    prop_data.initializer,
+                                    "(void 0)",
+                                )
+                            }
                         } else if let Some(ref alias) = class_alias {
                             self.convert_expression_static_with_class_alias(
                                 prop_data.initializer,
@@ -1415,6 +1429,14 @@ impl<'a> ES5ClassTransformer<'a> {
         // Emit deferred static property initializers and static blocks after
         // all methods/accessors, matching tsc's ES5 class member ordering.
         if !deferred_static_prop_inits.is_empty() {
+            if let Some(alias) = self.class_self_reference_alias.as_ref()
+                && !self.class_decorators.is_empty()
+            {
+                body.push(IRNode::VarDecl {
+                    name: alias.clone().into(),
+                    initializer: None,
+                });
+            }
             // Emit class alias preamble before the first static property init
             if let Some(ref alias) = class_alias {
                 body.push(IRNode::VarDecl {
@@ -1430,6 +1452,36 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         deferred_static_blocks
+    }
+
+    pub(super) fn has_static_property_initializer(
+        &self,
+        members: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return false;
+            }
+            let Some(prop_data) = self.arena.get_property_decl(member_node) else {
+                return false;
+            };
+            self.arena
+                .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+                && !is_private_identifier(self.arena, prop_data.name)
+                && !self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
+                && self.property_initializer_has_equals(member_node, prop_data)
+        })
     }
 
     /// Check if any static property initializer or static block uses `this`.

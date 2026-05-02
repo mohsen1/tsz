@@ -767,6 +767,25 @@ impl<'a> ES5ClassTransformer<'a> {
         result
     }
 
+    /// Convert a static initializer for a legacy-decorated self-referencing class.
+    ///
+    /// TSC rewrites class-name references in static initializers to the decorator
+    /// self alias (`C_1`) while still lowering static `this` to `void 0`.
+    fn convert_expression_static_with_decorator_self_alias(
+        &self,
+        idx: NodeIndex,
+        alias: &str,
+    ) -> IRNode {
+        let converter = self
+            .make_converter()
+            .with_static(true)
+            .with_raw_this_substitution(Some("(void 0)".to_string()))
+            .with_identifier_substitution(self.class_name.clone(), alias.to_string());
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
+    }
+
     fn convert_computed_property_expression(&self, idx: NodeIndex, is_static: bool) -> IRNode {
         if let Some(raw) = self.raw_string_literal_source(idx) {
             return IRNode::Raw(raw.into());
@@ -1651,7 +1670,9 @@ impl<'a> ES5ClassTransformer<'a> {
             self.emit_member_decorator_ir(&mut body, class_idx);
         }
         if !self.class_decorators.is_empty() {
-            if let Some(alias) = self.class_self_reference_alias.as_ref() {
+            if let Some(alias) = self.class_self_reference_alias.as_ref()
+                && !self.has_static_property_initializer(&class_data.members)
+            {
                 body.push(IRNode::VarDecl {
                     name: alias.clone().into(),
                     initializer: None,
