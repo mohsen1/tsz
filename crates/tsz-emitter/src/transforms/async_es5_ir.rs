@@ -70,6 +70,11 @@ pub struct AsyncTransformState {
     pub captures_arguments: bool,
 }
 
+enum SuspendedAssignmentTarget {
+    Property(String),
+    Element(IRNode),
+}
+
 impl AsyncTransformState {
     pub fn new() -> Self {
         Self::default()
@@ -809,6 +814,14 @@ impl<'a> AsyncES5Transformer<'a> {
 
         // Check for nested await inside the expression
         if self.contains_await_recursive(idx) {
+            if self.lower_assignment_target_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                return;
+            }
             self.emit_nested_suspension(idx, cases, current_statements, current_label);
             let ir = self.expression_to_ir(idx);
             current_statements.push(IRNode::ExpressionStatement(Box::new(ir)));
@@ -1044,6 +1057,22 @@ impl<'a> AsyncES5Transformer<'a> {
                 }
 
                 // Emit the yield for the nested await
+                if let Some(lowered_init) = self.lower_call_callee_before_suspension(
+                    decl.initializer,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
+                    current_statements.push(IRNode::ExpressionStatement(Box::new(
+                        IRNode::BinaryExpr {
+                            left: Box::new(IRNode::Identifier(name.into())),
+                            operator: "=".to_string().into(),
+                            right: Box::new(lowered_init),
+                        },
+                    )));
+                    return;
+                }
+
                 self.emit_nested_suspension(
                     decl.initializer,
                     cases,
@@ -1090,6 +1119,134 @@ impl<'a> AsyncES5Transformer<'a> {
                 });
             }
         }
+    }
+
+    fn lower_assignment_target_before_suspension(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(bin) = self.arena.get_binary_expr(node) else {
+            return false;
+        };
+        if self.get_operator_text(bin.operator_token) != "=" {
+            return false;
+        }
+        if !self.contains_await_recursive(bin.right) || self.contains_await_recursive(bin.left) {
+            return false;
+        }
+        let Some(left_node) = self.arena.get(bin.left) else {
+            return false;
+        };
+
+        let Some((target, object)) = self.suspended_assignment_target(left_node) else {
+            return false;
+        };
+        let temp = self.generate_hoisted_temp();
+        current_statements.push(IRNode::VarDecl {
+            name: temp.clone().into(),
+            initializer: None,
+        });
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(temp.clone()),
+            object,
+        ))));
+
+        self.emit_nested_suspension(idx, cases, current_statements, current_label);
+
+        let lowered_target = match target {
+            SuspendedAssignmentTarget::Property(property) => {
+                IRNode::prop(IRNode::id(temp), property)
+            }
+            SuspendedAssignmentTarget::Element(index) => IRNode::elem(IRNode::id(temp), index),
+        };
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            lowered_target,
+            self.expression_to_ir(bin.right),
+        ))));
+        true
+    }
+
+    fn suspended_assignment_target(
+        &self,
+        left_node: &tsz_parser::parser::node::Node,
+    ) -> Option<(SuspendedAssignmentTarget, IRNode)> {
+        if left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(left_node)?;
+            let object = self.expression_to_ir(access.expression);
+            let property = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                access.name_or_argument,
+            );
+            return Some((SuspendedAssignmentTarget::Property(property), object));
+        }
+
+        if left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(left_node)?;
+            let object = self.expression_to_ir(access.expression);
+            let index = self.expression_to_ir(access.name_or_argument);
+            return Some((SuspendedAssignmentTarget::Element(index), object));
+        }
+
+        None
+    }
+
+    fn lower_call_callee_before_suspension(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> Option<IRNode> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(node)?;
+        let callee_node = self.arena.get(call.expression)?;
+        if callee_node.kind != tsz_scanner::SyntaxKind::Identifier as u16
+            || self.contains_await_recursive(call.expression)
+        {
+            return None;
+        }
+        let args = call.arguments.as_ref()?;
+        if !args
+            .nodes
+            .iter()
+            .any(|&arg| self.contains_await_recursive(arg))
+        {
+            return None;
+        }
+
+        let temp = self.generate_hoisted_temp();
+        current_statements.push(IRNode::VarDecl {
+            name: temp.clone().into(),
+            initializer: None,
+        });
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(temp.clone()),
+            self.expression_to_ir(call.expression),
+        ))));
+
+        self.emit_nested_suspension(idx, cases, current_statements, current_label);
+
+        let lowered_args = args
+            .nodes
+            .iter()
+            .map(|&arg| self.expression_to_ir(arg))
+            .collect();
+        Some(IRNode::CallExpr {
+            callee: Box::new(IRNode::prop(IRNode::id(temp), "apply")),
+            arguments: vec![IRNode::Undefined, IRNode::ArrayLiteral(lowered_args)],
+        })
     }
 
     // =========================================================================

@@ -82,3 +82,40 @@ fn test_variable_declaration_order() {
         "Variable declaration must come before yield: {output}"
     );
 }
+
+#[test]
+fn test_await_assignment_captures_property_target_before_yield() {
+    let output = transform_and_print("async function foo() { var o; o.a = await p; after(); }");
+
+    assert!(
+        output.contains("var o, _a;"),
+        "Object temp should be hoisted with local declarations: {output}"
+    );
+    assert!(
+        output.contains("_a = o;\n                    return [4 /*yield*/, p];"),
+        "Property assignment target should be captured before yielding: {output}"
+    );
+    assert!(
+        output.contains("_a.a = _b.sent();"),
+        "Resumed assignment should use the captured target and sent value: {output}"
+    );
+}
+
+#[test]
+fn test_await_call_argument_captures_identifier_callee_before_yield() {
+    let output =
+        transform_and_print("async function foo() { var b = fn(await p, a, a); after(); }");
+
+    assert!(
+        output.contains("var b, _a;"),
+        "Callee temp should be hoisted with local declarations: {output}"
+    );
+    assert!(
+        output.contains("_a = fn;\n                    return [4 /*yield*/, p];"),
+        "Call callee should be captured before yielding: {output}"
+    );
+    assert!(
+        output.contains("b = _a.apply(void 0, [_b.sent(), a, a]);"),
+        "Resumed call should invoke the captured callee with the sent value: {output}"
+    );
+}

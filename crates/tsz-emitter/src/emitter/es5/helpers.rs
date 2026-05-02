@@ -1392,14 +1392,7 @@ impl<'a> Printer<'a> {
         generator_body: &str,
         this_expr: &str,
     ) {
-        if hoisted_vars.iter().any(|var_name| var_name == "_a") {
-            for var_name in hoisted_vars {
-                self.write("var ");
-                self.write(var_name);
-                self.write(";");
-                self.write_line();
-            }
-        } else if !hoisted_vars.is_empty() {
+        if !hoisted_vars.is_empty() {
             self.write("var ");
             for (i, var_name) in hoisted_vars.iter().enumerate() {
                 if i > 0 {
