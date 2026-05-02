@@ -46,6 +46,12 @@ impl<'a> Printer<'a> {
             if clause.is_type_only {
                 continue;
             }
+            if !self.ctx.options.verbatim_module_syntax
+                && !self.source_is_js_file
+                && !self.import_has_value_usage_after_node(stmt_node, clause)
+            {
+                continue;
+            }
             if clause.name.is_some() {
                 needs_import_default = true;
             }
@@ -1498,9 +1504,9 @@ export const Foo = () => null;
         );
     }
 
-    /// AMD wrappers should strip relative-path `/// <reference>` directives.
+    /// AMD wrappers should preserve relative declaration-file `/// <reference>` directives.
     #[test]
-    fn amd_reference_directive_relative_path_stripped() {
+    fn amd_reference_directive_relative_dts_path_preserved() {
         let source = r#"/// <reference path="file1.d.ts" />
 import { x } from "mod";
 export const y = x;
@@ -1518,8 +1524,8 @@ export const y = x;
         let output = printer.get_output().to_string();
 
         assert!(
-            !output.contains("/// <reference"),
-            "Relative-path reference should be stripped from AMD output.\nOutput:\n{output}"
+            output.starts_with("/// <reference path=\"file1.d.ts\" />"),
+            "Relative .d.ts reference should be emitted before AMD wrapper.\nOutput:\n{output}"
         );
         assert!(
             output.contains("define("),
