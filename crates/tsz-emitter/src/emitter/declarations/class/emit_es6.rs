@@ -1785,6 +1785,15 @@ impl<'a> Printer<'a> {
             }
         }
 
+        if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+            self.write_line();
+            self.write("exports.");
+            self.write(&class_name);
+            self.write(" = ");
+            self.write(&class_name);
+            self.write(";");
+        }
+
         // Emit computed property name hoisting comma expression or standalone side effects.
         if !computed_prop_entries.is_empty() {
             if class_expr_temp.is_some() {
@@ -1831,15 +1840,6 @@ impl<'a> Printer<'a> {
                     self.write(";");
                 }
             }
-        }
-
-        if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
-            self.write_line();
-            self.write("exports.");
-            self.write(&class_name);
-            self.write(" = ");
-            self.write(&class_name);
-            self.write(";");
         }
 
         if let Some(recovery_name) = self.class_var_function_recovery_name(node) {
