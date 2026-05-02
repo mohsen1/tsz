@@ -202,6 +202,51 @@ fn default_export_function_hoists_export_assignment() {
     );
 }
 
+/// `export namespace F` can merge with `export default function F`.
+/// The default export owns the CommonJS export binding, so the namespace IIFE
+/// must augment the local function binding rather than assigning `exports.F`.
+#[test]
+fn default_export_function_namespace_merge_keeps_local_iife_tail() {
+    let source = r#"export default function Decl() {
+    return 0;
+}
+
+export interface Decl {
+    p: number;
+}
+
+export namespace Decl {
+    export var x = 10;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.default = Decl;"),
+        "Default function export should still bind exports.default.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("})(Decl || (Decl = {}));"),
+        "Merged namespace should augment the local function binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.Decl = Decl = {}"),
+        "Merged namespace should not create a named CommonJS export binding.\nOutput:\n{output}"
+    );
+}
+
 /// `export default function func()` with other statements before the
 /// function should hoist `exports.default = func;` to the preamble,
 /// before all other statements. This matches tsc behavior:
