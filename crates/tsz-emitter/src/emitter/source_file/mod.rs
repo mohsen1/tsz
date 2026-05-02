@@ -153,6 +153,30 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn ambient_class_parenthesized_tail_emits_recovered_expression() {
+        let source = "declare class foo();\nfunction foo() {}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.starts_with("\"use strict\";\n();\nfunction foo() { }"),
+            "Malformed ambient class tail should emit the recovered `();` expression.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn esm_suppresses_redundant_export_empty_when_real_exports_exist() {
         // When a file has both `export {};` and `export { C };`, the empty export
         // is redundant and should be suppressed. tsc omits it.
