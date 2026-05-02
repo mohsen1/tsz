@@ -2109,7 +2109,6 @@ impl ParserState {
                                     "Variable declaration expected.",
                                     diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
                                 );
-                                self.next_token();
                             }
                         }
                         break;
