@@ -919,19 +919,12 @@ impl<'a> CheckerState<'a> {
         // extension is the user's mistake on a real file). When the module
         // doesn't resolve at all, tsc emits TS2307 ('cannot find module')
         // instead — emitting both produces a misleading double-diagnostic.
-        let module_resolves = self
-            .ctx
-            .resolve_import_target_from_file_with_mode(self.ctx.current_file_idx, module_name, None)
-            .is_some()
-            || self
-                .ctx
-                .module_exports_contains_module(self.ctx.binder, module_name);
         if !self.ctx.compiler_options.allow_importing_ts_extensions
             && !self.ctx.compiler_options.rewrite_relative_import_extensions
             && !is_type_only_import
             && !self.ctx.is_declaration_file()
             && !has_jsx_not_set_error
-            && module_resolves
+            && self.module_target_is_typescript_input_file(module_name)
             && let Some(ext) = ts_extension_suffix(module_name)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};

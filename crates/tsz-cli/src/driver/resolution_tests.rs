@@ -1093,6 +1093,47 @@ fn test_resolve_module_specifier_classic_path_mapping_falls_back_to_root() {
 }
 
 #[test]
+fn test_resolve_module_specifier_paths_without_base_url_use_project_base() {
+    let mut raw_paths = FxHashMap::default();
+    raw_paths.insert("foo/*".to_string(), vec!["./dist/*".to_string()]);
+    raw_paths.insert("baz/*.ts".to_string(), vec!["./types/*.d.ts".to_string()]);
+    let compiler_options = CompilerOptions {
+        paths: Some(raw_paths),
+        module_resolution: Some("bundler".to_string()),
+        module: Some("es2015".to_string()),
+        ..Default::default()
+    };
+    let options =
+        resolve_compiler_options(Some(&compiler_options)).expect("resolve compiler options");
+
+    let base = PathBuf::from("/tmp/tsz-test-paths-without-baseurl");
+    let mut known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    known_files.insert(base.join("dist/bar.ts"));
+    known_files.insert(base.join("types/main.d.ts"));
+
+    let mut cache = ModuleResolutionCache::default();
+    let foo = resolve_module_specifier(
+        &base.join("test.ts"),
+        "foo/bar.ts",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+    assert_eq!(foo, Some(base.join("dist/bar.ts")));
+
+    let baz = resolve_module_specifier(
+        &base.join("test.ts"),
+        "baz/main.ts",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+    assert_eq!(baz, Some(base.join("types/main.d.ts")));
+}
+
+#[test]
 fn test_resolve_module_specifier_classic_path_mapping_absolute_target_fallback() {
     let mut raw_paths = FxHashMap::default();
     raw_paths.insert(

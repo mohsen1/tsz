@@ -4189,6 +4189,45 @@ fn compile_resolves_paths_mappings() {
 }
 
 #[test]
+fn compile_paths_without_base_url_resolve_before_ts_extension_diagnostic() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "es2015",
+            "moduleResolution": "bundler",
+            "paths": {
+              "foo/*": ["./dist/*"],
+              "baz/*.ts": ["./types/*.d.ts"]
+            }
+          },
+          "files": ["test.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        "import { a } from 'foo/bar.ts';\nimport { b } from 'baz/main.ts';\na; b;\n",
+    );
+    write_file(&base.join("dist/bar.ts"), "export const a = 1234;");
+    write_file(&base.join("types/main.d.ts"), "export const b: string;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should complete");
+    let codes: Vec<_> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS
+        ],
+        "expected only TS5097 for the path-mapped TS input, got: {codes:?}"
+    );
+}
+
+#[test]
 fn compile_resolves_node_modules_types() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
