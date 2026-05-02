@@ -329,6 +329,20 @@ impl SourceWriter {
         self.column
     }
 
+    /// Get the indentation level implied by spaces already written on the
+    /// current line. This is useful when a raw transform string started a line
+    /// without synchronizing the writer's logical indentation.
+    pub fn current_line_visual_indent_level(&self) -> u32 {
+        let line = self
+            .output
+            .rsplit_once(&self.new_line)
+            .map_or(self.output.as_str(), |(_, line)| line);
+        let leading_spaces = line.bytes().take_while(|&b| b == b' ').count();
+        (leading_spaces / self.indent_str.len())
+            .try_into()
+            .unwrap_or(0)
+    }
+
     /// Get current source index for source map entries.
     pub const fn current_source_index(&self) -> u32 {
         self.current_source_index
