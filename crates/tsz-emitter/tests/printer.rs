@@ -84,6 +84,23 @@ fn arrow_default_optional_chain_temp_is_scoped_to_es5_body() {
 }
 
 #[test]
+fn decorated_anonymous_class_expression_sets_empty_function_name() {
+    let source = "declare let dec: any;\n(@dec class {});";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2022,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("static { __setFunctionName(_classThis, \"\"); }"),
+        "Anonymous decorated class expressions should set an empty function name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_es6_generator_param_named_yield_keeps_identifier_text() {
     let source = "function* foo(a = yield, yield) {}";
     let output = parse_lower_print(source, PrintOptions::es6());

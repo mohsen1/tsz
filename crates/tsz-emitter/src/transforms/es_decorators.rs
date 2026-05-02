@@ -180,6 +180,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .get_identifier_text(class_data.name)
             .unwrap_or_default();
         let class_decorators = self.collect_class_decorator_exprs(&class_data.modifiers);
+        let class_name_was_empty = class_name.is_empty();
         // For anonymous class expressions WITH class decorators, generate a temp name
         // (needed for the var assignment pattern). Without class decorators, keep anonymous.
         let class_name = if class_name.is_empty() && !class_decorators.is_empty() {
@@ -369,7 +370,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     // Use ONLY the externally-provided function name for __setFunctionName.
                     // The class's own name (e.g., `class C {}`) is NOT used — it's a
                     // self-reference, not the named evaluation target.
-                    if let Some(fn_name) = self.function_name.clone() {
+                    let function_name = self
+                        .function_name
+                        .clone()
+                        .or_else(|| class_name_was_empty.then(String::new));
+                    if let Some(fn_name) = function_name {
                         let set_fn = self.helper("__setFunctionName");
                         out.push_str(&format!(
                             "{i2}static {{ {set_fn}(_classThis, \"{fn_name}\"); }}\n"
