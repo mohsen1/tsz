@@ -119,6 +119,10 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_use_define_for_class_fields(enable);
     }
 
+    pub fn set_class_self_reference_alias(&mut self, alias: String) {
+        self.transformer.set_class_self_reference_alias(alias);
+    }
+
     pub fn set_temp_var_counter(&mut self, counter: u32) {
         self.transformer.set_temp_var_counter(counter);
     }

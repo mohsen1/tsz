@@ -232,6 +232,16 @@ fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex) -> String
             }
             "Object".to_string()
         }
+        k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+            if let Some(cond) = arena.get_conditional_type(type_node) {
+                let true_type = serialize_type_for_metadata(arena, cond.true_type);
+                let false_type = serialize_type_for_metadata(arena, cond.false_type);
+                if true_type == false_type {
+                    return true_type;
+                }
+            }
+            "Object".to_string()
+        }
         _ => "Object".to_string(),
     }
 }
@@ -318,6 +328,8 @@ pub struct ES5ClassTransformer<'a> {
     computed_prop_temp_map: std::collections::HashMap<NodeIndex, String>,
     /// Alias used for `this` in static property initializers/static blocks for the current class.
     current_static_class_alias: Option<String>,
+    /// Alias used for class-name self references when class decorators can replace the binding.
+    class_self_reference_alias: Option<String>,
     use_define_for_class_fields: bool,
     commonjs_import_substitutions: FxHashMap<String, String>,
     /// Additional hoisted temp variable names collected from expression conversions
@@ -344,6 +356,7 @@ impl<'a> ES5ClassTransformer<'a> {
             temp_var_counter: Cell::new(0),
             computed_prop_temp_map: std::collections::HashMap::new(),
             current_static_class_alias: None,
+            class_self_reference_alias: None,
             use_define_for_class_fields: false,
             commonjs_import_substitutions: FxHashMap::default(),
             extra_hoisted_temps: RefCell::new(Vec::new()),
@@ -352,6 +365,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
         self.use_define_for_class_fields = enable;
+    }
+
+    pub fn set_class_self_reference_alias(&mut self, alias: String) {
+        self.class_self_reference_alias = Some(alias);
     }
 
     pub fn set_commonjs_import_substitutions(&mut self, subs: FxHashMap<String, String>) {
@@ -632,6 +649,28 @@ impl<'a> ES5ClassTransformer<'a> {
             converter = converter.with_transforms(transforms.clone());
         }
         converter
+    }
+
+    fn convert_statement_with_context(
+        &self,
+        idx: NodeIndex,
+        is_static: bool,
+        class_alias: Option<&str>,
+    ) -> IRNode {
+        let mut converter = self.make_converter();
+        if is_static {
+            converter = converter.with_static(true);
+        }
+        if let Some(alias) = class_alias {
+            converter = converter.with_class_alias(Some(alias.to_string()));
+        }
+        if let Some(alias) = self.class_self_reference_alias.as_ref() {
+            converter =
+                converter.with_identifier_substitution(self.class_name.clone(), alias.clone());
+        }
+        let result = converter.convert_statement(idx);
+        self.collect_from_converter(&converter);
+        result
     }
 
     /// Collect hoisted temps from a converter and update our temp counter
@@ -1191,7 +1230,12 @@ impl<'a> ES5ClassTransformer<'a> {
         let total_entries = dec_strs.len() + param_strs.len() + metadata_strs.len();
         let mut raw = String::new();
         raw.push_str(&self.class_name);
-        raw.push_str(" = __decorate([");
+        raw.push_str(" = ");
+        if let Some(alias) = self.class_self_reference_alias.as_ref() {
+            raw.push_str(alias);
+            raw.push_str(" = ");
+        }
+        raw.push_str("__decorate([");
         let mut written = 0;
         for dec_str in &dec_strs {
             raw.push('\n');
@@ -1371,13 +1415,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 .statements
                 .nodes
                 .iter()
-                .map(|&s| {
-                    if is_static {
-                        self.convert_statement_static(s)
-                    } else {
-                        self.convert_statement(s)
-                    }
-                })
+                .map(|&s| self.convert_statement_with_context(s, is_static, class_alias.as_deref()))
                 .collect()
         } else {
             vec![]
@@ -1556,6 +1594,12 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(ctor_ir) = self.emit_constructor_ir(class_idx) {
             body.push(ctor_ir);
         }
+        if let Some(alias) = self.class_self_reference_alias.as_ref() {
+            body.push(IRNode::expr_stmt(IRNode::assign(
+                IRNode::id(alias.clone()),
+                IRNode::id(self.class_name.clone()),
+            )));
+        }
 
         // Emit computed property temp var declarations and comma expression
         if !computed_prop_entries.is_empty() {
@@ -1607,6 +1651,12 @@ impl<'a> ES5ClassTransformer<'a> {
             self.emit_member_decorator_ir(&mut body, class_idx);
         }
         if !self.class_decorators.is_empty() {
+            if let Some(alias) = self.class_self_reference_alias.as_ref() {
+                body.push(IRNode::VarDecl {
+                    name: alias.clone().into(),
+                    initializer: None,
+                });
+            }
             self.emit_class_decorator_ir(&mut body, class_idx);
         } else if self.legacy_decorators {
             // Even without class-level decorators, constructor parameter decorators

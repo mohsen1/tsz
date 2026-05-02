@@ -372,6 +372,16 @@ impl<'a> NamespaceES5Transformer<'a> {
         self.transform_namespace_with_flags(ns_idx, true, true)
     }
 
+    /// Transform an exported namespace declaration with explicit control over
+    /// whether the namespace binding declaration should be emitted.
+    pub fn transform_exported_namespace_with_var_flag(
+        &self,
+        ns_idx: NodeIndex,
+        should_declare_var: bool,
+    ) -> Option<IRNode> {
+        self.transform_namespace_with_flags(ns_idx, true, should_declare_var)
+    }
+
     /// Transform a namespace declaration with explicit export and var flags
     fn transform_namespace_with_flags(
         &self,

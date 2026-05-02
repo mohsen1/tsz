@@ -364,6 +364,17 @@ impl<'a> Printer<'a> {
             // Rest type (...T) → Object (used in tuples)
             k if k == syntax_kind_ext::REST_TYPE => "Object".to_string(),
 
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+                if let Some(cond) = self.arena.get_conditional_type(type_node) {
+                    let true_type = self.serialize_type_for_metadata(cond.true_type);
+                    let false_type = self.serialize_type_for_metadata(cond.false_type);
+                    if true_type == false_type {
+                        return true_type;
+                    }
+                }
+                "Object".to_string()
+            }
+
             // Conditional, mapped, indexed access, type query, infer, import → Object
             _ => "Object".to_string(),
         }

@@ -3,6 +3,7 @@
 //! Contains the `EmitDirective` enum and all methods related to applying
 //! transform directives during emission (Phase 2 architecture).
 
+use super::declarations::class::class_has_self_references;
 use super::*;
 use std::sync::Arc;
 use tracing::debug;
@@ -432,6 +433,7 @@ impl<'a> Printer<'a> {
                         // When a namespace merges with a default-exported function
                         // of the same name, tsc does NOT create an exports.Name
                         // binding — the function is the primary binding.
+                        let mut should_declare_namespace_var = None;
                         let merges_with_default_func = self
                             .arena
                             .get_module(node)
@@ -452,8 +454,11 @@ impl<'a> Printer<'a> {
                             );
                             // Cross-block export sharing
                             if let Some(module_decl) = self.arena.get_module(node) {
-                                let ns_name = self.get_identifier_text_idx(module_decl.name);
-                                if !ns_name.is_empty() {
+                                if let Some(ns_name) = self.get_module_root_name(module_decl.name) {
+                                    if self.declared_namespace_names.contains(&ns_name) {
+                                        should_declare_namespace_var = Some(false);
+                                    }
+                                    self.declared_namespace_names.insert(ns_name.clone());
                                     let block_exports = ns_emitter.collect_exported_var_names(idx);
                                     let entry =
                                         self.namespace_prior_exports.entry(ns_name).or_default();
@@ -473,8 +478,8 @@ impl<'a> Printer<'a> {
                                 // Merging with default-exported function: suppress var
                                 // since the function declaration provides the binding.
                                 ns_emitter.set_should_declare_var(false);
-                            } else if let Some(should_declare_var) =
-                                Self::namespace_var_flag_from_directive(inner.as_ref())
+                            } else if let Some(should_declare_var) = should_declare_namespace_var
+                                .or_else(|| Self::namespace_var_flag_from_directive(inner.as_ref()))
                             {
                                 ns_emitter.set_should_declare_var(should_declare_var);
                             }
@@ -920,6 +925,20 @@ impl<'a> Printer<'a> {
             && let Some(class_data) = self.arena.get_class(class_node_ref)
         {
             let class_decorators = self.collect_class_decorators(&class_data.modifiers);
+            let class_self_alias = if !class_decorators.is_empty() {
+                self.get_identifier_text_opt(class_data.name)
+                    .filter(|class_name| {
+                        class_has_self_references(
+                            self.arena,
+                            self.source_text_for_map(),
+                            class_name,
+                            &class_data.members.nodes,
+                        )
+                    })
+                    .map(|class_name| format!("{class_name}_1"))
+            } else {
+                None
+            };
             let has_member_decorators = class_data.members.nodes.iter().any(|&m_idx| {
                 let Some(m_node) = self.arena.get(m_idx) else {
                     return false;
@@ -986,6 +1005,9 @@ impl<'a> Printer<'a> {
                     has_member_decorators,
                     emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
                 });
+                if let Some(alias) = class_self_alias {
+                    es5_emitter.set_class_self_reference_alias(alias);
+                }
             }
         }
 
@@ -1379,10 +1401,14 @@ impl<'a> Printer<'a> {
             } => {
                 if node.kind == syntax_kind_ext::MODULE_DECLARATION && !*is_default {
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                    let mut should_declare_namespace_var = None;
                     // Cross-block export sharing
                     if let Some(module_decl) = self.arena.get_module(node) {
-                        let ns_name = self.get_identifier_text_idx(module_decl.name);
-                        if !ns_name.is_empty() {
+                        if let Some(ns_name) = self.get_module_root_name(module_decl.name) {
+                            if self.declared_namespace_names.contains(&ns_name) {
+                                should_declare_namespace_var = Some(false);
+                            }
+                            self.declared_namespace_names.insert(ns_name.clone());
                             let block_exports = ns_emitter.collect_exported_var_names(idx);
                             let entry = self.namespace_prior_exports.entry(ns_name).or_default();
                             entry.extend(block_exports);
@@ -1397,9 +1423,14 @@ impl<'a> Printer<'a> {
                     if let Some(text) = self.source_text_for_map() {
                         ns_emitter.set_source_text(text);
                     }
-                    if let Some(should_declare_var) =
-                        Self::namespace_var_flag_from_directive(inner.as_ref())
-                    {
+                    if let Some(should_declare_var) = should_declare_namespace_var.or_else(|| {
+                        Self::namespace_var_flag_from_directive(inner.as_ref()).or_else(|| {
+                            directives[..index]
+                                .iter()
+                                .rev()
+                                .find_map(Self::namespace_var_flag_from_directive)
+                        })
+                    }) {
                         ns_emitter.set_should_declare_var(should_declare_var);
                     }
                     let output = ns_emitter.emit_exported_namespace(idx);

@@ -776,7 +776,9 @@ impl<'a> Printer<'a> {
             if needs_parens {
                 self.write("(");
             }
-            self.emit(expr.expression);
+            if !self.try_emit_parent_namespace_heritage_reference(expr.expression) {
+                self.emit(expr.expression);
+            }
             if needs_parens {
                 self.write(")");
             }
@@ -798,11 +800,45 @@ impl<'a> Printer<'a> {
             if needs_parens {
                 self.write("(");
             }
-            self.emit(idx);
+            if !self.try_emit_parent_namespace_heritage_reference(idx) {
+                self.emit(idx);
+            }
             if needs_parens {
                 self.write(")");
             }
         }
+    }
+
+    fn try_emit_parent_namespace_heritage_reference(&mut self, idx: NodeIndex) -> bool {
+        if !self.in_namespace_iife || self.suppress_ns_qualification {
+            return false;
+        }
+
+        let Some(parent) = self.parent_namespace_name.clone() else {
+            return false;
+        };
+        let Some(name) = self.arena.identifier_text_owned(idx) else {
+            return false;
+        };
+
+        let is_parent_export = self
+            .namespace_prior_exports
+            .iter()
+            .any(|(namespace, exports)| {
+                exports.contains(name.as_str())
+                    && (namespace == &parent
+                        || namespace
+                            .strip_suffix(parent.as_str())
+                            .is_some_and(|prefix| prefix.ends_with('.')))
+            });
+        if !is_parent_export {
+            return false;
+        }
+
+        self.write(&parent);
+        self.write(".");
+        self.write_identifier(&name);
+        true
     }
 
     /// Check if a heritage expression node is an optional chain that will be lowered
@@ -940,6 +976,12 @@ impl<'a> Printer<'a> {
                     && !self.export_default_target_has_runtime_value(export_data.export_clause)
                 {
                     return true;
+                }
+                if inner_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    && let Some(import_data) = self.arena.get_import_decl(inner_node)
+                    && !import_data.is_type_only
+                {
+                    return false;
                 }
                 self.is_erased_statement(inner_node)
             }

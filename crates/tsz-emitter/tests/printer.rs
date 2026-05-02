@@ -258,6 +258,50 @@ fn test_commonjs_type_only_named_import_is_elided() {
 }
 
 #[test]
+fn test_async_generator_dynamic_import_nested_yield() {
+    let source = "async function* foo() {\n    import((await import(yield \"foo\")).default);\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("Promise.resolve(`${yield yield __await(\"foo\")}`)"),
+        "Nested dynamic import yield should be awaited for async generator lowering.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_invalid_export_throw_elides_recovery_export_and_keeps_strict() {
+    let source = "throw;\n\nexport throw null;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(output, "\"use strict\";\nthrow ;\nthrow null;\n");
+}
+
+#[test]
+fn test_nested_namespace_extends_parent_export_when_name_conflicts() {
+    let source = "declare namespace A.B.C {\n    class B {\n    }\n}\n\nnamespace A.B {\n    export class EventManager {\n        id: number;\n    }\n}\n\nnamespace A.B.C {\n    export class ContextMenu extends EventManager {\n        name: string;\n    }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("class ContextMenu extends B.EventManager"),
+        "Nested namespace heritage should qualify parent namespace export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_module_temp_vars_do_not_collide() {
     let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\nconsole.log(x);\n";
     let output = parse_lower_print(
@@ -376,6 +420,100 @@ fn test_commonjs_export_equals_interface_is_erased() {
     );
 
     assert!(!output.contains("module.exports = C"));
+}
+
+#[test]
+fn test_amd_export_import_namespace_alias_emits_export_assignment() {
+    let source = "namespace x { interface c {} }\nexport import a = x.c;\nvar b: a;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.a = void 0;"),
+        "exported import alias should be initialized in AMD output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.a = x.c;"),
+        "exported import alias should assign directly to exports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_commonjs_export_import_namespace_alias_keeps_export_equals() {
+    let source = "namespace x { interface c {} }\nexport import a = x.c;\nexport = x;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.a = void 0;"),
+        "exported import alias should still get CJS initialization.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.a = x.c;"),
+        "exported import alias should assign directly to exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("module.exports = x;"),
+        "export = should be preserved when an exported alias references the namespace.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__esModule"),
+        "export = output should not include an __esModule marker.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_invalid_interface_without_name_recovers_body_text() {
+    let source = "interface { }\ninterface interface{ }\ninterface & { }\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("interface;\n{ }"),
+        "missing interface name should recover the interface token and body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("interface & {};"),
+        "invalid interface ampersand statement should still be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("interface interface"),
+        "invalid identifier named interface should stay erased.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_unterminated_empty_switch_recovers_following_class() {
+    let source = "class C {\n  constructor() {\n    switch (e) {\n\nclass D {\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("switch (e) {\n        }\n        class D {\n        }"),
+        "unterminated empty switch should recover following class declaration.\nOutput:\n{output}"
+    );
 }
 
 #[test]
@@ -516,6 +654,31 @@ fn test_amd_non_module_script_no_use_strict() {
     assert!(
         !output.contains("use strict"),
         "AMD non-module script should not get 'use strict', got: {output}"
+    );
+}
+
+#[test]
+fn test_amd_export_assignment_elides_unused_namespace_alias() {
+    let source = r#"namespace M {
+    export class C {}
+}
+import M22 = M;
+export = M;"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !output.contains("M22"),
+        "Unused namespace alias should be erased from export-assignment modules.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return M;"),
+        "Export assignment should still return the namespace value.\nOutput:\n{output}"
     );
 }
 
@@ -840,6 +1003,33 @@ fn test_cjs_exported_namespace_uses_var_at_es5() {
     assert!(
         output.contains("var b = 2;"),
         "CJS namespace at ES5 should use 'var' for const, got: {output}"
+    );
+}
+
+#[test]
+fn test_cjs_exported_namespace_reopen_declares_var_once_es5() {
+    let source = r#"export namespace N {
+    export class A {}
+}
+export namespace N {
+    export class B {}
+}"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..PrintOptions::es5()
+        },
+    )
+    .code;
+
+    assert_eq!(
+        output.matches("var N;").count(),
+        1,
+        "Reopened exported namespace should only declare the namespace var once.\nOutput:\n{output}"
     );
 }
 

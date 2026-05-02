@@ -389,7 +389,9 @@ impl<'a> Printer<'a> {
                     self.namespace_scope_end = body_node.end;
                 }
                 let prev_parent_ns = self.parent_namespace_name.clone();
-                self.parent_namespace_name = prev_ns_name.clone();
+                self.parent_namespace_name = parent_name
+                    .map(std::borrow::ToOwned::to_owned)
+                    .or_else(|| prev_ns_name.clone());
                 self.current_namespace_name = Some(iife_param.clone());
                 self.emit_namespace_body_statements(module, &iife_param);
                 self.in_namespace_iife = prev;

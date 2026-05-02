@@ -112,6 +112,14 @@ impl<'a> Printer<'a> {
             };
 
             if self.ctx.target_es5 {
+                let needs_alias = !legacy_class_decorators.is_empty()
+                    && class_has_self_references(
+                        self.arena,
+                        self.source_text_for_map(),
+                        &class_name,
+                        &class.members.nodes,
+                    );
+                let alias_name = needs_alias.then(|| format!("{class_name}_1"));
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
                 es5_emitter.set_indent_level(self.writer.indent_level());
@@ -137,6 +145,9 @@ impl<'a> Printer<'a> {
                     has_member_decorators: has_legacy_member_decorators,
                     emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
                 });
+                if let Some(alias) = alias_name {
+                    es5_emitter.set_class_self_reference_alias(alias);
+                }
                 let output = es5_emitter.emit_class_with_name(idx, &class_name);
                 self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
                 let mappings = es5_emitter.take_mappings();
@@ -196,11 +207,7 @@ impl<'a> Printer<'a> {
 
             let alias_name = if needs_alias {
                 let alias = format!("{class_name}_1");
-                // Emit `var C_1;\n` before the class declaration
-                self.write("var ");
-                self.write(&alias);
-                self.write(";");
-                self.write_line();
+                self.hoisted_assignment_temps.push(alias.clone());
                 Some(alias)
             } else {
                 None
