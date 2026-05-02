@@ -313,6 +313,46 @@ fn test_es_module_external_import_equals_erased_to_empty_export_marker() {
 }
 
 #[test]
+fn test_es2015_string_namespace_export_downlevels_to_alias() {
+    let source = "export * as \"<Z>\" from \"./mod\";\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2022,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        output,
+        "import * as _a from \"./mod\";\nexport { _a as \"<Z>\" };\n"
+    );
+}
+
+#[test]
+fn test_amd_string_literal_import_substitution_uses_brackets() {
+    let source = "import { \"<X>\" as valueX } from \"./mod\";\nvalueX;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2022,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("[\"<X>\"]"),
+        "string-literal import should use bracket access.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(".;") && !output.contains(". "),
+        "string-literal import should not emit an empty property access.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_export_equals_interface_is_erased() {
     let source = "interface C {}\nexport = C;\n";
     let output = parse_lower_print(
