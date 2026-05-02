@@ -545,6 +545,44 @@ export = Point;
 }
 
 #[test]
+fn export_equals_class_instance_members_not_in_module_exports() {
+    // For `class D { bar: string; } export = D;`, the class's INSTANCE members
+    // (`bar`, accessible only via `new D().bar`) must NOT appear in
+    // `module_exports`. Otherwise an `import x = require()` of this module
+    // synthesizes a phantom `{ bar }` namespace surface and computes
+    // `typeof D & { bar }` as the import type instead of tsc's plain
+    // `typeof D`. That in turn flips diagnostics for assignment failures
+    // from TS2741 ("Property X is missing") to TS2322 ("Type … is not
+    // assignable"), as seen in the `typeofAmbientExternalModules`
+    // conformance test. tsc only exposes static members and namespace
+    // augmentations (which live in `.exports`) at the module level.
+    let source = r#"
+class D { bar: string; }
+export = D;
+"#;
+    let mut parser = ParserState::new("class_export_equals.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let module_exports = binder
+        .module_exports
+        .get("class_export_equals.ts")
+        .expect("expected cached module exports for file");
+    assert!(
+        module_exports.has("export="),
+        "expected explicit export= target to be cached"
+    );
+    assert!(
+        !module_exports.has("bar"),
+        "instance member `bar` from `class D` must not leak into module exports \
+         via export = D; tsc treats `import x = require()` as `typeof D`, not \
+         `typeof D & {{ bar }}`",
+    );
+}
+
+#[test]
 fn export_equals_qualified_namespace_target_populates_cached_members() {
     let source = r#"
 declare module "nestNamespaceModule" {

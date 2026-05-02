@@ -1278,7 +1278,15 @@ impl BinderState {
                     }
                 }
             }
-            if let Some(target_members) = target_symbol.members.as_ref() {
+            // The `.members` table on a class symbol holds INSTANCE members (e.g. `bar`
+            // from `class D { bar: string; }`). Those are accessible via an instance
+            // (`new D().bar`) — never at the module-namespace level. Static members and
+            // namespace augmentations live in `.exports`, which is merged above.
+            // Without this guard, `import x = require()` of an `export = D` module would
+            // synthesize a phantom `{ bar }` namespace surface and produce
+            // `typeof D & { bar }` instead of tsc's plain `typeof D`.
+            let target_is_class = (target_symbol.flags & symbol_flags::CLASS) != 0;
+            if !target_is_class && let Some(target_members) = target_symbol.members.as_ref() {
                 for (member_name, &member_sym_id) in target_members.iter() {
                     if member_name != "default" && !file_exports.has(member_name) {
                         file_exports.set(member_name.clone(), member_sym_id);

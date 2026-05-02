@@ -1226,7 +1226,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(symbol_members) = export_equals_symbol.members.as_ref() {
+        // The `.members` table on a class symbol holds INSTANCE members (e.g. `bar`
+        // from `class D { bar: string; }`). Those live on D's prototype and on
+        // instances of D — they are never accessible at the module-namespace level.
+        // Merging them here would synthesize a phantom `{ bar }` namespace surface
+        // and force the import type to be `typeof D & { bar }` instead of `typeof D`.
+        // tsc treats `import x = require()` of an `export = D` module as `typeof D`
+        // directly. Static members and namespace augmentations live in `.exports`,
+        // which we already merged above.
+        let is_class = export_equals_symbol.has_any_flags(tsz_binder::symbol_flags::CLASS);
+        if !is_class && let Some(symbol_members) = export_equals_symbol.members.as_ref() {
             for (name, sym_id) in symbol_members.iter() {
                 if name != "default" && !combined.has(name) {
                     combined.set(name.to_string(), *sym_id);
