@@ -40,7 +40,16 @@ impl<'a> Printer<'a> {
         // Empty blocks: check for comments inside and preserve original format
         if block.statements.nodes.is_empty() && !needs_this_capture {
             // Find the actual closing `}` position (not node.end which includes trailing trivia)
-            let closing_brace_pos = self.find_token_end_before_trivia(node.pos, node.end);
+            let closing_brace_end = self.find_block_closing_brace_end(node);
+            let closing_brace_pos = closing_brace_end.saturating_sub(1);
+            let opening_brace_pos = self.find_block_opening_brace_pos(node).unwrap_or(node.pos);
+            if is_function_body_block && !self.ctx.options.remove_comments {
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].end <= opening_brace_pos
+                {
+                    self.comment_emit_idx += 1;
+                }
+            }
             // Check if there are comments inside the block (between { and })
             let has_inner_comments = !self.ctx.options.remove_comments
                 && self
