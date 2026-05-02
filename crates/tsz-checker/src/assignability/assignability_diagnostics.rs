@@ -651,7 +651,13 @@ impl<'a> CheckerState<'a> {
         // Weak union violation for non-object-literal sources → emit TS2559
         // instead of the general TS2322/TS2345 error.
         if outcome.weak_union_violation {
-            self.error_no_common_properties(source, target, diag_idx);
+            // Recover the literal initializer type for display (e.g. `"A"` not
+            // `string`) when the source has been widened upstream. tsc keeps
+            // the literal in the TS2559 source slot.
+            let display_source = self
+                .literal_type_from_initializer(source_idx)
+                .unwrap_or(source);
+            self.error_no_common_properties(display_source, target, diag_idx);
             return false;
         }
         if !skip_source_elaboration
@@ -1653,6 +1659,22 @@ impl<'a> CheckerState<'a> {
     /// When the source type is callable or constructable and calling/constructing
     /// it would produce a type that is assignable to the target, tsc emits TS2560
     /// instead of TS2559 to suggest calling the value.
+    /// Format the source type for TS2559 messages. tsc widens enum-member
+    /// literal types to their parent enum name (e.g. `E.A` → `E`) in the
+    /// source slot of "has no properties in common" — but only there, not in
+    /// the general `format_type_diagnostic` output where `Parent.Member`
+    /// remains correct.
+    fn ts2559_source_display(&self, source: TypeId) -> String {
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(source)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+            && let Some(parent) = self.ctx.binder.get_symbol(symbol.parent)
+        {
+            return parent.escaped_name.to_string();
+        }
+        self.format_type_diagnostic(source)
+    }
+
     pub(crate) fn error_no_common_properties(
         &mut self,
         source: TypeId,
@@ -1671,7 +1693,11 @@ impl<'a> CheckerState<'a> {
         // so the diagnostic doesn't collapse to `Type 'A' has no properties
         // in common with type 'A'.`. Mirrors the pair-display logic used by
         // the standard TS2322 emitter.
-        let source_str = self.format_type_diagnostic(source);
+        // For TS2559, tsc widens enum-member literal types to the parent enum
+        // name in the source slot (e.g. `E.A` displays as `E`). The default
+        // `format_type_diagnostic` returns `Parent.Member`, which is correct
+        // elsewhere but mismatches tsc here.
+        let source_str = self.ts2559_source_display(source);
         let target_str = self.format_type_diagnostic(target);
         let (source_str, target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
