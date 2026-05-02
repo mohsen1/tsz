@@ -1263,14 +1263,20 @@ impl<'a> CheckerState<'a> {
                 // `D<string>` instead of just `D`.
                 if let Some(ref type_args_list) = new_expr.type_arguments
                     && !type_args_list.nodes.is_empty()
-                    && self.ctx.types.get_display_alias(return_type).is_none()
                 {
                     let resolved_args: Vec<TypeId> = type_args_list
                         .nodes
                         .iter()
                         .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                         .collect();
-                    if query::lazy_def_id(self.ctx.types, return_type).is_none() {
+                    if let Some(app) = self
+                        .explicit_class_new_application(new_expr.expression, resolved_args.clone())
+                    {
+                        return app;
+                    }
+                    if query::lazy_def_id(self.ctx.types, return_type).is_none()
+                        && self.ctx.types.get_display_alias(return_type).is_none()
+                    {
                         let factory = self.ctx.types.factory();
                         let app = factory.application(return_type, resolved_args);
                         self.ctx.types.store_display_alias(return_type, app);
