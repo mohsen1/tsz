@@ -73,26 +73,48 @@ impl<'a> Printer<'a> {
         false
     }
 
+    fn emit_static_block_iife_expression(
+        &mut self,
+        static_block_idx: NodeIndex,
+        saved_comment_idx: usize,
+    ) {
+        self.write("(() => ");
+        self.comment_emit_idx = saved_comment_idx;
+        if let Some(static_node) = self.arena.get(static_block_idx) {
+            let prev = self.emitting_function_body_block;
+            self.emitting_function_body_block = true;
+            // Save and restore hoisted temps so outer-scope vars (e.g. private
+            // field WeakMap names) don't get re-declared inside the IIFE body.
+            let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
+            self.emit_block(static_node, static_block_idx);
+            // Any temps generated inside the IIFE block have already been
+            // emitted by emit_block; restore the outer-scope temps.
+            self.hoisted_assignment_temps = saved_temps;
+            self.emitting_function_body_block = prev;
+        } else {
+            self.write("{ }");
+        }
+        self.write(")()");
+    }
+
     pub(in crate::emitter) fn emit_static_block_iifes(&mut self, blocks: Vec<(NodeIndex, usize)>) {
         for (static_block_idx, saved_comment_idx) in blocks {
             self.write_line();
-            self.write("(() => ");
-            self.comment_emit_idx = saved_comment_idx;
-            if let Some(static_node) = self.arena.get(static_block_idx) {
-                let prev = self.emitting_function_body_block;
-                self.emitting_function_body_block = true;
-                // Save and restore hoisted temps so outer-scope vars (e.g. private
-                // field WeakMap names) don't get re-declared inside the IIFE body.
-                let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
-                self.emit_block(static_node, static_block_idx);
-                // Any temps generated inside the IIFE block have already been
-                // emitted by emit_block; restore the outer-scope temps.
-                self.hoisted_assignment_temps = saved_temps;
-                self.emitting_function_body_block = prev;
-            } else {
-                self.write("{ }");
-            }
-            self.write(")();");
+            self.emit_static_block_iife_expression(static_block_idx, saved_comment_idx);
+            self.write(";");
+        }
+    }
+
+    pub(in crate::emitter) fn emit_static_block_iife_comma_items(
+        &mut self,
+        blocks: Vec<(NodeIndex, usize)>,
+    ) {
+        for (static_block_idx, saved_comment_idx) in blocks {
+            self.write(",");
+            self.write_line();
+            self.increase_indent();
+            self.emit_static_block_iife_expression(static_block_idx, saved_comment_idx);
+            self.decrease_indent();
         }
     }
 
