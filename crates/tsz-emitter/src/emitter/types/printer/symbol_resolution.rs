@@ -883,6 +883,7 @@ impl<'a> TypePrinter<'a> {
                 line.push_str(&member_indent);
 
                 if property.is_method
+                    && !property.readonly
                     && let Some(method_str) =
                         nested.print_property_as_method(property, shape.symbol)
                 {
@@ -996,6 +997,7 @@ impl<'a> TypePrinter<'a> {
 
                 // Try to emit as method syntax if the property is a method
                 if property.is_method
+                    && !property.readonly
                     && let Some(method_str) = self.print_property_as_method(property, shape.symbol)
                 {
                     member.push_str(&method_str);

@@ -365,11 +365,11 @@ fn edge_const_assertion_readonly_object() {
 #[test]
 fn fix_string_literal_escaped_quote() {
     // The scanner stores cooked text, so \" becomes a literal "
-    // The emitter matches tsc by switching to single quotes when possible.
+    // The declaration emitter preserves the source quote style.
     let output = emit_dts(r#"export declare const a: "quote\"mark";"#);
     println!("FIX escaped quote:\n{output}");
     assert!(
-        output.contains(r#"'quote"mark'"#),
+        output.contains(r#""quote\"mark""#),
         "Missing escaped quote: {output}"
     );
 }
@@ -409,8 +409,8 @@ fn fix_string_literal_single_quote_escape() {
     let output = emit_dts("export declare const a: 'it\\'s';");
     println!("FIX single quote escape:\n{output}");
     assert!(
-        output.contains(r#""it's""#),
-        "Expected string literal type to normalize to double quotes: {output}"
+        output.contains(r#"'it\'s'"#),
+        "Expected string literal type to preserve source single quotes: {output}"
     );
 }
 
@@ -429,7 +429,7 @@ fn fix_string_literal_combined_escapes() {
     let output = emit_dts(r#"export declare const a: "a\\b\"c\nd";"#);
     println!("FIX combined escapes:\n{output}");
     assert!(
-        output.contains(r#"'a\\b"c\nd'"#),
+        output.contains(r#""a\\b\"c\nd""#),
         "Missing combined escapes: {output}"
     );
 }

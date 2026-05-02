@@ -541,12 +541,47 @@ impl<'a> DeclarationEmitter<'a> {
             return declarations;
         }
 
+        let mut commonjs_exported_property_refs: FxHashSet<(String, String)> = FxHashSet::default();
         for &stmt_idx in &source_file.statements.nodes {
-            let Some((_root_name, member_name, initializer)) =
+            let Some((_export_name_idx, initializer)) =
+                self.js_commonjs_named_export_for_statement(stmt_idx)
+            else {
+                continue;
+            };
+            let initializer = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(initializer);
+            let Some(init_node) = self.arena.get(initializer) else {
+                continue;
+            };
+            if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(access) = self.arena.get_access_expr(init_node) else {
+                continue;
+            };
+            let receiver = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(access.expression);
+            if let (Some(root_name), Some(member_name)) = (
+                self.get_identifier_text(receiver),
+                self.get_identifier_text(access.name_or_argument),
+            ) {
+                commonjs_exported_property_refs.insert((root_name, member_name));
+            }
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((root_name, member_name, initializer)) =
                 self.js_namespace_class_expando_for_statement(stmt_idx)
             else {
                 continue;
             };
+            if let Some(member_text) = self.get_identifier_text(member_name)
+                && commonjs_exported_property_refs.contains(&(root_name, member_text))
+            {
+                continue;
+            }
             declarations.insert(stmt_idx, (member_name, initializer));
         }
 

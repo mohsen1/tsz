@@ -386,6 +386,20 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
 
+        if self.is_js_export_equals_name(name_idx) {
+            return true;
+        }
+
+        if self.source_is_js_file
+            && let Some(name) = self.get_identifier_text(name_idx)
+            && self
+                .js_namespace_export_aliases
+                .values()
+                .any(|aliases| aliases.iter().any(|alias| alias.local_name == name))
+        {
+            return true;
+        }
+
         let Some(used) = &self.used_symbols else {
             // Usage analysis unavailable: preserve dependent declarations
             // rather than over-pruning and producing unresolved names.
