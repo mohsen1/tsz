@@ -16,54 +16,24 @@ eleventyComputed:
 </nav>
 
 <h1>{{ benchmark.display_name }}</h1>
-{% if benchmark.detail_focus %}
-  <p class="subtitle">{{ benchmark.detail_focus }}</p>
-{% endif %}
 
-<div class="bench-detail-hero">
-  <div class="bench-detail-result">
-    {% if benchmark.comparison.available %}
-      <strong>
-        {% if benchmark.speedup_label == "equal" %}
-          equal
-        {% else %}
-          {{ benchmark.speedup_label | replace("tsz ", "tsz is ") | replace("tsgo ", "tsgo is ") }}
-        {% endif %}
-      </strong>
-      <span>
-        {% if benchmark.comparison.winner == "tsz" %}
-          tsz leads this benchmark.
-        {% elif benchmark.comparison.winner == "tsgo" %}
-          tsgo leads this benchmark.
-        {% else %}
-          Both compilers are effectively tied.
-        {% endif %}
-      </span>
-    {% else %}
-      <strong>tsz unavailable</strong>
-      <span>{{ benchmark.status or "No timing was recorded for tsz." }}</span>
-    {% endif %}
-  </div>
-</div>
-
-<section class="bench-detail-grid" aria-label="Benchmark measurements">
-  <div class="bench-metric">
-    <span>tsz</span>
-    <strong>{% if benchmark.tsz_ms %}{{ benchmark.tsz_ms }}ms{% else %}n/a{% endif %}</strong>
-  </div>
-  <div class="bench-metric">
-    <span>tsgo</span>
-    <strong>{% if benchmark.tsgo_ms %}{{ benchmark.tsgo_ms }}ms{% else %}n/a{% endif %}</strong>
-  </div>
-  <div class="bench-metric">
-    <span>Lines</span>
-    <strong>{{ benchmark.lines or 0 }}</strong>
-  </div>
-  <div class="bench-metric">
-    <span>Size</span>
-    <strong>{{ benchmark.kb or 0 }} KB</strong>
-  </div>
-</section>
+<p class="bench-detail-summary">
+  {% if benchmark.comparison.available %}
+    <strong>
+      {% if benchmark.speedup_label == "equal" %}
+        equal
+      {% else %}
+        {{ benchmark.speedup_label | replace("tsz ", "tsz is ") | replace("tsgo ", "tsgo is ") }}
+      {% endif %}
+    </strong>
+  {% else %}
+    <strong>tsz unavailable</strong>
+  {% endif %}
+  <span>tsz {% if benchmark.tsz_time %}{{ benchmark.tsz_time }}{% else %}n/a{% endif %}</span>
+  <span>tsgo {% if benchmark.tsgo_time %}{{ benchmark.tsgo_time }}{% else %}n/a{% endif %}</span>
+  <span>{{ benchmark.lines or 0 }} lines</span>
+  <span>{{ benchmark.kb or 0 }} KB</span>
+</p>
 
 <section>
   <h2>Timing</h2>

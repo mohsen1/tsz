@@ -28,26 +28,30 @@ Currently targeting **TypeScript `{{ metrics.ts_version }}`**
 
 <div class="progress-row">
   <span class="progress-label">Conformance</span>
-  <div class="progress-bar"><div class="progress-fill conformance" style="width: {{ metrics.conformance_bar_rate }}%"></div></div>
-  <span class="progress-stat">{{ metrics.conformance_rate_label }} - {{ metrics.conformance_passed }}/{{ metrics.conformance_total }}</span>
+  <div class="progress-bar" aria-label="Conformance {{ metrics.conformance_rate_label }}, {{ metrics.conformance_passed }} of {{ metrics.conformance_total }}">
+    <div class="progress-fill conformance" style="width: {{ metrics.conformance_bar_rate }}%"><span>{{ metrics.conformance_rate_label }}</span></div>
+  </div>
 </div>
 
 <div class="progress-row">
   <span class="progress-label">JS Emit</span>
-  <div class="progress-bar"><div class="progress-fill emit-js" style="width: {{ metrics.emit_js_bar_rate }}%"></div></div>
-  <span class="progress-stat">{{ metrics.emit_js_rate_label }} - {{ metrics.emit_js_passed }}/{{ metrics.emit_js_total }}{{ metrics.emit_js_extra }}</span>
+  <div class="progress-bar" aria-label="JS Emit {{ metrics.emit_js_rate_label }}, {{ metrics.emit_js_passed }} of {{ metrics.emit_js_total }}{{ metrics.emit_js_extra }}">
+    <div class="progress-fill emit-js" style="width: {{ metrics.emit_js_bar_rate }}%"><span>{{ metrics.emit_js_rate_label }}</span></div>
+  </div>
 </div>
 
 <div class="progress-row">
   <span class="progress-label">Declaration Emit</span>
-  <div class="progress-bar"><div class="progress-fill emit-dts" style="width: {{ metrics.emit_dts_bar_rate }}%"></div></div>
-  <span class="progress-stat">{{ metrics.emit_dts_rate_label }} - {{ metrics.emit_dts_passed }}/{{ metrics.emit_dts_total }}{{ metrics.emit_dts_extra }}</span>
+  <div class="progress-bar" aria-label="Declaration Emit {{ metrics.emit_dts_rate_label }}, {{ metrics.emit_dts_passed }} of {{ metrics.emit_dts_total }}{{ metrics.emit_dts_extra }}">
+    <div class="progress-fill emit-dts" style="width: {{ metrics.emit_dts_bar_rate }}%"><span>{{ metrics.emit_dts_rate_label }}</span></div>
+  </div>
 </div>
 
 <div class="progress-row">
   <span class="progress-label">Language Service</span>
-  <div class="progress-bar"><div class="progress-fill fourslash" style="width: {{ metrics.fourslash_bar_rate }}%"></div></div>
-  <span class="progress-stat">{{ metrics.fourslash_rate_label }} - {{ metrics.fourslash_passed }}/{{ metrics.fourslash_total }}</span>
+  <div class="progress-bar" aria-label="Language Service {{ metrics.fourslash_rate_label }}, {{ metrics.fourslash_passed }} of {{ metrics.fourslash_total }}">
+    <div class="progress-fill fourslash" style="width: {{ metrics.fourslash_bar_rate }}%"><span>{{ metrics.fourslash_rate_label }}</span></div>
+  </div>
 </div>
 
 <p class="loc-stat">{{ metrics.total_loc }} lines of Rust across {{ metrics.num_crates }} crates</p>
