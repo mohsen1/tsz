@@ -244,27 +244,25 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        match expr_node.kind {
-            k if k == SyntaxKind::NumericLiteral as u16
-                || k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                true
-            }
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => self
-                .ctx
-                .arena
-                .get_unary_expr(expr_node)
-                .is_some_and(|unary| {
-                    (unary.operator == SyntaxKind::MinusToken as u16
-                        || unary.operator == SyntaxKind::PlusToken as u16)
-                        && self.ctx.arena.get(unary.operand).is_some_and(|operand| {
-                            operand.kind == SyntaxKind::NumericLiteral as u16
-                                || operand.kind == SyntaxKind::BigIntLiteral as u16
-                        })
-                }),
-            _ => false,
+        if expr_node.kind == SyntaxKind::NumericLiteral as u16
+            || expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || expr_node.kind == SyntaxKind::BigIntLiteral as u16
+        {
+            return true;
         }
+
+        if expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.ctx.arena.get_unary_expr(expr_node)
+            && (unary.operator == SyntaxKind::MinusToken as u16
+                || unary.operator == SyntaxKind::PlusToken as u16)
+            && let Some(operand) = self.ctx.arena.get(unary.operand)
+        {
+            return operand.kind == SyntaxKind::NumericLiteral as u16
+                || operand.kind == SyntaxKind::BigIntLiteral as u16;
+        }
+
+        false
     }
 
     #[allow(dead_code)]
