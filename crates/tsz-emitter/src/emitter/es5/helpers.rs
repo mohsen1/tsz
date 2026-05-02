@@ -1226,6 +1226,13 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let original_indent_level = self.writer.indent_level();
+        let visual_indent_level = self.writer.current_line_visual_indent_level();
+        let synced_visual_indent = original_indent_level == 0 && visual_indent_level > 0;
+        if synced_visual_indent {
+            self.writer.set_indent_level(visual_indent_level);
+        }
+
         // Note: emit_function_parameters_es5 calls push_temp_scope() internally,
         // so we don't push here — the pop at the end of this function balances it.
         self.write("function (");
@@ -1285,17 +1292,7 @@ impl<'a> Printer<'a> {
             self.write(", void 0, void 0, function () {");
             self.write_line();
             self.increase_indent();
-            if !hoisted_vars.is_empty() {
-                self.write("var ");
-                for (i, var_name) in hoisted_vars.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    self.write(var_name);
-                }
-                self.write(";");
-                self.write_line();
-            }
+            self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
             self.write(&generator_body);
             self.decrease_indent();
             self.write_line();
@@ -1315,50 +1312,23 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            if hoisted_vars.is_empty() {
-                self.write(", void 0, void 0, function () {");
-                self.write_line();
-                self.increase_indent();
-                if !generator_mappings.is_empty() && self.writer.has_source_map() {
-                    self.writer.write("");
-                    let base_line = self.writer.current_line();
-                    let base_column = self.writer.current_column();
-                    self.writer
-                        .add_offset_mappings(base_line, base_column, &generator_mappings);
-                    self.writer.write(&generator_body);
-                } else {
-                    self.write(&generator_body);
-                }
-                self.decrease_indent();
-                self.write_line();
-                self.write("});");
+            self.write(", void 0, void 0, function () {");
+            self.write_line();
+            self.increase_indent();
+            self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
+            if !generator_mappings.is_empty() && self.writer.has_source_map() {
+                self.writer.write("");
+                let base_line = self.writer.current_line();
+                let base_column = self.writer.current_column();
+                self.writer
+                    .add_offset_mappings(base_line, base_column, &generator_mappings);
+                self.writer.write(&generator_body);
             } else {
-                self.write(", void 0, void 0, function () {");
-                self.write_line();
-                self.increase_indent();
-                self.write("var ");
-                for (i, var_name) in hoisted_vars.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    self.write(var_name);
-                }
-                self.write(";");
-                self.write_line();
-                if !generator_mappings.is_empty() && self.writer.has_source_map() {
-                    self.writer.write("");
-                    let base_line = self.writer.current_line();
-                    let base_column = self.writer.current_column();
-                    self.writer
-                        .add_offset_mappings(base_line, base_column, &generator_mappings);
-                    self.writer.write(&generator_body);
-                } else {
-                    self.write(&generator_body);
-                }
-                self.decrease_indent();
-                self.write_line();
-                self.write("});");
+                self.write(&generator_body);
             }
+            self.decrease_indent();
+            self.write_line();
+            self.write("});");
             self.write_line();
             self.decrease_indent();
             self.write("}");
@@ -1375,6 +1345,7 @@ impl<'a> Printer<'a> {
                 self.write(", void 0, void 0, function () {");
                 self.write_line();
                 self.increase_indent();
+                self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
                     let base_line = self.writer.current_line();
@@ -1393,15 +1364,7 @@ impl<'a> Printer<'a> {
                 self.write(", void 0, void 0, function () {");
                 self.write_line();
                 self.increase_indent();
-                self.write("var ");
-                for (i, var_name) in hoisted_vars.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    self.write(var_name);
-                }
-                self.write(";");
-                self.write_line();
+                self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
                     let base_line = self.writer.current_line();
@@ -1417,7 +1380,41 @@ impl<'a> Printer<'a> {
                 self.write("}); }");
             }
         }
+        if synced_visual_indent {
+            self.writer.set_indent_level(original_indent_level);
+        }
         self.pop_temp_scope();
+    }
+
+    fn emit_async_arrow_hoisted_vars(
+        &mut self,
+        hoisted_vars: &[String],
+        generator_body: &str,
+        this_expr: &str,
+    ) {
+        if hoisted_vars.iter().any(|var_name| var_name == "_a") {
+            for var_name in hoisted_vars {
+                self.write("var ");
+                self.write(var_name);
+                self.write(";");
+                self.write_line();
+            }
+        } else if !hoisted_vars.is_empty() {
+            self.write("var ");
+            for (i, var_name) in hoisted_vars.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(var_name);
+            }
+            self.write(";");
+            self.write_line();
+        }
+
+        if this_expr != "this" && generator_body.contains("return _this") {
+            self.write("var _this = this;");
+            self.write_line();
+        }
     }
 
     fn emit_async_arrow_es5_await_param_recovery(
