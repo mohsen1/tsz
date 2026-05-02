@@ -1559,6 +1559,15 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
 
+        // Don't intercept plain reference equality like `u === true` where `u`
+        // is itself the narrowing target. That should go through
+        // `LiteralEquality` (narrow `u` to `true`/`false`), not through
+        // truthiness recursion. The latter would just check whether `u` could
+        // be truthy and leave broad sources like `unknown` un-narrowed.
+        if self.is_matching_reference(guard_expr, target) {
+            return None;
+        }
+
         // Determine effective sense:
         // `expr === true` in true branch → narrow as if expr is true
         // `expr === false` in true branch → narrow as if expr is false
