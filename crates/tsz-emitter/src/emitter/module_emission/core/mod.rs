@@ -671,7 +671,7 @@ impl<'a> Printer<'a> {
 
         if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
             self.write("export ");
-            self.emit_import_equals_declaration_inner(clause_node);
+            self.emit_import_equals_declaration_inner(clause_node, false);
             self.write_semicolon();
             return;
         }
@@ -1436,6 +1436,19 @@ impl<'a> Printer<'a> {
                     if let Some(export_decl) = self.arena.get_export_decl(stmt_node)
                         && let Some(inner) = self.arena.get(export_decl.export_clause)
                     {
+                        if inner.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                            && let Some(import_decl) = self.arena.get_import_decl(inner)
+                        {
+                            let alias_name =
+                                self.get_identifier_text_idx(import_decl.import_clause);
+                            let target_root =
+                                self.get_module_root_name(import_decl.module_specifier);
+                            if alias_name == assigned_name
+                                || target_root.as_deref() == Some(assigned_name.as_str())
+                            {
+                                matched_runtime = true;
+                            }
+                        }
                         let matches_exported_type = (inner.kind
                             == syntax_kind_ext::INTERFACE_DECLARATION
                             && self.arena.get_interface(inner).is_some_and(|iface| {
