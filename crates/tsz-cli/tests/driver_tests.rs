@@ -654,6 +654,57 @@ export const works1 = fn((x: number) => x);
 }
 
 #[test]
+fn declaration_emit_generic_call_preserves_class_expression_type_argument() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("index.ts"),
+        r#"declare const a: symbol;
+export class A {
+    [a]() { return 1; };
+}
+declare const e1: A[typeof a];
+
+type Constructor = new (...args: any[]) => {};
+declare function Mix<T extends Constructor>(classish: T): T & (new (...args: any[]) => {mixed: true});
+
+export const Mixer = Mix(class {
+    [a]() { return 1; };
+});
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "strict": true,
+    "declaration": true,
+    "module": "es2015"
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:#?}",
+        result.diagnostics
+    );
+
+    let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
+    assert!(
+        dts.contains("export declare const Mixer: {\n    new (): {\n        [a]: () => number;\n    };\n} & (new (...args: any[]) => {\n    mixed: true;\n});"),
+        "expected inferred class-expression constructor type to survive generic substitution: {dts}"
+    );
+}
+
+#[test]
 fn declaration_emit_namespace_import_callable_member_avoids_ts7056() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
