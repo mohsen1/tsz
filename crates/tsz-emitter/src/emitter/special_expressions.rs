@@ -131,14 +131,14 @@ impl<'a> Printer<'a> {
     /// Emit an await expression: await value
     pub(super) fn emit_await_expression(&mut self, node: &Node) {
         // AwaitExpression is stored with UnaryExprDataEx
+        let emit_as_yield = self.ctx.emit_await_as_yield
+            || (self.ctx.needs_async_lowering && self.function_scope_depth > 0);
         let Some(unary) = self.arena.get_unary_expr_ex(node) else {
-            self.write(
-                if self.ctx.emit_await_as_yield_await || self.ctx.emit_await_as_yield {
-                    "yield"
-                } else {
-                    "await"
-                },
-            );
+            self.write(if self.ctx.emit_await_as_yield_await || emit_as_yield {
+                "yield"
+            } else {
+                "await"
+            });
             return;
         };
 
@@ -156,15 +156,10 @@ impl<'a> Printer<'a> {
         // When yield replaces await inside a binary expression, we need parens
         // because yield has lower precedence than binary operators.
         // e.g., `await p || a` → `(yield p) || a` (not `yield p || a`)
-        let needs_yield_parens = self.ctx.emit_await_as_yield
-            && self.ctx.flags.in_binary_operand
-            && unary.expression.is_some();
+        let needs_yield_parens =
+            emit_as_yield && self.ctx.flags.in_binary_operand && unary.expression.is_some();
 
-        let keyword = if self.ctx.emit_await_as_yield {
-            "yield"
-        } else {
-            "await"
-        };
+        let keyword = if emit_as_yield { "yield" } else { "await" };
 
         if needs_yield_parens {
             self.write("(");
