@@ -8,7 +8,9 @@ use crate::transforms::ir::{IRMethodName, IRNode, IRParam, IRPropertyDescriptor}
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::syntax::transform_utils::{contains_this_reference, is_private_identifier};
+use tsz_parser::syntax::transform_utils::{
+    contains_async_arrow_function, contains_this_reference, is_private_identifier,
+};
 use tsz_scanner::SyntaxKind;
 
 use super::{ES5ClassTransformer, PropertyNameIR, collect_accessor_pairs, get_identifier_text};
@@ -1464,15 +1466,20 @@ impl<'a> ES5ClassTransformer<'a> {
                 if !self.property_initializer_has_equals(member_node, prop_data) {
                     continue;
                 }
-                // Check if the initializer expression contains `this`
-                if contains_this_reference(self.arena, prop_data.initializer) {
+                // Async arrows in static initializers also need the class alias:
+                // tsc passes it to the downlevel `__generator` call as lexical `this`.
+                if contains_this_reference(self.arena, prop_data.initializer)
+                    || contains_async_arrow_function(self.arena, prop_data.initializer)
+                {
                     return true;
                 }
             } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 // Check if the static block body contains `this`
                 if let Some(block_data) = self.arena.get_block(member_node) {
                     for &stmt_idx in &block_data.statements.nodes {
-                        if contains_this_reference(self.arena, stmt_idx) {
+                        if contains_this_reference(self.arena, stmt_idx)
+                            || contains_async_arrow_function(self.arena, stmt_idx)
+                        {
                             return true;
                         }
                     }

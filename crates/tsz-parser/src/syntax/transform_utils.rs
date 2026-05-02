@@ -100,6 +100,56 @@ pub fn contains_arguments_reference(arena: &NodeArena, node_idx: NodeIndex) -> b
     contains_target_reference(arena, node_idx, ReferenceTarget::Arguments)
 }
 
+/// Check if a node contains an async arrow function in the current lexical
+/// context. Nested regular functions and classes form new lexical `this`
+/// boundaries, while nested arrow functions remain in the same context.
+#[must_use]
+pub fn contains_async_arrow_function(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(node_idx) else {
+        return false;
+    };
+
+    match node.kind {
+        kind if kind == syntax_kind_ext::ARROW_FUNCTION => {
+            let Some(func) = arena.get_function(node) else {
+                return false;
+            };
+            if func.is_async {
+                return true;
+            }
+            let mut children = Vec::new();
+            for &param_idx in &func.parameters.nodes {
+                let Some(param_node) = arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if param.initializer.is_some() {
+                    children.push(param.initializer);
+                }
+            }
+            if func.body.is_some() {
+                children.push(func.body);
+            }
+            children
+                .into_iter()
+                .any(|child_idx| contains_async_arrow_function(arena, child_idx))
+        }
+        kind if kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || kind == syntax_kind_ext::CLASS_DECLARATION
+            || kind == syntax_kind_ext::CLASS_EXPRESSION =>
+        {
+            false
+        }
+        _ => arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| contains_async_arrow_function(arena, child_idx)),
+    }
+}
+
 fn contains_target_reference(
     arena: &NodeArena,
     node_idx: NodeIndex,

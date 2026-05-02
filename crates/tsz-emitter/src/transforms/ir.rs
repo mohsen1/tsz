@@ -406,6 +406,13 @@ pub enum IRNode {
     /// Reference to an original AST node (for passthrough)
     ASTRef(NodeIndex),
 
+    /// Reference to an original async arrow expression whose generated
+    /// `__generator` call should use a static class alias as lexical `this`.
+    ASTRefWithGeneratorThis {
+        node: NodeIndex,
+        generator_this: Cow<'static, str>,
+    },
+
     /// Reference to an original AST node with constrained source range.
     /// Used when the parser's node.end extends into a parent block's closing brace.
     ASTRefRange(NodeIndex, u32),

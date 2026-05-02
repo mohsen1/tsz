@@ -1779,6 +1779,37 @@ impl<'a> IRPrinter<'a> {
                 self.write("undefined");
             }
 
+            IRNode::ASTRefWithGeneratorThis {
+                node,
+                generator_this,
+            } => {
+                if let Some(arena) = self.arena {
+                    let transforms = self.transforms.clone().unwrap_or_default();
+                    let mut printer = AstPrinter::with_transforms_and_options(
+                        arena,
+                        transforms,
+                        self.make_ast_printer_options(),
+                    );
+                    if let Some(source_text) = self.source_text {
+                        printer.set_source_text(source_text);
+                    }
+                    printer.emit_expression(*node);
+                    let output = printer.get_output();
+                    let mut rewritten = output.replacen(
+                        "__generator(this,",
+                        &format!("__generator({generator_this},"),
+                        1,
+                    );
+                    if generator_this.as_ref() == "_a" {
+                        rewritten = rewritten.replacen("function (_a)", "function (_b)", 1);
+                        rewritten = rewritten.replace("_a.", "_b.");
+                    }
+                    self.write_embedded_output(&rewritten);
+                    return;
+                }
+                self.write("undefined");
+            }
+
             IRNode::ASTRefRange(idx, max_end) => {
                 // Like ASTRef but with a constrained end position.
                 // Used when a statement's node.end extends into a parent block's closing brace.
