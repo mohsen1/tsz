@@ -819,6 +819,10 @@ impl<'a> Printer<'a> {
         // means a prior declaration already emitted the `var`/`export` prefix.
         let is_merged_subsequent = self.is_merged_subsequent_declaration(clause_node);
 
+        if !is_merged_subsequent && self.emit_es5_empty_binding_pattern_export(clause_node) {
+            return;
+        }
+
         // When a class has ES (non-legacy) decorators and is exported, tsc emits
         // decorators BEFORE the `export` keyword:
         //   @dec
@@ -963,6 +967,67 @@ impl<'a> Printer<'a> {
             }
         }
         names
+    }
+
+    fn emit_es5_empty_binding_pattern_export(&mut self, node: &Node) -> bool {
+        if !self.ctx.target_es5 || node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+
+        let mut decls = Vec::new();
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                return false;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                return false;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    return false;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    return false;
+                };
+                let Some(name_node) = self.arena.get(decl.name) else {
+                    return false;
+                };
+                let is_binding_pattern = name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+                if !is_binding_pattern || self.binding_pattern_has_export_names(decl.name) {
+                    return false;
+                }
+                decls.push((decl.name, decl.initializer));
+            }
+        }
+
+        if decls.is_empty() {
+            return false;
+        }
+
+        self.write("export var ");
+        for (index, (_name, initializer)) in decls.iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
+            }
+            let source_temp = self.make_unique_name_hoisted();
+            let export_temp = self.make_unique_name();
+            self.write(&export_temp);
+            self.write(" = ");
+            self.write(&source_temp);
+            self.write(" = ");
+            if initializer.is_none() {
+                self.write("void 0");
+            } else {
+                self.emit(*initializer);
+            }
+        }
+        self.write(";");
+        true
     }
 
     /// Try to collect inline CJS export info for a variable statement.

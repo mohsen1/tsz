@@ -501,6 +501,7 @@ impl<'a> Printer<'a> {
                 dep_vars.insert(dep.clone(), dep_var.clone());
             }
         }
+        self.system_empty_binding_pattern_temps.clear();
         let mut hoisted_names = self.collect_system_hoisted_names(source, &system_plan);
         let func_names_to_exclude = self.collect_system_hoisted_function_names(source);
         hoisted_names.retain(|n| !func_names_to_exclude.contains(n));
@@ -949,11 +950,12 @@ impl<'a> Printer<'a> {
                         continue;
                     }
                     if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                        for name in self.collect_variable_names_from_node(clause_node) {
-                            if !name.is_empty() && seen.insert(name.clone()) {
-                                names.push(name);
-                            }
-                        }
+                        self.collect_system_variable_hoisted_names(
+                            clause_node,
+                            true,
+                            &mut names,
+                            &mut seen,
+                        );
                         continue;
                     }
                     if has_top_level_using
@@ -1086,31 +1088,15 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            for &decl_list_idx in &var_stmt.declarations.nodes {
-                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                    continue;
-                };
-                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                    continue;
-                };
-
-                for &decl_idx in &decl_list.declarations.nodes {
-                    let Some(decl_node) = self.arena.get(decl_idx) else {
-                        continue;
-                    };
-                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                        continue;
-                    };
-
-                    let mut binding_names = Vec::new();
-                    self.collect_binding_names(decl.name, &mut binding_names);
-                    for name in binding_names {
-                        if !name.is_empty() && seen.insert(name.clone()) {
-                            names.push(name);
-                        }
-                    }
-                }
-            }
+            let is_exported = self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
+            self.collect_system_variable_hoisted_names(
+                stmt_node,
+                is_exported,
+                &mut names,
+                &mut seen,
+            );
         }
 
         if has_top_level_using && seen.insert("env_1".to_string()) {
@@ -1124,6 +1110,71 @@ impl<'a> Printer<'a> {
         }
 
         names
+    }
+
+    fn collect_system_variable_hoisted_names(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+        is_exported: bool,
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return;
+        };
+        let mut decls = Vec::new();
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                decls.push((decl_idx, decl.name));
+            }
+        }
+
+        for (decl_idx, name_idx) in decls {
+            let mut binding_names = Vec::new();
+            self.collect_binding_names(name_idx, &mut binding_names);
+            for name in binding_names {
+                if !name.is_empty() && seen.insert(name.clone()) {
+                    names.push(name);
+                }
+            }
+
+            let Some(name_node) = self.arena.get(name_idx) else {
+                continue;
+            };
+            let is_binding_pattern = name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+            if !is_binding_pattern || self.binding_pattern_has_export_names(name_idx) {
+                continue;
+            }
+
+            let source_temp = self.make_unique_name();
+            if seen.insert(source_temp.clone()) {
+                names.push(source_temp.clone());
+            }
+            let export_temp = if is_exported && self.ctx.target_es5 {
+                let temp = self.make_unique_name();
+                if seen.insert(temp.clone()) {
+                    names.push(temp.clone());
+                }
+                Some(temp)
+            } else {
+                None
+            };
+            self.system_empty_binding_pattern_temps
+                .insert(decl_idx, (source_temp, export_temp));
+        }
     }
 
     /// Collect variable names from a for/for-in/for-of initializer that is a

@@ -456,6 +456,11 @@ pub struct Printer<'a> {
     pub(crate) cjs_destr_hoist_byte_offset: usize,
     /// Line number where CJS destructuring export temps should be inserted.
     pub(crate) cjs_destr_hoist_line: u32,
+    /// Indentation level to use for inserted CJS destructuring export temps.
+    pub(crate) cjs_destr_hoist_indent_level: u32,
+
+    /// System module empty binding pattern temps, keyed by variable declaration.
+    pub(crate) system_empty_binding_pattern_temps: FxHashMap<NodeIndex, (String, Option<String>)>,
 
     /// Temp names reserved ahead-of-time and consumed before generating new names.
     pub(crate) preallocated_temp_names: VecDeque<String>,
@@ -835,6 +840,8 @@ impl<'a> Printer<'a> {
             cjs_destructuring_export_temps: Vec::new(),
             cjs_destr_hoist_byte_offset: 0,
             cjs_destr_hoist_line: 0_u32,
+            cjs_destr_hoist_indent_level: 0_u32,
+            system_empty_binding_pattern_temps: FxHashMap::default(),
             preallocated_temp_names: VecDeque::new(),
             hoisted_for_of_temps: Vec::new(),
             commonjs_named_import_substitutions: FxHashMap::default(),
