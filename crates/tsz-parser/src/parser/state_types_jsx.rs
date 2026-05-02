@@ -2014,23 +2014,27 @@ impl ParserState {
         self.parse_expected(SyntaxKind::LessThanSlashToken);
         let tag_name = self.parse_jsx_element_name();
         let end_pos = self.token_end();
-        if !self.parse_expected(SyntaxKind::GreaterThanToken)
-            && self.is_token(SyntaxKind::ColonToken)
-        {
-            // Match tsc's malformed namespaced-closing-tag recovery: report
-            // the missing `>` at the stray `:`, then consume the dangling
-            // namespace tail so outer expression recovery resumes at the real
-            // `>`/`;` tokens instead of the extra identifier segment.
-            self.next_token();
-            self.scanner.scan_jsx_identifier();
-            if self.is_identifier_or_keyword() {
-                self.parse_identifier_name();
-            }
-            if self.is_token(SyntaxKind::GreaterThanToken) {
-                self.parse_error_at_current_token(
-                    "',' expected.",
-                    tsz_common::diagnostics::diagnostic_codes::EXPECTED,
-                );
+        if !self.parse_expected(SyntaxKind::GreaterThanToken) {
+            if self.is_token(SyntaxKind::ColonToken) {
+                // Match tsc's malformed namespaced-closing-tag recovery: report
+                // the missing `>` at the stray `:`, then consume the dangling
+                // namespace tail so outer expression recovery resumes at the real
+                // `>`/`;` tokens instead of the extra identifier segment.
+                self.next_token();
+                self.scanner.scan_jsx_identifier();
+                if self.is_identifier_or_keyword() {
+                    self.parse_identifier_name();
+                }
+                if self.is_token(SyntaxKind::GreaterThanToken) {
+                    self.parse_error_at_current_token(
+                        "',' expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    );
+                }
+            } else if self.is_token(SyntaxKind::DotToken) {
+                // For a malformed namespaced close like `</b:c.x>`, tsc drops
+                // the stray `.` and lets `x >` recover as a following expression.
+                self.next_token();
             }
         }
         self.arena.add_jsx_closing(
