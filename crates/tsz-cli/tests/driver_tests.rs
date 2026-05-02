@@ -705,6 +705,59 @@ export const Mixer = Mix(class {
 }
 
 #[test]
+fn declaration_emit_inferred_array_return_preserves_explicit_new_type_arguments() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("index.ts"),
+        r#"export class Box<T> {}
+export namespace ns {
+    export class Box<T> {}
+}
+export function local() {
+    return [new Box<string>()];
+}
+export function qualified() {
+    return [new ns.Box<number>()];
+}
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "strict": true,
+    "declaration": true,
+    "module": "es2015"
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:#?}",
+        result.diagnostics
+    );
+
+    let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
+    assert!(
+        dts.contains("export declare function local(): Box<string>[];"),
+        "expected local class type arguments in inferred array return: {dts}"
+    );
+    assert!(
+        dts.contains("export declare function qualified(): ns.Box<number>[];"),
+        "expected qualified class type arguments in inferred array return: {dts}"
+    );
+}
+
+#[test]
 fn declaration_emit_spread_stringly_keyed_enum_preserves_member_order() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();

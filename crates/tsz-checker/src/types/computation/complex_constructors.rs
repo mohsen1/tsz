@@ -15,6 +15,62 @@ pub(crate) struct PrototypeMembers {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Build the instantiated class instance type for `new C<T>()`.
+    ///
+    /// Constructor resolution often returns the evaluated class instance object.
+    /// That is correct semantically, but it loses the explicit type arguments
+    /// once the type is nested inside another inferred type such as `C<T>[]`.
+    /// Returning an Application over the class DefId keeps the type arguments in
+    /// the type graph while still letting Lazy resolution expand to the instance
+    /// shape for checking.
+    pub(crate) fn explicit_class_new_application(
+        &mut self,
+        expr_idx: NodeIndex,
+        resolved_args: Vec<TypeId>,
+    ) -> Option<TypeId> {
+        use tsz_binder::symbol_flags;
+
+        if resolved_args.is_empty() {
+            return None;
+        }
+
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)
+            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
+            .or_else(|| self.resolve_qualified_symbol(expr_idx))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
+            return None;
+        }
+
+        let (instance_type, params) = self.class_instance_type_with_params_from_symbol(sym_id)?;
+        if instance_type == TypeId::ERROR {
+            return None;
+        }
+        let required_params = params
+            .iter()
+            .take_while(|param| param.default.is_none())
+            .count();
+        if resolved_args.len() < required_params || resolved_args.len() > params.len() {
+            return None;
+        }
+
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        if !params.is_empty() && self.ctx.get_def_type_params(def_id).is_none() {
+            self.ctx.insert_def_type_params(def_id, params);
+        }
+        self.ctx
+            .definition_store
+            .register_type_to_def(instance_type, def_id);
+        self.ctx
+            .register_class_instance_in_envs(def_id, instance_type);
+
+        let factory = self.ctx.types.factory();
+        Some(factory.application(factory.lazy(def_id), resolved_args))
+    }
+
     fn shallow_object_literal_callable_type(&mut self, callable_idx: NodeIndex) -> TypeId {
         use tsz_solver::{CallSignature, CallableShape, ParamInfo};
 
