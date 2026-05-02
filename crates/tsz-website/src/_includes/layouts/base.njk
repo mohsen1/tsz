@@ -1,9 +1,29 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  {% set page_title = browser_title or ((title or "tsz") + " - tsz") %}
+  {% set meta_title = og_title or page_title %}
+  {% if title == "tsz" %}
+    {% set meta_title = "tsz - A TypeScript compiler in Rust." %}
+  {% endif %}
+  {% set meta_description = description or "A TypeScript compiler in Rust." %}
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{ browser_title or ((title or "tsz") + " - tsz") }}</title>
+  <title>{{ page_title }}</title>
+  <meta name="description" content="{{ meta_description }}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="tsz">
+  <meta property="og:title" content="{{ meta_title }}">
+  <meta property="og:description" content="{{ meta_description }}">
+  <meta property="og:image" content="https://tsz.dev/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="tsz - A TypeScript compiler in Rust.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ meta_title }}">
+  <meta name="twitter:description" content="{{ meta_description }}">
+  <meta name="twitter:image" content="https://tsz.dev/og-image.png">
+  <meta name="twitter:image:alt" content="tsz - A TypeScript compiler in Rust.">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   {{ extra_head | safe }}
