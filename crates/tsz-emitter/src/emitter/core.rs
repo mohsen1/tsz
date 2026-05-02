@@ -1775,6 +1775,7 @@ impl<'a> Printer<'a> {
                 if self.ctx.flags.in_declaration_emit {
                     self.emit_interface_declaration(node);
                 } else {
+                    self.emit_recovered_interface_body_statements(node);
                     // Skip comments belonging to erased declarations so they don't
                     // get emitted later by gap/before-pos comment handling.
                     self.skip_comments_for_erased_node(node);

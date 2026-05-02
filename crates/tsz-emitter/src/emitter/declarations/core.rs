@@ -499,6 +499,93 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
+    pub(in crate::emitter) fn emit_recovered_interface_body_statements(&mut self, node: &Node) {
+        let statements = self.recovered_interface_body_statements(node);
+        if statements.is_empty() {
+            return;
+        }
+
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        for statement in statements {
+            self.write(&statement);
+            self.write_line();
+        }
+    }
+
+    fn recovered_interface_body_statements(&self, node: &Node) -> Vec<String> {
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        let start = std::cmp::min(node.pos as usize, text.len());
+        let end = self
+            .interface_source_end(start)
+            .unwrap_or_else(|| std::cmp::min(node.end as usize, text.len()));
+        let Some(source) = text.get(start..end) else {
+            return Vec::new();
+        };
+
+        source
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("return ") && line.ends_with(';'))
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn interface_source_end(&self, start: usize) -> Option<usize> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut i = start;
+        while i < bytes.len() && bytes[i] != b'{' {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            return None;
+        }
+
+        let mut depth = 0u32;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                b'\'' | b'"' | b'`' => {
+                    i = self.skip_interface_quoted_source_text(i);
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn skip_interface_quoted_source_text(&self, quote_start: usize) -> usize {
+        let Some(text) = self.source_text else {
+            return quote_start + 1;
+        };
+        let bytes = text.as_bytes();
+        let quote = bytes[quote_start];
+        let mut i = quote_start + 1;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+            if bytes[i] == quote {
+                return i + 1;
+            }
+            i += 1;
+        }
+        i
+    }
+
     /// Emit a type alias declaration (for .d.ts declaration emit mode)
     pub(in crate::emitter) fn emit_type_alias_declaration(&mut self, node: &Node) {
         let Some(type_alias) = self.arena.get_type_alias(node) else {
