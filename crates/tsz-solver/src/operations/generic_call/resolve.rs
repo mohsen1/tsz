@@ -2040,6 +2040,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.normalize_inferred_placeholder_type(raw_return_type, &final_arg_subst);
         let return_type =
             self.hoist_resolved_type_params_into_return_type(func, &final_subst, return_type);
+        if self.interner.get_display_alias(return_type).is_none()
+            && let Some(app_id) =
+                crate::visitor::application_id(self.interner.as_type_database(), raw_return_type)
+        {
+            let app = self.interner.type_application(app_id);
+            let mut changed = false;
+            let display_args = app
+                .args
+                .iter()
+                .copied()
+                .map(|arg| {
+                    let evaluated =
+                        if self.application_expands_to_conditional_alias_for_return_display(arg) {
+                            self.checker.evaluate_type(arg)
+                        } else {
+                            arg
+                        };
+                    changed |= evaluated != arg;
+                    evaluated
+                })
+                .collect::<Vec<_>>();
+            if changed {
+                let display_app = self.interner.application(app.base, display_args);
+                self.interner.store_display_alias(return_type, display_app);
+                let evaluated_return = self.checker.evaluate_type(return_type);
+                if evaluated_return != return_type
+                    && self.interner.get_display_alias(evaluated_return).is_none()
+                {
+                    self.interner
+                        .store_display_alias(evaluated_return, display_app);
+                }
+            }
+        }
         // For generic constructor calls (e.g. `new D()` where `class D<T>`),
         // store a display_alias so the formatter shows `D<unknown>` instead of
         // just `D` or the expanded structural type.
@@ -2286,5 +2319,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         CallResult::Success(return_type)
+    }
+
+    fn application_expands_to_conditional_alias_for_return_display(
+        &mut self,
+        type_id: TypeId,
+    ) -> bool {
+        if !matches!(
+            self.interner.lookup(type_id),
+            Some(TypeData::Application(_))
+        ) {
+            return false;
+        }
+        self.checker
+            .expand_type_alias_application(type_id)
+            .is_some_and(|expanded| {
+                matches!(
+                    self.interner.lookup(expanded),
+                    Some(TypeData::Conditional(_))
+                )
+            })
     }
 }

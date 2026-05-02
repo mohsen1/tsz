@@ -200,6 +200,194 @@ impl<'a> DeclarationEmitter<'a> {
         Some(evaluator.evaluate(instantiated))
     }
 
+    fn reduce_conditional_aliases_for_inferred_emit(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        depth: usize,
+    ) -> tsz_solver::types::TypeId {
+        if depth > 16 {
+            return type_id;
+        }
+
+        if let Some(reduced) = self.reduce_conditional_alias_application_for_inferred_emit(type_id)
+            && reduced != type_id
+        {
+            return self.reduce_conditional_aliases_for_inferred_emit(reduced, depth + 1);
+        }
+
+        let Some(interner) = self.type_interner else {
+            return type_id;
+        };
+        let Some(type_data) = interner.lookup(type_id) else {
+            return type_id;
+        };
+        match type_data {
+            tsz_solver::types::TypeData::Application(app_id) => {
+                let app = interner.type_application(app_id);
+                let mut changed = false;
+                let args = app
+                    .args
+                    .iter()
+                    .copied()
+                    .map(|arg| {
+                        let reduced =
+                            self.reduce_conditional_aliases_for_inferred_emit(arg, depth + 1);
+                        changed |= reduced != arg;
+                        reduced
+                    })
+                    .collect::<Vec<_>>();
+                if changed {
+                    interner.application(app.base, args)
+                } else {
+                    type_id
+                }
+            }
+            tsz_solver::types::TypeData::Function(shape_id) => {
+                let shape = interner.function_shape(shape_id);
+                let mut changed = false;
+                let params = shape
+                    .params
+                    .iter()
+                    .copied()
+                    .map(|mut param| {
+                        let reduced = self
+                            .reduce_conditional_aliases_for_inferred_emit(param.type_id, depth + 1);
+                        changed |= reduced != param.type_id;
+                        param.type_id = reduced;
+                        param
+                    })
+                    .collect::<Vec<_>>();
+                let this_type = shape.this_type.map(|this_type| {
+                    let reduced =
+                        self.reduce_conditional_aliases_for_inferred_emit(this_type, depth + 1);
+                    changed |= reduced != this_type;
+                    reduced
+                });
+                let return_type =
+                    self.reduce_conditional_aliases_for_inferred_emit(shape.return_type, depth + 1);
+                changed |= return_type != shape.return_type;
+                if changed {
+                    interner.function(tsz_solver::types::FunctionShape {
+                        type_params: shape.type_params.clone(),
+                        params,
+                        this_type,
+                        return_type,
+                        type_predicate: shape.type_predicate,
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    })
+                } else {
+                    type_id
+                }
+            }
+            tsz_solver::types::TypeData::Conditional(cond_id) => {
+                let cond = interner.get_conditional(cond_id);
+                let check_type =
+                    self.reduce_conditional_aliases_for_inferred_emit(cond.check_type, depth + 1);
+                let extends_type =
+                    self.reduce_conditional_aliases_for_inferred_emit(cond.extends_type, depth + 1);
+                let true_type =
+                    self.reduce_conditional_aliases_for_inferred_emit(cond.true_type, depth + 1);
+                let false_type =
+                    self.reduce_conditional_aliases_for_inferred_emit(cond.false_type, depth + 1);
+                if check_type == cond.check_type
+                    && extends_type == cond.extends_type
+                    && true_type == cond.true_type
+                    && false_type == cond.false_type
+                {
+                    return type_id;
+                }
+                let reduced_cond = interner.conditional(tsz_solver::types::ConditionalType {
+                    check_type,
+                    extends_type,
+                    true_type,
+                    false_type,
+                    is_distributive: cond.is_distributive,
+                });
+                let evaluated = if let Some(cache) = &self.type_cache {
+                    let resolver = DtsCacheResolver { cache };
+                    let mut evaluator =
+                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+                    evaluator.set_max_mapped_keys(1_024);
+                    evaluator.evaluate(reduced_cond)
+                } else {
+                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+                    evaluator.set_max_mapped_keys(1_024);
+                    evaluator.evaluate(reduced_cond)
+                };
+                self.reduce_conditional_aliases_for_inferred_emit(evaluated, depth + 1)
+            }
+            _ => type_id,
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn type_contains_conditional_alias_application_for_inferred_emit(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        depth: usize,
+    ) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        let (Some(interner), Some(cache)) = (self.type_interner, self.type_cache.as_ref()) else {
+            return false;
+        };
+        let Some(type_data) = interner.lookup(type_id) else {
+            return false;
+        };
+        match type_data {
+            tsz_solver::types::TypeData::Application(app_id) => {
+                let app = interner.type_application(app_id);
+                if let Some(def_id) = tsz_solver::visitor::lazy_def_id(interner, app.base)
+                    && let Some(body) = cache.def_types.get(&def_id.0).copied()
+                    && tsz_solver::visitor::conditional_type_id(interner, body).is_some()
+                {
+                    return true;
+                }
+                app.args.iter().copied().any(|arg| {
+                    self.type_contains_conditional_alias_application_for_inferred_emit(
+                        arg,
+                        depth + 1,
+                    )
+                })
+            }
+            tsz_solver::types::TypeData::Function(shape_id) => {
+                let shape = interner.function_shape(shape_id);
+                shape.params.iter().any(|param| {
+                    self.type_contains_conditional_alias_application_for_inferred_emit(
+                        param.type_id,
+                        depth + 1,
+                    )
+                }) || shape.this_type.is_some_and(|this_type| {
+                    self.type_contains_conditional_alias_application_for_inferred_emit(
+                        this_type,
+                        depth + 1,
+                    )
+                }) || self.type_contains_conditional_alias_application_for_inferred_emit(
+                    shape.return_type,
+                    depth + 1,
+                )
+            }
+            tsz_solver::types::TypeData::Conditional(cond_id) => {
+                let cond = interner.get_conditional(cond_id);
+                self.type_contains_conditional_alias_application_for_inferred_emit(
+                    cond.check_type,
+                    depth + 1,
+                ) || self.type_contains_conditional_alias_application_for_inferred_emit(
+                    cond.extends_type,
+                    depth + 1,
+                ) || self.type_contains_conditional_alias_application_for_inferred_emit(
+                    cond.true_type,
+                    depth + 1,
+                ) || self.type_contains_conditional_alias_application_for_inferred_emit(
+                    cond.false_type,
+                    depth + 1,
+                )
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn get_node_type_or_names(
         &self,
         node_ids: &[NodeIndex],
@@ -456,13 +644,16 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_id: tsz_solver::types::TypeId,
     ) -> String {
-        if let Some(reduced) = self.reduce_conditional_alias_application_for_inferred_emit(type_id)
-        {
-            return self.print_type_id_with_policy(
-                reduced,
+        let type_id = if let Some(interner) = self.type_interner {
+            self.display_alias_for_policy(
+                type_id,
+                interner,
                 Self::should_preserve_named_application_for_inferred_emit,
-            );
-        }
+            )
+        } else {
+            type_id
+        };
+        let type_id = self.reduce_conditional_aliases_for_inferred_emit(type_id, 0);
         self.print_type_id_with_policy(
             type_id,
             Self::should_preserve_named_application_for_inferred_emit,

@@ -1306,9 +1306,21 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.value_reference_symbol_type_text(expr_idx))
                     .or_else(|| self.undefined_identifier_type_text(expr_idx))
             }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => self
-                .call_expression_source_return_type_text(expr_idx)
-                .or_else(|| self.call_expression_declared_return_type_text(expr_idx)),
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let reused_type_text = self
+                    .call_expression_source_return_type_text(expr_idx)
+                    .or_else(|| self.call_expression_declared_return_type_text(expr_idx));
+                if reused_type_text.is_some()
+                    && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
+                    && type_id != tsz_solver::types::TypeId::ANY
+                    && type_id != tsz_solver::types::TypeId::ERROR
+                    && self
+                        .type_contains_conditional_alias_application_for_inferred_emit(type_id, 0)
+                {
+                    return Some(self.print_type_id_for_inferred_declaration(type_id));
+                }
+                reused_type_text
+            }
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                 self.tagged_template_declared_return_type_text(expr_idx)
             }
