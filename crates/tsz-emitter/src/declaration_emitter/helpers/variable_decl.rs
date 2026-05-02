@@ -134,6 +134,28 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if has_initializer
+                && self.initializer_is_new_expression(initializer)
+                && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
+                && self.initializer_is_new_expression(initializer)
+                && self.new_expression_constructor_is_class_like(initializer)
+                && let Some(type_text) = self.nameable_new_expression_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                && let Some(type_text) = self.preferred_expression_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&Self::strip_synthetic_anonymous_object_members(&type_text));
+            } else if has_initializer
                 && (self.emit_ts_late_bound_function_initializer_type_annotation(
                     decl_name,
                     initializer,
@@ -488,6 +510,50 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena
             .get(initializer)
             .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION)
+    }
+
+    pub(in crate::declaration_emitter) fn new_expression_constructor_is_class_like(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        let initializer = self.skip_parenthesized_non_null_and_comma(initializer);
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return false;
+        }
+        let Some(new_expr) = self.arena.get_call_expr(init_node) else {
+            return false;
+        };
+        let Some(expr_idx) = self.skip_parenthesized_expression(new_expr.expression) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(ident) = self.get_identifier_text(expr_idx) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(sym_id) = self.resolve_identifier_symbol(expr_idx, &ident) else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        (symbol.flags & symbol_flags::CLASS) != 0
+            || symbol.declarations.iter().copied().any(|decl_idx| {
+                self.arena.get(decl_idx).is_some_and(|decl_node| {
+                    decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                })
+            })
     }
 
     pub(in crate::declaration_emitter) fn synthetic_class_extends_alias_type_id(
