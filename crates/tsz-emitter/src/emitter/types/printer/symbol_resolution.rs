@@ -390,6 +390,12 @@ impl<'a> TypePrinter<'a> {
         {
             return stripped;
         }
+        if let Some((root, rest)) = qualified_name.split_once('.')
+            && root.eq_ignore_ascii_case(module_last)
+            && !rest.is_empty()
+        {
+            return rest;
+        }
         qualified_name
     }
 

@@ -181,7 +181,20 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
-                let type_id = lowering.lower_type(idx);
+                let mut type_id = lowering.lower_type(idx);
+                if query::get_application_info(self.ctx.types, type_id).is_none()
+                    && let Some(args) = &type_ref.type_arguments
+                {
+                    let type_args = args
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                        .collect::<Vec<_>>();
+                    if !type_args.is_empty() {
+                        let base_type = self.type_reference_symbol_type(sym_id);
+                        type_id = self.ctx.types.application(base_type, type_args);
+                    }
+                }
 
                 // Eagerly evaluate type alias applications to detect TS2589
                 // (excessive instantiation depth). Without this, the application

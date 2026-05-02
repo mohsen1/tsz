@@ -1588,13 +1588,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         match self.interner().lookup(result) {
+            Some(TypeData::Application(_)) => {
+                let evaluated = self.evaluate(result);
+                self.interner()
+                    .store_display_alias_preferring_application(evaluated, result);
+                evaluated
+            }
             Some(
                 TypeData::Conditional(_)
                 | TypeData::IndexAccess(_, _)
                 | TypeData::Mapped(_)
                 | TypeData::KeyOf(_)
                 | TypeData::Lazy(_)
-                | TypeData::Application(_)
                 | TypeData::TemplateLiteral(_)
                 | TypeData::StringIntrinsic { .. }
                 | TypeData::ReadonlyType(_)

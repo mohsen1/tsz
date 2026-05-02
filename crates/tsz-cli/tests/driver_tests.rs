@@ -1070,7 +1070,7 @@ export const publicProcedure = trpc.procedure;
 }
 
 #[test]
-fn declaration_emit_reports_ts2883_for_transitive_react_styled_form() {
+fn declaration_emit_transitive_react_styled_form_uses_public_import_surface() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
 
@@ -1139,12 +1139,6 @@ export default Form
     args.project = Some(base.join("tsconfig.json"));
 
     let result = compile(&args, base).expect("compile should succeed");
-    let ts2883_messages: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.code == 2883)
-        .map(|diagnostic| diagnostic.message_text.clone())
-        .collect();
     let ts2300_messages: Vec<_> = result
         .diagnostics
         .iter()
@@ -1152,35 +1146,24 @@ export default Form
         .map(|diagnostic| diagnostic.message_text.clone())
         .collect();
 
-    // tsc emits 3 TS2883 diagnostics here because it walks the transitive type
-    // graph through create-emotion-styled's re-exports. tsz currently does not
-    // detect non-portable references in this transitive re-export pattern, so
-    // 0 TS2883 diagnostics are produced. Accept 0 or 3 until the emitter handles
-    // transitive re-export portability checking.
     assert!(
-        ts2883_messages.is_empty() || ts2883_messages.len() == 3,
-        "expected 0 (current) or 3 (tsc parity) TS2883 diagnostics, got: {ts2883_messages:#?}"
+        result
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != 2883),
+        "expected public import surface to avoid TS2883, got: {:#?}",
+        result.diagnostics
     );
-    if ts2883_messages.len() == 3 {
-        assert!(
-            ts2883_messages
-                .iter()
-                .any(|message| message.contains("StyledOtherComponent")),
-            "expected one TS2883 to mention StyledOtherComponent, got: {ts2883_messages:#?}"
-        );
-        assert!(
-            ts2883_messages
-                .iter()
-                .filter(|message| message.contains("DetailedHTMLProps")
-                    || message.contains("HTMLAttributes"))
-                .count()
-                >= 2,
-            "expected TS2883 diagnostics for react transitive types, got: {ts2883_messages:#?}"
-        );
-    }
     assert!(
         ts2300_messages.is_empty(),
         "expected module augmentation interface merge to avoid TS2300, got: {ts2300_messages:#?}"
+    );
+    let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
+    assert!(
+        dts.contains(
+            "declare const Form: import(\"create-emotion-styled\").StyledOtherComponent<{}, import(\"react\").DetailedHTMLProps<import(\"react\").HTMLAttributes<HTMLDivElement>, HTMLDivElement>, any>;"
+        ),
+        "expected public transitive import and reduced indexed access argument: {dts}"
     );
 }
 

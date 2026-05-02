@@ -73,6 +73,10 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// self-referential conditional types produce the same Application TypeId
     /// on each expansion, preventing the per-DefId depth counter from working.
     flag_depth_on_app_cycle: bool,
+    /// When true, display aliases for evaluated applications preserve expanded
+    /// argument types. Declaration emit opts into this to print reusable public
+    /// surfaces without changing checker diagnostic display behavior.
+    expand_application_display_alias_args: bool,
     /// Set by `evaluate_conditional` when a conditional branch resolved to an
     /// Application type (via tail-call expansion or direct evaluation).
     /// `evaluate_application` reads this to store a forward display alias
@@ -146,6 +150,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             conditional_subtype_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
+            expand_application_display_alias_args: false,
             apparent_conditional_branch: None,
         }
     }
@@ -191,6 +196,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             conditional_subtype_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
+            expand_application_display_alias_args: false,
             apparent_conditional_branch: None,
         }
     }
@@ -218,6 +224,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// preventing the normal per-DefId depth counter from triggering.
     pub const fn with_flag_depth_on_app_cycle(mut self) -> Self {
         self.flag_depth_on_app_cycle = true;
+        self
+    }
+
+    /// Preserve evaluated application display aliases with already-expanded
+    /// type arguments. This is declaration-emitter-only behavior; checker
+    /// diagnostics keep the original alias origin to avoid recursive display
+    /// chains in complex conditional cases.
+    pub const fn with_expanded_application_display_alias_args(mut self) -> Self {
+        self.expand_application_display_alias_args = true;
         self
     }
 
@@ -924,6 +939,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // `this` types, since `this` is context-dependent and shouldn't
             // cause conflation issues like generic type parameters can.
             if result != original_type_id {
+                let display_origin = if self.expand_application_display_alias_args
+                    && let Some(TypeData::Application(original_app_id)) =
+                        self.interner.lookup(original_type_id)
+                {
+                    let original_app = self.interner.type_application(original_app_id);
+                    let expanded_args = self.expand_type_args(&original_app.args);
+                    if expanded_args.as_ref() != original_app.args.as_slice() {
+                        let candidate = self
+                            .interner
+                            .application(original_app.base, expanded_args.into_owned());
+                        if crate::visitor::contains_type_by_id(self.interner, candidate, result) {
+                            original_type_id
+                        } else {
+                            candidate
+                        }
+                    } else {
+                        original_type_id
+                    }
+                } else {
+                    original_type_id
+                };
                 let has_param_args = app.args.iter().any(|&arg| {
                     crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
                 });
@@ -936,11 +972,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         )
                     )
                 {
-                    if prefer_application_display_alias {
+                    if prefer_application_display_alias
+                        || (self.expand_application_display_alias_args
+                            && matches!(
+                                self.interner.lookup(display_origin),
+                                Some(TypeData::Application(_))
+                            ))
+                    {
                         self.interner
-                            .store_display_alias_preferring_application(result, original_type_id);
+                            .store_display_alias_preferring_application(result, display_origin);
                     } else {
-                        self.interner.store_display_alias(result, original_type_id);
+                        self.interner.store_display_alias(result, display_origin);
                     }
 
                     // If the conditional branch resolved to an intermediate Application
@@ -1056,6 +1098,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 TypeData::TypeQuery(_)
                     | TypeData::Application(_)
                     | TypeData::Conditional(_)
+                    | TypeData::IndexAccess(_, _)
                     | TypeData::Mapped(_)
                     | TypeData::TemplateLiteral(_)
                     | TypeData::KeyOf(_)
@@ -1193,6 +1236,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Application(_)
             | TypeData::Conditional(_)
+            | TypeData::IndexAccess(_, _)
             | TypeData::Mapped(_)
             | TypeData::TemplateLiteral(_)
             | TypeData::KeyOf(_) => {
