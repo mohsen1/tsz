@@ -1452,10 +1452,16 @@ impl<'a> Printer<'a> {
                     .checked_sub(1)
                     .and_then(|previous_i| source.statements.nodes.get(previous_i))
                     .and_then(|&previous_idx| self.arena.get(previous_idx))
-                    && let Some(recovered_operator) =
-                        self.recovered_trailing_binary_operator_text(previous_stmt, stmt_node)
                 {
-                    self.write(&recovered_operator);
+                    if let Some(recovered_arrow_chain) =
+                        self.recovered_leading_arrow_chain_text(previous_stmt, stmt_node)
+                    {
+                        self.write(&recovered_arrow_chain);
+                    } else if let Some(recovered_operator) =
+                        self.recovered_trailing_binary_operator_text(previous_stmt, stmt_node)
+                    {
+                        self.write(&recovered_operator);
+                    }
                 }
                 self.emit(stmt_idx);
             }
@@ -1922,6 +1928,46 @@ impl<'a> Printer<'a> {
             return None;
         }
         Some(recovered.to_string())
+    }
+
+    fn recovered_leading_arrow_chain_text(
+        &self,
+        previous: &Node,
+        current: &Node,
+    ) -> Option<String> {
+        if previous.kind != syntax_kind_ext::EXPRESSION_STATEMENT
+            || current.kind != syntax_kind_ext::EXPRESSION_STATEMENT
+        {
+            return None;
+        }
+
+        let text = self.source_text?;
+        let previous_text = text.get(previous.pos as usize..previous.end as usize)?;
+        if !previous_text.trim_end().ends_with('?') {
+            return None;
+        }
+
+        let current_expr = self
+            .arena
+            .get_expression_statement(current)
+            .and_then(|stmt| self.arena.get(stmt.expression))?;
+        let start = (previous.end as usize).min(text.len());
+        let end = (current_expr.pos as usize).min(text.len());
+        if start >= end {
+            return None;
+        }
+
+        let gap = text.get(start..end)?.trim();
+        if !gap.ends_with("=>") {
+            return None;
+        }
+
+        let mut parts = gap.split("=>").map(str::trim).collect::<Vec<_>>();
+        if parts.len() < 2 || parts.pop() != Some("") || parts.iter().any(|part| part.is_empty()) {
+            return None;
+        }
+
+        Some(format!("{} => ", parts.join(" => ")))
     }
 
     fn recovered_debugger_namespace_line(&self, node: &Node) -> Option<(u32, Option<&'a str>)> {
