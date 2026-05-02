@@ -108,6 +108,21 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn emit_static_block_iifes_with_context(
+        &mut self,
+        blocks: Vec<(NodeIndex, usize)>,
+        this_alias: Option<&str>,
+        super_base_alias: Option<&str>,
+    ) {
+        let prev_this_alias = self.scoped_static_this_alias.clone();
+        let prev_super_alias = self.scoped_static_super_base_alias.clone();
+        self.scoped_static_this_alias = this_alias.map(std::sync::Arc::from);
+        self.scoped_static_super_base_alias = super_base_alias.map(std::sync::Arc::from);
+        self.emit_static_block_iifes(blocks);
+        self.scoped_static_this_alias = prev_this_alias;
+        self.scoped_static_super_base_alias = prev_super_alias;
+    }
+
     pub(in crate::emitter) fn emit_static_block_iife_comma_items(
         &mut self,
         blocks: Vec<(NodeIndex, usize)>,
@@ -119,6 +134,21 @@ impl<'a> Printer<'a> {
             self.emit_static_block_iife_expression(static_block_idx, saved_comment_idx);
             self.decrease_indent();
         }
+    }
+
+    pub(in crate::emitter) fn emit_static_block_iife_comma_items_with_context(
+        &mut self,
+        blocks: Vec<(NodeIndex, usize)>,
+        this_alias: Option<&str>,
+        super_base_alias: Option<&str>,
+    ) {
+        let prev_this_alias = self.scoped_static_this_alias.clone();
+        let prev_super_alias = self.scoped_static_super_base_alias.clone();
+        self.scoped_static_this_alias = this_alias.map(std::sync::Arc::from);
+        self.scoped_static_super_base_alias = super_base_alias.map(std::sync::Arc::from);
+        self.emit_static_block_iife_comma_items(blocks);
+        self.scoped_static_this_alias = prev_this_alias;
+        self.scoped_static_super_base_alias = prev_super_alias;
     }
 
     pub(in crate::emitter) fn class_has_auto_accessor_members(

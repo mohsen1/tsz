@@ -2343,7 +2343,11 @@ impl<'a> Printer<'a> {
             && !self.defer_class_static_blocks
             && !deferred_static_blocks.is_empty()
         {
-            self.emit_static_block_iife_comma_items(deferred_static_blocks);
+            self.emit_static_block_iife_comma_items_with_context(
+                deferred_static_blocks,
+                static_initializer_this_binding,
+                static_initializer_super_base,
+            );
             self.write(",");
             self.write_line();
             self.increase_indent();
@@ -2356,7 +2360,11 @@ impl<'a> Printer<'a> {
             self.deferred_class_static_blocks
                 .extend(deferred_static_blocks);
         } else {
-            self.emit_static_block_iifes(deferred_static_blocks);
+            self.emit_static_block_iifes_with_context(
+                deferred_static_blocks,
+                static_initializer_this_binding,
+                static_initializer_super_base,
+            );
         }
 
         // Restore private field state (for nested classes)
