@@ -83,6 +83,7 @@ fn test_concurrent_object_creation() {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    single_quoted_name: false,
                 },
             ];
             interner.object(props)
@@ -209,6 +210,7 @@ fn test_concurrent_property_map_building() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         })
         .collect();
 

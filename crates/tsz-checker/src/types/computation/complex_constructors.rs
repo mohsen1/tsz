@@ -301,6 +301,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: Some(parent_sym),
                         declaration_order: 0,
                         is_string_named: false,
+                        single_quoted_name: false,
                     },
                 ));
                 continue;
@@ -356,6 +357,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: Some(parent_sym),
                     declaration_order: 0,
                     is_string_named: false,
+                    single_quoted_name: false,
                 },
             ));
         }
@@ -683,6 +685,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: Some(parent_sym),
                         declaration_order: 0,
                         is_string_named: false,
+                        single_quoted_name: false,
                     },
                 ));
             }

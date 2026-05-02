@@ -625,6 +625,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: Some(sym_id),
                 declaration_order: properties.len() as u32,
                 is_string_named: false,
+                single_quoted_name: false,
             });
             changed = true;
         }
@@ -750,6 +751,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: Some(sym_id),
                 declaration_order: property_count as u32,
                 is_string_named: false,
+                single_quoted_name: false,
             });
             property_count += 1;
         }

@@ -292,6 +292,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         parent_id: prop.parent_id,
                         declaration_order: 0,
                         is_string_named: prop.is_string_named,
+                        single_quoted_name: prop.single_quoted_name,
                     });
                 }
             }

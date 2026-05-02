@@ -13,6 +13,7 @@ use crate::symbols_domain::name_text::{
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 const SPREAD_DISPLAY_ORDER_OFFSET: u32 = 1_000_000;
@@ -37,6 +38,35 @@ fn rebase_spread_display_property_order(props: &[PropertyInfo], base: u32) -> Ve
 /// like `a: 1` in `{ a: 1 } satisfies unknown` widens to `number`.
 fn is_literal_permissive_context(ctx: TypeId) -> bool {
     ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
+}
+
+fn is_single_quoted_string_property_name_node(
+    arena: &tsz_parser::parser::node::NodeArena,
+    name_idx: NodeIndex,
+) -> bool {
+    let Some(name_node) = arena.get(name_idx) else {
+        return false;
+    };
+
+    if name_node.kind == SyntaxKind::StringLiteral as u16 {
+        return arena
+            .get_literal(name_node)
+            .and_then(|literal| literal.raw_text.as_deref())
+            .is_some_and(|raw| raw.starts_with('\''));
+    }
+
+    if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+        && let Some(computed) = arena.get_computed_property(name_node)
+        && let Some(expr_node) = arena.get(computed.expression)
+        && expr_node.kind == SyntaxKind::StringLiteral as u16
+    {
+        return arena
+            .get_literal(expr_node)
+            .and_then(|literal| literal.raw_text.as_deref())
+            .is_some_and(|raw| raw.starts_with('\''));
+    }
+
+    false
 }
 
 impl<'a> CheckerState<'a> {
@@ -86,6 +116,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
+                        single_quoted_name: prop.single_quoted_name,
                     });
                 } else {
                     slot.insert(prop.clone());
@@ -890,6 +921,8 @@ impl<'a> CheckerState<'a> {
                             self.ctx.arena,
                             prop.name,
                         ) || self.is_computed_string_property_name(prop.name);
+                    let single_quoted_name =
+                        is_single_quoted_string_property_name_node(self.ctx.arena, prop.name);
                     properties.insert(
                         name_atom,
                         PropertyInfo {
@@ -904,6 +937,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: order,
                             is_string_named,
+                            single_quoted_name,
                         },
                     );
                 } else {
@@ -1331,6 +1365,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: order,
                             is_string_named: false,
+                            single_quoted_name: false,
                         },
                     );
                 } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
@@ -1651,6 +1686,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: order,
                             is_string_named: false,
+                            single_quoted_name: false,
                         },
                     );
                 } else {
@@ -1846,6 +1882,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: None,
                                 declaration_order: 0,
                                 is_string_named: false,
+                                single_quoted_name: false,
                             });
                         }
                         self.ctx
@@ -2023,6 +2060,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: None,
                                 declaration_order: existing_order,
                                 is_string_named: false,
+                                single_quoted_name: false,
                             },
                         );
                     } else {
@@ -2050,6 +2088,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: None,
                                 declaration_order: order,
                                 is_string_named: false,
+                                single_quoted_name: false,
                             },
                         );
                     }

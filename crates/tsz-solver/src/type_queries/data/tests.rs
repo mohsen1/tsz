@@ -222,6 +222,7 @@ fn test_collect_callable_property_types() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: interner.intern_string("value"),
@@ -235,6 +236,7 @@ fn test_collect_callable_property_types() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ]);
 
@@ -499,6 +501,7 @@ fn test_get_object_symbol() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         }],
         string_index: None,
         number_index: None,
@@ -531,6 +534,7 @@ fn test_get_raw_property_type() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: name_y,
@@ -544,6 +548,7 @@ fn test_get_raw_property_type() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ]);
 

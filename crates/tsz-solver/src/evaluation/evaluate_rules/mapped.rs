@@ -206,8 +206,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // For homomorphic types, source comes from the homomorphic check.
         // For non-homomorphic types, still try extracting from keyof for array/tuple preservation.
-        let source_object =
-            homomorphic_source.or_else(|| self.extract_source_from_keyof(mapped.constraint));
+        let source_object = homomorphic_source
+            .or_else(|| self.extract_source_from_keyof(mapped.constraint))
+            .or_else(|| self.post_instantiation_mapped_template_source(mapped));
 
         // tsc treats ANY `{ [K in keyof T]: ... }` as homomorphic for modifier
         // inheritance — the source T's optional/readonly flags propagate to the
@@ -257,7 +258,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             source_decl_order.reserve(source_props.len());
             for prop in source_props {
                 source_decl_order.push(prop.name);
-                source_prop_map.insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
+                source_prop_map.insert(
+                    prop.name,
+                    (
+                        prop.optional,
+                        prop.readonly,
+                        prop.type_id,
+                        prop.is_string_named,
+                        prop.single_quoted_name,
+                    ),
+                );
             }
         }
 
@@ -382,7 +392,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Delegate to centralized modifier computation in type_queries.
             let source_info = source_prop_map.get(&key_name);
             let (source_optional, source_readonly) =
-                source_info.map_or((false, false), |(opt, ro, _)| (*opt, *ro));
+                source_info.map_or((false, false), |(opt, ro, _, _, _)| (*opt, *ro));
 
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
@@ -414,7 +424,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             });
             let property_type = if is_identity_homomorphic
                 && !source_has_type_params
-                && let Some(&(_, _, declared_type)) = source_info
+                && let Some(&(_, _, declared_type, _, _)) = source_info
             {
                 declared_type
             } else {
@@ -434,6 +444,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             for remapped_name in remapped_names {
+                let is_string_named = source_info
+                    .is_some_and(|(_, _, _, source_is_string_named, _)| *source_is_string_named)
+                    && remapped_name == key_name;
+                let single_quoted_name =
+                    source_info.is_some_and(|(_, _, _, _, source_single_quoted_name)| {
+                        *source_single_quoted_name
+                    }) && remapped_name == key_name;
                 properties.push(PropertyInfo {
                     name: remapped_name,
                     type_id: property_type,
@@ -445,7 +462,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: 0,
-                    is_string_named: false,
+                    is_string_named,
+                    single_quoted_name,
                 });
             }
         }
@@ -653,6 +671,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    single_quoted_name: false,
                 });
             }
         }
@@ -1285,6 +1304,67 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         None
+    }
+
+    fn post_instantiation_mapped_template_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        let source = self.extract_template_index_source(mapped.template, mapped.type_param.name)?;
+        if matches!(
+            self.interner().lookup(source),
+            Some(TypeData::TypeParameter(_))
+        ) {
+            return None;
+        }
+
+        let expected_keys = self.evaluate_keyof(source);
+        if expected_keys == mapped.constraint {
+            return Some(source);
+        }
+
+        let evaluated_constraint = self.evaluate_keyof_or_constraint(mapped.constraint);
+        if let (Some(constraint_keys), Some(expected_key_set)) = (
+            self.extract_mapped_keys(evaluated_constraint),
+            self.extract_mapped_keys(expected_keys),
+        ) && !constraint_keys.has_string
+            && !constraint_keys.has_number
+            && !constraint_keys.string_literals.is_empty()
+        {
+            let expected_set: rustc_hash::FxHashSet<Atom> =
+                expected_key_set.string_literals.iter().copied().collect();
+            if constraint_keys
+                .string_literals
+                .iter()
+                .all(|key| expected_set.contains(key))
+            {
+                return Some(source);
+            }
+        }
+
+        None
+    }
+
+    fn extract_template_index_source(
+        &mut self,
+        template: TypeId,
+        iter_name: Atom,
+    ) -> Option<TypeId> {
+        match self.interner().lookup(template) {
+            Some(TypeData::IndexAccess(obj, idx)) => match self.interner().lookup(idx) {
+                Some(TypeData::TypeParameter(param)) if param.name == iter_name => Some(obj),
+                _ => None,
+            },
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+                let members = self.interner().type_list(list_id);
+                members
+                    .iter()
+                    .find_map(|&member| self.extract_template_index_source(member, iter_name))
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner().get_conditional(cond_id);
+                self.extract_template_index_source(cond.true_type, iter_name)
+                    .or_else(|| self.extract_template_index_source(cond.false_type, iter_name))
+            }
+            _ => None,
+        }
     }
 
     /// Extract the source type T from a `keyof T` constraint.

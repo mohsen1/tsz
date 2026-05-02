@@ -8,7 +8,10 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
 
-use super::{TypePrinter, needs_property_name_quoting_with_flag, quote_property_name};
+use super::{
+    TypePrinter, needs_property_name_quoting_with_flag, quote_property_name,
+    quote_property_name_single,
+};
 
 impl<'a> TypePrinter<'a> {
     pub(crate) fn property_is_hidden_in_declaration_shape(
@@ -33,7 +36,11 @@ impl<'a> TypePrinter<'a> {
 
         let name = self.resolve_atom(property.name);
         if needs_property_name_quoting_with_flag(&name, property.is_string_named) {
-            quote_property_name(&name)
+            if property.single_quoted_name {
+                quote_property_name_single(&name)
+            } else {
+                quote_property_name(&name)
+            }
         } else {
             name
         }

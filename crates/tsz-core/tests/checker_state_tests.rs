@@ -6140,6 +6140,7 @@ fn test_contextual_typing_for_object_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
         PropertyInfo {
             name: types.intern_string("age"),
@@ -6153,6 +6154,7 @@ fn test_contextual_typing_for_object_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            single_quoted_name: false,
         },
     ]);
 
@@ -6812,6 +6814,7 @@ fn test_strict_null_checks_property_access() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create union type: { x: number } | null
@@ -6856,6 +6859,7 @@ fn test_strict_null_checks_undefined_type() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create union type: { y: string } | undefined
@@ -6898,6 +6902,7 @@ fn test_strict_null_checks_both_null_and_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     // Create union type: { z: boolean } | null | undefined
@@ -6952,6 +6957,7 @@ fn test_strict_null_checks_non_nullable_success() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        single_quoted_name: false,
     }]);
 
     let evaluator = PropertyAccessEvaluator::new(&types);
