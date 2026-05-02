@@ -1523,22 +1523,47 @@ pub(super) struct MergedAugmentations {
 impl MergedAugmentations {
     /// Build merged augmentations from all files in the program. Call once per compilation.
     pub fn from_program(program: &MergedProgram) -> Self {
+        let module_augmentation_keys = program
+            .files
+            .iter()
+            .map(|file| file.module_augmentations.len())
+            .sum();
+        let augmentation_target_count = program
+            .files
+            .iter()
+            .map(|file| file.augmentation_target_modules.len())
+            .sum();
+        let global_augmentation_keys = program
+            .files
+            .iter()
+            .map(|file| file.global_augmentations.len())
+            .sum();
+
         let mut module_augmentations: rustc_hash::FxHashMap<
             String,
             Vec<tsz::binder::ModuleAugmentation>,
-        > = rustc_hash::FxHashMap::default();
+        > = rustc_hash::FxHashMap::with_capacity_and_hasher(
+            module_augmentation_keys,
+            Default::default(),
+        );
         let mut augmentation_target_modules: rustc_hash::FxHashMap<tsz::binder::SymbolId, String> =
-            rustc_hash::FxHashMap::default();
+            rustc_hash::FxHashMap::with_capacity_and_hasher(
+                augmentation_target_count,
+                Default::default(),
+            );
         let mut global_augmentations: rustc_hash::FxHashMap<
             String,
             Vec<tsz::binder::GlobalAugmentation>,
-        > = rustc_hash::FxHashMap::default();
+        > = rustc_hash::FxHashMap::with_capacity_and_hasher(
+            global_augmentation_keys,
+            Default::default(),
+        );
 
         for file in &program.files {
             for (spec, augs) in file.module_augmentations.iter() {
                 module_augmentations
                     .entry(spec.clone())
-                    .or_default()
+                    .or_insert_with(|| Vec::with_capacity(augs.len()))
                     .extend(augs.iter().map(|aug| {
                         tsz::binder::ModuleAugmentation::with_arena(
                             aug.name.clone(),
@@ -1553,7 +1578,7 @@ impl MergedAugmentations {
             for (name, decls) in file.global_augmentations.iter() {
                 global_augmentations
                     .entry(name.clone())
-                    .or_default()
+                    .or_insert_with(|| Vec::with_capacity(decls.len()))
                     .extend(decls.iter().map(|aug| {
                         tsz::binder::GlobalAugmentation::with_arena(
                             aug.node,

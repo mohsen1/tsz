@@ -5428,15 +5428,38 @@ pub struct SharedBinderData {
 impl SharedBinderData {
     /// Build shared binder data from all files in one pass.
     pub fn from_program(files: &[BoundFile]) -> Self {
-        let mut merged_module_augmentations = rustc_hash::FxHashMap::default();
-        let mut merged_augmentation_target_modules = rustc_hash::FxHashMap::default();
-        let mut merged_global_augmentations = rustc_hash::FxHashMap::default();
+        let module_augmentation_keys = files
+            .iter()
+            .map(|file| file.module_augmentations.len())
+            .sum();
+        let augmentation_target_count = files
+            .iter()
+            .map(|file| file.augmentation_target_modules.len())
+            .sum();
+        let global_augmentation_keys = files
+            .iter()
+            .map(|file| file.global_augmentations.len())
+            .sum();
+
+        let mut merged_module_augmentations = rustc_hash::FxHashMap::with_capacity_and_hasher(
+            module_augmentation_keys,
+            Default::default(),
+        );
+        let mut merged_augmentation_target_modules =
+            rustc_hash::FxHashMap::with_capacity_and_hasher(
+                augmentation_target_count,
+                Default::default(),
+            );
+        let mut merged_global_augmentations = rustc_hash::FxHashMap::with_capacity_and_hasher(
+            global_augmentation_keys,
+            Default::default(),
+        );
 
         for file in files {
             for (spec, augs) in file.module_augmentations.iter() {
                 merged_module_augmentations
                     .entry(spec.clone())
-                    .or_insert_with(Vec::new)
+                    .or_insert_with(|| Vec::with_capacity(augs.len()))
                     .extend(augs.iter().map(|aug| {
                         crate::binder::ModuleAugmentation::with_arena(
                             aug.name.clone(),
@@ -5451,7 +5474,7 @@ impl SharedBinderData {
             for (name, decls) in file.global_augmentations.iter() {
                 merged_global_augmentations
                     .entry(name.clone())
-                    .or_insert_with(Vec::new)
+                    .or_insert_with(|| Vec::with_capacity(decls.len()))
                     .extend(decls.iter().map(|aug| {
                         crate::binder::GlobalAugmentation::with_arena(
                             aug.node,
