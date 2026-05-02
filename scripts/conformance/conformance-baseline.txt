@@ -10,7 +10,7 @@ FAIL TypeScript/tests/cases/compiler/contextualParamTypeVsNestedReturnTypeInfere
 FAIL TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts | expected:[TS2353,TS7006] actual:[TS2353,TS7006]
 FAIL TypeScript/tests/cases/compiler/controlFlowArrayErrors.ts | expected:[TS2345,TS7005,TS7034] actual:[TS2345,TS7005,TS7034]
 FAIL TypeScript/tests/cases/compiler/controlFlowForFunctionLike1.ts | expected:[TS2345] actual:[TS2345]
-FAIL TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expected:[TS1155,TS2345,TS2355,TS2393,TS2411,TS2448,TS2451,TS2454,TS2456,TS2502,TS2554,TS2749] actual:[TS1155,TS2355,TS2411,TS2448,TS2451,TS2454,TS2502,TS2749]
+FAIL TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expected:[TS1155,TS2345,TS2355,TS2393,TS2411,TS2448,TS2451,TS2454,TS2456,TS2502,TS2554,TS2749] actual:[TS1155,TS2355,TS2448,TS2451,TS2454,TS2502,TS2749]
 FAIL TypeScript/tests/cases/compiler/customAsyncIterator.ts | expected:[] actual:[TS2416]
 FAIL TypeScript/tests/cases/compiler/declarationEmitEnumReferenceViaImportEquals.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts | expected:[] actual:[TS2339,TS2345]
@@ -105,7 +105,6 @@ FAIL TypeScript/tests/cases/compiler/typeGuardConstructorClassAndNumber.ts | exp
 FAIL TypeScript/tests/cases/compiler/typeInferenceConflictingCandidates.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/typeofAmbientExternalModules.ts | expected:[TS2564,TS2741] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts | expected:[TS1005,TS1068,TS1127,TS1128,TS1134,TS1351,TS1389,TS1434,TS2809] actual:[TS1127,TS1128,TS1434]
-FAIL TypeScript/tests/cases/compiler/unionSubtypeReductionErrors.ts | expected:[TS2590] actual:[TS2590]
 FAIL TypeScript/tests/cases/compiler/unionTypeWithRecursiveSubtypeReduction3.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/unreachableDeclarations.ts | expected:[TS1235,TS2448,TS2449,TS2450,TS2454,TS5024,TS7027] actual:[TS1235,TS2448,TS2449,TS2450,TS2454,TS5024,TS7027]
 FAIL TypeScript/tests/cases/compiler/unresolvableSelfReferencingAwaitedUnion.ts | expected:[TS1062,TS2322] actual:[TS1062,TS2322]
@@ -6354,6 +6353,7 @@ PASS TypeScript/tests/cases/compiler/unionReductionMutualSubtypes.ts
 PASS TypeScript/tests/cases/compiler/unionReductionWithStringMappingAndIdenticalBaseTypeExistsNoCrash.tsx
 PASS TypeScript/tests/cases/compiler/unionRelationshipCheckPasses.ts
 PASS TypeScript/tests/cases/compiler/unionSignaturesWithThisParameter.ts
+PASS TypeScript/tests/cases/compiler/unionSubtypeReductionErrors.ts
 PASS TypeScript/tests/cases/compiler/unionTypeErrorMessageTypeRefs01.ts
 PASS TypeScript/tests/cases/compiler/unionTypeParameterInference.ts
 PASS TypeScript/tests/cases/compiler/unionTypeWithIndexAndMethodSignature.ts
