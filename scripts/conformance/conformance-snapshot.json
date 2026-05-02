@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-02T05:27:26Z",
-  "git_sha": "ffdf13c1b70d126efdddc0191ae584ffdda548f2",
+  "timestamp": "2026-05-02T06:03:26Z",
+  "git_sha": "58efd5a100a07c20924ec1cc805348be27db710c",
   "summary": {
     "total_tests": 12582,
-    "passed": 12334,
-    "failed": 248,
+    "passed": 12335,
+    "failed": 247,
     "pass_rate": 98.0
   },
   "areas_by_pass_rate": [
@@ -184,13 +184,6 @@
       "pass_rate": 96.0
     },
     {
-      "area": "jsdoc",
-      "total": 249,
-      "passed": 240,
-      "failed": 9,
-      "pass_rate": 96.39
-    },
-    {
       "area": "es6/destructuring",
       "total": 147,
       "passed": 142,
@@ -210,6 +203,13 @@
       "passed": 30,
       "failed": 1,
       "pass_rate": 96.77
+    },
+    {
+      "area": "jsdoc",
+      "total": 249,
+      "passed": 241,
+      "failed": 8,
+      "pass_rate": 96.79
     },
     {
       "area": "types/members",
@@ -1082,10 +1082,6 @@
       "count": 1
     },
     {
-      "code": "TS18046",
-      "count": 1
-    },
-    {
       "code": "TS2604",
       "count": 1
     },
@@ -1095,6 +1091,10 @@
     },
     {
       "code": "TS2351",
+      "count": 1
+    },
+    {
+      "code": "TS18046",
       "count": 1
     },
     {
@@ -1416,10 +1416,6 @@
       "count": 1
     },
     {
-      "code": "TS18046",
-      "count": 1
-    },
-    {
       "code": "TS2565",
       "count": 1
     },
@@ -1456,6 +1452,10 @@
       "count": 1
     },
     {
+      "code": "TS18046",
+      "count": 1
+    },
+    {
       "code": "TS2722",
       "count": 1
     },
@@ -1476,7 +1476,7 @@
     "false_positive": 14,
     "all_missing": 9,
     "wrong_code": 69,
-    "fingerprint_only": 156,
+    "fingerprint_only": 155,
     "same_code_count_drift": 0,
     "close_to_passing": 48
   }
