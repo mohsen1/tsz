@@ -132,7 +132,30 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.arena.get_parenthesized(node) {
-                    IRNode::Parenthesized(Box::new(self.expression_to_ir(paren.expression)))
+                    if self.is_type_erasure_expression(paren.expression) {
+                        self.expression_to_ir(paren.expression)
+                    } else {
+                        IRNode::Parenthesized(Box::new(self.expression_to_ir(paren.expression)))
+                    }
+                } else {
+                    IRNode::Undefined
+                }
+            }
+
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                if let Some(assertion) = self.arena.get_type_assertion(node) {
+                    self.expression_to_ir(assertion.expression)
+                } else {
+                    IRNode::Undefined
+                }
+            }
+
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+                    self.expression_to_ir(unary.expression)
                 } else {
                     IRNode::Undefined
                 }
@@ -242,6 +265,10 @@ impl<'a> AsyncES5Transformer<'a> {
             // TEMPLATE_EXPRESSION: `hello ${name}!`
             k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => self.convert_template_expression(idx),
 
+            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
+                self.convert_tagged_template_expression(idx)
+            }
+
             // NoSubstitutionTemplateLiteral: `hello world`
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
@@ -263,6 +290,15 @@ impl<'a> AsyncES5Transformer<'a> {
 
             _ => IRNode::ASTRef(idx),
         }
+    }
+
+    fn is_type_erasure_expression(&self, idx: NodeIndex) -> bool {
+        self.arena.get(idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::TYPE_ASSERTION
+                || node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+                || node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
+        })
     }
 
     /// Convert object literal properties to `IRProperty`
@@ -571,6 +607,37 @@ impl<'a> AsyncES5Transformer<'a> {
             };
         }
         result
+    }
+
+    fn convert_tagged_template_expression(&self, idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::ASTRef(idx);
+        };
+        let Some(tagged) = self.arena.get_tagged_template(node) else {
+            return IRNode::ASTRef(idx);
+        };
+
+        let Some(template_node) = self.arena.get(tagged.template) else {
+            return IRNode::ASTRef(idx);
+        };
+        if template_node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+            return IRNode::ASTRef(idx);
+        }
+
+        let text = self
+            .arena
+            .get_literal(template_node)
+            .map_or_else(String::new, |lit| lit.text.clone());
+        IRNode::CallExpr {
+            callee: Box::new(self.expression_to_ir(tagged.tag)),
+            arguments: vec![IRNode::CallExpr {
+                callee: Box::new(IRNode::Identifier("__makeTemplateObject".into())),
+                arguments: vec![
+                    IRNode::ArrayLiteral(vec![IRNode::StringLiteral(text.clone().into())]),
+                    IRNode::ArrayLiteral(vec![IRNode::StringLiteral(text.into())]),
+                ],
+            }],
+        }
     }
 
     /// Convert a function expression to IR

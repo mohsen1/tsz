@@ -475,6 +475,19 @@ impl<'a> LoweringPass<'a> {
                     TransformDirective::ES5TemplateLiteral { template_node: idx },
                 );
             }
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                if let Some(assertion) = self.arena.get_type_assertion(node) {
+                    self.visit(assertion.expression);
+                }
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+                    self.visit(unary.expression);
+                }
+            }
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                 if self.ctx.target_es5 {
                     self.transforms.insert(
@@ -528,6 +541,11 @@ impl<'a> LoweringPass<'a> {
                 }
             }
             k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+                    self.visit(unary.expression);
+                }
+            }
+            k if k == syntax_kind_ext::YIELD_EXPRESSION => {
                 if let Some(unary) = self.arena.get_unary_expr_ex(node) {
                     self.visit(unary.expression);
                 }
