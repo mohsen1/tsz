@@ -126,6 +126,23 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Returns true when `ty` is a `TypeId` registered against a `TypeAlias`
+    /// definition in the def store. Used to gate widening transformations
+    /// that would rebuild the type into a structurally-equivalent but distinct
+    /// `TypeId` lacking the alias registration — such transformations cause
+    /// the diagnostic printer to emit the structural body
+    /// (e.g. `string | Promise<SimpleType>`) instead of the alias name
+    /// (`SimpleType`).
+    pub(crate) fn is_registered_type_alias_for_display(&self, ty: TypeId) -> bool {
+        let Some(def_id) = self.ctx.definition_store.find_def_for_type(ty) else {
+            return false;
+        };
+        self.ctx
+            .definition_store
+            .get(def_id)
+            .is_some_and(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+    }
+
     fn assignability_display_has_own_signature_type_params(&self, ty: TypeId) -> bool {
         if let Some(fn_shape) =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
