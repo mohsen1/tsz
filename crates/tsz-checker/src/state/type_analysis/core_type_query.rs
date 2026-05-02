@@ -954,11 +954,31 @@ impl<'a> CheckerState<'a> {
 
     fn resolve_typeof_import_query(&mut self, expr_name: NodeIndex) -> Option<TypeId> {
         let (call_idx, segments) = self.decompose_typeof_import_query(expr_name)?;
-        let (module_name, _) = self.get_import_type_module_specifier(call_idx)?;
+        let (module_name, specifier_node) = self.get_import_type_module_specifier(call_idx)?;
         let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
 
-        let mut current =
-            self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)?;
+        let Some(mut current) =
+            self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)
+        else {
+            // Match the bare `import("./missing")` type-position behavior in
+            // `import_type.rs`: emit TS2307 at the module specifier when the
+            // module cannot be resolved through any of the binder's exports
+            // tables. Without this branch, `typeof import("./missing")`
+            // silently resolves to `any` and tsc-parity diagnostics go
+            // missing. Gated on the same `report_unresolved_imports` flag the
+            // bare `import_type` path uses so cross-file fixture pipelines
+            // that suppress unresolved-import noise stay quiet.
+            if self.ctx.report_unresolved_imports
+                && !self.ctx.binder.module_exports.contains_key(&module_name)
+            {
+                let (message, code) = self.module_not_found_diagnostic_for_site(
+                    &module_name,
+                    crate::import::core::ModuleNotFoundSite::ImportType,
+                );
+                self.error_at_node(specifier_node, &message, code);
+            }
+            return None;
+        };
         let mut resolved_segments: Vec<String> = Vec::new();
         let mut segments_iter = segments.into_iter().peekable();
         while let Some((segment_idx, segment)) = segments_iter.next() {
