@@ -1650,7 +1650,6 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             // with N² — several hundred MB on large-ts-repo.
             cross_file_node_symbols: Default::default(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
-            modules_with_export_equals: Default::default(),
             // Per-binder `flow_nodes` is an Arc clone (atomic increment)
             // instead of a deep clone of the underlying `Vec<FlowNode>`.
             // Each `FlowNode` owns a `Vec<FlowNodeId>` antecedents, so
@@ -1785,7 +1784,6 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             // the rationale: the program-wide map lives on ProjectEnv.
             cross_file_node_symbols: Default::default(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
-            modules_with_export_equals: Default::default(),
             // Per-binder `flow_nodes` is an Arc clone; see
             // `create_binder_from_bound_file_with_augmentations` for
             // the rationale.

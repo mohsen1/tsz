@@ -2703,7 +2703,6 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
             sym_to_decl_indices: original_binder.sym_to_decl_indices.clone(),
             cross_file_node_symbols: original_binder.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: original_binder.shorthand_ambient_modules.clone(),
-            modules_with_export_equals: original_binder.modules_with_export_equals.clone(),
             flow_nodes: original_binder.flow_nodes.clone(),
             node_flow: original_binder.node_flow.clone(),
             switch_clause_to_switch: original_binder.switch_clause_to_switch.clone(),

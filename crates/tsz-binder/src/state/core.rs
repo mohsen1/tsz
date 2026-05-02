@@ -216,7 +216,6 @@ impl BinderState {
             resolved_export_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
             shorthand_ambient_modules: Arc::new(FxHashSet::default()),
-            modules_with_export_equals: FxHashSet::default(),
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
@@ -291,7 +290,6 @@ impl BinderState {
             .expect("RwLock not poisoned")
             .clear();
         Arc::make_mut(&mut self.shorthand_ambient_modules).clear();
-        self.modules_with_export_equals.clear();
         self.module_export_equals_non_module.clear();
         self.lib_symbols_merged = false;
         self.break_targets.clear();
@@ -460,7 +458,6 @@ impl BinderState {
             resolved_export_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
             shorthand_ambient_modules: Arc::new(FxHashSet::default()),
-            modules_with_export_equals: FxHashSet::default(),
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
@@ -525,7 +522,6 @@ impl BinderState {
             sym_to_decl_indices,
             cross_file_node_symbols,
             shorthand_ambient_modules,
-            modules_with_export_equals,
             flow_nodes,
             node_flow,
             switch_clause_to_switch,
@@ -585,7 +581,6 @@ impl BinderState {
             resolved_export_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
             shorthand_ambient_modules,
-            modules_with_export_equals,
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),

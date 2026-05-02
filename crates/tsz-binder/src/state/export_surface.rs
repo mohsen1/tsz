@@ -201,7 +201,18 @@ impl ExportSurface {
         }
 
         // 6. Export equals
-        surface.has_export_equals = binder.modules_with_export_equals.contains(file_name);
+        //
+        // Source the flag from `module_exports` directly: a file has
+        // `export = X` iff its merged exports table contains the
+        // synthetic `"export="` key. The previous source field
+        // (`BinderState::modules_with_export_equals`) was never
+        // populated anywhere in the codebase, so this lookup also
+        // unblocks the assertion that `from_binder()` reports a
+        // truthful flag (rather than always returning `false`).
+        surface.has_export_equals = binder
+            .module_exports
+            .get(file_name)
+            .is_some_and(|exports| exports.has("export="));
 
         // 7. Overload pre-scan + public-API scope detection from AST
         surface.scan_ast_structure(arena, root_idx);
