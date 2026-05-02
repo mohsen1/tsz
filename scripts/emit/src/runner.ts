@@ -10,7 +10,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { createHash } from 'node:crypto';
+import { execFile as execFileCb } from 'node:child_process';
 import { fileURLToPath } from 'url';
+import { promisify } from 'node:util';
 import pc from 'picocolors';
 import pLimit from 'p-limit';
 import ts from 'typescript';
@@ -18,6 +20,7 @@ import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parse
 import { CliTranspiler } from './cli-transpiler.js';
 import { parseTarget, parseModule, inferDefaultModule } from './ts-enums.js';
 
+const execFile = promisify(execFileCb);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '../../..');
 const TS_DIR = path.join(ROOT_DIR, 'TypeScript');
@@ -495,9 +498,8 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
           sourceFileName = cached.sourceFileName ?? sourceFileName;
         }
       } else {
-        const testFilePath = path.join(TS_DIR, baseline.testPath);
         try {
-          const testFileContent = await fs.promises.readFile(testFilePath, 'utf-8');
+          const testFileContent = await readTypeScriptTestFile(baseline.testPath);
           const parsedSource = parseSourceTest(testFileContent);
           directives = parsedSource.options;
           if (parsedSource.sourceFiles.length > 0) {
@@ -683,6 +685,25 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
 
   // Filter nulls and cap to maxTests
   return results.filter((r): r is TestCase => r !== null).slice(0, maxTests);
+}
+
+async function readTypeScriptTestFile(testPath: string): Promise<string> {
+  const testFilePath = path.join(TS_DIR, testPath);
+  try {
+    return await fs.promises.readFile(testFilePath, 'utf-8');
+  } catch (readError) {
+    try {
+      const normalizedPath = testPath.replace(/\\/g, '/');
+      const { stdout } = await execFile(
+        'git',
+        ['-C', TS_DIR, 'show', `HEAD:${normalizedPath}`],
+        { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 },
+      );
+      return stdout;
+    } catch {
+      throw readError;
+    }
+  }
 }
 
 // ============================================================================
