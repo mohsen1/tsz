@@ -161,6 +161,19 @@ fn test_class_property_initializer() {
 }
 
 #[test]
+fn test_computed_string_field_preserves_source_quotes() {
+    let output = emit_es5("class C {\n    ['this'] = '';\n}\n");
+    assert!(
+        output.contains("this['this'] = '';"),
+        "Expected computed string field to preserve source quotes.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this[\"this\"]"),
+        "Expected computed string field not to be rewritten to double quotes.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_class_getter_setter_define_property() {
     let output = emit_es5("class Foo {\n    get bar() { return 1; }\n    set bar(v) {}\n}\n");
     assert!(

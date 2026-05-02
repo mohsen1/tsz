@@ -1083,7 +1083,11 @@ impl<'a> Printer<'a> {
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 let text = self.arena.get_literal_text(idx)?;
-                Some(PropertyNameEmit::Bracket(format!("\"{text}\"")))
+                let raw = self
+                    .get_raw_string_literal(node)
+                    .or_else(|| self.find_raw_string_literal_near(node, text))
+                    .unwrap_or_else(|| format!("\"{text}\""));
+                Some(PropertyNameEmit::Bracket(raw))
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let text = self.arena.get_literal_text(idx)?;

@@ -390,62 +390,136 @@ impl<'a> Printer<'a> {
     }
 
     /// Get the raw string literal from source text, preserving line continuations.
-    fn get_raw_string_literal(&self, node: &Node) -> Option<String> {
-        let text = self.source_text?;
+    pub(in crate::emitter) fn get_raw_string_literal(&self, node: &Node) -> Option<String> {
+        let text = self.source_text_for_map()?;
         let bytes = text.as_bytes();
         let start = node.pos as usize;
         if start >= bytes.len() {
             return None;
         }
 
-        // Skip leading trivia to find the quote
+        let read_from_quote = |i: usize| -> Option<String> {
+            let quote = bytes[i];
+            let mut j = i + 1;
+            let mut escaped = false;
+            while j < bytes.len() {
+                let b = bytes[j];
+                if escaped {
+                    escaped = false;
+                    j += 1;
+                    continue;
+                }
+
+                if b == b'\\' {
+                    escaped = true;
+                    j += 1;
+                    continue;
+                }
+
+                if b == quote {
+                    return Some(text[i..=j].to_string());
+                }
+
+                // Unterminated literal fallback: use parser end range.
+                if b == b'\n' || b == b'\r' {
+                    break;
+                }
+
+                j += 1;
+            }
+
+            let end = std::cmp::min(node.end as usize, bytes.len());
+            if end > i {
+                Some(text[i..end].to_string())
+            } else {
+                None
+            }
+        };
+
+        // Skip leading trivia to find the quote. Some string-literal nodes inside
+        // computed property names carry the opening `[` in their pos range.
         let mut i = start;
         while i < bytes.len() {
             match bytes[i] {
                 b'\'' | b'"' => break,
-                b' ' | b'\t' | b'\r' | b'\n' => i += 1,
-                _ => return None,
+                b' ' | b'\t' | b'\r' | b'\n' | b'[' => i += 1,
+                _ => {
+                    let scan_start = start.saturating_sub(4);
+                    for q in (scan_start..start).rev() {
+                        if matches!(bytes[q], b'\'' | b'"') {
+                            return read_from_quote(q);
+                        }
+                        if !matches!(bytes[q], b' ' | b'\t' | b'\r' | b'\n' | b'[') {
+                            break;
+                        }
+                    }
+                    return None;
+                }
             }
         }
         if i >= bytes.len() {
             return None;
         }
 
-        let quote = bytes[i];
-        let mut j = i + 1;
-        let mut escaped = false;
-        while j < bytes.len() {
-            let b = bytes[j];
-            if escaped {
-                escaped = false;
-                j += 1;
+        read_from_quote(i)
+    }
+
+    pub(in crate::emitter) fn find_raw_string_literal_near(
+        &self,
+        node: &Node,
+        literal_text: &str,
+    ) -> Option<String> {
+        let source = self.source_text_for_map()?;
+        let bytes = source.as_bytes();
+        if bytes.is_empty() {
+            return None;
+        }
+
+        let approx_start = (node.pos as usize).min(bytes.len());
+        let approx_end = (node.end as usize).min(bytes.len());
+        let start = approx_start.saturating_sub(128);
+        let end = approx_end.saturating_add(128).min(bytes.len());
+
+        let mut i = start;
+        while i < end {
+            let quote = bytes[i];
+            if !matches!(quote, b'\'' | b'"') {
+                i += 1;
                 continue;
             }
 
-            if b == b'\\' {
-                escaped = true;
+            let mut j = i + 1;
+            let mut escaped = false;
+            while j < end {
+                let b = bytes[j];
+                if escaped {
+                    escaped = false;
+                    j += 1;
+                    continue;
+                }
+                if b == b'\\' {
+                    escaped = true;
+                    j += 1;
+                    continue;
+                }
+                if b == quote {
+                    let raw = &source[i..=j];
+                    let inner = &raw[1..raw.len() - 1];
+                    if inner == literal_text {
+                        return Some(raw.to_string());
+                    }
+                    break;
+                }
+                if b == b'\n' || b == b'\r' {
+                    break;
+                }
                 j += 1;
-                continue;
             }
 
-            if b == quote {
-                return Some(text[i..=j].to_string());
-            }
-
-            // Unterminated literal fallback: use parser end range.
-            if b == b'\n' || b == b'\r' {
-                break;
-            }
-
-            j += 1;
+            i += 1;
         }
 
-        let end = std::cmp::min(node.end as usize, bytes.len());
-        if end > i {
-            Some(text[i..end].to_string())
-        } else {
-            None
-        }
+        None
     }
 
     /// Detect the original quote character used in source text.
