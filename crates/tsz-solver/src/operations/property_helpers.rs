@@ -891,6 +891,31 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.interner().union2(type_id, TypeId::UNDEFINED)
     }
 
+    /// Build a successful index-signature property-access result that records
+    /// the original (pre-`noUncheckedIndexedAccess`) value type as the WRITE
+    /// type while widening the READ type with `| undefined` when NUIA is on.
+    /// `noUncheckedIndexedAccess` only widens reads; writes must still be
+    /// rejected when the source isn't part of the index signature's value
+    /// type — e.g. assigning `undefined` to `{[s: string]: boolean}["k"]`
+    /// must emit TS2322 even though the read type is `boolean | undefined`.
+    pub(crate) fn index_signature_result_with_nuia_write_type(
+        &self,
+        value_type: TypeId,
+    ) -> PropertyAccessResult {
+        if !self.no_unchecked_indexed_access || value_type == TypeId::UNDEFINED {
+            return PropertyAccessResult::from_index(value_type);
+        }
+        let read_type = self.add_undefined_if_unchecked(value_type);
+        if read_type == value_type {
+            return PropertyAccessResult::from_index(value_type);
+        }
+        PropertyAccessResult::Success {
+            type_id: read_type,
+            write_type: Some(value_type),
+            from_index_signature: true,
+        }
+    }
+
     pub(crate) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
         crate::utils::optional_property_type(self.interner(), prop)
     }

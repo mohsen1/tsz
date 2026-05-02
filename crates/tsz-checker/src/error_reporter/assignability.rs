@@ -291,7 +291,31 @@ impl<'a> CheckerState<'a> {
 
         let read_target = self
             .get_type_of_node_with_request(write_target_idx, &crate::context::TypingRequest::NONE);
-        crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, read_target)
+        if !crate::query_boundaries::class_type::type_includes_undefined(
+            self.ctx.types,
+            read_target,
+        ) {
+            return false;
+        }
+
+        // TS2412 only applies to true `?`-optional properties. When the read
+        // type includes `undefined` purely because `noUncheckedIndexedAccess`
+        // widened an index-signature lookup, the regular TS2322 path is the
+        // correct diagnostic — fall through. Detect this by checking whether
+        // `target | undefined` equals the read target: that pattern is the
+        // signature of NUIA-widening on a non-optional slot.
+        if self.ctx.compiler_options.no_unchecked_indexed_access {
+            let target_with_undef = self
+                .ctx
+                .types
+                .factory()
+                .union(vec![target, TypeId::UNDEFINED]);
+            if target_with_undef == read_target {
+                return false;
+            }
+        }
+
+        true
     }
 
     /// Get the declaring type name for a property in a target type.
