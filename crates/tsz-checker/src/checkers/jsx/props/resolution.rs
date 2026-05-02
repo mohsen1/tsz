@@ -1344,6 +1344,7 @@ impl<'a> CheckerState<'a> {
                     has_later_spreads,
                     suppress_missing_props,
                     &display_target,
+                    preferred_target_display,
                 );
                 suppress_missing_props_from_spread |= had_error || suppress_missing_props;
 

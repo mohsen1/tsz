@@ -68,6 +68,7 @@ impl<'a> CheckerState<'a> {
         has_later_spreads: bool,
         suppress_missing_props: bool,
         display_target: &str,
+        preferred_target_display: Option<&str>,
     ) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
 
@@ -140,7 +141,20 @@ impl<'a> CheckerState<'a> {
         let resolved_spread = self.evaluate_type_with_env(spread_type);
         let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
 
-        let props_display = self.format_type(props_type);
+        // For TS2322 messages on JSX spread mismatches, tsc displays the
+        // bare component prop type (e.g. `PoisonedProp`) not the
+        // synthetic-children-injected form (`PoisonedProp & { children?:
+        // ReactNode | undefined; }`). Prefer the caller-provided bare-prop
+        // display string when one is available; otherwise fall back to
+        // formatting `props_type` with the optional `children` member
+        // stripped.
+        let props_display = match preferred_target_display {
+            Some(display) if !display.is_empty() => display.to_string(),
+            _ => {
+                let props_display_type = self.strip_jsx_children_injection_for_display(props_type);
+                self.format_type(props_display_type)
+            }
+        };
 
         let Some(spread_shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_spread)
@@ -453,5 +467,93 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    /// Remove the synthetic JSX `& { children?: ... }` injection from a
+    /// component props type for the TS2322 diagnostic message. tsc's
+    /// `getJsxAttributesTypeFromAttributesProperty` adds `children` to a
+    /// component's props for assignability, but the error message displays
+    /// the bare component prop type (e.g. `PoisonedProp`). Mirror that here.
+    ///
+    /// The function looks for an Intersection whose members include a
+    /// non-empty Object/ObjectWithIndex whose only own property is an
+    /// optional `children`, and returns the remaining intersection (or the
+    /// single non-children member if exactly one remains). All other types
+    /// are returned unchanged.
+    fn strip_jsx_children_injection_for_display(&self, props_type: TypeId) -> TypeId {
+        // Walk through any display alias chain first — the alias usually
+        // points to the original Lazy/Application that displays as the
+        // bare prop type name.  Apply the same stripping to the resolved
+        // alias if the alias itself is an intersection containing a
+        // children-injection member.
+        let candidate = self
+            .ctx
+            .types
+            .get_display_alias(props_type)
+            .filter(|&alias| alias != props_type)
+            .unwrap_or(props_type);
+        self.strip_jsx_children_injection_for_display_inner(candidate)
+    }
+
+    fn strip_jsx_children_injection_for_display_inner(&self, props_type: TypeId) -> TypeId {
+        use crate::query_boundaries::common;
+        // Handle the intersection case (e.g. raw `PoisonedProp & {children?}`).
+        if let Some(members) = common::intersection_members(self.ctx.types, props_type) {
+            let mut kept: Vec<TypeId> = Vec::with_capacity(members.len());
+            for &member in &members {
+                if self.intersection_member_is_jsx_children_injection(member) {
+                    continue;
+                }
+                kept.push(member);
+            }
+            if kept.len() != members.len() {
+                return match kept.len() {
+                    0 => props_type, // pathological — keep original
+                    1 => kept[0],
+                    _ => self.ctx.types.factory().intersection(kept),
+                };
+            }
+        }
+        // Handle the merged-Object case (e.g. interner collapsed
+        // `PoisonedProp & {children?}` into a single Object whose own
+        // properties include `x`, `y`, plus an injected `children?`).
+        if let Some(shape) = common::object_shape_for_type(self.ctx.types, props_type) {
+            let filtered: Vec<_> = shape
+                .properties
+                .iter()
+                .filter(|prop| {
+                    let name = self.ctx.types.resolve_atom(prop.name);
+                    !(name == "children" && prop.optional)
+                })
+                .cloned()
+                .collect();
+            if filtered.len() != shape.properties.len() {
+                return self.ctx.types.factory().object(filtered);
+            }
+        }
+        props_type
+    }
+
+    /// Returns true if `member` is a synthetic `{ children?: ReactNode | ... }`
+    /// JSX-injected member (single optional `children` property, no other own
+    /// state). Defensive: rejects any shape with extra properties or index
+    /// signatures so user-authored types named `children` are unaffected.
+    fn intersection_member_is_jsx_children_injection(&self, member: TypeId) -> bool {
+        use crate::query_boundaries::common;
+        let Some(shape) = common::object_shape_for_type(self.ctx.types, member) else {
+            return false;
+        };
+        if shape.string_index.is_some() || shape.number_index.is_some() {
+            return false;
+        }
+        if shape.properties.len() != 1 {
+            return false;
+        }
+        let prop = &shape.properties[0];
+        if !prop.optional {
+            return false;
+        }
+        let name = self.ctx.types.resolve_atom(prop.name);
+        name == "children"
     }
 }
