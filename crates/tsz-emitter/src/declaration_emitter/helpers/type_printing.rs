@@ -1078,6 +1078,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.package_specifier_for_node_modules_path(current_path, module_path)
             {
                 package_specifier
+            } else if let Some(package_specifier) =
+                self.package_specifier_for_package_json_path(current_path, module_path)
+            {
+                package_specifier
             } else {
                 let rel_path = self.calculate_relative_path(current_path, module_path);
                 self.strip_ts_extensions(&rel_path)
@@ -1086,7 +1090,54 @@ impl<'a> DeclarationEmitter<'a> {
             candidates.push(module_specifier);
         }
 
+        for (module_path, source_modules) in binder.wildcard_reexports.iter() {
+            if self.paths_refer_to_same_source_file(current_path, module_path) {
+                continue;
+            }
+
+            for source_module in source_modules {
+                let normalized_source_module = self.strip_ts_extensions(source_module);
+                let effective_source_module = if normalized_source_module != *source_module {
+                    normalized_source_module.as_str()
+                } else {
+                    source_module.as_str()
+                };
+
+                let reexports_symbol = self
+                    .matching_module_export_paths(binder, module_path, effective_source_module)
+                    .into_iter()
+                    .filter_map(|source_path| binder.module_exports.get(source_path))
+                    .filter_map(|exports| exports.get(export_name))
+                    .any(|exported_sym_id| {
+                        exported_sym_id == sym_id
+                            || binder.resolve_import_symbol(exported_sym_id) == Some(sym_id)
+                            || self.resolve_alias_in_source_context(exported_sym_id, binder)
+                                == Some(sym_id)
+                    });
+
+                if !reexports_symbol {
+                    continue;
+                }
+
+                let module_specifier = if let Some(package_specifier) =
+                    self.package_specifier_for_node_modules_path(current_path, module_path)
+                {
+                    package_specifier
+                } else if let Some(package_specifier) =
+                    self.package_specifier_for_package_json_path(current_path, module_path)
+                {
+                    package_specifier
+                } else {
+                    let rel_path = self.calculate_relative_path(current_path, module_path);
+                    self.strip_ts_extensions(&rel_path)
+                };
+
+                candidates.push(module_specifier);
+            }
+        }
+
         candidates.sort_by_key(|specifier| (specifier.matches('/').count(), specifier.len()));
+        candidates.dedup();
         candidates.into_iter().next()
     }
 
@@ -1163,6 +1214,15 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Import aliases are never "global" in this sense.
         if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) && symbol.import_module.is_some() {
+            return false;
+        }
+
+        if let (Some(current_path), Some(source_path)) = (
+            self.current_file_path.as_deref(),
+            self.get_symbol_source_path(check_sym_id, binder),
+        ) && !self.paths_refer_to_same_source_file(current_path, &source_path)
+            && binder.module_exports.contains_key(&source_path)
+        {
             return false;
         }
 
@@ -1267,6 +1327,12 @@ impl<'a> DeclarationEmitter<'a> {
 
             if let Some(package_specifier) =
                 self.package_specifier_for_node_modules_path(current_path, source_path)
+            {
+                return Some(package_specifier);
+            }
+
+            if let Some(package_specifier) =
+                self.package_specifier_for_package_json_path(current_path, source_path)
             {
                 return Some(package_specifier);
             }
@@ -1525,6 +1591,74 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         Some((root_key, specifier))
+    }
+
+    pub(in crate::declaration_emitter) fn package_specifier_for_package_json_path(
+        &self,
+        current_path: &str,
+        source_path: &str,
+    ) -> Option<String> {
+        use std::path::Path;
+
+        let source = Path::new(source_path);
+        let mut package_root = source.parent()?;
+        let package_json = loop {
+            let candidate = package_root.join("package.json");
+            if candidate.is_file() {
+                break candidate;
+            }
+            package_root = package_root.parent()?;
+        };
+
+        let package_json_text = std::fs::read_to_string(&package_json).ok()?;
+        let package_json = serde_json::from_str::<serde_json::Value>(&package_json_text).ok()?;
+        let package_name = package_json.get("name")?.as_str()?;
+        if package_name.is_empty() {
+            return None;
+        }
+
+        let current_dir = Path::new(current_path).parent()?;
+        let package_root_canonical = package_root.canonicalize().ok()?;
+        let mut ancestor = Some(current_dir);
+        let mut reachable = false;
+        while let Some(dir) = ancestor {
+            let candidate = dir.join("node_modules").join(package_name);
+            if candidate.exists()
+                && let Ok(candidate_canonical) = candidate.canonicalize()
+                && candidate_canonical == package_root_canonical
+            {
+                reachable = true;
+                break;
+            }
+            ancestor = dir.parent();
+        }
+        if !reachable {
+            return None;
+        }
+
+        let relative = source
+            .strip_prefix(package_root)
+            .ok()?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let runtime_relative_path = self.declaration_runtime_relative_path(&relative)?;
+        let subpath = self
+            .reverse_export_specifier_for_runtime_path(package_root, &runtime_relative_path)
+            .or_else(|| {
+                let mut relative_path = self.strip_ts_extensions(&relative);
+                if relative_path.ends_with("/index") {
+                    relative_path.truncate(relative_path.len() - "/index".len());
+                } else if relative_path == "index" {
+                    relative_path.clear();
+                }
+                Some(relative_path)
+            })?;
+
+        if subpath.is_empty() {
+            Some(package_name.to_string())
+        } else {
+            Some(format!("{package_name}/{subpath}"))
+        }
     }
 
     pub(in crate::declaration_emitter) fn declaration_runtime_relative_path(
