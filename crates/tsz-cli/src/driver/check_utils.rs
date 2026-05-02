@@ -1497,6 +1497,57 @@ pub(super) const fn is_checker_grammar_code_suppressed_in_js(code: u32) -> bool 
     )
 }
 
+/// JS-only-syntactic diagnostic codes — those `TS8xxx` codes that tsc emits
+/// from `getJSSyntacticDiagnosticsForFile` (see `program.ts`) for TypeScript
+/// syntax appearing inside JavaScript source files. tsc routes these through
+/// `getSyntacticDiagnostics` and uses them to short-circuit
+/// `getSemanticDiagnostics` across the whole program in
+/// `emitFilesAndReportErrors`.
+///
+/// This list is a stricter subset of `is_js_grammar_diagnostic`. JSDoc-related
+/// `TS8xxx` codes (`TS8020`–`TS8039` save for `TS8038`) come from the checker
+/// and do **not** participate in the syntactic-skip-semantic gate.
+pub(super) const fn is_js_only_syntactic_diagnostic(code: u32) -> bool {
+    matches!(
+        code,
+        8002  // 'import ... =' can only be used in TypeScript files
+        | 8003  // 'export =' can only be used in TypeScript files
+        | 8004  // Type parameter declarations
+        | 8005  // 'implements' clauses
+        | 8006  // '{0}' declarations (interface, namespace, enum, import/export type)
+        | 8008  // Type aliases
+        | 8009  // The '{0}' modifier
+        | 8010  // Type annotations
+        | 8011  // Type arguments
+        | 8012  // Parameter modifiers
+        | 8013  // Non-null assertions
+        | 8016  // Type assertion expressions
+        | 8017  // Signature declarations
+        | 8037  // Type satisfaction expressions
+        | 8038 // Decorators may not appear after 'export'
+    )
+}
+
+/// True when a checker-emitted diagnostic should be retained even though the
+/// program contains a JS-only-syntactic diagnostic.
+///
+/// In tsc, `getSyntacticDiagnostics` (which contains the JS-only-syntactic
+/// codes for JS files) short-circuits `getSemanticDiagnostics` for every
+/// source file. We mirror that by keeping only:
+/// - real parse failures (parser-emitted, structural recovery)
+/// - `TS1xxx` codes that tsc legitimately emits for JS sources
+/// - `TS8xxx` JS grammar diagnostics (the gate trigger plus its peers)
+/// - `TS2427`/`TS2457` reserved type names (deferred parse-vs-checker validation)
+///
+/// Everything else — checker semantic diagnostics, including low-numbered
+/// codes like `TS1192` and `TS1295` — is suppressed to match tsc.
+pub(super) const fn keep_diagnostic_when_js_only_syntactic_skips_semantic(code: u32) -> bool {
+    is_real_syntax_error(code)
+        || is_ts1xxx_allowed_in_js(code)
+        || (code >= 8000 && code < 9000)
+        || matches!(code, 2427 | 2457)
+}
+
 /// Pre-computed merged augmentation data shared across all per-file binders.
 /// Computing this once avoids `O(N_files²)` iteration in [`create_binder_from_bound_file`].
 pub(super) struct MergedAugmentations {

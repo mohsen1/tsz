@@ -1099,3 +1099,67 @@ fn test_types_entry_with_explicit_type_roots_still_emits_ts2688() {
         result.diagnostics
     );
 }
+
+/// When a JavaScript source file contains TypeScript-only syntax (e.g.,
+/// `import x = require(...)`), tsc emits TS8002 from
+/// `getJSSyntacticDiagnosticsForFile`. Because that diagnostic flows through
+/// `getSyntacticDiagnostics`, tsc's `emitFilesAndReportErrors` short-circuits
+/// `getSemanticDiagnostics` for *every* file in the program — so any other
+/// semantic error (TS2305 missing exported member, TS1192 no default export,
+/// TS2591 missing 'require' name, etc.) is suppressed.
+///
+/// Regression test for the behaviour exercised by
+/// `compiler/modulePreserve4.ts`. Ensures a `.cjs` import-equals in a
+/// multi-file program suppresses semantic noise across the program but
+/// keeps the JS-syntactic TS8002 itself.
+#[test]
+fn js_only_syntactic_error_suppresses_semantic_diagnostics_program_wide() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    fs::write(base.join("a.ts"), "export const x = 0;\n").expect("write a.ts");
+    fs::write(
+        base.join("main.cjs"),
+        "import { x, y } from \"./a\";\nimport a1 = require(\"./a\");\n",
+    )
+    .expect("write main.cjs");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "preserve",
+            "target": "esnext",
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["a.ts", "main.cjs"]
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    // The JS-syntactic error tsc would surface in the syntactic phase.
+    assert!(
+        codes.contains(&8002),
+        "Expected TS8002 'import = require can only be used in TypeScript files' to be reported, got: {:?}",
+        result.diagnostics,
+    );
+
+    // tsc skips semantic checking for the whole program when any
+    // JS-only-syntactic error is present, so these checker-emitted
+    // diagnostics must NOT appear.
+    for &suppressed in &[2305_u32, 2591, 1192] {
+        assert!(
+            !codes.contains(&suppressed),
+            "TS{} should be suppressed program-wide when any JS-only-syntactic error exists; got diagnostics: {:?}",
+            suppressed,
+            result.diagnostics,
+        );
+    }
+}
