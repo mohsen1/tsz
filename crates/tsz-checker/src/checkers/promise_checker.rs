@@ -38,6 +38,32 @@ impl<'a> CheckerState<'a> {
         matches!(name, "Promise" | "PromiseLike")
     }
 
+    /// True when `type_id` is an `Application` whose base resolves (through any
+    /// number of `Lazy` wrappers) to the lib `Awaited` type alias.
+    ///
+    /// Used to gate alias-evaluation after Promise unwrap so we only fold
+    /// Awaited applications (which tsc resolves eagerly via `getAwaitedType`)
+    /// without disturbing the printer's preferred alias-form display for other
+    /// generic applications like `Box<T>` or `Partial<T>`.
+    fn is_awaited_application(&self, type_id: TypeId) -> bool {
+        let Some((base, _)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        match query::classify_promise_type(self.ctx.types, base) {
+            query::PromiseTypeKind::Lazy(def_id) => {
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    return symbol.escaped_name.as_str() == "Awaited";
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// Check if a name refers to exactly the global Promise type (not subclasses).
     ///
     /// TSC's `checkAsyncFunctionReturnType` uses `isReferenceToType(returnType, globalPromiseType)`,
@@ -1510,17 +1536,25 @@ impl<'a> CheckerState<'a> {
     /// - `Promise<T>` → `T`
     /// - `Promise<T> | StateMachine<T>` → `T | StateMachine<T>`
     /// - Non-Promise types pass through unchanged.
+    ///
+    /// The unwrapped inner type is then evaluated via `evaluate_application_type`
+    /// so that alias applications like `Awaited<X>` (which appears in the lib
+    /// signature `Promise.resolve<T>(value: T): Promise<Awaited<T>>`) fold to
+    /// their conditional-type result. This mirrors tsc's `getAwaitedType`,
+    /// which always resolves Awaited<X> for non-thenable X. Without this step
+    /// the assignability gateway sees a raw `Awaited<X>` Application and fails
+    /// to relate it against the structural form.
     pub fn unwrap_async_return_type_for_body(&mut self, return_type: TypeId) -> TypeId {
         // Try simple unwrap first
         if let Some(unwrapped) = self.unwrap_promise_type(return_type) {
-            return unwrapped;
+            return self.evaluate_awaited_application(unwrapped);
         }
         // For unions, unwrap each Promise member individually
         if let Some(members) = query::union_members(self.ctx.types, return_type) {
             let mut new_members: Vec<TypeId> = Vec::new();
             for member in &members {
                 if let Some(unwrapped) = self.unwrap_promise_type(*member) {
-                    new_members.push(unwrapped);
+                    new_members.push(self.evaluate_awaited_application(unwrapped));
                 } else {
                     new_members.push(*member);
                 }
@@ -1528,6 +1562,19 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.factory().union(new_members);
         }
         return_type
+    }
+
+    /// If `type_id` is an `Awaited<X>` application, evaluate it through the
+    /// conditional-type machinery (which folds it to `X` for non-thenable X);
+    /// otherwise return `type_id` unchanged. Other generic applications (e.g.
+    /// `Box<T>`, `Partial<T>`) keep their alias-form display, matching tsc's
+    /// preference for the named alias when one is in scope.
+    fn evaluate_awaited_application(&mut self, type_id: TypeId) -> TypeId {
+        if self.is_awaited_application(type_id) {
+            self.evaluate_application_type(type_id)
+        } else {
+            type_id
+        }
     }
 
     /// Check that `Generator<TYield, any, any>` (or `AsyncGenerator`) is assignable
