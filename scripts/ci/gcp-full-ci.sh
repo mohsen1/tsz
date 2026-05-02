@@ -1322,7 +1322,9 @@ run_fourslash_shard() {
 
   local detail_json="$METRICS_DIR/fourslash-shard-${shard_index}.json"
   set +e
-  ./scripts/fourslash/run-fourslash.sh \
+  run_with_heartbeat "fourslash-${shard_index}" \
+    bash -c 'log_file="$1"; shift; "$@" >"$log_file" 2>&1' bash "$LOG_DIR/fourslash/shard-${shard_index}.log" \
+    ./scripts/fourslash/run-fourslash.sh \
     --skip-cargo-build \
     --skip-ts-build \
     --shard="${shard_index}/${shard_count}" \
@@ -1330,8 +1332,7 @@ run_fourslash_shard() {
     --workers="$FOURSLASH_WORKERS" \
     --timeout="${TSZ_CI_FOURSLASH_TIMEOUT_MS:-15000}" \
     --memory-limit=512 \
-    --json-out="$detail_json" \
-    >"$LOG_DIR/fourslash/shard-${shard_index}.log" 2>&1
+    --json-out="$detail_json"
   local rc="$?"
   set -e
 
