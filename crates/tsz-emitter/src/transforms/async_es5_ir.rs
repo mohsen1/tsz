@@ -117,6 +117,23 @@ pub mod opcodes {
     pub const END_FINALLY: u32 = 7;
 }
 
+/// Pieces of an ES5 class factory broken out from a transformed
+/// `ES5ClassIIFE` so that callers can splice the body into a generator
+/// case while still emitting weakmap declarations / instantiations and
+/// deferred static blocks alongside the class assignment.
+struct ES5ClassFactoryParts {
+    factory: IRNode,
+    /// Names of `WeakMap` declarations for private fields. Must be
+    /// declared as part of the surrounding scope (otherwise references
+    /// to them in the class body fail at runtime with `ReferenceError`).
+    weakmap_decls: Vec<String>,
+    /// Pre-rendered `WeakMap` instantiation expression strings (e.g.
+    /// `_value = new WeakMap()`). Emitted after the class assignment.
+    weakmap_inits: Vec<String>,
+    /// Static block IIFEs deferred to after the class assignment.
+    deferred_static_blocks: Vec<IRNode>,
+}
+
 /// Async ES5 transformer that produces IR nodes instead of strings.
 ///
 /// This transformer mirrors the `GeneratorES5Transformer` pattern from generators.rs.
@@ -1373,11 +1390,22 @@ impl<'a> AsyncES5Transformer<'a> {
         else {
             return false;
         };
-        let Some(factory) = self.es5_class_factory(idx, &class_name) else {
+        let Some(factory_parts) = self.es5_class_factory(idx, &class_name) else {
             return false;
         };
 
         let factory_temp = self.generate_hoisted_temp();
+
+        // Emit weakmap declarations alongside the other class-related vars.
+        // These would otherwise be silently dropped by destructuring just the
+        // factory body out of the ES5ClassIIFE IR node.
+        for weakmap_name in &factory_parts.weakmap_decls {
+            current_statements.push(IRNode::VarDecl {
+                name: weakmap_name.clone().into(),
+                initializer: None,
+            });
+        }
+
         current_statements.push(IRNode::VarDecl {
             name: class_name.clone().into(),
             initializer: None,
@@ -1388,7 +1416,7 @@ impl<'a> AsyncES5Transformer<'a> {
         });
         current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
             IRNode::id(factory_temp.clone()),
-            factory,
+            factory_parts.factory,
         ))));
 
         self.process_await_expression(suspension_idx, cases, current_statements, current_label);
@@ -1400,6 +1428,20 @@ impl<'a> AsyncES5Transformer<'a> {
                 base_class: Box::new(self.extends_value_after_suspension(extends_expr)),
             },
         ))));
+
+        // Emit weakmap initializers and deferred static blocks after the class
+        // is assigned, mirroring the ordering used by IRPrinter for
+        // ES5ClassIIFE (see `ir_printer.rs` ES5ClassIIFE arm: weakmap_inits
+        // appended after the IIFE, then deferred_static_blocks).
+        for weakmap_init in factory_parts.weakmap_inits {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(
+                weakmap_init.into(),
+            ))));
+        }
+        for deferred in factory_parts.deferred_static_blocks {
+            current_statements.push(deferred);
+        }
+
         true
     }
 
@@ -1422,18 +1464,34 @@ impl<'a> AsyncES5Transformer<'a> {
         Some((class_name, extends_expr, suspension_idx))
     }
 
-    fn es5_class_factory(&self, class_idx: NodeIndex, class_name: &str) -> Option<IRNode> {
+    fn es5_class_factory(
+        &self,
+        class_idx: NodeIndex,
+        class_name: &str,
+    ) -> Option<ES5ClassFactoryParts> {
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
         let class_ir = class_transformer.transform_class_with_name(class_idx, Some(class_name))?;
-        let IRNode::ES5ClassIIFE { body, .. } = class_ir else {
+        let IRNode::ES5ClassIIFE {
+            body,
+            weakmap_decls,
+            weakmap_inits,
+            deferred_static_blocks,
+            ..
+        } = class_ir
+        else {
             return None;
         };
-        Some(IRNode::FunctionExpr {
-            name: None,
-            parameters: vec![IRParam::new("_super")],
-            body,
-            is_expression_body: false,
-            body_source_range: None,
+        Some(ES5ClassFactoryParts {
+            factory: IRNode::FunctionExpr {
+                name: None,
+                parameters: vec![IRParam::new("_super")],
+                body,
+                is_expression_body: false,
+                body_source_range: None,
+            },
+            weakmap_decls,
+            weakmap_inits,
+            deferred_static_blocks,
         })
     }
 

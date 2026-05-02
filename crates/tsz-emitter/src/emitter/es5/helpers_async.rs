@@ -376,6 +376,12 @@ impl<'a> Printer<'a> {
                     self.write_line();
                     self.decrease_indent();
                     self.write("}");
+                    // emit_function_parameters_es5() pushed a temp scope; the
+                    // other early-return paths in this function (and the
+                    // multi-line/normal exit below) all call pop_temp_scope.
+                    // Forgetting it here would leak temp-name state across
+                    // functions and corrupt subsequent emissions.
+                    self.pop_temp_scope();
                     return;
                 }
 
