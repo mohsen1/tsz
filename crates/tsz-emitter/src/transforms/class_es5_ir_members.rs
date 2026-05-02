@@ -696,7 +696,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             } else {
                                 IRNode::elem(
                                     IRNode::id(self.class_name.clone()),
-                                    self.convert_expression_static(*expr_idx),
+                                    self.convert_computed_property_expression(*expr_idx, true),
                                 )
                             }
                         }
@@ -831,7 +831,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             if let Some(computed) = self.arena.get_computed_property(name_node) {
                 return IRMethodName::Computed(Box::new(
-                    self.convert_expression_static(computed.expression),
+                    self.convert_computed_property_expression(computed.expression, true),
                 ));
             }
         } else if name_node.kind == SyntaxKind::Identifier as u16 {
@@ -1298,7 +1298,7 @@ impl<'a> ES5ClassTransformer<'a> {
                                 } else {
                                     IRNode::elem(
                                         IRNode::id(self.class_name.clone()),
-                                        self.convert_expression_static(*expr_idx),
+                                        self.convert_computed_property_expression(*expr_idx, true),
                                     )
                                 }
                             }

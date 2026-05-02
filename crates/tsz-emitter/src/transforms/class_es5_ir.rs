@@ -722,6 +722,134 @@ impl<'a> ES5ClassTransformer<'a> {
         result
     }
 
+    fn convert_computed_property_expression(&self, idx: NodeIndex, is_static: bool) -> IRNode {
+        if let Some(raw) = self.raw_string_literal_source(idx) {
+            return IRNode::Raw(raw.into());
+        }
+
+        if is_static {
+            self.convert_expression_static(idx)
+        } else {
+            self.convert_expression(idx)
+        }
+    }
+
+    fn raw_string_literal_source(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.kind != SyntaxKind::StringLiteral as u16 {
+            return None;
+        }
+        let literal_text = self.arena.get_literal(node).map(|lit| lit.text.as_str())?;
+
+        let source_text = self.source_text?;
+        let bytes = source_text.as_bytes();
+        let start = (node.pos as usize).min(bytes.len());
+        let end = (node.end as usize).min(bytes.len());
+        if start >= end {
+            return self.find_raw_string_literal_near(node, literal_text);
+        }
+
+        let read_from_quote = |i: usize| -> Option<String> {
+            let quote = bytes[i];
+            let mut j = i + 1;
+            while j < bytes.len() {
+                if bytes[j] == b'\\' {
+                    j = j.saturating_add(2);
+                    continue;
+                }
+                if bytes[j] == quote {
+                    return Some(source_text[i..=j].to_string());
+                }
+                if bytes[j] == b'\n' || bytes[j] == b'\r' {
+                    break;
+                }
+                j += 1;
+            }
+
+            None
+        };
+
+        let mut i = start;
+        while i < end {
+            match bytes[i] {
+                b'\'' | b'"' => break,
+                b' ' | b'\t' | b'\r' | b'\n' | b'[' => i += 1,
+                _ => {
+                    let scan_start = start.saturating_sub(4);
+                    for q in (scan_start..start).rev() {
+                        if matches!(bytes[q], b'\'' | b'"') {
+                            return read_from_quote(q);
+                        }
+                        if !matches!(bytes[q], b' ' | b'\t' | b'\r' | b'\n' | b'[') {
+                            break;
+                        }
+                    }
+                    return self.find_raw_string_literal_near(node, literal_text);
+                }
+            }
+        }
+
+        if i >= end {
+            return self.find_raw_string_literal_near(node, literal_text);
+        }
+
+        read_from_quote(i).or_else(|| self.find_raw_string_literal_near(node, literal_text))
+    }
+
+    fn find_raw_string_literal_near(&self, node: &Node, literal_text: &str) -> Option<String> {
+        let source_text = self.source_text?;
+        let bytes = source_text.as_bytes();
+        if bytes.is_empty() {
+            return None;
+        }
+
+        let approx_start = (node.pos as usize).min(bytes.len());
+        let approx_end = (node.end as usize).min(bytes.len());
+        let start = approx_start.saturating_sub(128);
+        let end = approx_end.saturating_add(128).min(bytes.len());
+
+        let mut i = start;
+        while i < end {
+            let quote = bytes[i];
+            if !matches!(quote, b'\'' | b'"') {
+                i += 1;
+                continue;
+            }
+
+            let mut j = i + 1;
+            let mut escaped = false;
+            while j < end {
+                let b = bytes[j];
+                if escaped {
+                    escaped = false;
+                    j += 1;
+                    continue;
+                }
+                if b == b'\\' {
+                    escaped = true;
+                    j += 1;
+                    continue;
+                }
+                if b == quote {
+                    let raw = &source_text[i..=j];
+                    let inner = &raw[1..raw.len() - 1];
+                    if inner == literal_text {
+                        return Some(raw.to_string());
+                    }
+                    break;
+                }
+                if b == b'\n' || b == b'\r' {
+                    break;
+                }
+                j += 1;
+            }
+
+            i += 1;
+        }
+
+        None
+    }
+
     /// Collect decorator `NodeIndex` list from a modifier list
     fn collect_decorators_from_modifiers(&self, modifiers: &Option<NodeList>) -> Vec<NodeIndex> {
         let Some(mods) = modifiers else {
@@ -2280,7 +2408,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 if let Some(temp) = self.computed_prop_temp_map.get(&expr_idx) {
                     IRNode::elem(receiver, IRNode::id(temp.clone()))
                 } else {
-                    IRNode::elem(receiver, self.convert_expression(expr_idx))
+                    IRNode::elem(
+                        receiver,
+                        self.convert_computed_property_expression(expr_idx, false),
+                    )
                 }
             }
         }
