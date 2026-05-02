@@ -533,6 +533,29 @@ fn explore_type_operator_in_array() {
     );
 }
 
+/// `keyof (() => void)` and `readonly` / `unique` operators with a
+/// function- or constructor-type operand must keep parentheses around
+/// the operand. Without them the output `keyof () => void` is either a
+/// syntax error or a function type whose parameter list begins with `(`.
+/// Devin review: <https://github.com/mohsen1/tsz/pull/2258#discussion_r3176332311>
+#[test]
+fn type_operator_function_type_operand_is_parenthesized() {
+    let output = emit_dts("export type K = keyof (() => void);");
+    assert!(
+        output.contains("keyof (() => void)"),
+        "keyof on a function type must keep parentheses: {output}"
+    );
+}
+
+#[test]
+fn type_operator_constructor_type_operand_is_parenthesized() {
+    let output = emit_dts("export type K = keyof (new () => object);");
+    assert!(
+        output.contains("keyof (new () => object)"),
+        "keyof on a constructor type must keep parentheses: {output}"
+    );
+}
+
 #[test]
 fn explore_conditional_type_in_array() {
     // (T extends U ? X : Y)[] - conditional type in array needs parens

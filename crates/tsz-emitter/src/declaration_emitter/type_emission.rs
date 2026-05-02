@@ -1083,9 +1083,17 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let needs_parens = self.arena.get(operand).is_some_and(|n| {
+            // Type operators (`keyof T`, `readonly T`, `unique T`) bind
+            // tighter than `|`, `&`, `extends ? :`, `=>` and `new (...)`.
+            // Without parens, e.g. `keyof () => void` would be parsed as
+            // a function type whose first parameter list starts with `(`,
+            // which is either a syntax error or completely different
+            // semantics.
             n.kind == syntax_kind_ext::UNION_TYPE
                 || n.kind == syntax_kind_ext::INTERSECTION_TYPE
                 || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                || n.kind == syntax_kind_ext::FUNCTION_TYPE
+                || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
         });
 
         (operand, needs_parens)
