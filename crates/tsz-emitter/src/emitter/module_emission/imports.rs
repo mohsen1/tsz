@@ -814,6 +814,12 @@ impl<'a> Printer<'a> {
         {
             return;
         }
+        if is_namespace_alias
+            && self.ctx.file_is_module
+            && !self.import_equals_has_value_usage_after_node(node, import)
+        {
+            return;
+        }
 
         // Parser recovery can produce missing/invalid module references for
         // malformed `import x = ...;` declarations. TSC skips JS alias emission
