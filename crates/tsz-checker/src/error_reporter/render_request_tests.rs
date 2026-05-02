@@ -445,6 +445,48 @@ let x: { a: number; b: string } = { a: "hello", b: 42 };
     }
 }
 
+/// Regression: when a generic Application type (e.g. `T<A>`) has a sibling
+/// non-generic alias (`type C = T<A>`) that evaluates to the same body, the
+/// TS2322 message must reference the *Application form* used at the source
+/// location, not the unrelated alias name.
+///
+/// Source pattern (covers `genericIndexedAccessVarianceComparisonResultCorrect.ts`):
+///   declare let a: T<A>; declare let b: T<B>; b = a;
+/// tsc emits: "Type 'T<A>' is not assignable to type 'T<B>'."
+/// Bug: tsz emitted: "Type 'C' is not assignable to type 'D'." — using the
+/// unrelated `type C = T<A>` / `type D = T<B>` alias names that happened to
+/// share the evaluated body.
+#[test]
+fn ts2322_uses_application_form_not_unrelated_sibling_alias() {
+    // Inline `Pick` because the test harness runs without lib types.
+    let source = r#"
+class A { x: string = 'A'; y: number = 0; }
+class B { x: string = 'B'; z: boolean = true; }
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type T<X extends { x: any }> = Pick<X, 'x'>;
+type C = T<A>;
+type D = T<B>;
+declare let a: T<A>;
+declare let b: T<B>;
+b = a;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("Expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        ts2322.message_text.contains("T<A>") && ts2322.message_text.contains("T<B>"),
+        "TS2322 should reference the Application form `T<A>`/`T<B>` from the variable annotations, got: {}",
+        ts2322.message_text
+    );
+    assert!(
+        !ts2322.message_text.contains("'C'") && !ts2322.message_text.contains("'D'"),
+        "TS2322 should not reference unrelated sibling aliases `C`/`D`, got: {}",
+        ts2322.message_text
+    );
+}
+
 /// Verify deterministic type formatting — same source always produces
 /// the same message text.
 #[test]
