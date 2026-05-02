@@ -1693,9 +1693,30 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.enclosing_call_parameter_is_optional_non_rest(arg_idx) {
-            // tsc elides the synthetic optional `| undefined` surface once a
-            // regular argument definitely fills an optional non-rest slot.
-            return self.format_assignability_type_for_message(param_type, arg_type);
+            // Widen the param type with `| undefined` to model the optional
+            // surface, then defer to the strip-aware formatter:
+            //   - When stripping `| undefined` leaves at least one non-nullish
+            //     member, tsc elides the synthetic surface (e.g. `number | undefined`
+            //     against `string` arg renders as `number`).
+            //   - When stripping leaves the union empty (the underlying type is
+            //     already nullish, e.g. `null` from `function f(x = null)`), tsc
+            //     keeps the full union (`null | undefined`) — the strip helper
+            //     declines to strip in that case and the surface is preserved.
+            // This matches tsc's behaviour for both `f(x = null)` (renders
+            // `null | undefined`) and `fn.apply` (renders `[base: any, ...args:
+            // any[]]` without the synthetic `| undefined`).
+            let widened_param_type = if param_type == TypeId::UNDEFINED
+                || query_common::union_list_id(self.ctx.types, param_type).is_some_and(|list_id| {
+                    self.ctx
+                        .types
+                        .type_list(list_id)
+                        .contains(&TypeId::UNDEFINED)
+                }) {
+                param_type
+            } else {
+                self.ctx.types.union2(param_type, TypeId::UNDEFINED)
+            };
+            return self.format_assignability_type_for_message(widened_param_type, arg_type);
         }
 
         self.format_assignability_type_for_message_preserving_nullish(param_type, arg_type)
