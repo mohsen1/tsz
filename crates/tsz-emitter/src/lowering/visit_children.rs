@@ -16,9 +16,12 @@ impl<'a> LoweringPass<'a> {
         match node.kind {
             k if k == syntax_kind_ext::SOURCE_FILE => {
                 if let Some(sf) = self.arena.get_source_file(node) {
+                    let previous_source_text = self.current_source_text;
+                    self.current_source_text = Some(sf.text.as_ref());
                     for &stmt in &sf.statements.nodes {
                         self.visit(stmt);
                     }
+                    self.current_source_text = previous_source_text;
                 }
             }
             k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {

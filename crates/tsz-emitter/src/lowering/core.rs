@@ -68,6 +68,8 @@ pub struct LoweringPass<'a> {
     /// Each entry is the name to use for `_this` capture in that scope
     /// (e.g., "_this" or "_`this_1`" if there's a collision with a user-defined `_this`).
     pub(super) enclosing_capture_names: Vec<Arc<str>>,
+    /// Source text for the source file currently being traversed.
+    pub(super) current_source_text: Option<&'a str>,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -93,6 +95,7 @@ impl<'a> LoweringPass<'a> {
             re_exported_names: rustc_hash::FxHashSet::default(),
             enclosing_function_bodies: Vec::new(),
             enclosing_capture_names: Vec::new(),
+            current_source_text: None,
         }
     }
 
@@ -458,13 +461,7 @@ impl<'a> LoweringPass<'a> {
         if names.is_empty() {
             return true;
         }
-        let Some(source_text) = self.arena.source_files.iter().find_map(|sf| {
-            if (node.pos as usize) < sf.text.len() {
-                Some(sf.text.as_ref())
-            } else {
-                None
-            }
-        }) else {
+        let Some(source_text) = self.current_source_text else {
             return true;
         };
         // Use the module specifier end as the base offset, since node.end may

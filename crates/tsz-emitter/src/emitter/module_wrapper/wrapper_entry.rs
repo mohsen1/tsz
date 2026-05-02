@@ -111,11 +111,17 @@ impl<'a> Printer<'a> {
             }
             let comment = trimmed.trim_start_matches('/').trim();
             if comment.starts_with("<reference") {
-                // Only emit references with absolute paths — relative paths
-                // typically resolve to files in the same compilation and tsc
-                // strips those from JS output.
                 if let Some(path) = Self::extract_directive_attr(comment, "path") {
-                    if path.starts_with('/') {
+                    let references_compilation_dts =
+                        self.arena.source_files.iter().any(|source_file| {
+                            source_file.is_declaration_file
+                                && (source_file.file_name == path
+                                    || source_file.file_name.ends_with(&format!("/{path}")))
+                        });
+                    if path.starts_with('/')
+                        || (self.ctx.options.module == ModuleKind::AMD
+                            && (path.ends_with(".d.ts") || references_compilation_dts))
+                    {
                         refs.push(trimmed.to_string());
                     }
                 } else {
