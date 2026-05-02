@@ -1014,7 +1014,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
     ) -> PropertyAccessResult {
         // STEP 1: Try to get the boxed interface type from the resolver (e.g. Number for number)
         // This allows us to use lib.d.ts definitions instead of just hardcoded lists
-        if let Some(boxed_type) = crate::def::resolver::TypeResolver::get_boxed_type(self.db, kind)
+        let boxed_loaded = if let Some(boxed_type) =
+            crate::def::resolver::TypeResolver::get_boxed_type(self.db, kind)
         {
             // Resolve the property on the boxed interface type
             // This handles inheritance (e.g., String extends Object) automatically
@@ -1022,15 +1023,27 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
 
             // If the property was found (or we got a definitive answer like IsUnknown), return it.
-            // Only fall back if the property was NOT found on the boxed type.
-            // This ensures that if the environment defines the interface but is incomplete
-            // (e.g., during bootstrapping or partial lib loading), we still find the intrinsic methods.
             if !result.is_not_found() {
                 return result;
             }
-        }
+            true
+        } else {
+            false
+        };
 
-        // STEP 2: Fallback to hardcoded apparent members (bootstrapping/no-lib behavior)
+        // STEP 2: Fallback to hardcoded apparent members (bootstrapping/no-lib behavior).
+        // Mirrors the gating in `resolve_function_property`: when the boxed
+        // interface IS loaded but lacks a *version-specific* property, an
+        // absent property is a genuine "not in this lib" signal and the
+        // fallback must not paper over it. For es5-baseline members the
+        // fallback still fires so synthesized shapes that don't navigate to
+        // the boxed interface keep resolving them.
+        if boxed_loaded && crate::objects::apparent::is_post_es5_primitive_member(kind, prop_name) {
+            return PropertyAccessResult::PropertyNotFound {
+                type_id,
+                property_name: prop_atom,
+            };
+        }
         self.resolve_apparent_property(kind, type_id, prop_name, prop_atom)
     }
 

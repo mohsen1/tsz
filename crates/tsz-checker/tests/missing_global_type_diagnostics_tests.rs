@@ -199,3 +199,38 @@ foo.name;
          Function interface is registered (no-lib path). Got: {diagnostics:?}"
     );
 }
+
+/// Negative case for the post-es5 bootstrap-fallback gate in
+/// `resolve_primitive_property`: when no lib `String` interface is
+/// registered at all, the no-lib bootstrap fallback must continue to
+/// resolve future-version members (`includes`, `padStart`, etc.) so
+/// internal Solver callers that don't load lib files keep working.
+///
+/// The complementary positive case (boxed `String` loaded but lacking
+/// the property — e.g. lib es5 plus `s.includes(...)`) is exercised by
+/// the conformance suite where the boxed lookup correctly returns
+/// not-found and the checker emits TS2550.
+#[test]
+fn string_post_es5_member_resolves_via_bootstrap_when_no_string_interface_registered() {
+    let diagnostics = check_without_lib_with_minimal_core_globals_except(
+        &["String"],
+        r#"
+const s: string = "x";
+s.includes("y");
+s.padStart(2);
+"#,
+    );
+    let unwanted: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            (d.code == 2339 || d.code == 2550)
+                && (d.message_text.contains("'includes'") || d.message_text.contains("'padStart'"))
+        })
+        .collect();
+    assert!(
+        unwanted.is_empty(),
+        "Expected `string.includes`/`padStart` to resolve via the bootstrap \
+         fallback when no String interface is registered (no-lib path). Got: \
+         {diagnostics:?}"
+    );
+}

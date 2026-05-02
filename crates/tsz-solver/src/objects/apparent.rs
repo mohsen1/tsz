@@ -163,6 +163,61 @@ pub fn apparent_object_member_kind(name: &str) -> Option<ApparentMemberKind> {
     object_member_kind(name, true)
 }
 
+/// Whether `name` is a primitive member that was added to its boxed interface
+/// in lib.es2015.* or later. The bootstrap fallback in
+/// `resolve_primitive_property` consults this so that, when a real lib is
+/// loaded that predates the property's introduction (e.g. es5 with
+/// `String.includes`), the not-found result from the boxed interface
+/// propagates to the checker (which then emits TS2550 / TS2339) instead of
+/// being silently resolved by the no-lib fallback.
+pub fn is_post_es5_primitive_member(kind: IntrinsicKind, name: &str) -> bool {
+    match kind {
+        IntrinsicKind::String => matches!(
+            name,
+            // es2015 (lib.es2015.core)
+            "codePointAt"
+                | "includes"
+                | "endsWith"
+                | "normalize"
+                | "repeat"
+                | "startsWith"
+                // es2017
+                | "padStart"
+                | "padEnd"
+                // es2019
+                | "trimStart"
+                | "trimEnd"
+                | "trimLeft"
+                | "trimRight"
+                // es2020
+                | "matchAll"
+                // es2021
+                | "replaceAll"
+                // es2022
+                | "at"
+                // esnext
+                | "isWellFormed"
+                | "toWellFormed"
+        ),
+        IntrinsicKind::Number => matches!(
+            name,
+            // es2015: Number gained no instance methods (constructor only — handled separately)
+            "" // placeholder so the matches! body is non-empty without listing es5 baselines
+        ),
+        IntrinsicKind::Symbol => matches!(
+            name,
+            // es2018
+            "asyncIterator"
+                // es2019
+                | "description"
+        ),
+        // Boolean and Bigint do not gain new prototype members in any
+        // post-es5 lib that the apparent fallback covers; nothing to
+        // gate here.
+        _ => false,
+    }
+}
+
 pub fn apparent_primitive_member_kind(
     interner: &dyn TypeDatabase,
     kind: IntrinsicKind,
