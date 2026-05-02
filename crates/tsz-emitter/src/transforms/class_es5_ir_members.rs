@@ -156,9 +156,10 @@ impl<'a> ES5ClassTransformer<'a> {
                     if self
                         .arena
                         .has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword)
-                        || self
+                        || (self
                             .arena
                             .has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword)
+                            && accessor_data.body.is_none())
                         || is_private_identifier(self.arena, accessor_data.name)
                     {
                         continue;
@@ -498,9 +499,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 return self
                     .arena
                     .has_modifier(&acc_data.modifiers, SyntaxKind::StaticKeyword)
-                    && !self
+                    && !(self
                         .arena
                         .has_modifier(&acc_data.modifiers, SyntaxKind::AbstractKeyword)
+                        && acc_data.body.is_none())
                     && !is_private_identifier(self.arena, acc_data.name);
             }
             false
@@ -758,9 +760,10 @@ impl<'a> ES5ClassTransformer<'a> {
                         .has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword)
                 {
                     // Skip abstract/private
-                    if self
+                    if (self
                         .arena
                         .has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword)
+                        && accessor_data.body.is_none())
                         || is_private_identifier(self.arena, accessor_data.name)
                     {
                         continue;
@@ -899,9 +902,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 return self
                     .arena
                     .has_modifier(&acc_data.modifiers, SyntaxKind::StaticKeyword)
-                    && !self
+                    && !(self
                         .arena
                         .has_modifier(&acc_data.modifiers, SyntaxKind::AbstractKeyword)
+                        && acc_data.body.is_none())
                     && !is_private_identifier(self.arena, acc_data.name);
             }
             false
@@ -1123,7 +1127,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         .has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword);
                     let is_private = is_private_identifier(self.arena, accessor_data.name);
 
-                    if is_abstract || is_private {
+                    if (is_abstract && accessor_data.body.is_none()) || is_private {
                         continue;
                     }
 

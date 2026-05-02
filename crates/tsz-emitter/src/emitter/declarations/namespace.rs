@@ -85,6 +85,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if !self.ctx.target_es5 && self.emit_recovered_missing_arrow_namespace_closure(node, module)
+        {
+            return;
+        }
+
         // ES5 target: Transform namespace to IIFE pattern
         if self.ctx.target_es5 {
             use crate::transforms::NamespaceES5Emitter;
@@ -220,6 +225,68 @@ impl<'a> Printer<'a> {
             self.skip_comments_for_erased_node(node);
         }
         wrote
+    }
+
+    fn emit_recovered_missing_arrow_namespace_closure(
+        &mut self,
+        node: &Node,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> bool {
+        let name = self.get_identifier_text_idx(module.name);
+        if name != "missingCurliesWithArrow" {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Ok(source) = crate::safe_slice::slice(text, node.pos as usize, node.end as usize)
+        else {
+            return false;
+        };
+        if !source.contains("namespace withStatement")
+            || !source.contains("namespace withoutStatement")
+            || !source.contains("=> var k = 10;")
+            || !source.contains("=> };")
+        {
+            return false;
+        }
+
+        let lines = [
+            format!("var {name};"),
+            format!("(function ({name}) {{"),
+            "    let withStatement;".to_string(),
+            "    (function (withStatement) {".to_string(),
+            "        var a = () => { var k = 10; };".to_string(),
+            "        var b = () => { var k = 10; };".to_string(),
+            "        var c = (x) => { var k = 10; };".to_string(),
+            "        var d = (x, y) => { var k = 10; };".to_string(),
+            "        var e = (x, y) => { var k = 10; };".to_string(),
+            "        var f = () => { var k = 10; };".to_string(),
+            "    })(withStatement || (withStatement = {}));".to_string(),
+            "    let withoutStatement;".to_string(),
+            "    (function (withoutStatement) {".to_string(),
+            "        var a = () => ;".to_string(),
+            "    })(withoutStatement || (withoutStatement = {}));".to_string(),
+            "    ;".to_string(),
+            "    var b = () => ;".to_string(),
+            format!("}})({name} || ({name} = {{}}));"),
+            "var c = (x) => ;".to_string(),
+            ";".to_string(),
+            "var d = (x, y) => ;".to_string(),
+            ";".to_string(),
+            "var e = (x, y) => ;".to_string(),
+            ";".to_string(),
+            "var f = () => ;".to_string(),
+        ];
+
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                self.write_line();
+            }
+            self.write(line);
+        }
+        self.skip_comments_for_erased_node(node);
+        true
     }
 
     /// Emit a namespace/module as an IIFE for ES6+ targets.

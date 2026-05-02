@@ -1104,6 +1104,34 @@ impl<'a> Printer<'a> {
                 continue;
             };
 
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                    continue;
+                };
+                if !self.import_decl_has_runtime_value(import_decl) {
+                    continue;
+                }
+                let Some(module_spec) =
+                    self.system_module_specifier_text(import_decl.module_specifier)
+                else {
+                    continue;
+                };
+                if !dependency_set.contains(module_spec.as_str()) {
+                    continue;
+                }
+                let local_name = self.get_identifier_text_idx(import_decl.import_clause);
+                if local_name.is_empty() {
+                    continue;
+                }
+
+                plan.import_vars.insert(stmt_node.pos, local_name.clone());
+                plan.actions
+                    .entry(module_spec)
+                    .or_default()
+                    .push(SystemDependencyAction::Assign(local_name));
+                continue;
+            }
+
             if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
                 let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
                     continue;
