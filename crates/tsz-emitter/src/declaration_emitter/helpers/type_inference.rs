@@ -3310,6 +3310,13 @@ impl<'a> DeclarationEmitter<'a> {
             scratch.write("void");
         } else if let Some(return_type) = scratch.expression_body_parameter_return_type_text(func) {
             scratch.write(&return_type);
+        } else if func.body.is_some()
+            && let Some(return_type) = scratch
+                .preferred_expression_type_text(func.body)
+                .or_else(|| scratch.infer_fallback_type_text_at(func.body, 0))
+                .filter(|text| !text.is_empty() && text != "any")
+        {
+            scratch.write(&return_type);
         } else if let Some(return_type) =
             scratch.function_body_preferred_return_type_text(func.body)
         {

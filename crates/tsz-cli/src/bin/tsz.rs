@@ -336,16 +336,17 @@ fn run_batch_mode() -> Result<()> {
             "false",
         ]);
 
-        // Compile from the per-test project_path, not the worker's process
-        // cwd. Subprocess mode sets the child's `current_dir` to project_dir
-        // (`runner.rs` uses `.current_dir(&prepared.project_dir)`), so any
-        // diagnostic anchored relative to cwd ends up project-relative. Batch
-        // mode reuses one long-running worker whose process cwd never moves,
-        // so we have to plumb the per-test project explicitly. Without this,
-        // tests that opt into a non-root `// @currentDirectory:` (e.g.
-        // `typeRootsFromNodeModulesInParentDirectory.ts`'s `/src`) emit
-        // paths anchored at the temp root (`src/a.ts`) instead of the
-        // project root (`a.ts`), tripping fingerprint-only failures.
+        // Match subprocess mode for code paths that still consult process cwd
+        // during JS module/JSDoc symbol resolution. Keep passing project_path
+        // through compile/reporter so diagnostics remain project-relative for
+        // tests that opt into a non-root currentDirectory.
+        let previous_cwd = std::env::current_dir().context("failed to resolve batch cwd")?;
+        std::env::set_current_dir(project_path).with_context(|| {
+            format!(
+                "failed to enter batch project directory {}",
+                project_path.display()
+            )
+        })?;
         match driver::compile(&batch_args, project_path) {
             Ok(result) => {
                 if !result.diagnostics.is_empty() {
@@ -362,6 +363,7 @@ fn run_batch_mode() -> Result<()> {
                 writeln!(stdout, "error: {e}")?;
             }
         }
+        std::env::set_current_dir(previous_cwd).context("failed to restore batch cwd")?;
 
         writeln!(stdout, "---TSZ-BATCH-DONE---")?;
         stdout.flush()?;

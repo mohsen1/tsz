@@ -11,7 +11,7 @@
 //! verify exact char-by-char matches.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct TempDir {
@@ -193,6 +193,70 @@ fn find_tsz_binary() -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[test]
+fn batch_mode_uses_project_cwd_for_jsdoc_required_constructor_types() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        eprintln!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("batch_jsdoc_required_constructor").expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node.d.ts"),
+        "declare function require(id: string): any;\ndeclare var module: any, exports: any;\n",
+    );
+    write_file(
+        &base.join("a-ext.js"),
+        "exports.A = function () {\n    this.x = 1;\n};\n",
+    );
+    write_file(
+        &base.join("a.js"),
+        "const { A } = require(\"./a-ext\");\n\n/** @param {A} p */\nfunction a(p) { p.x; }\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "module": "commonjs"
+  },
+  "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
+  "exclude": ["node_modules"]
+}"#,
+    );
+
+    let mut child = Command::new(tsz_bin)
+        .arg("--batch")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tsz --batch");
+
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("batch stdin");
+        writeln!(stdin, "{}", base.display()).expect("write batch project");
+    }
+
+    let output = child.wait_with_output().expect("wait for tsz --batch");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "batch worker failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("TS2339"),
+        "expected no TS2339 from JSDoc constructor param in batch mode, got:\n{stdout}\n{stderr}"
+    );
 }
 
 /// Normalize output: strip ANSI codes, normalize line endings to \n.
