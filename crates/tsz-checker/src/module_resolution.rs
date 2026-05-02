@@ -637,6 +637,34 @@ pub fn module_specifier_candidates(specifier: &str) -> Vec<String> {
     out
 }
 
+/// Build lookup keys for a module specifier when querying *resolution-error*
+/// maps keyed by the exact user-written specifier.
+///
+/// Unlike `module_specifier_candidates`, this helper does NOT fan out to the
+/// extension-stripped stem. Resolution errors are stored against the exact
+/// specifier produced by the user (e.g. `"./index.js"` is one key, `"./index"`
+/// is another). Two different specifiers may resolve very differently — for
+/// example, `import "./index.js"` succeeds via the synthetic `.js → .ts`
+/// substitution while `import "./index"` fails with TS2835. Conflating them
+/// would make the checker emit the TS2835 from the extensionless variant on
+/// the line that wrote `./index.js`.
+///
+/// The returned candidates therefore cover only spellings of the *same*
+/// specifier: the canonical normalized form (whitespace/quote/separator
+/// cleanup) plus the raw input when it differs.
+pub fn module_specifier_error_candidates(specifier: &str) -> Vec<String> {
+    let Some(canonical) = normalize_import_specifier(specifier) else {
+        return vec![specifier.to_string()];
+    };
+
+    let mut out = Vec::with_capacity(2);
+    out.push(canonical.text.clone());
+    if canonical.text != specifier {
+        out.push(specifier.to_string());
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Fast, on-demand specifier resolution via a filename reverse index
 // ---------------------------------------------------------------------------
