@@ -1,4 +1,4 @@
-use super::super::{ModuleKind, Printer};
+use super::super::{JsxEmit, ModuleKind, Printer};
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -142,11 +142,58 @@ impl<'a> Printer<'a> {
         if name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
             && name != "Promise"
             && name != "PromiseLike"
+            && !self.is_type_only_declaration_name(&name)
         {
             Some(name)
         } else {
             None
         }
+    }
+
+    /// Returns true when the given import clause's default or namespace
+    /// binding matches the configured JSX factory root name (e.g. `React`).
+    /// Such imports must be exempt from text-based value-usage elision since
+    /// JSX elements reference the factory implicitly. Mirrors the logic at
+    /// `crates/tsz-emitter/src/emitter/module_wrapper/wrapper_entry.rs`
+    /// around the AMD/UMD dependency collection (`is_jsx_factory_import`).
+    pub(in crate::emitter) fn is_jsx_factory_import_clause(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        if !matches!(
+            self.ctx.options.jsx,
+            JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+        ) {
+            return false;
+        }
+        let factory_root = self
+            .ctx
+            .options
+            .jsx_factory
+            .as_deref()
+            .and_then(|f| f.split('.').next())
+            .unwrap_or("React");
+
+        if clause.name.is_some() {
+            let name = self.get_identifier_text_idx(clause.name);
+            if name == factory_root {
+                return true;
+            }
+        }
+
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+            && named_imports.name.is_some()
+            && named_imports.elements.nodes.is_empty()
+        {
+            let ns_name = self.get_identifier_text_idx(named_imports.name);
+            if ns_name == factory_root {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Filter named import specifiers to only those with value-level usage
@@ -987,6 +1034,7 @@ impl<'a> Printer<'a> {
 
             if !self.ctx.options.verbatim_module_syntax
                 && !self.source_is_js_file
+                && !self.is_jsx_factory_import_clause(clause)
                 && !self.import_has_value_usage_after_node(stmt_node, clause)
             {
                 continue;

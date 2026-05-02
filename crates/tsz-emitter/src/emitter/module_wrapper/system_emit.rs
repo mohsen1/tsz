@@ -48,6 +48,7 @@ impl<'a> Printer<'a> {
             }
             if !self.ctx.options.verbatim_module_syntax
                 && !self.source_is_js_file
+                && !self.is_jsx_factory_import_clause(clause)
                 && !self.import_has_value_usage_after_node(stmt_node, clause)
             {
                 continue;
@@ -1628,6 +1629,76 @@ export const y = x;
         assert!(
             !output.contains("});\n                exports_1(\"C\", C);"),
             "System top-level using should not split direct legacy class exports into a trailing export statement.\nOutput:\n{output}"
+        );
+    }
+
+    /// Imports whose only textual references are to a type alias or
+    /// interface of the same name must NOT be retained as runtime imports
+    /// just because their `PascalCase` name appears as the return type of
+    /// an async function under ES5. Mirrors the existing guard in
+    /// `extract_awaiter_promise_constructor`.
+    /// Devin review: <https://github.com/mohsen1/tsz/pull/2314#discussion_r3176824619>
+    #[test]
+    fn amd_es5_type_alias_named_like_import_does_not_force_retention() {
+        // The source declares a type alias `Foo` AND imports a value named `Foo`.
+        // The async function's return type is `Foo`, but `Foo` is a type alias
+        // here, so the import should still be elided (no runtime usage).
+        let source = r#"import { Foo } from "lib";
+type Foo = string;
+async function f(): Foo { return "" as any; }
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::AMD,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // The AMD dependency list / require call should NOT include "lib"
+        // because the only "use" of `Foo` was as a type position. The buggy
+        // version falsely treated the type alias as a Promise constructor
+        // and kept the import.
+        assert!(
+            !output.contains("\"lib\""),
+            "AMD wrapper should not keep `lib` import when the only use of `Foo` is as a type alias.\nOutput:\n{output}"
+        );
+    }
+
+    /// JSX factory imports must not be elided by the AMD/System helper-emission
+    /// usage check, even when the factory name doesn't textually appear in the
+    /// source (JSX elements reference it implicitly).
+    /// Devin review: <https://github.com/mohsen1/tsz/pull/2295#discussion_r3176647570>
+    #[test]
+    fn amd_jsx_factory_default_import_kept_in_helpers_check() {
+        use crate::emitter::JsxEmit;
+        let source = r#"import React from "react";
+export const Foo = () => <div/>;
+"#;
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::AMD,
+            jsx: JsxEmit::React,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // The default-import factory ("React") has no textual value usage
+        // (only JSX), but because it is a JSX factory we must keep the
+        // __importDefault helper definition emitted in the AMD wrapper.
+        assert!(
+            output.contains("__importDefault"),
+            "AMD wrapper should still emit __importDefault helper for JSX factory `React` even without textual value usage.\nOutput:\n{output}"
         );
     }
 }
