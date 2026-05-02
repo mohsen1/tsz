@@ -1445,6 +1445,10 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
+                if self.emit_system_binding_pattern_initializer(decl, is_exported) {
+                    continue;
+                }
+
                 if is_exported {
                     let export_name = self.get_identifier_text_idx(decl.name);
                     if !export_name.is_empty() {
@@ -1464,6 +1468,75 @@ impl<'a> Printer<'a> {
                 self.write_semicolon();
             }
         }
+    }
+
+    fn emit_system_binding_pattern_initializer(
+        &mut self,
+        decl: &tsz_parser::parser::node::VariableDeclarationData,
+        is_exported: bool,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(decl.name) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(name_node) else {
+            return false;
+        };
+        if pattern.elements.nodes.len() != 1 {
+            return false;
+        }
+        let Some(elem_node) = self.arena.get(pattern.elements.nodes[0]) else {
+            return false;
+        };
+        let Some(elem) = self.arena.get_binding_element(elem_node) else {
+            return false;
+        };
+        if elem.dot_dot_dot_token {
+            return false;
+        }
+        if elem.initializer.is_some() {
+            return false;
+        }
+
+        let export_name = self.get_identifier_text(elem.name);
+        if export_name.is_empty() {
+            return false;
+        }
+        let prop_name = if elem.property_name.is_some() {
+            let prop = self.get_identifier_text_idx(elem.property_name);
+            if prop.is_empty() {
+                export_name.clone()
+            } else {
+                prop
+            }
+        } else {
+            export_name.clone()
+        };
+
+        if is_exported {
+            self.write("exports_1(\"");
+            self.write(&export_name);
+            self.write("\", ");
+        }
+        self.write(&export_name);
+        self.write(" = ");
+        self.emit_expression(decl.initializer);
+        if self
+            .arena
+            .get(decl.initializer)
+            .is_some_and(|node| node.is_numeric_literal())
+        {
+            self.write(".");
+        }
+        self.write(".");
+        self.write(&prop_name);
+        if is_exported {
+            self.write(")");
+        }
+        self.write_semicolon();
+        true
     }
 }
 
@@ -1629,6 +1702,76 @@ export const y = x;
         assert!(
             !output.contains("});\n                exports_1(\"C\", C);"),
             "System top-level using should not split direct legacy class exports into a trailing export statement.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn system_exported_object_binding_initializer_assigns_and_exports_hoisted_name() {
+        let source = "export let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::System,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var toString;"),
+            "System wrapper should hoist the exported binding name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("exports_1(\"toString\", toString = 1..toString);"),
+            "System wrapper should export the destructuring assignment value.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("let { toFixed } = 1;"),
+            "Nested block-scoped destructuring should remain a declaration.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn system_object_binding_initializer_assigns_hoisted_name() {
+        let source = "let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\nexport {};\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::System,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var toString;"),
+            "System wrapper should hoist the binding name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("toString = 1..toString;"),
+            "System wrapper should initialize the hoisted binding from the object property.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("exports_1(\"toString\""),
+            "Non-exported binding should not be exported.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("let { toFixed } = 1;"),
+            "Nested block-scoped destructuring should remain a declaration.\nOutput:\n{output}"
         );
     }
 
