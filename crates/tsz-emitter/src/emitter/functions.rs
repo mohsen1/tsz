@@ -1510,6 +1510,9 @@ impl<'a> Printer<'a> {
         }
 
         let index = skip_trivia(bytes, scan_start, scan_end);
+        if index >= scan_end {
+            return false;
+        }
         match bytes.get(index) {
             Some(b'=') if bytes.get(index + 1) == Some(&b'>') => false,
             Some(b'=') => true,
