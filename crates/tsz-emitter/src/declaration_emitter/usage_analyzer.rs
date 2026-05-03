@@ -26,6 +26,10 @@ use tsz_solver::visitor;
 
 use crate::type_cache_view::TypeCacheView;
 
+mod type_walk;
+
+pub(super) type SolverTypeId = tsz_solver::TypeId;
+
 /// Tracks how a symbol is used - as a type, a value, or both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UsageKind {
@@ -88,6 +92,8 @@ pub struct UsageAnalyzer<'a> {
     memoizing_types: FxHashSet<tsz_solver::TypeId>,
     /// The current file's arena (for distinguishing local vs foreign symbols)
     current_arena: Arc<NodeArena>,
+    /// Current source file path, used to resolve relative import aliases.
+    current_file_path: Option<String>,
     /// Whether the current source file is JavaScript.
     source_is_js_file: bool,
     /// Set of symbols from other modules that need imports
@@ -104,6 +110,7 @@ impl<'a> UsageAnalyzer<'a> {
         type_cache: &'a TypeCacheView,
         type_interner: &'a TypeInterner,
         current_arena: Arc<NodeArena>,
+        current_file_path: Option<String>,
         import_name_map: &'a FxHashMap<String, SymbolId>,
         source_is_js_file: bool,
     ) -> Self {
@@ -119,6 +126,7 @@ impl<'a> UsageAnalyzer<'a> {
             type_symbol_cache: FxHashMap::default(),
             memoizing_types: FxHashSet::default(),
             current_arena,
+            current_file_path,
             source_is_js_file,
             foreign_symbols: FxHashSet::default(),
             in_value_pos: false,
@@ -1196,13 +1204,10 @@ impl<'a> UsageAnalyzer<'a> {
             // Even though typeof appears in a type position, it requires the value to exist
             k if k == syntax_kind_ext::TYPE_QUERY => {
                 if let Some(type_query) = self.arena.get_type_query(type_node) {
-                    // Set in_value_pos = true for typeof expressions
-                    self.in_value_pos = true;
-                    self.analyze_entity_name(type_query.expr_name);
+                    self.analyze_type_query_entity_name(type_query.expr_name);
                     // Also track import alias dependencies so that non-exported
                     // `import =` aliases referenced via `typeof` are preserved.
                     self.analyze_local_import_equals_dependency(type_query.expr_name);
-                    self.in_value_pos = false; // Restore after
 
                     // Walk type arguments (e.g., typeof X<A, B>)
                     if let Some(ref type_args) = type_query.type_arguments {
@@ -1383,6 +1388,164 @@ impl<'a> UsageAnalyzer<'a> {
             .copied()
             .and_then(|type_id| visitor::literal_value(self.type_interner, type_id))
             .is_some()
+    }
+
+    fn analyze_type_query_entity_name(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(sym_id) = self.resolve_type_query_value_symbol(name_idx) {
+                    self.mark_symbol_used(sym_id, UsageKind::VALUE);
+                }
+            }
+            k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                if let Some(name) = self.arena.get_qualified_name(name_node) {
+                    self.analyze_type_query_entity_name(name.left);
+                    self.analyze_type_query_entity_name(name.right);
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(name_node) {
+                    self.analyze_type_query_entity_name(access.expression);
+                    self.analyze_type_query_entity_name(access.name_or_argument);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn resolve_type_query_value_symbol(&self, name_idx: NodeIndex) -> Option<SymbolId> {
+        let name_node = self.arena.get(name_idx)?;
+        let ident = self.arena.get_identifier(name_node)?;
+        if ident.escaped_text == "default" {
+            return None;
+        }
+
+        if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0)
+            && let Some(sym_id) = self.type_query_value_dependency_symbol(sym_id)
+        {
+            return Some(sym_id);
+        }
+
+        if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text)
+            && let Some(sym_id) = self.type_query_value_dependency_symbol(sym_id)
+        {
+            return Some(sym_id);
+        }
+
+        if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text)
+            && let Some(sym_id) = self.type_query_value_dependency_symbol(sym_id)
+        {
+            return Some(sym_id);
+        }
+
+        for scope in self.binder.scopes.iter() {
+            if let Some(sym_id) = scope.table.get(&ident.escaped_text)
+                && let Some(sym_id) = self.type_query_value_dependency_symbol(sym_id)
+            {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
+    fn type_query_value_dependency_symbol(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        let symbol = self.binder.symbols.get(sym_id)?;
+
+        if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) && symbol.import_module.is_some() {
+            let Some(resolved_sym_id) = self.resolve_import_alias_target_symbol(sym_id) else {
+                // If the module graph is unavailable, preserve the source import.
+                return Some(sym_id);
+            };
+            return self
+                .symbol_has_type_query_value_meaning(resolved_sym_id)
+                .then_some(sym_id);
+        }
+
+        self.symbol_has_type_query_value_meaning(sym_id)
+            .then_some(sym_id)
+    }
+
+    fn resolve_import_alias_target_symbol(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        if let Some(resolved) = self.binder.resolve_import_symbol(sym_id) {
+            return Some(resolved);
+        }
+
+        let symbol = self.binder.symbols.get(sym_id)?;
+        let module_specifier = symbol.import_module.as_deref()?;
+        let export_name = symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(symbol.escaped_name.as_str());
+
+        for module_key in self.relative_module_export_keys(module_specifier) {
+            if let Some(exports) = self.binder.module_exports.get(&module_key)
+                && let Some(target) = exports.get(export_name)
+            {
+                return Some(target);
+            }
+        }
+
+        None
+    }
+
+    fn relative_module_export_keys(&self, module_specifier: &str) -> Vec<String> {
+        if !module_specifier.starts_with('.') {
+            return vec![module_specifier.to_string()];
+        }
+
+        let Some(current_file_name) = self.current_file_path.as_deref().or_else(|| {
+            self.current_arena
+                .source_files
+                .first()
+                .map(|source_file| source_file.file_name.as_str())
+        }) else {
+            return vec![module_specifier.to_string()];
+        };
+
+        let current_dir = std::path::Path::new(current_file_name)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new(""));
+        let joined = Self::normalize_path(current_dir.join(module_specifier));
+        let mut keys = Vec::new();
+        keys.push(joined.display().to_string());
+
+        if joined.extension().is_none() {
+            for ext in [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx"] {
+                keys.push(format!("{}{}", joined.display(), ext));
+            }
+        }
+
+        keys
+    }
+
+    fn normalize_path(path: std::path::PathBuf) -> std::path::PathBuf {
+        let mut parts = Vec::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    parts.pop();
+                }
+                other => parts.push(other),
+            }
+        }
+        parts.iter().collect()
+    }
+
+    fn symbol_has_type_query_value_meaning(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if symbol.is_type_only {
+            return false;
+        }
+        symbol
+            .has_any_flags(tsz_binder::symbol_flags::VALUE | tsz_binder::symbol_flags::EXPORT_VALUE)
     }
 
     /// Analyze an entity name to extract the leftmost symbol.
@@ -1612,241 +1775,6 @@ impl<'a> UsageAnalyzer<'a> {
         }
 
         self.binder.get_node_symbol(expr_idx)
-    }
-
-    /// Walk an inferred type from the type cache.
-    ///
-    /// This is the semantic walk over inferred `TypeId`s.
-    fn walk_inferred_type(&mut self, node_idx: NodeIndex) {
-        // Look up the inferred TypeId for this node
-        debug!("[DEBUG] walk_inferred_type: node_idx={:?}", node_idx);
-        if let Some(&type_id) = self.type_cache.node_types.get(&node_idx.0) {
-            debug!("[DEBUG] walk_inferred_type: found type_id={:?}", type_id);
-            self.walk_type_id(type_id);
-        } else {
-            debug!(
-                "[DEBUG] walk_inferred_type: NO TYPE FOUND for node_idx={:?}",
-                node_idx
-            );
-        }
-    }
-
-    fn walk_inferred_type_if_present(&mut self, node_idx: NodeIndex) -> bool {
-        if let Some(&type_id) = self.type_cache.node_types.get(&node_idx.0) {
-            self.walk_type_id(type_id);
-            return true;
-        }
-        false
-    }
-
-    fn walk_inferred_type_or_related(&mut self, node_ids: &[NodeIndex]) {
-        for &node_idx in node_ids {
-            if !node_idx.is_some() {
-                continue;
-            }
-
-            if self.walk_inferred_type_if_present(node_idx) {
-                return;
-            }
-
-            let Some(node) = self.arena.get(node_idx) else {
-                continue;
-            };
-
-            for related_idx in self.get_node_type_related_nodes(node) {
-                if related_idx.is_some() && self.walk_inferred_type_if_present(related_idx) {
-                    return;
-                }
-            }
-        }
-    }
-
-    fn get_node_type_related_nodes(&self, node: &tsz_parser::parser::node::Node) -> Vec<NodeIndex> {
-        match node.kind {
-            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-                if let Some(decl) = self.arena.get_variable_declaration(node) {
-                    let mut related = Vec::with_capacity(2);
-                    if decl.initializer.is_some() {
-                        related.push(decl.initializer);
-                    }
-                    if decl.type_annotation.is_some() {
-                        related.push(decl.type_annotation);
-                    }
-                    related
-                } else {
-                    Vec::new()
-                }
-            }
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                if let Some(decl) = self.arena.get_property_decl(node) {
-                    let mut related = Vec::with_capacity(2);
-                    if decl.initializer.is_some() {
-                        related.push(decl.initializer);
-                    }
-                    if decl.type_annotation.is_some() {
-                        related.push(decl.type_annotation);
-                    }
-                    related
-                } else {
-                    Vec::new()
-                }
-            }
-            k if k == syntax_kind_ext::PARAMETER => {
-                if let Some(param) = self.arena.get_parameter(node) {
-                    if param.initializer.is_some() {
-                        vec![param.initializer]
-                    } else {
-                        Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                }
-            }
-            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                if let Some(access_expr) = self.arena.get_access_expr(node) {
-                    vec![access_expr.expression, access_expr.name_or_argument]
-                } else {
-                    Vec::new()
-                }
-            }
-            k if k == syntax_kind_ext::TYPE_QUERY => {
-                if let Some(query) = self.arena.get_type_query(node) {
-                    vec![query.expr_name]
-                } else {
-                    Vec::new()
-                }
-            }
-            _ => Vec::new(),
-        }
-    }
-
-    fn add_symbol_usage(
-        usages: &mut FxHashMap<SymbolId, UsageKind>,
-        sym_id: SymbolId,
-        usage_kind: UsageKind,
-    ) {
-        usages
-            .entry(sym_id)
-            .and_modify(|kind| *kind |= usage_kind)
-            .or_insert(usage_kind);
-    }
-
-    fn collect_direct_symbol_usages(
-        &self,
-        type_id: tsz_solver::TypeId,
-        usages: &mut FxHashMap<SymbolId, UsageKind>,
-    ) {
-        if let Some(def_id) = visitor::lazy_def_id(self.type_interner, type_id)
-            && let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id)
-        {
-            Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
-        }
-
-        if let Some((def_id, _)) = visitor::enum_components(self.type_interner, type_id)
-            && let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id)
-        {
-            Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
-
-            // Also add the parent enum symbol if this is an enum member
-            if let Some(symbol) = self.binder.symbols.get(sym_id)
-                && symbol.parent.is_some()
-            {
-                Self::add_symbol_usage(usages, symbol.parent, UsageKind::TYPE);
-            }
-        }
-
-        if let Some(sym_ref) = visitor::type_query_symbol(self.type_interner, type_id) {
-            Self::add_symbol_usage(usages, tsz_binder::SymbolId(sym_ref.0), UsageKind::VALUE);
-        }
-
-        if let Some(sym_ref) = visitor::unique_symbol_ref(self.type_interner, type_id) {
-            Self::add_symbol_usage(usages, tsz_binder::SymbolId(sym_ref.0), UsageKind::TYPE);
-        }
-
-        if let Some(sym_ref) = visitor::module_namespace_symbol_ref(self.type_interner, type_id) {
-            Self::add_symbol_usage(usages, tsz_binder::SymbolId(sym_ref.0), UsageKind::TYPE);
-        }
-
-        if let Some(shape_id) = visitor::object_shape_id(self.type_interner, type_id)
-            .or_else(|| visitor::object_with_index_shape_id(self.type_interner, type_id))
-        {
-            let shape = self.type_interner.object_shape(shape_id);
-            if let Some(sym_id) = shape.symbol {
-                Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
-            }
-        }
-
-        if let Some(shape_id) = visitor::callable_shape_id(self.type_interner, type_id) {
-            let shape = self.type_interner.callable_shape(shape_id);
-            if let Some(sym_id) = shape.symbol {
-                Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
-            }
-        }
-    }
-
-    fn collect_symbol_usages_for_type(
-        &mut self,
-        type_id: tsz_solver::TypeId,
-    ) -> Arc<[(SymbolId, UsageKind)]> {
-        if let Some(cached) = self.type_symbol_cache.get(&type_id) {
-            return cached.clone();
-        }
-
-        if !self.memoizing_types.insert(type_id) {
-            return self
-                .type_symbol_cache
-                .get(&type_id)
-                .cloned()
-                .unwrap_or_else(|| Arc::from([]));
-        }
-
-        let mut usages = FxHashMap::default();
-        self.collect_direct_symbol_usages(type_id, &mut usages);
-
-        let mut result = Self::freeze_symbol_usages(&usages);
-        self.type_symbol_cache.insert(type_id, result.clone());
-
-        let mut children = Vec::new();
-        visitor::for_each_child_by_id(self.type_interner, type_id, |child| {
-            children.push(child);
-        });
-
-        for child in children {
-            if child == type_id {
-                continue;
-            }
-            for &(sym_id, usage_kind) in self.collect_symbol_usages_for_type(child).iter() {
-                Self::add_symbol_usage(&mut usages, sym_id, usage_kind);
-            }
-        }
-
-        self.memoizing_types.remove(&type_id);
-
-        result = Self::freeze_symbol_usages(&usages);
-        self.type_symbol_cache.insert(type_id, result.clone());
-        result
-    }
-
-    fn freeze_symbol_usages(
-        usages: &FxHashMap<SymbolId, UsageKind>,
-    ) -> Arc<[(SymbolId, UsageKind)]> {
-        let mut frozen: Vec<(SymbolId, UsageKind)> = usages
-            .iter()
-            .map(|(&sym_id, &usage_kind)| (sym_id, usage_kind))
-            .collect();
-        frozen.sort_unstable_by_key(|(sym_id, usage_kind)| (sym_id.0, usage_kind.bits));
-        Arc::from(frozen)
-    }
-
-    /// Walk a `TypeId` to extract all referenced symbols.
-    fn walk_type_id(&mut self, type_id: tsz_solver::TypeId) {
-        if !self.visited_types.insert(type_id) {
-            return;
-        }
-
-        for &(sym_id, usage_kind) in self.collect_symbol_usages_for_type(type_id).iter() {
-            self.mark_symbol_used(sym_id, usage_kind);
-        }
     }
 
     /// Mark a symbol as used in the public API.
