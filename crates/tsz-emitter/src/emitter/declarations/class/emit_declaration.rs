@@ -162,10 +162,11 @@ impl<'a> Printer<'a> {
                     self.write(&output);
                 }
                 while self.comment_emit_idx < self.all_comments.len()
-                    && self.all_comments[self.comment_emit_idx].end <= node.end
+                    && self.all_comments[self.comment_emit_idx].pos < node.end
                 {
                     self.comment_emit_idx += 1;
                 }
+                self.skip_comments_for_erased_node(node);
                 return;
             }
 
@@ -422,6 +423,11 @@ impl<'a> Printer<'a> {
             // This must happen BEFORE `skip_comments_for_erased_node` consumes
             // the trailing comment.
             let class_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+            while self.comment_emit_idx < self.all_comments.len()
+                && self.all_comments[self.comment_emit_idx].pos < class_close_pos
+            {
+                self.comment_emit_idx += 1;
+            }
             self.emit_trailing_comments(class_close_pos);
             // Skip comments within the class body range since the ES5 class emitter
             // handles them separately. Without this, they'd appear at end of file.
