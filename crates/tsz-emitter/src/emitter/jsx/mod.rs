@@ -348,6 +348,19 @@ mod tests {
     }
 
     #[test]
+    fn conflict_marker_unclosed_jsx_emits_empty_synthesized_close() {
+        let output = emit_jsx("const x = <div>\n<<<<<<< HEAD");
+        assert!(
+            output.contains("const x = <div></>;"),
+            "Conflict-marker JSX recovery should emit an empty synthesized close.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("</div>"),
+            "Conflict-marker JSX recovery should not mirror the opener tag.\nOutput: {output}"
+        );
+    }
+
+    #[test]
     fn jsx_text_multiline_content_preserves_whitespace() {
         // tsc preserves JSX text content including leading/trailing whitespace and newlines.
         // The scanner's re_scan_jsx_token must reset to full_start_pos (before trivia)
