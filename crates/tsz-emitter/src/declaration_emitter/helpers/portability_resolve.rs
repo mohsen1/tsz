@@ -833,6 +833,18 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         use tsz_common::diagnostics::Diagnostic;
 
+        let (from_path, type_name) = if !from_path.contains('/')
+            && (type_name.contains('/') || type_name.starts_with('.'))
+        {
+            (type_name, from_path)
+        } else {
+            (from_path, type_name)
+        };
+
+        if self.relative_node_modules_package_has_no_exports(file, from_path) {
+            return;
+        }
+
         self.diagnostics.push(Diagnostic::from_code(
             2883,
             file,
@@ -840,6 +852,53 @@ impl<'a> DeclarationEmitter<'a> {
             length,
             &[decl_name, from_path, type_name],
         ));
+    }
+
+    fn relative_node_modules_package_has_no_exports(&self, file: &str, from_path: &str) -> bool {
+        use std::path::{Component, Path, PathBuf};
+
+        if !from_path.starts_with("./node_modules/") && !from_path.starts_with("node_modules/") {
+            return false;
+        }
+
+        let relative = from_path.strip_prefix("./").unwrap_or(from_path);
+        let components: Vec<_> = Path::new(relative).components().collect();
+        let Some(nm_idx) = components.iter().position(
+            |component| matches!(component, Component::Normal(part) if *part == "node_modules"),
+        ) else {
+            return false;
+        };
+
+        let pkg_start = nm_idx + 1;
+        let pkg_len = if components.get(pkg_start).is_some_and(
+            |component| matches!(component, Component::Normal(part) if part.to_str().is_some_and(|text| text.starts_with('@'))),
+        ) {
+            2
+        } else {
+            1
+        };
+        if components.len() < pkg_start + pkg_len {
+            return false;
+        }
+
+        let package_rel: PathBuf = components[..pkg_start + pkg_len]
+            .iter()
+            .map(|component| component.as_os_str())
+            .collect();
+        let Some(file_dir) = Path::new(file).parent() else {
+            return false;
+        };
+
+        for ancestor in file_dir.ancestors() {
+            let package_json = ancestor.join(&package_rel).join("package.json");
+            if let Ok(pkg_content) = std::fs::read_to_string(package_json)
+                && let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content)
+            {
+                return pkg_json.get("exports").is_none();
+            }
+        }
+
+        false
     }
 
     pub(in crate::declaration_emitter) fn type_text_is_directly_nameable_reference(
@@ -1898,6 +1957,35 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
+        let pkg_start = nm_idx + 1;
+        let pkg_len = if path.components().nth(pkg_start).is_some_and(
+            |c| matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@'))),
+        ) {
+            2
+        } else {
+            1
+        };
+        let package_parts: Vec<_> = path
+            .components()
+            .skip(pkg_start)
+            .take(pkg_len)
+            .filter_map(|component| match component {
+                Component::Normal(part) => part.to_str(),
+                _ => None,
+            })
+            .collect();
+        let package_name = package_parts.join("/");
+        let package_root: std::path::PathBuf =
+            path.components().take(pkg_start + pkg_len).collect();
+        let package_json = package_root.join("package.json");
+        if let Ok(pkg_content) = std::fs::read_to_string(&package_json)
+            && let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content)
+            && pkg_json.get("exports").is_none()
+            && self.current_package_declares_dependency(current_file_path, &package_name)
+        {
+            return None;
+        }
+
         let mut from_path =
             self.strip_ts_extensions(&self.calculate_relative_path(current_file_path, source_path));
         if from_path.ends_with("/index") {
@@ -1905,6 +1993,40 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some((from_path, type_name.to_string()))
+    }
+
+    fn current_package_declares_dependency(
+        &self,
+        current_file_path: &str,
+        package_name: &str,
+    ) -> bool {
+        use std::path::Path;
+
+        let Some(file_dir) = Path::new(current_file_path).parent() else {
+            return false;
+        };
+        for ancestor in file_dir.ancestors() {
+            let package_json = ancestor.join("package.json");
+            let Ok(content) = std::fs::read_to_string(package_json) else {
+                continue;
+            };
+            let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+                continue;
+            };
+            return [
+                "dependencies",
+                "devDependencies",
+                "peerDependencies",
+                "optionalDependencies",
+            ]
+            .iter()
+            .any(|field| {
+                json.get(field)
+                    .and_then(|deps| deps.get(package_name))
+                    .is_some()
+            });
+        }
+        false
     }
 
     pub(in crate::declaration_emitter) fn transitive_import_module_reference_path(

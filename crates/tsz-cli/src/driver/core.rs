@@ -1791,11 +1791,29 @@ fn normalize_ts2883_diagnostics_in_place(
 ) {
     use rustc_hash::FxHashSet;
 
-    let mut canonical_sites = FxHashSet::default();
+    let mut original_canonical_sites = FxHashSet::default();
     let mut exact_seen = FxHashSet::default();
     let mut unique = Vec::with_capacity(diagnostics.len());
 
     for diagnostic in diagnostics.drain(..) {
+        let mut diagnostic = diagnostic;
+        let mut was_canonicalized = false;
+        if diagnostic.code == 2883 {
+            if let Some((first, second)) =
+                parse_ts2883_named_reference_message(&diagnostic.message_text)
+            {
+                let site = (diagnostic.file.clone(), diagnostic.start, diagnostic.length);
+                if !looks_like_module_path(&first) && looks_like_module_path(&second) {
+                    original_canonical_sites.insert(site);
+                }
+            }
+            if let Some(message) =
+                canonical_ts2883_named_reference_message(&diagnostic.message_text)
+            {
+                diagnostic.message_text = message;
+                was_canonicalized = true;
+            }
+        }
         let exact_key = (
             diagnostic.code,
             diagnostic.file.clone(),
@@ -1807,40 +1825,35 @@ fn normalize_ts2883_diagnostics_in_place(
             continue;
         }
 
-        if diagnostic.code == 2883
-            && let Some((first, second)) =
-                parse_ts2883_named_reference_message(&diagnostic.message_text)
-            && !looks_like_module_path(&first)
-            && looks_like_module_path(&second)
-        {
-            canonical_sites.insert((diagnostic.file.clone(), diagnostic.start, diagnostic.length));
-        }
-
-        unique.push(diagnostic);
+        unique.push((diagnostic, was_canonicalized));
     }
 
     *diagnostics = unique
         .into_iter()
-        .filter(|diagnostic| {
+        .filter_map(|(diagnostic, was_canonicalized)| {
             if diagnostic.code != 2883 {
-                return true;
+                return Some(diagnostic);
             }
 
             let Some((first, second)) =
                 parse_ts2883_named_reference_message(&diagnostic.message_text)
             else {
-                return true;
+                return Some(diagnostic);
             };
 
-            if !looks_like_module_path(&first) || looks_like_module_path(&second) {
-                return true;
+            if !was_canonicalized
+                || looks_like_module_path(&first)
+                || !looks_like_module_path(&second)
+            {
+                return Some(diagnostic);
             }
 
-            !canonical_sites.contains(&(
+            (!original_canonical_sites.contains(&(
                 diagnostic.file.clone(),
                 diagnostic.start,
                 diagnostic.length,
-            ))
+            )))
+            .then_some(diagnostic)
         })
         .collect();
 }
@@ -1852,6 +1865,18 @@ fn parse_ts2883_named_reference_message(message: &str) -> Option<(String, String
     let (first, tail) = rest.split_once("' from '")?;
     let (second, _) = tail.split_once('\'')?;
     Some((first.to_string(), second.to_string()))
+}
+
+fn canonical_ts2883_named_reference_message(message: &str) -> Option<String> {
+    let (first, second) = parse_ts2883_named_reference_message(message)?;
+    if !looks_like_module_path(&first) || looks_like_module_path(&second) {
+        return None;
+    }
+
+    Some(message.replace(
+        &format!("reference to '{first}' from '{second}'"),
+        &format!("reference to '{second}' from '{first}'"),
+    ))
 }
 
 fn looks_like_module_path(text: &str) -> bool {

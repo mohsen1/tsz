@@ -4067,6 +4067,129 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(crate) fn enum_member_access_initializer_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        let is_access = expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+        if !is_access {
+            return None;
+        }
+
+        let binder = self.binder?;
+        let sym_id = self
+            .value_reference_symbol(expr_idx)
+            .or_else(|| self.entity_access_chain_symbol(expr_idx))?;
+        let symbol = binder.symbols.get(sym_id)?;
+        if symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0 {
+            return None;
+        }
+
+        self.get_source_slice_no_semi(expr_node.pos, expr_node.end)
+    }
+
+    fn entity_access_chain_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let binder = self.binder?;
+        let (root_idx, parts) = self.entity_access_chain_parts(expr_idx)?;
+        let root_name = self.get_identifier_text(root_idx)?;
+        let root_sym_id = self.resolve_identifier_symbol(root_idx, &root_name)?;
+        let root_symbol = binder.symbols.get(root_sym_id)?;
+
+        if !parts.is_empty()
+            && root_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+            && let Some(module_specifier) = root_symbol.import_module.as_deref()
+            && let Some(current_path) = self.current_file_path.as_deref()
+        {
+            for module_path in
+                self.matching_module_export_paths(binder, current_path, module_specifier)
+            {
+                let Some(exports) = binder.module_exports.get(module_path) else {
+                    continue;
+                };
+                let export_name = root_symbol.import_name.as_deref();
+                let (mut current, start_index) = match export_name {
+                    Some("*") | Some("export=") | None => {
+                        let Some(current) = exports.get(&parts[0]) else {
+                            continue;
+                        };
+                        (current, 1)
+                    }
+                    Some(name) => {
+                        let Some(current) = exports.get(name) else {
+                            continue;
+                        };
+                        (current, 0)
+                    }
+                };
+                let mut resolved_all_parts = true;
+                for part in parts.iter().skip(start_index) {
+                    let Some(next) = self.symbol_member(current, part, binder) else {
+                        resolved_all_parts = false;
+                        break;
+                    };
+                    current = next;
+                }
+                if !resolved_all_parts {
+                    continue;
+                }
+                return Some(current);
+            }
+        }
+
+        let mut current = self.resolve_portability_symbol(root_sym_id, binder);
+        for part in parts {
+            current = self.symbol_member(current, &part, binder)?;
+        }
+        Some(current)
+    }
+
+    fn entity_access_chain_parts(&self, expr_idx: NodeIndex) -> Option<(NodeIndex, Vec<String>)> {
+        let mut current = self.skip_parenthesized_non_null_and_comma(expr_idx);
+        let mut reversed_parts = Vec::new();
+
+        for _ in 0..32 {
+            let node = self.arena.get(current)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                reversed_parts.reverse();
+                return Some((current, reversed_parts));
+            }
+
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = self.arena.get_access_expr(node)?;
+                reversed_parts.push(self.get_identifier_text(access.name_or_argument)?);
+                current = access.expression;
+                continue;
+            }
+
+            return None;
+        }
+
+        None
+    }
+
+    fn symbol_member(
+        &self,
+        sym_id: SymbolId,
+        member_name: &str,
+        binder: &BinderState,
+    ) -> Option<SymbolId> {
+        let resolved = self.resolve_portability_symbol(sym_id, binder);
+        let symbol = binder.symbols.get(resolved)?;
+        symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(member_name))
+            .or_else(|| {
+                symbol
+                    .members
+                    .as_ref()
+                    .and_then(|members| members.get(member_name))
+            })
+    }
+
     pub(crate) fn simple_const_enum_access_member_text(
         &self,
         expr_idx: NodeIndex,

@@ -79,18 +79,12 @@ impl<'a> DeclarationEmitter<'a> {
         pos: u32,
         length: u32,
     ) -> bool {
-        use tsz_common::diagnostics::Diagnostic;
-
         let Some((from_path, type_name)) = self.find_non_portable_type_reference(type_id) else {
             return false;
         };
-        self.diagnostics.push(Diagnostic::from_code(
-            2883,
-            file,
-            pos,
-            length,
-            &[decl_name, &from_path, &type_name],
-        ));
+        self.emit_non_portable_named_reference_diagnostic(
+            decl_name, file, pos, length, &from_path, &type_name,
+        );
         true
     }
 
@@ -354,14 +348,14 @@ impl<'a> DeclarationEmitter<'a> {
                         &mut visited_declaration_symbols,
                         &mut visited_nodes,
                     ) {
-                        use tsz_common::diagnostics::Diagnostic;
-                        self.diagnostics.push(Diagnostic::from_code(
-                            2883,
+                        self.emit_non_portable_named_reference_diagnostic(
+                            decl_name,
                             file,
                             pos,
                             length,
-                            &[decl_name, &from_path, &type_name_text],
-                        ));
+                            &from_path,
+                            &type_name_text,
+                        );
                         return;
                     }
 
@@ -374,14 +368,14 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(from_path) =
                         self.check_nested_transitive_import(type_sym_id, binder)
                     {
-                        use tsz_common::diagnostics::Diagnostic;
-                        self.diagnostics.push(Diagnostic::from_code(
-                            2883,
+                        self.emit_non_portable_named_reference_diagnostic(
+                            decl_name,
                             file,
                             pos,
                             length,
-                            &[decl_name, &from_path, &type_name_text],
-                        ));
+                            &from_path,
+                            &type_name_text,
+                        );
                         return;
                     }
                 }
