@@ -125,6 +125,14 @@ pub(crate) struct CacheSnapshot {
     pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
     /// Clone of the flow analysis cache.
     pub flow_analysis_cache: rustc_hash::FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>,
+    /// Thread-local global resolution fuel counter at snapshot time. Speculative
+    /// sites (return-type inference) shouldn't bill their work against the
+    /// global budget when rolled back — the work will be redone non-
+    /// speculatively. Without this, a speculative pass that consumes the full
+    /// 50k global budget on lib-property walks silences every subsequent
+    /// `consume_fuel` caller in the same file (e.g. the post-rollback property
+    /// access check that should emit TS2339).
+    pub global_resolution_fuel: u32,
 }
 
 /// Complete speculation snapshot (full + cache).
@@ -179,6 +187,8 @@ impl CheckerContext<'_> {
                 node_types: self.node_types.clone(),
                 request_node_types: self.request_node_types.clone(),
                 flow_analysis_cache: self.flow_analysis_cache.borrow().clone(),
+                global_resolution_fuel:
+                    crate::state_domain::type_environment::lazy::global_resolution_fuel_value(),
             },
         }
     }
@@ -214,6 +224,19 @@ impl CheckerContext<'_> {
     /// speculatively).
     pub(crate) fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
         let truncate_at = self.clamped_diag_len(snap);
+        #[allow(clippy::print_stderr)]
+        if std::env::var_os("TSZ_DBG_PROP").is_some() {
+            for d in &self.diagnostics[truncate_at..] {
+                if d.message_text.contains("propertyNotOnHtml") {
+                    eprintln!(
+                        "[rollback_diagnostics] dropping: code={} msg={}",
+                        d.code, d.message_text
+                    );
+                    // Print backtrace
+                    eprintln!("{}", std::backtrace::Backtrace::capture());
+                }
+            }
+        }
         cleanup_ts2454_dedup(
             &mut self.emitted_ts2454_errors,
             &self.diagnostics[truncate_at..],
@@ -259,6 +282,9 @@ impl CheckerContext<'_> {
         self.request_node_types
             .clone_from(&snap.cache.request_node_types);
         *self.flow_analysis_cache.borrow_mut() = snap.cache.flow_analysis_cache.clone();
+        crate::state_domain::type_environment::lazy::restore_global_resolution_fuel(
+            snap.cache.global_resolution_fuel,
+        );
     }
 
     // -----------------------------------------------------------------------
