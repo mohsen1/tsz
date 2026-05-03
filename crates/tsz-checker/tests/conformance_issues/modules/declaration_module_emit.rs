@@ -1081,11 +1081,20 @@ export { configs };
             ),
             (
                 "main.ts",
+                // Locally declare a `Record`-shaped helper so `no_lib: true`
+                // doesn't leave the type reference unresolved. Otherwise
+                // `Record<string, ...>` lowers to
+                // `Application(UnresolvedTypeName('Record'), ...)`, which is
+                // (correctly) classified as an error type by `is_error_type`
+                // post the Devin-flagged fix on PR #2616, and the
+                // assignability check is short-circuited — so we'd never
+                // see the TS2322 this test is meant to assert on.
                 r#"
 import * as pluginImportX from "./pkg/index";
 const cfg = pluginImportX.configs["stage-0"];
+type RecordLike<K extends string, V> = { [P in K]: V };
 interface Plugin {
-  configs?: Record<string, { parser: string | null }>;
+  configs?: RecordLike<string, { parser: string | null }>;
 }
 const p: Plugin = pluginImportX;
 "#,

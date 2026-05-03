@@ -624,10 +624,20 @@ foo1<number>(1, "string", anythingAny);
 
 #[test]
 fn ts2322_optional_function_property_target_display_omits_synthetic_undefined() {
+    // Note: the original repro used `Promise<number[]>` / `Promise<string>`
+    // for the property return types. Without lib loaded that lowers to
+    // `Application(UnresolvedTypeName('Promise'), [...])`, which is now
+    // recognised as an error type by `is_error_type` and short-circuits
+    // the assignability check (per Devin review on PR #2616). To keep
+    // exercising the optional-property display invariant without relying
+    // on the cascading-error path, we substitute a locally declared
+    // generic alias so the property types are fully resolved.
     let source = r#"
+type Box<T> = { value: T };
+
 interface Stuff {
-    a?: () => Promise<number[]>;
-    b: () => Promise<string>;
+    a?: () => Box<number[]>;
+    b: () => Box<string>;
 }
 
 function foo(): Stuff | string {

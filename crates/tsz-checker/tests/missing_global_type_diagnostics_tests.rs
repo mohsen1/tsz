@@ -375,3 +375,44 @@ declare const x: Box<MissingType>;
         "Application argument must format as `MissingType`, not `error`"
     );
 }
+
+/// Regression for Devin review on PR #2616: end-to-end check that an
+/// unresolved generic in an interface property annotation does not
+/// produce cascading false-positive assignability diagnostics on top of
+/// the underlying TS2304. Before the fix, `Application(UnresolvedTypeName,
+/// args)` was not recognised as an error type, so the assignability
+/// checker would proceed with structural comparison against the
+/// unevaluable Application and emit spurious TS2322/TS2345 messages.
+#[test]
+fn unresolved_generic_in_interface_property_does_not_cascade() {
+    let diagnostics = check_without_lib_with_minimal_core_globals(
+        r#"
+interface Holder {
+    value: Foo<string>;
+}
+declare const h: Holder;
+const s: string = h.value;
+"#,
+    );
+
+    // TS2304 for `Foo` is the underlying error and must be reported.
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2304 && d.message_text.contains("'Foo'")),
+        "Expected TS2304 for `Foo`, got: {diagnostics:?}"
+    );
+
+    // But we must not also see a cascading TS2322 on `const s: string =
+    // h.value`. Before the fix, `Application(UnresolvedTypeName('Foo'),
+    // [string])` would not short-circuit the assignability check, so the
+    // checker would compare `Foo<string>` structurally against `string`
+    // and emit a spurious TS2322. After the fix, `is_error_type`
+    // recognises the wrapped unresolved name and the check is suppressed.
+    let cascading_2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        cascading_2322.is_empty(),
+        "Expected no cascading TS2322 on top of the unresolved generic \
+         `Foo<string>`, got: {cascading_2322:?}"
+    );
+}
