@@ -642,7 +642,16 @@ impl<'a> CheckerState<'a> {
         let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
             return;
         };
-        if clause.name.is_none() {
+        // Emit TS1543 for default imports (`import x from "./f.json"`) and namespace imports
+        // (`import * as x from "./f.json"`). Named imports are handled separately by TS1544
+        // in import_members.rs, and side-effect imports have no import clause.
+        let has_default_binding = clause.name.is_some();
+        let has_namespace_binding = self
+            .ctx
+            .arena
+            .get(clause.named_bindings)
+            .is_some_and(|bindings_node| bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT);
+        if !has_default_binding && !has_namespace_binding {
             return;
         }
 

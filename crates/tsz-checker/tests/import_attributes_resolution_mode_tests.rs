@@ -334,6 +334,21 @@ fn node18_esm_default_json_import_without_attribute_reports_ts1543() {
 }
 
 #[test]
+fn node18_esm_namespace_json_import_without_attribute_reports_ts1543() {
+    let diagnostics = check_json_module_import(
+        "main.mts",
+        r#"import * as config from "./config.json";"#,
+        ModuleKind::Node18,
+        Some(true),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1543),
+        "Expected TS1543 for ESM JSON namespace import without type=json, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn node18_esm_named_json_import_reports_ts1544_not_ts2614() {
     let diagnostics = check_json_module_import(
         "main.mts",
