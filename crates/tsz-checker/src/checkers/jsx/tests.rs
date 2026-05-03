@@ -1743,6 +1743,29 @@ function test<P extends JSX.IntrinsicAttributes>(wrappedProps: P) {{
     );
 }
 
+/// SFC excess-property TS2322: target display should include `IntrinsicAttributes &`
+/// when the JSX namespace declares `IntrinsicAttributes`. This mirrors
+/// `jsxElementType.tsx`'s expected fingerprint shape.
+#[test]
+fn jsx_sfc_excess_property_target_includes_intrinsic_attributes_prefix() {
+    let source = format!(
+        "{JSX_WITH_INTRINSIC_ATTRS}
+const RenderElement = ({{ title }}: {{ title: string }}) => null as any as JSX.Element;
+<RenderElement excessProp />;
+"
+    );
+    let diagnostics = check_jsx_strict(&source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for excess JSX attribute");
+    assert!(
+        diag.message_text
+            .contains("IntrinsicAttributes & { title: string"),
+        "Expected `IntrinsicAttributes &` prefix in TS2322 target display, got: {diag:?}"
+    );
+}
+
 /// Regression for jsxChildrenGenericContextualTypes.tsx:
 /// a zero-parameter callback nested in JSX body children whose body returns a
 /// string literal must not be flagged when the children prop's expected return

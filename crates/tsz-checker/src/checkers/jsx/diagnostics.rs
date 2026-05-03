@@ -37,14 +37,11 @@ impl<'a> CheckerState<'a> {
 
     /// Get the unevaluated Lazy(DefId) type for JSX.IntrinsicAttributes.
     pub(crate) fn get_intrinsic_attributes_lazy_type(&mut self) -> Option<TypeId> {
-        let jsx_sym_id = self.get_jsx_namespace_type()?;
-        let lib_binders = self.get_lib_binders();
-        let symbol = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
-        let exports = symbol.exports.as_ref()?;
-        let ia_sym_id = exports.get("IntrinsicAttributes")?;
+        // Use the merged-export resolution so we find `IntrinsicAttributes`
+        // declared in lib augmentations (e.g. react16.d.ts inside `declare global`)
+        // even when the local file's JSX namespace symbol only carries other
+        // exports like `IntrinsicElements`.
+        let ia_sym_id = self.get_jsx_namespace_export_symbol_id("IntrinsicAttributes")?;
         let ty = self.type_reference_symbol_type(ia_sym_id);
         let evaluated = self.evaluate_type_with_env(ty);
         if evaluated == TypeId::ANY || evaluated == TypeId::ERROR || evaluated == TypeId::UNKNOWN {
@@ -100,7 +97,12 @@ impl<'a> CheckerState<'a> {
         preferred_props_display: Option<&str>,
     ) -> String {
         let mut parts = Vec::new();
-        if let Some(ia) = self.get_intrinsic_attributes_lazy_type() {
+        // tsc only wraps `IntrinsicAttributes &` around the target for component
+        // (SFC / class) elements. Intrinsic JSX elements (`<a:b ... />`) skip the
+        // prefix entirely. `component_type.is_some()` distinguishes the two paths.
+        if component_type.is_some()
+            && let Some(ia) = self.get_intrinsic_attributes_lazy_type()
+        {
             parts.push(self.format_type(ia));
         }
         if let Some(comp) = component_type
