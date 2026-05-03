@@ -846,6 +846,8 @@ impl<'a> Printer<'a> {
         if is_namespace_alias
             && self.ctx.file_is_module
             && !is_exported_var
+            && !self.ctx.options.verbatim_module_syntax
+            && !self.source_is_js_file
             && !self.import_equals_has_value_usage_after_node(node, import)
         {
             return;
