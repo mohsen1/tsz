@@ -787,6 +787,51 @@ tr:nth-child(even) { background: var(--table-stripe); }
   background: var(--bg-code) !important;
 }
 
+.benchmark-readme {
+  max-width: 68rem;
+  max-height: 30rem;
+  overflow: auto;
+  padding-right: 0.75rem;
+  color: var(--text-secondary);
+  scrollbar-width: thin;
+}
+
+.benchmark-readme h1,
+.benchmark-readme h2,
+.benchmark-readme h3 {
+  margin: 1.4rem 0 0.55rem;
+  padding: 0;
+  color: var(--text);
+}
+
+.benchmark-readme h1 {
+  font-size: 1.25rem;
+}
+
+.benchmark-readme h2 {
+  font-size: 1.05rem;
+}
+
+.benchmark-readme h3 {
+  font-size: 0.95rem;
+}
+
+.benchmark-readme p,
+.benchmark-readme li {
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+
+.benchmark-readme pre {
+  border: 0;
+  border-radius: 0;
+}
+
+.benchmark-readme img {
+  max-width: 100%;
+  height: auto;
+}
+
 /* ── Footer ── */
 .site-footer {
   border-top: 1px solid var(--border-subtle);

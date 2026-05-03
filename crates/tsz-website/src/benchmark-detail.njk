@@ -29,8 +29,6 @@ eleventyComputed:
   {% else %}
     <strong>tsz unavailable</strong>
   {% endif %}
-  <span>tsz {% if benchmark.tsz_time %}{{ benchmark.tsz_time }}{% else %}n/a{% endif %}</span>
-  <span>tsgo {% if benchmark.tsgo_time %}{{ benchmark.tsgo_time }}{% else %}n/a{% endif %}</span>
   <span>{{ benchmark.lines or 0 }} lines</span>
   <span>{{ benchmark.kb or 0 }} KB</span>
   {% if benchmark.status_label %}
@@ -57,6 +55,15 @@ eleventyComputed:
     </div>
   </div>
 </section>
+
+{% if benchmark.readme_html %}
+  <section class="benchmark-readme-section">
+    <h2>README</h2>
+    <div class="benchmark-readme">
+      {{ benchmark.readme_html | safe }}
+    </div>
+  </section>
+{% endif %}
 
 {% if benchmark.source_files.length %}
   <section id="benchmark-files">
