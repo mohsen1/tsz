@@ -5,9 +5,11 @@
 //! `A<string>` even though `unknown` is NOT a subtype of `string`.
 //!
 //! The fix narrows the fast path to require at least one `never` arg in the
-//! target — the typical signature of inference fallback for Thenable-like
-//! constructors (e.g., `EPromise<never, A>`). User-written `A<unknown>` →
-//! `A<string>` no longer slips through.
+//! target and no concrete non-`unknown`/non-type-parameter target args on a
+//! promise-like generic — the typical signature of inference fallback for
+//! Thenable-like constructors (e.g., `EPromise<never, A>`). User-written
+//! `A<unknown>` → `A<string>` and `A<unknown>` → `A<never>` no longer slip
+//! through.
 
 use tsz_common::options::checker::CheckerOptions;
 
@@ -105,5 +107,42 @@ x.x = r;
             && d.message_text.contains("'A<unknown>'")
             && d.message_text.contains("'A<string>'")),
         "Expected TS2322 'A<unknown>' not assignable to 'A<string>'; got: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2322_emitted_for_class_unknown_arg_to_never_arg() {
+    let diags = diags_strict(
+        r#"
+declare class A<T> { foo: T }
+declare const a: A<unknown>;
+const b: A<never> = a;
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2322
+            && d.message_text.contains("'A<unknown>'")
+            && d.message_text.contains("'A<never>'")),
+        "Expected TS2322 'A<unknown>' not assignable to 'A<never>'; got: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2322_emitted_for_multi_arg_unknown_source_when_target_has_never_and_concrete_arg() {
+    let diags = diags_strict(
+        r#"
+declare class Result<E, A> {
+    error: E;
+    value: A;
+}
+declare const result: Result<unknown, unknown>;
+const concrete: Result<never, string> = result;
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2322
+            && d.message_text.contains("'Result<unknown, unknown>'")
+            && d.message_text.contains("'Result<never, string>'")),
+        "Expected TS2322 'Result<unknown, unknown>' not assignable to 'Result<never, string>'; got: {diags:?}"
     );
 }
