@@ -298,3 +298,53 @@ fn test_no_ts1382_in_unclosed_recovery_patterns() {
         found.join("\n")
     );
 }
+
+#[test]
+fn test_jsx_unclosed_at_eof_emits_ts1005_not_ts17002() {
+    // tsc behavior: when an unclosed JSX element reaches EOF, `parseExpected`
+    // for `</` always emits TS1005 `'</' expected.` at the EOF position,
+    // deduped only by exact same start. Without the EOF force-emit, tsz's
+    // distance-based suppression hides the TS1005 (because TS17008 was just
+    // emitted within 3 tokens), and the downstream tag-mismatch path then
+    // wrongly emits TS17002 instead. Verify TS1005 fires and TS17002 does
+    // not, mirroring tsc.
+    //
+    // Try multiple shapes — a bare `<a>;`, a nested `<a><a />;`, and an
+    // attribute-bearing `<a b={}>;` — to ensure the fix is structural and
+    // not tied to a particular identifier name or attribute shape.
+    for source in ["<a>;", "<a><a />;", "<a b={}>;", "<x>;", "<x><x />;"] {
+        let errors = get_parser_errors(source, "test.tsx");
+        let ts1005_close: Vec<_> = errors
+            .iter()
+            .filter(|(c, m)| *c == 1005 && m == "'</' expected.")
+            .collect();
+        assert!(
+            !ts1005_close.is_empty(),
+            "Expected TS1005 `'</' expected.` for {source:?}, got: {errors:?}",
+        );
+        let ts17002: Vec<_> = errors.iter().filter(|(c, _)| *c == 17002).collect();
+        assert!(
+            ts17002.is_empty(),
+            "Expected no TS17002 (tag mismatch should dedup against TS1005 at EOF) for {source:?}, got: {errors:?}",
+        );
+    }
+}
+
+#[test]
+fn test_jsx_unclosed_at_eof_position_matches_tsc_no_trailing_newline() {
+    // tsc emits TS1005 at the EOF position (= end of last content) when the
+    // file has no trailing newline. Without the EOF force-emit, tsz's
+    // suppression-distance path skips TS1005 and falls back to TS17002 at a
+    // different position. Lock the position at the byte after `;` for `<a>;`.
+    let source = "<a>;";
+    let errors = get_parser_errors(source, "test.tsx");
+    let ts1005: Vec<_> = errors
+        .iter()
+        .filter(|(c, m)| *c == 1005 && m == "'</' expected.")
+        .collect();
+    assert_eq!(
+        ts1005.len(),
+        1,
+        "Expected exactly one TS1005 `'</' expected.`, got: {errors:?}",
+    );
+}
