@@ -121,6 +121,17 @@ fn test_await_call_argument_captures_identifier_callee_before_yield() {
 }
 
 #[test]
+fn test_computed_object_after_await_uses_separate_temp_var_statement() {
+    let output =
+        transform_and_print("async function foo(): Promise<void> { var v = { [await]: foo } }");
+
+    assert!(
+        output.contains("var v;\n        var _a;"),
+        "Computed-object temp should be emitted in a separate hoisted var statement: {output}"
+    );
+}
+
+#[test]
 fn test_return_await_call_argument_captures_identifier_callee_before_yield() {
     let output = transform_and_print("async function foo() { return fn(await p); }");
 

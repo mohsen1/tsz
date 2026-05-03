@@ -168,6 +168,9 @@ pub enum IRNode {
     /// Multiple variable declarations: `var a = 1, b = 2;`
     VarDeclList(Vec<Self>),
 
+    /// Internal async-transform marker: start a new hoisted `var` statement group.
+    HoistedVarGroupBreak,
+
     /// Expression statement: `expr;`
     ExpressionStatement(Box<Self>),
 
@@ -320,8 +323,8 @@ pub enum IRNode {
     AwaiterCall {
         this_arg: Box<Self>,
         generator_body: Box<Self>,
-        /// Var declarations hoisted out of the generator body to the awaiter wrapper scope
-        hoisted_vars: Vec<String>,
+        /// Var declaration groups hoisted out of the generator body to the awaiter wrapper scope.
+        hoisted_var_groups: Vec<Vec<String>>,
         /// Custom promise constructor for the third `__awaiter` arg.
         promise_constructor: Option<String>,
     },
