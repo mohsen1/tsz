@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-03T17:44:46Z",
-  "git_sha": "c15d371fc9aeee8a0a09eec428655fae2e26c3a8",
+  "timestamp": "2026-05-03T19:16:54Z",
+  "git_sha": "59eb22e6b1f57b5cd5e16c46f41baf946d652068",
   "summary": {
     "total_tests": 12582,
-    "passed": 12389,
-    "failed": 193,
+    "passed": 12391,
+    "failed": 191,
     "pass_rate": 98.5
   },
   "areas_by_pass_rate": [
@@ -214,9 +214,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6429,
-      "failed": 91,
-      "pass_rate": 98.6
+      "passed": 6431,
+      "failed": 89,
+      "pass_rate": 98.63
     },
     {
       "area": "es6/destructuring",
@@ -1206,15 +1206,15 @@
       "count": 1
     },
     {
-      "code": "TS2352",
-      "count": 1
-    },
-    {
       "code": "TS2799",
       "count": 1
     },
     {
       "code": "TS2800",
+      "count": 1
+    },
+    {
+      "code": "TS2352",
       "count": 1
     },
     {
@@ -1388,14 +1388,6 @@
       "count": 1
     },
     {
-      "code": "TS2722",
-      "count": 1
-    },
-    {
-      "code": "TS7052",
-      "count": 1
-    },
-    {
       "code": "TS2353",
       "count": 1
     },
@@ -1420,7 +1412,7 @@
     "false_positive": 7,
     "all_missing": 9,
     "wrong_code": 56,
-    "fingerprint_only": 121,
+    "fingerprint_only": 119,
     "same_code_count_drift": 0,
     "close_to_passing": 38
   }
