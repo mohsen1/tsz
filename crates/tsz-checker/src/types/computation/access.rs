@@ -629,6 +629,28 @@ impl<'a> CheckerState<'a> {
                 .index_access(pre_resolution_object_type, index_type);
         }
 
+        // Concrete receiver indexed by a generic key (`K extends keyof Receiver`):
+        // tsc preserves the deferred `Receiver[K]` form for the WRITE target so
+        // the assignability check rejects sources that aren't valid for every
+        // possible instantiation of the index parameter and the diagnostic
+        // surfaces `Receiver[K]` rather than the resolved (NUIA-widened) value
+        // type. Without this, `obj[k] = undefined` (where `k: K extends keyof
+        // typeof obj`) silently typechecks because the read-side widening
+        // makes the LHS `T | undefined` and `undefined` is assignable to it.
+        if skip_flow_narrowing
+            && !is_generic_receiver
+            && self.concrete_receiver_write_target_should_preserve_indexed_access(
+                pre_resolution_object_type,
+                index_type,
+            )
+        {
+            return self
+                .ctx
+                .types
+                .factory()
+                .index_access(pre_resolution_object_type, index_type);
+        }
+
         // TS2476: A const enum member can only be accessed using a string literal.
         let const_enum_sym = self
             .resolve_identifier_symbol(access.expression)
@@ -1275,6 +1297,30 @@ impl<'a> CheckerState<'a> {
             )
         {
             result_type = Some(TypeId::ANY);
+            use_index_signature_check = false;
+        }
+
+        // Value-level element access whose index expression has type `any`.
+        // tsc routes through the receiver's applicable index signature for
+        // expression-level access, so `noUncheckedIndexedAccess` still widens
+        // the read type to `T | undefined` and rejects writes of `undefined`
+        // against the un-widened slot type. Without this branch, the
+        // type-level `T[any] = any` rule short-circuits `obj[anyExpr]` to
+        // `any` and silently bypasses NUIA on both reads and writes (e.g.
+        // `strMap[null as any]` and `strMap[null as any] = undefined`).
+        if result_type.is_none()
+            && index_type == TypeId::ANY
+            && let Some(any_result) = self.ctx.types.resolve_any_index_access(
+                object_type_for_access,
+                self.ctx.compiler_options.no_unchecked_indexed_access,
+            )
+            && let PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } = any_result
+        {
+            result_type = Some(effective_write_result(type_id, write_type));
             use_index_signature_check = false;
         }
 

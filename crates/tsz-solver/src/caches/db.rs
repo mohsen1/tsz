@@ -844,6 +844,22 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         no_unchecked_indexed_access: bool,
     ) -> crate::operations::property::PropertyAccessResult;
 
+    /// Resolve a value-level element access whose index expression has type
+    /// `any` (e.g. `obj[someAny]`) against the receiver's applicable index
+    /// signature.
+    ///
+    /// `T[any]` at the type level resolves to `any`; this helper is for the
+    /// value-level case where tsc instead routes the access through the
+    /// applicable index signature so `noUncheckedIndexedAccess` keeps
+    /// widening reads to `T | undefined` and rejecting `undefined` writes
+    /// against the un-widened slot type. Returns `None` when the receiver
+    /// has no string or number index signature.
+    fn resolve_any_index_access(
+        &self,
+        object_type: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> Option<crate::operations::property::PropertyAccessResult>;
+
     fn property_access_type(
         &self,
         object_type: TypeId,
@@ -1242,6 +1258,18 @@ impl QueryDatabase for TypeInterner {
         evaluator
             .set_exact_optional_property_types(TypeInterner::exact_optional_property_types(self));
         evaluator.resolve_property_access(object_type, prop_name)
+    }
+
+    fn resolve_any_index_access(
+        &self,
+        object_type: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> Option<crate::operations::property::PropertyAccessResult> {
+        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator
+            .set_exact_optional_property_types(TypeInterner::exact_optional_property_types(self));
+        evaluator.resolve_any_index_access(object_type)
     }
 
     fn resolve_element_access(

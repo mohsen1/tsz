@@ -159,6 +159,9 @@ mod name_resolution_boundary_tests;
 #[path = "../tests/no_filename_based_behavior_tests.rs"]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
+#[path = "tests/noUIA_any_index_emits_ts2322_tests.rs"]
+mod nuia_any_index_emits_ts2322_tests;
+#[cfg(test)]
 #[path = "tests/noUIA_write_index_signature_emits_ts2322_tests.rs"]
 mod nuia_write_index_signature_emits_ts2322_tests;
 #[cfg(test)]
