@@ -23,7 +23,7 @@ use crate::types::{
     TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData,
     TypeId, TypeListId, TypeParamInfo,
 };
-use crate::visitors::visitor_predicates::{contains_type_matching, is_primitive_type};
+use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Controls which subtype direction makes a member redundant when simplifying
@@ -717,7 +717,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     )
                                 })
                             } else {
-                                is_primitive_type(self.interner, resolved_arg)
+                                Self::is_primitive_or_primitive_union(self.interner, resolved_arg)
                             };
                             if should_passthrough {
                                 if let Some(db) = self.query_db {
@@ -1738,6 +1738,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> bool {
         crate::visitors::visitor_predicates::is_empty_object_type(db, candidate)
             && crate::visitors::visitor_predicates::is_widening_primitive_intrinsic(db, subsuming)
+    }
+
+    fn is_primitive_or_primitive_union(
+        db: &dyn crate::caches::db::TypeDatabase,
+        candidate: TypeId,
+    ) -> bool {
+        if crate::visitors::visitor_predicates::is_primitive_type(db, candidate) {
+            return true;
+        }
+        let Some(TypeData::Union(members)) = db.lookup(candidate) else {
+            return false;
+        };
+        db.type_list(members)
+            .iter()
+            .all(|&member| crate::visitors::visitor_predicates::is_primitive_type(db, member))
     }
 
     /// Check whether a union member is a literal that's only "subsumed" by a

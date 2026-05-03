@@ -188,6 +188,8 @@ pub struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_check: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_resolve: Option<bool>,
     /// Do not resolve symlinks to their real path.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
@@ -951,6 +953,9 @@ pub fn resolve_compiler_options(
 
     if let Some(no_emit) = options.no_emit {
         resolved.no_emit = no_emit;
+    }
+    if let Some(no_check) = options.no_check {
+        resolved.no_check = no_check;
     }
     if let Some(no_resolve) = options.no_resolve {
         resolved.no_resolve = no_resolve;
@@ -3277,6 +3282,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             strict,
             sound,
             no_emit,
+            no_check,
             no_emit_on_error,
             isolated_modules,
             isolated_declarations,
@@ -5848,6 +5854,14 @@ mod tests {
             resolved.checker.use_unknown_in_catch_variables,
             "useUnknownInCatchVariables should default to true when strict is not set"
         );
+    }
+
+    #[test]
+    fn test_resolve_compiler_options_propagates_no_check() {
+        let json = r#"{"compilerOptions":{"noCheck":true}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(resolved.no_check, "noCheck should be read from tsconfig");
     }
 
     #[test]

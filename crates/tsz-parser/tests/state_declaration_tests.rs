@@ -395,6 +395,42 @@ fn import_specifier_string_literal_export_name_with_identifier_alias_is_valid() 
 }
 
 #[test]
+fn import_specifier_can_use_from_as_binding_name() {
+    let (parser, _root) = parse_source(
+        r#"
+import { from } from "./from";
+import { from as fromObservable } from "./from";
+"#,
+    );
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "`from` is valid as an import specifier binding name"
+    );
+}
+
+#[test]
+fn conditional_tuple_element_inside_conditional_extends_type_parses() {
+    let (parser, _root) = parse_source(
+        r#"
+type ExcludeStrict<
+    T,
+    U extends [U] extends [
+        U extends unknown ? ([T] extends [Exclude<T, U>] ? never : U) : never,
+    ]
+        ? unknown
+        : never,
+> = Exclude<T, U>;
+"#,
+    );
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "conditional tuple elements remain valid inside a conditional extends type"
+    );
+}
+
+#[test]
 fn invalid_bigint_import_specifier_preserves_missing_brace_recovery() {
     let (parser, _root) = parse_source(r#"import { 0n as foo } from "./foo";"#);
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
