@@ -683,7 +683,7 @@ impl<'a> Printer<'a> {
         let mut depth = 0i32;
         while scan < limit {
             match bytes[scan] {
-                b'(' | b'[' | b'{' | b'<' => {
+                b'(' | b'[' | b'{' => {
                     depth += 1;
                     scan += 1;
                 }
@@ -694,7 +694,7 @@ impl<'a> Printer<'a> {
                         break;
                     }
                 }
-                b']' | b'}' | b'>' => {
+                b']' | b'}' => {
                     depth -= 1;
                     scan += 1;
                 }
