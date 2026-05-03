@@ -50,11 +50,31 @@ impl<'a> Printer<'a> {
         };
 
         self.emit(jsx.opening_element);
+        let has_synthesized_empty_close = self
+            .arena
+            .get(jsx.closing_element)
+            .and_then(|closing_node| {
+                self.arena
+                    .get_jsx_closing(closing_node)
+                    .map(|closing| (closing_node, closing))
+            })
+            .is_some_and(|(_closing_node, closing)| closing.tag_name.is_none());
         for &child in &jsx.children.nodes {
             // tsc strips empty JSX expression containers `{}` that have no
             // inner comments in preserve mode.  Expressions with comments
             // like `{/* comment */}` are kept.
             if self.is_empty_jsx_expression_without_comments(child) {
+                continue;
+            }
+            if has_synthesized_empty_close
+                && self
+                    .arena
+                    .get(child)
+                    .and_then(|child_node| self.arena.get_jsx_text(child_node))
+                    .is_some_and(|text| {
+                        text.contains_only_trivia_white_spaces || text.text.trim().is_empty()
+                    })
+            {
                 continue;
             }
             self.emit(child);
