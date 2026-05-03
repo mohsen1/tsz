@@ -1,6 +1,5 @@
 FAIL TypeScript/tests/cases/compiler/circularInlineMappedGenericTupleTypeNoCrash.ts | expected:[TS2589] actual:[]
 FAIL TypeScript/tests/cases/compiler/circularReferenceInReturnType2.ts | expected:[TS7022,TS7023] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/complexRecursiveCollections.ts | expected:[TS2320,TS2344,TS2430] actual:[TS2344,TS2430]
 FAIL TypeScript/tests/cases/compiler/conditionalTypeAssignabilityWhenDeferred.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/compiler/conditionalTypeVarianceBigArrayConstraintsPerformance.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts | expected:[TS1002,TS1005,TS1011,TS1068,TS1109,TS1110,TS1127,TS1128,TS1135] actual:[TS1002,TS1005,TS1011,TS1068,TS1109,TS1128,TS1135,TS1435,TS1472]
@@ -65,8 +64,7 @@ FAIL TypeScript/tests/cases/compiler/restParameterWithBindingPattern3.ts | expec
 FAIL TypeScript/tests/cases/compiler/reuseTypeAnnotationImportTypeInGlobalThisTypeArgument.ts | expected:[TS2304] actual:[TS2305,TS2694]
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypeNotCircular.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts | expected:[TS2322,TS2353] actual:[TS2322,TS2353]
-FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters3.ts | expected:[TS2345] actual:[]
-FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters4.ts | expected:[TS2345] actual:[]
+FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters4.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters5.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/strictFunctionTypesErrors.ts | expected:[TS2322,TS2328] actual:[TS2322,TS2328]
 FAIL TypeScript/tests/cases/compiler/strictModeReservedWord.ts | expected:[TS1212,TS1213,TS2300,TS2349,TS2480,TS2503,TS2507,TS2552,TS7006] actual:[TS1212,TS1213,TS2349,TS2480,TS2503,TS2552,TS7006]
@@ -112,7 +110,6 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag7.ts | expec
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocPrototypePropertyAccessWithType.ts | expected:[TS2322] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeFromChainedAssignment.ts | expected:[TS2322,TS2339,TS2345] actual:[TS2322,TS2339,TS2345]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeTagCast.ts | expected:[TS1228,TS2322,TS2352,TS2454] actual:[TS2322,TS2352,TS2403,TS2454]
-FAIL TypeScript/tests/cases/conformance/jsdoc/typedefCrossModule5.ts | expected:[TS2300,TS2451] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty4.tsx | expected:[TS2322,TS2551] actual:[TS2551]
 FAIL TypeScript/tests/cases/conformance/jsx/inline/inlineJsxAndJsxFragPragma.tsx | expected:[TS2874,TS6133] actual:[TS6133,TS6192]
 FAIL TypeScript/tests/cases/conformance/jsx/jsxInvalidEsprimaTestSuite.tsx | expected:[TS1002,TS1003,TS1005,TS1109,TS1128,TS1145,TS1381,TS1382,TS2657,TS17002,TS17008] actual:[TS1002,TS1003,TS1005,TS1109,TS1128,TS1145,TS1381,TS1382,TS2657,TS17002,TS17008]
@@ -1200,6 +1197,7 @@ PASS TypeScript/tests/cases/compiler/compilerOptionsOutDirAndNoEmit.ts
 PASS TypeScript/tests/cases/compiler/compilerOptionsOutFileAndNoEmit.ts
 PASS TypeScript/tests/cases/compiler/complexClassRelationships.ts
 PASS TypeScript/tests/cases/compiler/complexNarrowingWithAny.ts
+PASS TypeScript/tests/cases/compiler/complexRecursiveCollections.ts
 PASS TypeScript/tests/cases/compiler/complicatedGenericRecursiveBaseClassReference.ts
 PASS TypeScript/tests/cases/compiler/complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound.ts
 PASS TypeScript/tests/cases/compiler/complicatedIndexesOfIntersectionsAreInferencable.ts
@@ -5564,6 +5562,7 @@ PASS TypeScript/tests/cases/compiler/sideEffectImports4.ts
 PASS TypeScript/tests/cases/compiler/sigantureIsSubTypeIfTheyAreIdentical.ts
 PASS TypeScript/tests/cases/compiler/signatureCombiningRestParameters1.ts
 PASS TypeScript/tests/cases/compiler/signatureCombiningRestParameters2.ts
+PASS TypeScript/tests/cases/compiler/signatureCombiningRestParameters3.ts
 PASS TypeScript/tests/cases/compiler/signatureInstantiationWithRecursiveConstraints.ts
 PASS TypeScript/tests/cases/compiler/signatureLengthMismatchCall.ts
 PASS TypeScript/tests/cases/compiler/signatureLengthMismatchInOverload.ts
@@ -9956,6 +9955,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/typedefCrossModule.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/typedefCrossModule2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/typedefCrossModule3.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/typedefCrossModule4.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/typedefCrossModule5.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/typedefDuplicateTypeDeclaration.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/typedefInnerNamepaths.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/typedefMultipleTypeParameters.ts
