@@ -6,7 +6,7 @@ use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -662,6 +662,41 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    pub(crate) fn type_arg_nodes_contain_scoped_type_parameter_for_depth_check(
+        &self,
+        type_args: &NodeList,
+    ) -> bool {
+        type_args
+            .nodes
+            .iter()
+            .copied()
+            .any(|node_idx| self.type_node_contains_scoped_type_parameter_for_depth_check(node_idx))
+    }
+
+    fn type_node_contains_scoped_type_parameter_for_depth_check(
+        &self,
+        node_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if let Some(identifier) = self.ctx.arena.get_identifier(node)
+            && self
+                .ctx
+                .type_parameter_scope
+                .contains_key(&identifier.escaped_text)
+        {
+            return true;
+        }
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.type_node_contains_scoped_type_parameter_for_depth_check(child_idx)
+            })
     }
 
     pub(crate) fn class_instance_type_from_symbol(&mut self, sym_id: SymbolId) -> Option<TypeId> {

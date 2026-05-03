@@ -1264,6 +1264,12 @@ impl<'a> CheckerState<'a> {
                             .arena
                             .get_signature(pn)
                             .and_then(|sig| sig.type_parameters.as_ref())
+                    } else if pn.kind == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    {
+                        self.ctx
+                            .arena
+                            .get_type_alias(pn)
+                            .and_then(|alias| alias.type_parameters.as_ref())
                     } else {
                         None
                     };
@@ -1283,6 +1289,7 @@ impl<'a> CheckerState<'a> {
                     // Stop at declaration boundaries
                     if pn.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION
                         || pn.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
+                        || pn.kind == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     {
                         break;
                     }

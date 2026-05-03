@@ -2025,104 +2025,108 @@ impl<'a> CheckerState<'a> {
                     // In JS/checkJs, expression-bodied arrows can carry inline JSDoc casts
                     // (e.g. `/** @type {T} */(expr)`); use that annotated type when present.
                     let mut actual_return_node = body;
-                    let actual_return = self
-                        .jsdoc_type_annotation_for_node_direct(actual_return_node)
-                        .or_else(|| {
-                            // Parenthesized expression wrappers can separate the annotation
-                            // from the final body node in `.js` files (for cast-like syntax).
-                            while let Some(parent_idx) = self
-                                .ctx
-                                .arena
-                                .get_extended(actual_return_node)
-                                .map(|ext| ext.parent)
-                            {
-                                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                                    break;
-                                };
-                                if parent_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                                    break;
-                                }
-                                actual_return_node = parent_idx;
-                                if let Some(ty) =
-                                    self.jsdoc_type_annotation_for_node_direct(actual_return_node)
-                                {
-                                    return Some(ty);
-                                }
+                    let mut actual_return_uses_jsdoc_cast = false;
+                    let actual_return = (if let Some(ty) =
+                        self.jsdoc_type_annotation_for_node_direct(actual_return_node)
+                    {
+                        actual_return_uses_jsdoc_cast = true;
+                        Some(ty)
+                    } else {
+                        // Parenthesized expression wrappers can separate the annotation
+                        // from the final body node in `.js` files (for cast-like syntax).
+                        let mut found = None;
+                        while let Some(parent_idx) = self
+                            .ctx
+                            .arena
+                            .get_extended(actual_return_node)
+                            .map(|ext| ext.parent)
+                        {
+                            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                                break;
+                            };
+                            if parent_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                                break;
                             }
-                            None
-                        })
-                        .unwrap_or_else(|| {
-                            // For explicit annotations/JSDoc, type the body under that
-                            // return context so literal expressions are preserved.
-                            // For contextual-return-only closures, read the raw body type
-                            // and let the later assignability check report on the whole
-                            // expression instead of a nested contextualized subexpression.
-                            let can_apply_contextual_body =
-                                !self.type_has_unresolved_inference_holes(expected_return_type);
-                            let literal_sensitive_return =
-                                crate::query_boundaries::common::literal_value(
+                            actual_return_node = parent_idx;
+                            if let Some(ty) =
+                                self.jsdoc_type_annotation_for_node_direct(actual_return_node)
+                            {
+                                actual_return_uses_jsdoc_cast = true;
+                                found = Some(ty);
+                                break;
+                            }
+                        }
+                        found
+                    })
+                    .unwrap_or_else(|| {
+                        // For explicit annotations/JSDoc, type the body under that
+                        // return context so literal expressions are preserved.
+                        // For contextual-return-only closures, read the raw body type
+                        // and let the later assignability check report on the whole
+                        // expression instead of a nested contextualized subexpression.
+                        let can_apply_contextual_body =
+                            !self.type_has_unresolved_inference_holes(expected_return_type);
+                        let literal_sensitive_return =
+                            crate::query_boundaries::common::literal_value(
+                                self.ctx.types,
+                                expected_return_type,
+                            )
+                            .is_some()
+                                || crate::query_boundaries::common::enum_def_id(
                                     self.ctx.types,
                                     expected_return_type,
                                 )
                                 .is_some()
-                                    || crate::query_boundaries::common::enum_def_id(
-                                        self.ctx.types,
-                                        expected_return_type,
-                                    )
-                                    .is_some()
-                                    || (crate::query_boundaries::common::is_symbol_or_unique_symbol(
-                                        self.ctx.types,
-                                        expected_return_type,
-                                    )
-                                        && expected_return_type != TypeId::SYMBOL)
-                                    || expected_return_type == TypeId::NEVER
-                                    || crate::query_boundaries::common::union_list_id(
-                                        self.ctx.types,
-                                        expected_return_type,
-                                    )
-                                    .is_some_and(|list_id| {
-                                        self.ctx.types.type_list(list_id).iter().any(|&member| {
-                                            crate::query_boundaries::common::is_literal_type(
-                                                self.ctx.types,
-                                                member,
-                                            ) || crate::query_boundaries::common::enum_def_id(
-                                                self.ctx.types,
-                                                member,
-                                            )
-                                            .is_some()
-                                        })
-                                    });
-                            let concrete_return_context = expected_return_type != TypeId::ANY
-                                && expected_return_type != TypeId::UNKNOWN
-                                && !crate::query_boundaries::common::contains_type_parameters(
+                                || (crate::query_boundaries::common::is_symbol_or_unique_symbol(
                                     self.ctx.types,
                                     expected_return_type,
-                                );
-                            let keep_contextual_body = has_type_annotation
-                                || jsdoc_return_context.is_some()
-                                || literal_sensitive_return
-                                || (can_apply_contextual_body
-                                    && (is_contextually_sensitive(self, body)
-                                        || (concrete_return_context
-                                            && expression_needs_contextual_return_type(
-                                                self, body,
-                                            ))));
-                            let body_request = if keep_contextual_body {
-                                TypingRequest::with_contextual_type(expected_return_type)
-                            } else {
-                                TypingRequest::NONE
-                            };
-                            let prev_preserve_literals = self.ctx.preserve_literal_types;
-                            if keep_contextual_body {
-                                self.ctx.preserve_literal_types = true;
-                            }
-                            if body_request.is_empty() {
-                                self.invalidate_expression_for_contextual_retry(body);
-                            }
-                            let t = self.get_type_of_node_with_request(body, &body_request);
-                            self.ctx.preserve_literal_types = prev_preserve_literals;
-                            t
-                        });
+                                ) && expected_return_type != TypeId::SYMBOL)
+                                || expected_return_type == TypeId::NEVER
+                                || crate::query_boundaries::common::union_list_id(
+                                    self.ctx.types,
+                                    expected_return_type,
+                                )
+                                .is_some_and(|list_id| {
+                                    self.ctx.types.type_list(list_id).iter().any(|&member| {
+                                        crate::query_boundaries::common::is_literal_type(
+                                            self.ctx.types,
+                                            member,
+                                        ) || crate::query_boundaries::common::enum_def_id(
+                                            self.ctx.types,
+                                            member,
+                                        )
+                                        .is_some()
+                                    })
+                                });
+                        let concrete_return_context = expected_return_type != TypeId::ANY
+                            && expected_return_type != TypeId::UNKNOWN
+                            && !crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                expected_return_type,
+                            );
+                        let keep_contextual_body = has_type_annotation
+                            || jsdoc_return_context.is_some()
+                            || literal_sensitive_return
+                            || (can_apply_contextual_body
+                                && (is_contextually_sensitive(self, body)
+                                    || (concrete_return_context
+                                        && expression_needs_contextual_return_type(self, body))));
+                        let body_request = if keep_contextual_body {
+                            TypingRequest::with_contextual_type(expected_return_type)
+                        } else {
+                            TypingRequest::NONE
+                        };
+                        let prev_preserve_literals = self.ctx.preserve_literal_types;
+                        if keep_contextual_body {
+                            self.ctx.preserve_literal_types = true;
+                        }
+                        if body_request.is_empty() {
+                            self.invalidate_expression_for_contextual_retry(body);
+                        }
+                        let t = self.get_type_of_node_with_request(body, &body_request);
+                        self.ctx.preserve_literal_types = prev_preserve_literals;
+                        t
+                    });
                     // For async expression-bodied arrows, unwrap Promise from the
                     // actual return type, matching check_return_statement behavior.
                     // `async (): Promise<T> => p` where p is Promise<T>: the body
@@ -2251,7 +2255,11 @@ impl<'a> CheckerState<'a> {
                         // reported position lands on the innermost expression
                         // (e.g. `{}` in `(({}) satisfies unknown)`), matching
                         // tsc's behavior.
-                        let inner_body = self.ctx.arena.skip_parenthesized_and_assertions(body);
+                        let inner_body = if actual_return_uses_jsdoc_cast {
+                            actual_return_node
+                        } else {
+                            self.ctx.arena.skip_parenthesized_and_assertions(body)
+                        };
                         let assignability_ok = if body_is_conditional || is_rhs_assignment {
                             self.check_assignable_or_report_at(
                                 actual_return,
