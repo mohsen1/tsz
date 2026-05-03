@@ -490,12 +490,27 @@ impl<'a> CheckerState<'a> {
     ) -> tsz_solver::def::DefId {
         use tsz_solver::def::{DefKind, DefinitionInfo};
 
-        let def_id = if type_params.is_empty()
-            && let Some(def_id) = self.ctx.definition_store.find_type_alias_by_body(body_type)
-        {
+        let atom_name = self.ctx.types.intern_string(name);
+        // Two distinct JSDoc typedefs (`A` and `B`) can resolve to the same
+        // structural body type. Reusing a body-matched DefId across names would
+        // collapse them into a single display alias, so a body-by-body lookup is
+        // only safe when the existing alias's NAME matches the new one.
+        let body_match_with_same_name = if type_params.is_empty() {
+            self.ctx
+                .definition_store
+                .find_type_alias_by_body(body_type)
+                .filter(|def_id| {
+                    self.ctx
+                        .definition_store
+                        .get(*def_id)
+                        .is_some_and(|def| def.name == atom_name)
+                })
+        } else {
+            None
+        };
+        let def_id = if let Some(def_id) = body_match_with_same_name {
             def_id
         } else {
-            let atom_name = self.ctx.types.intern_string(name);
             let mut found = None;
             if let Some(candidates) = self.ctx.definition_store.find_defs_by_name(atom_name) {
                 for def_id in candidates {
