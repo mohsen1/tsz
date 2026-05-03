@@ -4569,6 +4569,45 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(printed);
         }
 
+        if has_non_emittable_computed_members {
+            let index_signature_value_types: Vec<String> = lines
+                .iter()
+                .filter_map(|line| {
+                    Self::broad_object_index_signature_value_type(line).map(str::to_string)
+                })
+                .collect();
+            if !index_signature_value_types.is_empty() {
+                computed_members.retain(|(_, member_text)| {
+                    Self::object_literal_property_value_type(member_text).is_none_or(
+                        |member_value_type| {
+                            !index_signature_value_types
+                                .iter()
+                                .any(|index_value_type| index_value_type == member_value_type)
+                        },
+                    )
+                });
+            }
+        } else {
+            let computed_value_types: Vec<String> = computed_members
+                .iter()
+                .filter_map(|(_, member_text)| {
+                    Self::object_literal_property_value_type(member_text).map(str::to_string)
+                })
+                .collect();
+            if !computed_value_types.is_empty() {
+                lines.retain(|line| {
+                    let Some(index_value_type) =
+                        Self::broad_object_index_signature_value_type(line)
+                    else {
+                        return true;
+                    };
+                    !computed_value_types
+                        .iter()
+                        .any(|member_value_type| member_value_type == index_value_type)
+                });
+            }
+        }
+
         if only_numeric_like {
             if has_non_emittable_computed_members {
                 for line in &mut lines {
@@ -4655,6 +4694,34 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         false
+    }
+
+    fn broad_object_index_signature_value_type(line: &str) -> Option<&str> {
+        let trimmed = line.trim_start();
+        let without_readonly = trimmed
+            .strip_prefix("readonly ")
+            .unwrap_or(trimmed)
+            .trim_start();
+        (without_readonly.starts_with("[x: string]:")
+            || without_readonly.starts_with("[x: number]:")
+            || without_readonly.starts_with("[x: symbol]:"))
+        .then(|| Self::object_literal_property_value_type(without_readonly))
+        .flatten()
+    }
+
+    fn object_literal_property_value_type(line: &str) -> Option<&str> {
+        let trimmed = line.trim().trim_end_matches(';').trim();
+        let without_readonly = trimmed
+            .strip_prefix("readonly ")
+            .unwrap_or(trimmed)
+            .trim_start();
+        let colon_idx = if without_readonly.starts_with('[') {
+            let bracket_end = without_readonly.find(']')?;
+            without_readonly.get(bracket_end + 1..)?.find(':')? + bracket_end + 1
+        } else {
+            without_readonly.find(':')?
+        };
+        without_readonly.get(colon_idx + 1..).map(str::trim)
     }
 
     pub(in crate::declaration_emitter) fn object_literal_line_matches_any_name(
