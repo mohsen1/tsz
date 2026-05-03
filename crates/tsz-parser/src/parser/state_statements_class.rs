@@ -593,6 +593,9 @@ impl ParserState {
                 let reserved_start = self.token_pos();
                 let reserved_end = self.token_end();
                 self.error_reserved_word_identifier();
+                if self.token_pos() == reserved_start {
+                    self.next_token();
+                }
                 self.arena.add_identifier(
                     SyntaxKind::Identifier as u16,
                     reserved_start,
