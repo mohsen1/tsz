@@ -159,9 +159,21 @@ impl<'a> CheckerState<'a> {
     fn emit_global_not_found_error(&mut self, idx: NodeIndex, name: &str) -> TypeId {
         use crate::query_boundaries::environment::CapabilityDiagnostic;
 
+        // tsc's value-position TS2583 ("change your target library") only
+        // applies to a narrow set of well-known ES2015+ globals (Map, Set,
+        // Promise, Symbol, …). Other ES2015+ types like `Proxy`, `Generator`,
+        // `WeakRef` fall through to plain TS2304 at the call site even though
+        // they live in es2015+ libs. See `getCannotFindNameDiagnosticForName`
+        // in tsc's checker.ts.
+        let value_lib_suggestion =
+            tsz_binder::lib_loader::is_es2015_plus_value_lib_suggestion(name);
+
         if !self.ctx.capabilities.has_lib {
-            if let Some(CapabilityDiagnostic::MissingEs2015Type { .. }) =
-                self.ctx.capabilities.diagnose_missing_name(name)
+            if value_lib_suggestion
+                && matches!(
+                    self.ctx.capabilities.diagnose_missing_name(name),
+                    Some(CapabilityDiagnostic::MissingEs2015Type { .. })
+                )
             {
                 self.error_cannot_find_name_change_lib(name, idx);
             } else {
@@ -185,8 +197,19 @@ impl<'a> CheckerState<'a> {
                 );
                 return TypeId::ERROR;
             }
-            Some(CapabilityDiagnostic::MissingEs2015Type { .. }) => {
+            Some(CapabilityDiagnostic::MissingEs2015Type { .. }) if value_lib_suggestion => {
                 self.error_cannot_find_global_type(name, idx);
+                return TypeId::ERROR;
+            }
+            Some(CapabilityDiagnostic::MissingEs2015Type { .. }) => {
+                // Names like `Proxy` are in ES2015+ libs but tsc still emits
+                // plain TS2304 in value position — fall through to the
+                // not-found boundary path.
+                self.report_not_found_at_boundary(
+                    name,
+                    idx,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
                 return TypeId::ERROR;
             }
             _ => {}

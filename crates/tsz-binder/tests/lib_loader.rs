@@ -396,3 +396,62 @@ fn lib_file_from_source_empty_input() {
     assert!(!lib.file_locals().has("console"));
     assert!(!lib.file_locals().has("Array"));
 }
+
+#[test]
+fn is_es2015_plus_value_lib_suggestion_includes_well_known_names() {
+    use crate::lib_loader::is_es2015_plus_value_lib_suggestion;
+
+    // tsc's narrow value-position list (checker.ts:getCannotFindNameDiagnosticForName).
+    for name in &[
+        "Map",
+        "Set",
+        "Promise",
+        "Symbol",
+        "WeakMap",
+        "WeakSet",
+        "Iterator",
+        "AsyncIterator",
+        "SharedArrayBuffer",
+        "Atomics",
+        "AsyncIterable",
+        "AsyncIterableIterator",
+        "AsyncGenerator",
+        "AsyncGeneratorFunction",
+        "BigInt",
+        "Reflect",
+        "BigInt64Array",
+        "BigUint64Array",
+    ] {
+        assert!(
+            is_es2015_plus_value_lib_suggestion(name),
+            "expected {name} to opt in to TS2583 in value position"
+        );
+    }
+}
+
+#[test]
+fn is_es2015_plus_value_lib_suggestion_excludes_proxy_and_iterators() {
+    use crate::lib_loader::is_es2015_plus_value_lib_suggestion;
+
+    // tsc's switch in `getCannotFindNameDiagnosticForName` deliberately omits
+    // these: even though they live in es2015+ libs, tsc emits plain TS2304
+    // ("Cannot find name") in value position rather than the lib-upgrade hint.
+    for name in &[
+        "Proxy",
+        "ProxyHandler",
+        "ProxyConstructor",
+        "Generator",
+        "GeneratorFunction",
+        "IterableIterator",
+        "WeakRef",
+        "FinalizationRegistry",
+        "AggregateError",
+        "Disposable",
+        "AsyncDisposable",
+    ] {
+        assert!(
+            !is_es2015_plus_value_lib_suggestion(name),
+            "{name} should NOT opt in to TS2583 in value position (tsc emits TS2304)"
+        );
+    }
+}
