@@ -90,7 +90,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
                         generator_body: Box::new(generator_body),
-                        hoisted_vars: Vec::new(),
+                        hoisted_var_groups: Vec::new(),
                         promise_constructor: self
                             .async_method_promise_constructor(method_data.type_annotation),
                     }]
@@ -591,7 +591,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
                         generator_body: Box::new(generator_body),
-                        hoisted_vars: Vec::new(),
+                        hoisted_var_groups: Vec::new(),
                         promise_constructor: self
                             .async_method_promise_constructor(method_data.type_annotation),
                     }]
@@ -981,7 +981,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
                             generator_body: Box::new(generator_body),
-                            hoisted_vars: Vec::new(),
+                            hoisted_var_groups: Vec::new(),
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
                         }]
@@ -1073,7 +1073,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
                             generator_body: Box::new(generator_body),
-                            hoisted_vars: Vec::new(),
+                            hoisted_var_groups: Vec::new(),
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
                         }]

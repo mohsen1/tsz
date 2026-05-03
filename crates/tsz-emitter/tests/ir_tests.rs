@@ -295,7 +295,7 @@ fn test_ir_generator_body() {
 fn test_ir_awaiter_call() {
     let awaiter = IRNode::AwaiterCall {
         this_arg: Box::new(IRNode::this()),
-        hoisted_vars: vec![],
+        hoisted_var_groups: vec![],
         promise_constructor: None,
         generator_body: Box::new(IRNode::GeneratorBody {
             has_await: false,

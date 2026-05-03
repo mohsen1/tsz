@@ -328,7 +328,7 @@ impl<'a> IRPrinter<'a> {
         self.generator_state_name = name;
     }
 
-    pub fn generator_state_name_for_hoisted(hoisted_vars: &[String]) -> &'static str {
+    pub fn generator_state_name_for_hoisted<T: AsRef<str>>(hoisted_vars: &[T]) -> &'static str {
         const TEMP_NAMES: [&str; 26] = [
             "_a", "_b", "_c", "_d", "_e", "_f", "_g", "_h", "_i", "_j", "_k", "_l", "_m", "_n",
             "_o", "_p", "_q", "_r", "_s", "_t", "_u", "_v", "_w", "_x", "_y", "_z",
@@ -336,7 +336,10 @@ impl<'a> IRPrinter<'a> {
 
         let max_hoisted_temp = hoisted_vars
             .iter()
-            .filter_map(|name| TEMP_NAMES.iter().position(|temp| temp == name))
+            .filter_map(|name| {
+                let name = name.as_ref();
+                TEMP_NAMES.iter().position(|temp| *temp == name)
+            })
             .max();
         TEMP_NAMES[max_hoisted_temp.map_or(0, |idx| (idx + 1).min(TEMP_NAMES.len() - 1))]
     }
@@ -915,6 +918,7 @@ impl<'a> IRPrinter<'a> {
             }
 
             // Statements
+            IRNode::HoistedVarGroupBreak => {}
             IRNode::VarDecl { name, initializer } => {
                 self.write("var ");
                 self.write(name);
@@ -1411,11 +1415,15 @@ impl<'a> IRPrinter<'a> {
             IRNode::AwaiterCall {
                 this_arg,
                 generator_body,
-                hoisted_vars,
+                hoisted_var_groups,
                 promise_constructor,
             } => {
                 let previous_generator_state_name = self.generator_state_name;
-                self.generator_state_name = Self::generator_state_name_for_hoisted(hoisted_vars);
+                let hoisted_vars: Vec<&str> = hoisted_var_groups
+                    .iter()
+                    .flat_map(|group| group.iter().map(String::as_str))
+                    .collect();
+                self.generator_state_name = Self::generator_state_name_for_hoisted(&hoisted_vars);
                 self.write("return __awaiter(");
                 self.emit_node(this_arg);
                 if let Some(ctor) = promise_constructor {
@@ -1425,7 +1433,7 @@ impl<'a> IRPrinter<'a> {
                 } else {
                     self.write(", void 0, void 0, function () {");
                 }
-                if hoisted_vars.is_empty() {
+                if hoisted_var_groups.is_empty() {
                     // TSC keeps the generator call on the awaiter callback's
                     // opening line when no hoisted variables are needed.
                     self.write(" ");
@@ -1435,11 +1443,13 @@ impl<'a> IRPrinter<'a> {
                     // Multi-line format with hoisted vars
                     self.write_line();
                     self.increase_indent();
-                    self.write_indent();
-                    self.write("var ");
-                    self.write(&hoisted_vars.join(", "));
-                    self.write(";");
-                    self.write_line();
+                    for group in hoisted_var_groups {
+                        self.write_indent();
+                        self.write("var ");
+                        self.write(&group.join(", "));
+                        self.write(";");
+                        self.write_line();
+                    }
                     self.write_indent();
                     self.emit_node(generator_body);
                     self.decrease_indent();

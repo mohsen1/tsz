@@ -370,7 +370,7 @@ impl<'a> AsyncES5Transformer<'a> {
         // Hoist var declarations from generator cases to the awaiter wrapper scope.
         // In tsc output, var declarations inside async function bodies are placed
         // before `return __generator(...)`, not inside the switch/case statements.
-        let hoisted_vars = Self::extract_and_remove_var_decls(&mut generator_body);
+        let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
 
         // Extract promise constructor from return type annotation
         let promise_constructor = self.extract_promise_constructor(type_annotation);
@@ -379,7 +379,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let awaiter_call = IRNode::AwaiterCall {
             this_arg: Box::new(IRNode::This { captured: false }),
             generator_body: Box::new(generator_body),
-            hoisted_vars,
+            hoisted_var_groups,
             promise_constructor,
         };
 
@@ -443,12 +443,13 @@ impl<'a> AsyncES5Transformer<'a> {
         self.state.captures_arguments =
             tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
         let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
-        let hoisted_vars = Self::extract_and_remove_var_decls(&mut generator_body);
+        let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
+        let hoisted_vars = hoisted_var_groups.into_iter().flatten();
         let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.clone())).collect();
         let mut body = Vec::new();
-        for var_name in &hoisted_vars {
+        for var_name in hoisted_vars {
             body.push(IRNode::VarDecl {
-                name: var_name.clone().into(),
+                name: var_name.into(),
                 initializer: None,
             });
         }
@@ -1109,6 +1110,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 if let Some((temp, initial_obj, lowered_init)) =
                     self.lower_object_literal_es5_after_computed_suspension(decl.initializer)
                 {
+                    current_statements.push(IRNode::HoistedVarGroupBreak);
                     current_statements.push(IRNode::VarDecl {
                         name: temp.clone().into(),
                         initializer: None,
@@ -2413,32 +2415,41 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
     /// Extract `VarDecl` names from a `GeneratorBody` IR node and remove them
-    /// from the case statements. Returns the list of variable names to hoist.
+    /// from the case statements. Returns variable groups to hoist.
     ///
     /// tsc hoists `var` declarations to before the `return __generator(...)` call,
     /// so they appear at the top of the `__awaiter` wrapper function body.
-    pub fn extract_and_remove_var_decls(generator_body: &mut IRNode) -> Vec<String> {
+    pub fn extract_and_remove_var_decl_groups(generator_body: &mut IRNode) -> Vec<Vec<String>> {
         let IRNode::GeneratorBody { cases, .. } = generator_body else {
             return Vec::new();
         };
 
         let mut hoisted = Vec::new();
+        let mut current_group = Vec::new();
         for case in cases.iter_mut() {
             let mut i = 0;
             while i < case.statements.len() {
-                if let IRNode::VarDecl { name, initializer } = &case.statements[i] {
-                    if initializer.is_none() {
-                        // Pure declaration with no initializer -- hoist and remove
-                        hoisted.push(name.to_string());
+                match &case.statements[i] {
+                    IRNode::HoistedVarGroupBreak => {
+                        if !current_group.is_empty() {
+                            hoisted.push(std::mem::take(&mut current_group));
+                        }
                         case.statements.remove(i);
                         continue;
-                    } else {
-                        // Has initializer -- hoist the name but keep as assignment
+                    }
+                    IRNode::VarDecl { name, initializer } if initializer.is_none() => {
+                        // Pure declaration with no initializer -- hoist and remove.
+                        current_group.push(name.to_string());
+                        case.statements.remove(i);
+                        continue;
+                    }
+                    IRNode::VarDecl { name, initializer } => {
+                        // Has initializer -- hoist the name but keep as assignment.
                         let var_name = name.clone();
-                        hoisted.push(var_name.to_string());
+                        current_group.push(var_name.to_string());
                         let init = initializer
                             .clone()
-                            .expect("else branch guarantees initializer is Some");
+                            .expect("VarDecl match without guard guarantees initializer is Some");
                         case.statements[i] =
                             IRNode::ExpressionStatement(Box::new(IRNode::BinaryExpr {
                                 left: Box::new(IRNode::Identifier(var_name)),
@@ -2446,12 +2457,24 @@ impl<'a> AsyncES5Transformer<'a> {
                                 right: init,
                             }));
                     }
+                    _ => {}
                 }
                 i += 1;
             }
         }
 
+        if !current_group.is_empty() {
+            hoisted.push(current_group);
+        }
+
         hoisted
+    }
+
+    pub fn extract_and_remove_var_decls(generator_body: &mut IRNode) -> Vec<String> {
+        Self::extract_and_remove_var_decl_groups(generator_body)
+            .into_iter()
+            .flatten()
+            .collect()
     }
 }
 
