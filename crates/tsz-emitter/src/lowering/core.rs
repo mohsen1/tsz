@@ -316,17 +316,7 @@ impl<'a> LoweringPass<'a> {
             && let Some(clause) = self.arena.get_import_clause(clause_node)
             && !clause.is_type_only
         {
-            let empty_named_import_preserves_side_effects = clause.name.is_none()
-                && clause.named_bindings.is_some()
-                && self
-                    .arena
-                    .get(clause.named_bindings)
-                    .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
-                    .is_some_and(|named_imports| {
-                        named_imports.name.is_none() && named_imports.elements.nodes.is_empty()
-                    });
-            if !empty_named_import_preserves_side_effects
-                && !self.ctx.options.verbatim_module_syntax
+            if !self.ctx.options.verbatim_module_syntax
                 && !self.import_has_value_usage_after_node(node, clause)
             {
                 if import_decl.import_clause.is_some() {

@@ -132,6 +132,20 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
             }
         }
 
+        if ch == b'\'' || ch == b'"' {
+            pos = skip_quoted_string(bytes, pos, ch);
+            continue;
+        }
+
+        if ch == b'/'
+            && pos + 1 < len
+            && can_start_regex_at(bytes, pos)
+            && let Some(next_pos) = skip_regex_literal(bytes, pos)
+        {
+            pos = next_pos;
+            continue;
+        }
+
         // Not in a comment or whitespace, skip this character
         // (In practice, we'd stop at actual code, but for simplicity
         // we're just extracting top-level comments here)
@@ -139,6 +153,94 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
     }
 
     comments
+}
+
+fn skip_quoted_string(bytes: &[u8], start: usize, quote: u8) -> usize {
+    let mut pos = start + 1;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => pos = (pos + 2).min(bytes.len()),
+            ch if ch == quote => return pos + 1,
+            // JS/TS single-line string literals cannot contain raw newlines.
+            // If we hit one, treat the string as terminated and let the main
+            // scanner resume at the newline so subsequent comments are still
+            // detected.
+            b'\n' | b'\r' => return pos,
+            _ => pos += 1,
+        }
+    }
+    pos
+}
+
+fn can_start_regex_at(bytes: &[u8], slash_pos: usize) -> bool {
+    let mut pos = slash_pos;
+    while pos > 0 {
+        pos -= 1;
+        match bytes[pos] {
+            b' ' | b'\t' | b'\r' | b'\n' => continue,
+            b'(' | b'[' | b'{' | b':' | b',' | b';' | b'=' | b'!' | b'?' | b'&' | b'|' | b'+'
+            | b'-' | b'*' | b'%' | b'~' | b'^' | b'<' | b'>' => return true,
+            ch if ch.is_ascii_alphabetic() || ch == b'_' || ch == b'$' => {
+                let end = pos + 1;
+                while pos > 0
+                    && (bytes[pos - 1].is_ascii_alphanumeric()
+                        || bytes[pos - 1] == b'_'
+                        || bytes[pos - 1] == b'$')
+                {
+                    pos -= 1;
+                }
+                return matches!(
+                    &bytes[pos..end],
+                    b"return"
+                        | b"throw"
+                        | b"case"
+                        | b"delete"
+                        | b"void"
+                        | b"typeof"
+                        | b"instanceof"
+                        | b"in"
+                        | b"of"
+                        | b"yield"
+                        | b"await"
+                        | b"else"
+                        | b"do"
+                );
+            }
+            _ => return false,
+        }
+    }
+
+    true
+}
+
+fn skip_regex_literal(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut pos = start + 1;
+    let mut in_class = false;
+
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => pos = (pos + 2).min(bytes.len()),
+            b'\r' | b'\n' => return None,
+            b'[' if !in_class => {
+                in_class = true;
+                pos += 1;
+            }
+            b']' if in_class => {
+                in_class = false;
+                pos += 1;
+            }
+            b'/' if !in_class => {
+                pos += 1;
+                while pos < bytes.len() && bytes[pos].is_ascii_alphabetic() {
+                    pos += 1;
+                }
+                return Some(pos);
+            }
+            _ => pos += 1,
+        }
+    }
+
+    None
 }
 
 /// Get leading comments before a position.
