@@ -375,7 +375,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .interner
                     .resolve_lazy(def_id, self.interner)
                     .unwrap_or(member),
-                Some(TypeData::Application(_) | TypeData::Mapped(_)) => {
+                Some(TypeData::Application(_) | TypeData::Mapped(_) | TypeData::Conditional(_)) => {
                     self.interner.evaluate_type(member)
                 }
                 _ => member,
