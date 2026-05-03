@@ -63,12 +63,20 @@ impl<'a> TypeVisitor for StringIndexResolver<'a> {
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
-        shape.string_index.as_ref().map(|idx| idx.value_type)
+        shape
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL)
+            .map(|idx| idx.value_type)
     }
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
-        shape.string_index.as_ref().map(|idx| idx.value_type)
+        shape
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL)
+            .map(|idx| idx.value_type)
     }
 
     fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
@@ -184,7 +192,10 @@ impl<'a> TypeVisitor for ReadonlyChecker<'a> {
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         match self.kind {
-            IndexKind::String => shape.string_index.as_ref().is_some_and(|idx| idx.readonly),
+            IndexKind::String => shape
+                .string_index
+                .as_ref()
+                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL && idx.readonly),
             IndexKind::Number => shape.number_index.as_ref().is_some_and(|idx| idx.readonly),
         }
     }
@@ -192,7 +203,10 @@ impl<'a> TypeVisitor for ReadonlyChecker<'a> {
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
         match self.kind {
-            IndexKind::String => shape.string_index.as_ref().is_some_and(|idx| idx.readonly),
+            IndexKind::String => shape
+                .string_index
+                .as_ref()
+                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL && idx.readonly),
             IndexKind::Number => shape.number_index.as_ref().is_some_and(|idx| idx.readonly),
         }
     }

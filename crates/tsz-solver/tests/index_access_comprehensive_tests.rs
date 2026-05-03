@@ -200,6 +200,97 @@ fn test_index_access_with_string_index_signature() {
     );
 }
 
+#[test]
+fn test_symbol_index_signature_accepts_symbol_keys_only() {
+    let interner = TypeInterner::new();
+
+    let obj = interner.object_with_index(crate::types::ObjectShape {
+        symbol: None,
+        flags: crate::types::ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let unique_key = interner.unique_symbol(crate::types::SymbolRef(7));
+    assert_eq!(
+        evaluate_type(&interner, interner.index_access(obj, unique_key)),
+        TypeId::BOOLEAN,
+        "symbol index signatures should accept unique-symbol keys"
+    );
+    assert_eq!(
+        evaluate_type(&interner, interner.index_access(obj, TypeId::SYMBOL)),
+        TypeId::BOOLEAN,
+        "symbol index signatures should accept the broad symbol key type"
+    );
+    assert_eq!(
+        evaluate_type(&interner, interner.index_access(obj, TypeId::STRING)),
+        TypeId::UNDEFINED,
+        "symbol index signatures must not behave like string index signatures"
+    );
+}
+
+#[test]
+fn test_symbol_named_properties_do_not_satisfy_string_index_signatures() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__unique_7"),
+        TypeId::NUMBER,
+    )]);
+    let target = interner.object_with_index(crate::types::ObjectShape {
+        symbol: None,
+        flags: crate::types::ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    assert!(
+        checker.is_subtype_of(source, target),
+        "unique-symbol properties should not be checked against string index signatures"
+    );
+}
+
+#[test]
+fn test_symbol_index_signatures_check_symbol_named_properties() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__unique_7"),
+        TypeId::NUMBER,
+    )]);
+    let target = interner.object_with_index(crate::types::ObjectShape {
+        symbol: None,
+        flags: crate::types::ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "symbol index signatures should validate unique-symbol property values"
+    );
+}
+
 // =============================================================================
 // Index Access Identity Tests
 // =============================================================================

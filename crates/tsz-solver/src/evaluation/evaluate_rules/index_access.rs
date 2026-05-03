@@ -1659,6 +1659,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         shape: &ObjectShape,
         index_type: TypeId,
     ) -> TypeId {
+        let string_index = shape
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL);
+        let symbol_index = shape
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type == TypeId::SYMBOL);
+
         // If index is a union, evaluate each member
         if let Some(members) = union_list_id(self.interner(), index_type) {
             let members = self.interner().type_list(members);
@@ -1692,9 +1701,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
-            // Symbol-keyed properties must NOT fall through to string index
-            // signatures — tsc treats symbol keys as distinct from string keys.
-            if !is_symbol_key && let Some(string_index) = shape.string_index.as_ref() {
+            if is_symbol_key && let Some(symbol_index) = symbol_index {
+                return self.add_undefined_if_unchecked(symbol_index.value_type);
+            }
+            // Symbol-keyed properties must not fall through to string index signatures.
+            if !is_symbol_key && let Some(string_index) = string_index {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
@@ -1705,14 +1716,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if let Some(number_index) = shape.number_index.as_ref() {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
-            if let Some(string_index) = shape.string_index.as_ref() {
+            if let Some(string_index) = string_index {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
         }
 
         if index_type == TypeId::STRING {
-            let result = if let Some(string_index) = shape.string_index.as_ref() {
+            let result = if let Some(string_index) = string_index {
                 string_index.value_type
             } else {
                 self.union_property_types(&shape.properties)
@@ -1723,7 +1734,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if index_type == TypeId::NUMBER {
             let result = if let Some(number_index) = shape.number_index.as_ref() {
                 number_index.value_type
-            } else if let Some(string_index) = shape.string_index.as_ref() {
+            } else if let Some(string_index) = string_index {
                 string_index.value_type
             } else {
                 self.union_property_types(&shape.properties)
@@ -1731,12 +1742,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.add_undefined_if_unchecked(result);
         }
 
+        if index_type == TypeId::SYMBOL
+            && let Some(symbol_index) = symbol_index
+        {
+            return self.add_undefined_if_unchecked(symbol_index.value_type);
+        }
+
         // Template literal types (e.g., `foo${string}`), string intrinsic types
         // (e.g., Lowercase<T>), and intersections containing string (e.g., string & { brand: any })
         // are all subtypes of string. When the object has a string index signature,
         // these index types should resolve to the string index signature's value type,
         // just like TypeId::STRING does.
-        if let Some(string_index) = shape.string_index.as_ref()
+        if let Some(string_index) = string_index
             && self.is_string_like_index(index_type)
         {
             return self.add_undefined_if_unchecked(string_index.value_type);
@@ -1755,6 +1772,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         shape: &CallableShape,
         index_type: TypeId,
     ) -> TypeId {
+        let string_index = shape
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL);
+        let symbol_index = shape
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type == TypeId::SYMBOL);
+
         // If index is a union, evaluate each member
         if let Some(members) = union_list_id(self.interner(), index_type) {
             let members = self.interner().type_list(members);
@@ -1788,8 +1814,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
+            if is_symbol_key && let Some(symbol_index) = symbol_index {
+                return self.add_undefined_if_unchecked(symbol_index.value_type);
+            }
             // Symbol-keyed properties must NOT fall through to string index signatures
-            if !is_symbol_key && let Some(string_index) = shape.string_index.as_ref() {
+            if !is_symbol_key && let Some(string_index) = string_index {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
@@ -1800,14 +1829,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if let Some(number_index) = shape.number_index.as_ref() {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
-            if let Some(string_index) = shape.string_index.as_ref() {
+            if let Some(string_index) = string_index {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
         }
 
         if index_type == TypeId::STRING {
-            let result = if let Some(string_index) = shape.string_index.as_ref() {
+            let result = if let Some(string_index) = string_index {
                 string_index.value_type
             } else {
                 self.union_property_types(&shape.properties)
@@ -1818,7 +1847,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if index_type == TypeId::NUMBER {
             let result = if let Some(number_index) = shape.number_index.as_ref() {
                 number_index.value_type
-            } else if let Some(string_index) = shape.string_index.as_ref() {
+            } else if let Some(string_index) = string_index {
                 string_index.value_type
             } else {
                 self.union_property_types(&shape.properties)
@@ -1826,9 +1855,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.add_undefined_if_unchecked(result);
         }
 
+        if index_type == TypeId::SYMBOL
+            && let Some(symbol_index) = symbol_index
+        {
+            return self.add_undefined_if_unchecked(symbol_index.value_type);
+        }
+
         // String-like index types (template literals, string intrinsics, branded strings)
         // should use the string index signature when available.
-        if let Some(string_index) = shape.string_index.as_ref()
+        if let Some(string_index) = string_index
             && self.is_string_like_index(index_type)
         {
             return self.add_undefined_if_unchecked(string_index.value_type);
