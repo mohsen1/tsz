@@ -930,7 +930,9 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                if !self.binding_pattern_has_export_names(decl.name) {
+                if !(self.binding_pattern_has_export_names(decl.name)
+                    || self.ctx.target_es5 && self.binding_pattern_is_empty(decl.name))
+                {
                     self.emit_cjs_destructuring_export_without_bindings(
                         decl.name,
                         decl.initializer,
@@ -1154,6 +1156,20 @@ impl<'a> Printer<'a> {
             };
             self.binding_pattern_has_export_names(elem.name)
         })
+    }
+
+    pub(in crate::emitter) fn binding_pattern_is_empty(&self, pattern_idx: NodeIndex) -> bool {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return false;
+        };
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+            && pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return false;
+        }
+        self.arena
+            .get_binding_pattern(pattern_node)
+            .is_some_and(|pattern| pattern.elements.nodes.is_empty())
     }
 
     fn emit_cjs_destructuring_export_without_bindings(

@@ -452,6 +452,10 @@ pub struct Printer<'a> {
     /// matching tsc's placement (between "use strict" and Object.defineProperty).
     pub(crate) cjs_destructuring_export_temps: Vec<String>,
 
+    /// `SystemJS` empty binding pattern temps reserved during outer-scope hoist
+    /// collection and consumed when emitting execute-body initializers.
+    pub(crate) system_empty_binding_temps: FxHashMap<u32, (String, Option<String>)>,
+
     /// Byte offset where CJS destructuring export temps should be inserted.
     pub(crate) cjs_destr_hoist_byte_offset: usize,
     /// Line number where CJS destructuring export temps should be inserted.
@@ -833,6 +837,7 @@ impl<'a> Printer<'a> {
             preallocated_assignment_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
             cjs_destructuring_export_temps: Vec::new(),
+            system_empty_binding_temps: FxHashMap::default(),
             cjs_destr_hoist_byte_offset: 0,
             cjs_destr_hoist_line: 0_u32,
             preallocated_temp_names: VecDeque::new(),

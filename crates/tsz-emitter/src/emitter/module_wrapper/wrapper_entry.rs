@@ -785,6 +785,7 @@ impl<'a> Printer<'a> {
         source: &tsz_parser::parser::node::SourceFileData,
         system_plan: &SystemDependencyPlan,
     ) -> Vec<String> {
+        self.system_empty_binding_temps.clear();
         let mut names = Vec::new();
         let mut deferred_named_export_names = Vec::new();
         let mut seen_deferred_named_export_names = HashSet::new();
@@ -949,6 +950,12 @@ impl<'a> Printer<'a> {
                         continue;
                     }
                     if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        self.collect_system_empty_binding_temps_from_variable_statement(
+                            clause_node,
+                            true,
+                            &mut names,
+                            &mut seen,
+                        );
                         for name in self.collect_variable_names_from_node(clause_node) {
                             if !name.is_empty() && seen.insert(name.clone()) {
                                 names.push(name);
@@ -1088,6 +1095,9 @@ impl<'a> Printer<'a> {
             {
                 continue;
             }
+            let is_exported_variable = self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
 
             for &decl_list_idx in &var_stmt.declarations.nodes {
                 let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -1104,6 +1114,27 @@ impl<'a> Printer<'a> {
                     let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
                         continue;
                     };
+
+                    if decl.initializer.is_some() && self.binding_pattern_is_empty(decl.name) {
+                        let source_temp = self.make_unique_name();
+                        if seen.insert(source_temp.clone()) {
+                            names.push(source_temp.clone());
+                        }
+                        let export_temp = if is_exported_variable && self.ctx.target_es5 {
+                            let name = self.make_unique_name();
+                            if seen.insert(name.clone()) {
+                                names.push(name.clone());
+                            }
+                            Some(name)
+                        } else {
+                            None
+                        };
+                        if let Some(name_node) = self.arena.get(decl.name) {
+                            self.system_empty_binding_temps
+                                .insert(name_node.pos, (source_temp, export_temp));
+                        }
+                        continue;
+                    }
 
                     let mut binding_names = Vec::new();
                     self.collect_binding_names(decl.name, &mut binding_names);
@@ -1127,6 +1158,54 @@ impl<'a> Printer<'a> {
         }
 
         names
+    }
+
+    fn collect_system_empty_binding_temps_from_variable_statement(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+        is_exported: bool,
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return;
+        };
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if decl.initializer.is_none() || !self.binding_pattern_is_empty(decl.name) {
+                    continue;
+                }
+                let source_temp = self.make_unique_name();
+                if seen.insert(source_temp.clone()) {
+                    names.push(source_temp.clone());
+                }
+                let export_temp = if is_exported && self.ctx.target_es5 {
+                    let name = self.make_unique_name();
+                    if seen.insert(name.clone()) {
+                        names.push(name.clone());
+                    }
+                    Some(name)
+                } else {
+                    None
+                };
+                if let Some(name_node) = self.arena.get(decl.name) {
+                    self.system_empty_binding_temps
+                        .insert(name_node.pos, (source_temp, export_temp));
+                }
+            }
+        }
     }
 
     fn collect_system_nested_top_level_var_hoisted_names(

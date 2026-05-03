@@ -1761,7 +1761,15 @@ impl<'a> Printer<'a> {
 
         // Insert CJS destructuring export temps before the __esModule marker.
         if !self.cjs_destructuring_export_temps.is_empty() {
-            let var_decl = format!("var {};", self.cjs_destructuring_export_temps.join(", "));
+            let insertion_indent = self.writer.get_output()[self.cjs_destr_hoist_byte_offset..]
+                .chars()
+                .take_while(|&c| c == ' ')
+                .collect::<String>();
+            let var_decl = format!(
+                "{}var {};",
+                insertion_indent,
+                self.cjs_destructuring_export_temps.join(", ")
+            );
             self.writer.insert_line_at(
                 self.cjs_destr_hoist_byte_offset,
                 self.cjs_destr_hoist_line,
