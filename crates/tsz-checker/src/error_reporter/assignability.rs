@@ -1196,8 +1196,12 @@ impl<'a> CheckerState<'a> {
                 {
                     return None; // Keep concrete literal displays instead of repainting alias provenance.
                 }
-                // Only for types that have a display_alias (were produced by Application eval)
-                state.ctx.types.get_display_alias(ty)?;
+                // Only for types whose display_alias is an Application (were
+                // produced by Application eval). JSDoc typedef aliases store
+                // Lazy display aliases for exact-optional diagnostics and must
+                // not trigger this TS2322 application rewrite.
+                let alias = state.ctx.types.get_display_alias(ty)?;
+                crate::query_boundaries::common::application_info(state.ctx.types, alias)?;
                 let mut formatter = state
                     .ctx
                     .create_diagnostic_type_formatter()
