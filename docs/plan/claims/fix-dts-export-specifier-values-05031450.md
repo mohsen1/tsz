@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-03
 - **Branch**: `fix/dts-export-specifier-values-05031450`
-- **PR**: TBD
+- **PR**: #2565
 - **Status**: ready
 - **Workstream**: §2 (Emit pass rate)
 
