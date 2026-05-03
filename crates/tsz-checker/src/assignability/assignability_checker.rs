@@ -2076,8 +2076,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let source = self.evaluate_type_for_assignability(source);
-        let target = self.evaluate_type_for_assignability(target);
+        let source_eval = self.evaluate_type_for_assignability(source);
+        let target_eval = self.evaluate_type_for_assignability(target);
+        let source = if source_eval == TypeId::ERROR && source != TypeId::ERROR {
+            source
+        } else {
+            source_eval
+        };
+        let target = if target_eval == TypeId::ERROR && target != TypeId::ERROR {
+            target
+        } else {
+            target_eval
+        };
         self.check_assignability_cached(
             source,
             target,
