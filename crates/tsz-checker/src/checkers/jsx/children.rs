@@ -21,7 +21,13 @@ impl<'a> CheckerState<'a> {
         let spread_type = self.evaluate_type_with_env(spread_type);
         let spread_type = unwrap_readonly(self.ctx.types, spread_type);
 
-        if matches!(spread_type, TypeId::ANY | TypeId::ERROR) {
+        // Only short-circuit for genuine `any` (explicit annotation or
+        // intentional widening). For error-propagated types — e.g. a JSX
+        // spread of `this.props.children` where `this` itself fails to
+        // resolve — tsc still emits TS2609 alongside the upstream error
+        // (chained diagnostics). Suppressing TS2609 on `ERROR` here masks
+        // the spread-shape violation that tsc reports.
+        if spread_type == TypeId::ANY {
             return TypeId::ANY;
         }
 

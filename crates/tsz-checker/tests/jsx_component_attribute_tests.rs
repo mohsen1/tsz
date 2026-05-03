@@ -4171,6 +4171,68 @@ let ok = <div>{...items}</div>;
     );
 }
 
+/// `void` is a non-array, non-ANY, non-ERROR primitive. Spreading it
+/// must emit TS2609. Pins the structural rule that the
+/// `normalize_jsx_spread_child_type` short-circuit only suppresses for
+/// genuine `any`, not for arbitrary unwidened types. The behavioural
+/// change from the gate narrowing (`TypeId::ANY | TypeId::ERROR` →
+/// `TypeId::ANY`) is verified end-to-end by
+/// `conformance/jsx/inline/inlineJsxFactoryDeclarationsLocalTypes.tsx`,
+/// which moves from fingerprint-only failure (1 missing TS2609) to PASS
+/// post-fix because the `{...this.props.children}` spread (where `this`
+/// resolves to ERROR under strict mode + lib loading) finally emits TS2609.
+#[test]
+fn jsx_spread_child_void_value_emits_ts2609() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}
+declare var React: any;
+declare let novalue: void;
+
+let ok = <div>{...novalue}</div>;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::JSX_SPREAD_CHILD_MUST_BE_AN_ARRAY_TYPE
+        ),
+        "Void-typed JSX spread child must emit TS2609, got: {diags:?}"
+    );
+}
+
+/// Sanity for the gate-narrowing direction: explicit `any` still
+/// short-circuits without emitting TS2609 (the `ANY` branch of the
+/// narrowed gate must still suppress, preserving permissiveness for
+/// genuine `any`). Pairs with `jsx_spread_child_any_has_no_ts2609`.
+#[test]
+fn jsx_spread_child_explicit_any_value_still_no_ts2609() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}
+declare var React: any;
+declare let widened: any;
+
+let ok = <div>{...widened}</div>;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::JSX_SPREAD_CHILD_MUST_BE_AN_ARRAY_TYPE
+        ),
+        "Explicit `any` spread must still skip TS2609 after the gate narrowing, got: {diags:?}"
+    );
+}
+
 #[test]
 fn jsx_spread_child_array_normalizes_to_multiple_children() {
     let source = format!(
