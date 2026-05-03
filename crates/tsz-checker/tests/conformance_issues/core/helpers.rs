@@ -1484,6 +1484,39 @@ var r6 = foo5(a);
 }
 
 #[test]
+fn test_overloaded_constructor_callback_infers_pairwise_construct_signatures() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function foo5<T>(cb: { new(x: T): string; new(x: number): T }) {
+    return cb;
+}
+
+declare var a: { new (x: boolean): string; new (x: number): boolean; }
+var r5 = foo5(a);
+
+function foo6<T>(cb: { new(x: T): string; new(x: T, y?: T): string }) {
+    return cb;
+}
+
+var r8 = foo6(a);
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Expected overloaded constructor callbacks to infer from bottom-up signature pairs, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2769),
+        "Did not expect TS2769 for valid overloaded constructor callbacks, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_generic_constructor_callback_with_leading_arg() {
     // foo7<T>(x:T, cb) has two arguments. With the deferral fix (non-context-sensitive
     // args are no longer deferred), T is correctly inferred from arg 0. The constructor
