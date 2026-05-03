@@ -833,6 +833,9 @@ impl<'a> Printer<'a> {
                 false
             };
 
+        let clause_emits_export_prefix = clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && self.is_es5_empty_binding_pattern_export_statement(clause_node);
+
         if class_has_es_decorators {
             // Emit decorators before `export`
             if let Some(class) = self.arena.get_class(clause_node) {
@@ -848,7 +851,7 @@ impl<'a> Printer<'a> {
             // Emit the class with modifiers suppressed (decorators already emitted)
             self.emit_class_es6_with_options(clause_node, export.export_clause, true, None, None);
         } else {
-            if !is_merged_subsequent {
+            if !is_merged_subsequent && !clause_emits_export_prefix {
                 self.write("export ");
             }
             self.emit(export.export_clause);
