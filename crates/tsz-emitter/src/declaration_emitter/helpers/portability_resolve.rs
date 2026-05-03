@@ -39,7 +39,23 @@ impl<'a> DeclarationEmitter<'a> {
 
         while let Some(index) = search.find(needle) {
             let rest = &search[index + needle.len()..];
-            let symbol_expr: String = rest
+            // After `in typeof `, the printed form may be either
+            //   `Symbol`              -> extract `Symbol` directly, or
+            //   `import("…").Symbol`  -> skip past the import prefix and
+            //                            extract `Symbol` after it.
+            // Without the import-prefix skip, we extract the keyword
+            // `import` and emit `[import]` instead of the real symbol
+            // name (regressed by PR #2425, see
+            // declarationEmitMappedTypeTemplateTypeofSymbol.ts).
+            let after_import_prefix = if let Some(after_open) = rest.strip_prefix("import(\"") {
+                after_open
+                    .find("\")")
+                    .and_then(|close| after_open[close + 2..].strip_prefix('.'))
+                    .unwrap_or(rest)
+            } else {
+                rest
+            };
+            let symbol_expr: String = after_import_prefix
                 .chars()
                 .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
                 .collect();
