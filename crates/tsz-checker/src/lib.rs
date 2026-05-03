@@ -352,6 +352,9 @@ mod class_duplicate_extends_skip_resolution_tests;
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
 #[cfg(test)]
+#[path = "tests/closure_destructuring_top_level_diagnostics_tests.rs"]
+mod closure_destructuring_top_level_diagnostics_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_infer_tests.rs"]
 mod conditional_infer_tests;
 #[cfg(test)]

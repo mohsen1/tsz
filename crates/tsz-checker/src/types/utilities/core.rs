@@ -1134,6 +1134,86 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Validate top-level destructuring patterns of closure parameters against
+    /// their externally-derived contextual types.
+    ///
+    /// For function declarations and methods, `check_parameter_binding_pattern_defaults`
+    /// already runs these checks. Closures (arrow/function expressions) skip that path,
+    /// so this helper covers the closure-specific gap when the parameter type is
+    /// derived from a contextual signature or an IIFE call argument.
+    ///
+    /// Emits:
+    /// - TS2488 (and its ES5 variants) for an array binding pattern destructuring
+    ///   a non-iterable contextual type, e.g. `(([]) => 0)({})`.
+    /// - TS2532 for an empty object binding pattern destructuring a possibly-undefined
+    ///   contextual type, e.g. `(({}) => 0)(undefined)`.
+    pub(crate) fn check_closure_destructuring_top_level_diagnostics(
+        &mut self,
+        params: &[NodeIndex],
+        param_types: &[Option<TypeId>],
+    ) {
+        for (i, &param_idx) in params.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.type_annotation.is_some() {
+                continue;
+            }
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            let is_array = name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+            let is_object = name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN;
+            if !is_array && !is_object {
+                continue;
+            }
+            let Some(ctx_type) = param_types
+                .get(i)
+                .and_then(|t| *t)
+                .filter(|&t| t != TypeId::ANY && t != TypeId::UNKNOWN && t != TypeId::ERROR)
+            else {
+                continue;
+            };
+            if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ctx_type)
+                && crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    ctx_type,
+                )
+                .is_none()
+            {
+                continue;
+            }
+            // When the parameter has a default value, the destructure happens
+            // against the type with `undefined` removed, matching tsc.
+            let effective_type = if param.initializer.is_some() {
+                crate::query_boundaries::common::remove_undefined(self.ctx.types, ctx_type)
+            } else {
+                ctx_type
+            };
+            if is_array {
+                self.check_destructuring_iterability(param.name, effective_type, param.initializer);
+            } else if is_object {
+                let pattern_data = self
+                    .ctx
+                    .arena
+                    .get(param.name)
+                    .and_then(|n| self.ctx.arena.get_binding_pattern(n));
+                let elements_empty = pattern_data
+                    .map(|p| p.elements.nodes.is_empty())
+                    .unwrap_or(false);
+                if elements_empty {
+                    let (non_nullish_type, nullish_cause) = self.split_nullish_type(effective_type);
+                    if let Some(cause) = nullish_cause {
+                        self.report_nullish_object(param.name, cause, non_nullish_type.is_none());
+                    }
+                }
+            }
+        }
+    }
+
     /// Record destructured parameter binding groups for correlated narrowing.
     ///
     /// This enables cases like:
