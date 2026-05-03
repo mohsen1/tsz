@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.gate.outputs.should_run }}
+      rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
     steps:
       - id: gate
         env:
@@ -36,6 +37,8 @@ jobs:
         run: |
           set -euo pipefail
           should_run=true
+          rust_cache_refresh=false
+          cache_key_changed=false
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             # The `labeled` event triggers on every label add. We only care
             # about the `ci-approved` label (used to opt fork PRs into CI).
@@ -138,7 +141,6 @@ jobs:
               fi
             fi
             if [[ -n "$pr_number" ]]; then
-              cache_key_changed=false
               page=1
               while :; do
                 page_paths=$(gh api \
@@ -153,6 +155,7 @@ jobs:
                   echo "PR #${pr_number} changed CI cache-key inputs; running main CI to refresh shared Rust caches:"
                   printf '  %s\n' $(printf '%s\n' "$cache_paths" | sort -u)
                   cache_key_changed=true
+                  rust_cache_refresh=true
                   break
                 fi
                 count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
@@ -188,6 +191,7 @@ jobs:
             fi
           fi
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+          echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
 
   lint:
     name: lint
@@ -213,10 +217,11 @@ jobs:
     env:
       GITHUB_SHA: ${{ github.sha }}
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-      # The dist artifact unblocks conformance/emit/fourslash. On main run
-      # 25057027232, saving cargo-target-deps took ~100s after a 75s build,
-      # while sccache already had 100% Rust hits.
-      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
+      # The dist artifact unblocks conformance/emit/fourslash, so PRs avoid
+      # target-dir uploads. Trusted main runs publish cargo-target-deps only
+      # when Cargo.lock/profile inputs changed and the gate intentionally ran
+      # main CI to refresh the exact shared cache key.
+      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: ${{ needs.gate.outputs.rust_cache_refresh == 'true' && '1' || '0' }}
       # Keep artifact production independent from sccache service hangs. The
       # dist-fast build is short enough without sccache, and all harness suites
       # are blocked until this artifact uploads.
