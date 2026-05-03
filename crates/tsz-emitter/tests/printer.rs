@@ -302,6 +302,52 @@ fn test_nested_namespace_extends_parent_export_when_name_conflicts() {
 }
 
 #[test]
+fn test_nested_namespace_qualifies_parent_class_from_prior_block() {
+    // Regression for #2521 review: when a parent namespace is reopened in a
+    // later block that contains a nested namespace, references to a class
+    // declared in an EARLIER block of the same parent namespace must qualify
+    // as `Parent.Foo` (the earlier block's IIFE has exited, so the class is
+    // only reachable via the namespace object). Splitting class/fn/enum
+    // exports into a separate map originally regressed this cross-block case
+    // because parent_exports only read the var-only prior-exports map.
+    let source = "namespace A { export class Foo {} }\nnamespace A { export namespace B { console.log(Foo); } }\n";
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("console.log(A.Foo)"),
+        "Nested namespace inside reopened parent block should qualify class \
+         from prior parent block as `A.Foo`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("console.log(Foo)"),
+        "Bare `Foo` reference must not appear — class lives on namespace \
+         object after the prior IIFE exited.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_nested_namespace_does_not_qualify_parent_class_in_same_block() {
+    // Companion to test_nested_namespace_qualifies_parent_class_from_prior_block:
+    // ensure the same-block case (the fix from PR #2521) still works. Within a
+    // single namespace block, the parent's class is in lexical scope of the
+    // surrounding IIFE, so a nested namespace must reference it bare.
+    let source =
+        "namespace A {\n    export class Foo {}\n    export namespace B { console.log(Foo); }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("console.log(Foo)"),
+        "Same-block nested namespace should reference parent class without \
+         qualification (lexical scope of surrounding IIFE).\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("console.log(A.Foo)"),
+        "Same-block nested namespace must NOT qualify parent class — that \
+         would break tsc parity.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_module_temp_vars_do_not_collide() {
     let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\nconsole.log(x);\n";
     let output = parse_lower_print(
