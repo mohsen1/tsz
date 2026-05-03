@@ -270,7 +270,25 @@ impl<'a> CheckerState<'a> {
                     }
                     // Route through boundary for TS2304/TS2552 with spelling suggestions
                     let _ = self.resolve_type_name_or_report(name, type_name_idx);
-                    return TypeId::ERROR;
+                    // Preserve the user-written name in subsequent diagnostic
+                    // displays (e.g., TS2322 message for `Foo<HTMLDivElement>`
+                    // when `HTMLDivElement` is undeclared) by interning an
+                    // `UnresolvedTypeName`, which is treated structurally as
+                    // `Error` everywhere but renders the original identifier.
+                    let mut lowered_args: Vec<TypeId> = Vec::new();
+                    if let Some(args) = &type_ref.type_arguments {
+                        for &arg_idx in &args.nodes {
+                            lowered_args
+                                .push(self.get_type_from_type_node_in_type_literal(arg_idx));
+                        }
+                    }
+                    let atom = self.ctx.types.intern_string(name);
+                    let base = self.ctx.types.unresolved_type_name(atom);
+                    return if lowered_args.is_empty() {
+                        base
+                    } else {
+                        self.ctx.types.application(base, lowered_args)
+                    };
                 }
                 // For Array<T> / ReadonlyArray<T> with type arguments, convert to
                 // proper array types (Array(T) / Readonly(Array(T))) instead of
@@ -453,7 +471,11 @@ impl<'a> CheckerState<'a> {
             }
             // Route through boundary for TS2304/TS2552 with spelling suggestions
             let _ = self.resolve_type_name_or_report(name, type_name_idx);
-            return TypeId::ERROR;
+            // Preserve the user-written name as `UnresolvedTypeName` so
+            // downstream display in TS2322/TS2345 messages prints the
+            // original identifier rather than the bare `error` token.
+            let atom = self.ctx.types.intern_string(name);
+            return self.ctx.types.unresolved_type_name(atom);
         }
 
         TypeId::ANY
