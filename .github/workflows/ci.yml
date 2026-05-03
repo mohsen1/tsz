@@ -138,6 +138,30 @@ jobs:
               fi
             fi
             if [[ -n "$pr_number" ]]; then
+              cache_key_changed=false
+              page=1
+              while :; do
+                page_paths=$(gh api \
+                  "repos/${{ github.repository }}/pulls/${pr_number}/files?per_page=100&page=${page}" \
+                  --jq '.[] | (.filename, (.previous_filename // empty))' \
+                  2>/dev/null || true)
+                if [[ -z "$page_paths" ]]; then break; fi
+                cache_paths=$(printf '%s\n' "$page_paths" \
+                  | grep -E '^(Cargo\.lock|Cargo\.toml|\.cargo/config\.toml)$' \
+                  || true)
+                if [[ -n "$cache_paths" ]]; then
+                  echo "PR #${pr_number} changed CI cache-key inputs; running main CI to refresh shared Rust caches:"
+                  printf '  %s\n' $(printf '%s\n' "$cache_paths" | sort -u)
+                  cache_key_changed=true
+                  break
+                fi
+                count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
+                if [[ "$count" -lt 100 ]]; then break; fi
+                page=$((page + 1))
+                if [[ "$page" -gt 30 ]]; then break; fi
+              done
+            fi
+            if [[ -n "$pr_number" && "$cache_key_changed" != "true" ]]; then
               pr_head_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
                 --jq '.head.sha' 2>/dev/null || true)
               if [[ -n "$pr_head_sha" ]]; then
