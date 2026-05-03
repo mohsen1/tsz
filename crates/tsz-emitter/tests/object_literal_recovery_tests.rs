@@ -100,3 +100,25 @@ fn comma_terminated_object_method_without_body_is_recovered() {
         "Trailing comment from recovered method must not move into params; output:\n{output}"
     );
 }
+
+#[test]
+fn object_binding_reserved_shorthand_emits_empty_property_assignment() {
+    let source = "var { while } = { while: 1 };\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("var { while:  } = { while: 1 };"),
+        "reserved shorthand binding should recover as an empty property assignment; output:\n{output}"
+    );
+}
+
+#[test]
+fn object_binding_reserved_renaming_recovers_duplicate_empty_binding() {
+    let source = "var { while: while } = { while: 1 };\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("var { while: , while:  } = { while: 1 };"),
+        "reserved renamed binding should leave the token for the recovered duplicate binding; output:\n{output}"
+    );
+}

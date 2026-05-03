@@ -13,6 +13,7 @@ use crate::parser::{
     syntax_kind_ext,
 };
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::keyword_text_len;
 use tsz_scanner::scanner_impl::TokenFlags;
@@ -90,7 +91,30 @@ impl ParserState {
                 let (property_name, name) = if self.parse_optional(SyntaxKind::ColonToken) {
                     // propertyName: name
                     let name_is_reserved = self.is_reserved_word();
-                    let name = self.parse_binding_element_name();
+                    let name = if name_is_reserved {
+                        let start = self.token_pos();
+                        let end = self.token_end();
+                        let word = self.current_keyword_text();
+                        self.parse_error_at_current_token(
+                            &format!(
+                                "Identifier expected. '{word}' is a reserved word that cannot be used here."
+                            ),
+                            diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+                        );
+                        self.arena.add_identifier(
+                            SyntaxKind::Identifier as u16,
+                            start,
+                            end,
+                            IdentifierData {
+                                atom: Atom::NONE,
+                                escaped_text: String::new(),
+                                original_text: None,
+                                type_arguments: None,
+                            },
+                        )
+                    } else {
+                        self.parse_binding_element_name()
+                    };
                     if name.is_none() {
                         // Emit TS1109 for missing property binding element: {prop: missing}
                         self.error_expression_expected();

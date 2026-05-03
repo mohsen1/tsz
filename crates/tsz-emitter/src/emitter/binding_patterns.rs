@@ -90,6 +90,9 @@ impl<'a> Printer<'a> {
             self.emit(elem.property_name);
             self.write(": ");
             self.emit_decl_name(elem.name);
+        } else if self.binding_name_requires_property_assignment(elem.name) {
+            self.emit(elem.name);
+            self.write(": ");
         } else {
             self.emit_decl_name(elem.name);
         }
@@ -99,6 +102,22 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             self.emit(elem.initializer);
         }
+    }
+
+    fn binding_name_requires_property_assignment(&self, name: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name) else {
+            return false;
+        };
+        if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return self
+                .arena
+                .get_identifier(name_node)
+                .and_then(|ident| tsz_scanner::text_to_keyword(&ident.escaped_text))
+                .is_some_and(tsz_scanner::token_is_reserved_word);
+        }
+
+        name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+            || name_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
     }
 
     // =========================================================================
