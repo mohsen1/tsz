@@ -136,6 +136,30 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.module_has_default_binding_fast_path(module_name, resolution_mode)
                 };
+                // For JS modules whose exports are *only* CommonJS property
+                // assignments (`exports.X = …` / `module.exports.X = …`), the
+                // binder's exports_table is empty even though the file has
+                // real exports. In that case, the JS Export Surface (computed
+                // by `resolve_js_export_surface`) is authoritative — fall back
+                // to it before short-circuiting the named-import diagnostic
+                // pass. Without this, a file like
+                //   exports.j = 1;
+                //   exports.k = void 0;   // → TS2339 + dropped from surface
+                // is treated as having no exports, so an importer doing
+                // `import { k } from './...'` silently succeeds instead of
+                // emitting TS2305.
+                let has_export_surface = has_export_surface
+                    || (is_js_like
+                        && self
+                            .resolve_js_export_surface_for_module(
+                                module_name,
+                                Some(self.ctx.current_file_idx),
+                            )
+                            .is_some_and(|s| {
+                                s.has_commonjs_exports
+                                    || !s.named_exports.is_empty()
+                                    || !s.prototype_members.is_empty()
+                            }));
                 if is_js_like && !has_export_surface && resolution_mode.is_none() {
                     return;
                 }
