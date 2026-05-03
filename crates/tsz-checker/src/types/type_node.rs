@@ -383,13 +383,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             wrapped.type_node,
                         ) {
                             // TS2574: A rest element type must be an array type.
-                            // Conservatively emit only when the inner type-node is
-                            // syntactically a primitive keyword (`string`/`number`/`boolean`/
-                            // `bigint`/`symbol`/`object`/`null`/`undefined`/`void`/`never`).
-                            // Anything else (type param, conditional, mapped, application,
-                            // index access, alias, infer, …) requires solver-level check
-                            // that we don't have here, so we keep the existing permissive
-                            // behavior to avoid regressing variadic-tuple use cases.
+                            // Conservatively emit only when the inner type-node
+                            // is syntactically a primitive keyword; anything else
+                            // (type param, conditional, mapped, application, index
+                            // access, alias, infer, …) requires solver-level check
+                            // we don't have here, so we keep the permissive
+                            // behavior to avoid regressing variadic-tuple usage.
                             self.ctx.error(
                                 elem_node.pos,
                                 elem_node.end - elem_node.pos,
@@ -428,6 +427,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     );
                                 }
                                 seen_rest = true;
+                            } else if Self::ast_kind_is_obviously_non_array(
+                                self.ctx.arena,
+                                data.type_node,
+                            ) {
+                                // TS2574: named-rest mirror of the unnamed-rest
+                                // branch above (e.g. `[...rest: string]`). See
+                                // that branch for the conservative-emit rationale.
+                                self.ctx.error(
+                                    elem_node.pos,
+                                    elem_node.end - elem_node.pos,
+                                    crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_TYPE_MUST_BE_AN_ARRAY_TYPE.to_string(),
+                                    crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_TYPE_MUST_BE_AN_ARRAY_TYPE,
+                                );
                             }
                         } else if data.question_token {
                             // TS1266: An optional element cannot follow a rest element

@@ -485,10 +485,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         false
     }
 
-    /// Check if a resolved type is an array or tuple type (concrete, not a type parameter).
-    /// Used by TS1265/TS1266 checks to distinguish concrete rest elements from variadic
-    /// type parameter spreads. Only concrete array/tuple rest elements are subject to
-    /// the "rest after rest" and "optional after rest" restrictions.
     /// Conservative AST-only check for "this rest-tuple element type is
     /// obviously not an array type" (TS2574).
     ///
@@ -519,6 +515,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             k if k == SyntaxKind::UndefinedKeyword as u16 => true,
             k if k == SyntaxKind::VoidKeyword as u16 => true,
             k if k == SyntaxKind::NeverKeyword as u16 => true,
+            k if k == SyntaxKind::UnknownKeyword as u16 => true,
             k if k == syntax_kind_ext::LITERAL_TYPE => true,
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 // Detect bare-keyword forms parsed as TYPE_REFERENCE (the
@@ -544,6 +541,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 | "undefined"
                                 | "void"
                                 | "never"
+                                | "unknown"
                         );
                     }
                 }
@@ -553,6 +551,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
+    /// Check if a resolved type is an array or tuple type (concrete, not a type parameter).
+    /// Used by TS1265/TS1266 checks to distinguish concrete rest elements from variadic
+    /// type parameter spreads. Only concrete array/tuple rest elements are subject to
+    /// the "rest after rest" and "optional after rest" restrictions.
     pub(super) fn is_array_or_tuple_type(&self, type_id: tsz_solver::TypeId) -> bool {
         crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
             || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)

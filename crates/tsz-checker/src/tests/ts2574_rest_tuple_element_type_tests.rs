@@ -76,3 +76,45 @@ type T = [number, ...boolean];
         "TS2574 expected for `[number, ...boolean]`: {codes:?}"
     );
 }
+
+/// `[...rest: string]` — NAMED rest member wrapping a primitive; TS2574.
+#[test]
+fn named_rest_primitive_emits_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type T = [...rest: string];
+"#,
+    );
+    assert!(
+        codes.contains(&2574),
+        "TS2574 expected for named rest `[...rest: string]`: {codes:?}"
+    );
+}
+
+/// `[...rest: string[]]` — named rest wrapping an array; valid.
+#[test]
+fn named_rest_array_does_not_emit_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type T = [...rest: string[]];
+"#,
+    );
+    assert!(
+        !codes.contains(&2574),
+        "TS2574 should not fire for named rest `[...rest: string[]]`: {codes:?}"
+    );
+}
+
+/// `[...rest: T]` where `T` is a type parameter — valid (variadic spread).
+#[test]
+fn named_rest_type_parameter_does_not_emit_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Wrap<T> = [...rest: T];
+"#,
+    );
+    assert!(
+        !codes.contains(&2574),
+        "TS2574 should not fire for named rest `[...rest: T]`: {codes:?}"
+    );
+}
