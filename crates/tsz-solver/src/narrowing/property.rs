@@ -134,7 +134,22 @@ impl<'a> NarrowingContext<'a> {
                     return self.db.intersection2(source_type, narrowed_constraint);
                 }
             }
-            // Type parameter with no constraint or unchanged constraint
+            // Unconstrained type parameter (or one whose constraint reduces to
+            // itself): in the truthy branch of `prop in x` the operand is
+            // known to be an object — tsc narrows `T` to `T & object` so the
+            // RHS of any chained `in` check (and any subsequent property
+            // access) sees a type that is structurally an object. Without
+            // this, `"a" in x && "b" in x` re-emits TS2322 for every `in` in
+            // the && chain when `T` is unconstrained.
+            if present && type_param_info.constraint.is_none() {
+                let narrowed = self.db.intersection2(source_type, TypeId::OBJECT);
+                trace!(
+                    "Unconstrained type parameter narrowed via `in` to T & object: {} -> {}",
+                    source_type.0, narrowed.0
+                );
+                return narrowed;
+            }
+            // Type parameter with no constraint (false branch) or unchanged constraint
             trace!("Type parameter unchanged, returning source");
             return source_type;
         }
