@@ -1398,20 +1398,14 @@ impl<'a> Printer<'a> {
                     // Namespace `X` matches the export-equals identifier.
                     // Distinguish runtime vs type-only by inspecting the body:
                     // - `namespace X { ...values... }` is runtime.
-                    // - `declare namespace X { var a; const b }` is type-only —
-                    //   declare-namespace bodies emit no JS regardless of their
-                    //   contents (the declared bindings exist only ambient/at
-                    //   runtime, but the namespace itself produces no IIFE), so
-                    //   `export = X` from a declare-namespace must elide.
-                    //   Runtime bindings come via separate `declare var` siblings,
-                    //   not via the declare-namespace body.
+                    // - `declare namespace X { var a; function b(); }` emits no
+                    //   namespace body, but still describes a runtime value.
+                    //   `export = X` must therefore lower to `module.exports = X`.
+                    //   A declare namespace with only type members remains type-only.
                     // - `namespace X { ...types only... }` and empty namespaces
                     //   are type-only.
                     if let Some(module_decl) = self.arena.get_module(stmt_node) {
-                        let is_declare = self
-                            .arena
-                            .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword);
-                        if !is_declare && self.is_instantiated_module(module_decl.body) {
+                        if self.is_instantiated_module(module_decl.body) {
                             matched_runtime = true;
                         } else {
                             matched_type = true;
