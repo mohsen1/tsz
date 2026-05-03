@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-03
 - **Branch**: `fix/ts2320-complex-recursive-collections-05031424`
-- **PR**: TBD
+- **PR**: #2571
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
