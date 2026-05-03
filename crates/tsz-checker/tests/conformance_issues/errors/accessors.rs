@@ -862,14 +862,16 @@ export const useCsvParser = () => {
         diagnostics.iter().any(|(code, _)| *code == 2345),
         "Expected TS2345 for null passed to typeof import(\"csv-parse\") ref. Actual diagnostics: {diagnostics:#?}"
     );
-    // tsc preserves the original module specifier (`"csv-parse"`) in
-    // `typeof import("...")` output, not the resolved
-    // `node_modules/<pkg>/<entry>` path. Match tsc parity.
+    // tsc renders bare imports that resolve to a `.d.ts` typings file
+    // inside `node_modules/` with the resolved-path form
+    // (`typeof import("p1/node_modules/csv-parse/lib/index")`), not the
+    // original specifier — see PR replacing #2650.
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2345 && message.contains("typeof import(\"csv-parse\")")
+            *code == 2345
+                && message.contains("typeof import(\"p1/node_modules/csv-parse/lib/index\")")
         }),
-        "Expected TS2345 message to preserve the bare module specifier. Actual diagnostics: {diagnostics:#?}"
+        "Expected TS2345 message to use the resolved node_modules path. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -1170,19 +1172,21 @@ mdast2.default;
         .map(|d| (d.code, d.message_text.clone()))
         .collect();
 
-    // tsc preserves the original bare module specifier
-    // (`"mdast-util-to-string"`) in `typeof import("...")` output, not the
-    // resolved `node_modules/<pkg>/index` path. Match tsc parity.
+    // tsc renders bare imports that resolve to a `.d.ts` typings file
+    // inside `node_modules/` with the resolved-path form
+    // (`typeof import("node_modules/mdast-util-to-string/index")`), not
+    // the original specifier — see PR replacing #2650.
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 1192 && message.contains("\"mdast-util-to-string\"")
+            *code == 1192 && message.contains("\"node_modules/mdast-util-to-string/index\"")
         }),
-        "Expected TS1192 to use the bare module specifier. Actual diagnostics: {diagnostics:#?}"
+        "Expected TS1192 to use the resolved node_modules path. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2339 && message.contains("typeof import(\"mdast-util-to-string\")")
+            *code == 2339
+                && message.contains("typeof import(\"node_modules/mdast-util-to-string/index\")")
         }),
-        "Expected TS2339 to use the bare module specifier. Actual diagnostics: {diagnostics:#?}"
+        "Expected TS2339 to use the resolved node_modules path. Actual diagnostics: {diagnostics:#?}"
     );
 }

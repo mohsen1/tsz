@@ -32,13 +32,46 @@ impl<'a> CheckerState<'a> {
         // For relative imports, use the module specifier directly as the display
         // name rather than the resolved file path. This matches tsc, which shows
         // `typeof import("aliasAssignments_moduleA")` not the full resolved path.
-        // For non-relative (bare) imports — package names like `"shortid"` —
-        // tsc also uses the original specifier in `typeof import("...")` output,
-        // not the resolved `node_modules/<pkg>/index` path. Treat both kinds
-        // uniformly: the display name is the original specifier with `./` and
-        // any known extension stripped.
-        let trimmed = trim_namespace_display_path(module_name);
+        // For bare imports whose resolved file is a `.d.ts` typings file inside
+        // `node_modules/`, tsc shows the resolved file path (with the
+        // `node_modules/<pkg>/<path>` segment preserved) — e.g.
+        // `typeof import("node_modules/mdast-util-to-string/index")`.
+        // Bare imports that resolve to a `.js`/`.cjs`/`.mjs` package source —
+        // even when that source lives under `node_modules/` — display the
+        // original specifier, because the type information comes from an
+        // ambient `declare module "name"` (typings/) not from the package
+        // file itself. Imports with no `node_modules/` resolution (ambient
+        // declarations everywhere, mapped paths) also keep the original.
+        let resolved_for_node_modules = (!Self::is_relative_module_specifier(module_name))
+            .then(|| {
+                self.ctx
+                    .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+                    .or_else(|| self.ctx.resolve_import_target(module_name))
+            })
+            .flatten()
+            .and_then(|target_idx| {
+                let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                let source_file = arena.source_files.first()?;
+                let file_name = source_file.file_name.as_str();
+                let is_node_modules_dts = file_name.contains("/node_modules/")
+                    && (file_name.ends_with(".d.ts")
+                        || file_name.ends_with(".d.mts")
+                        || file_name.ends_with(".d.cts"));
+                is_node_modules_dts.then(|| file_name.to_string())
+            });
+        let display_source = resolved_for_node_modules.as_deref().unwrap_or(module_name);
+        let trimmed = trim_namespace_display_path(display_source);
         tsz_common::file_extensions::strip_known_extension(&trimmed).to_string()
+    }
+
+    pub(crate) fn is_relative_module_specifier(name: &str) -> bool {
+        name.starts_with("./")
+            || name.starts_with(".\\")
+            || name.starts_with("../")
+            || name.starts_with("..\\")
+            || name == "."
+            || name == ".."
+            || name.starts_with('/')
     }
 
     /// Resolve the display module name for namespace `typeof import("...")`.
