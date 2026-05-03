@@ -102,8 +102,6 @@ FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/typeOnlyESMImpo
 FAIL TypeScript/tests/cases/conformance/generators/generatorReturnContextualType.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfaceExtendsObjectIntersectionErrors.ts | expected:[TS2312,TS2411,TS2413,TS2416,TS2430] actual:[TS2312,TS2411,TS2413,TS2416,TS2430]
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/FunctionAndModuleWithSameNameAndCommonRoot.ts | expected:[TS2403,TS2433] actual:[TS2403,TS2433]
-FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag10.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
-FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag7.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocPrototypePropertyAccessWithType.ts | expected:[TS2322] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeFromChainedAssignment.ts | expected:[TS2322,TS2339,TS2345] actual:[TS2322,TS2339,TS2345]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeTagCast.ts | expected:[TS1228,TS2322,TS2352,TS2454] actual:[TS2322,TS2352,TS2403,TS2454]
@@ -9648,6 +9646,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocParamTag1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocReturnTag1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocReturnTag2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag1.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag10.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag11.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag12.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag13.ts
@@ -9658,6 +9657,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag3.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag4.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag5.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag6.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag7.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag8.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag9.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocTypeTag1.ts
