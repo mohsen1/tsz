@@ -38,7 +38,8 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::TYPE_QUERY {
             // Check node_types cache first — resolve_type_queries_with_flow may have
             // pre-resolved this typeof with flow narrowing.
-            if let Some(&cached) = self.ctx.node_types.get(&idx.0)
+            if !self.is_type_query_in_non_flow_sensitive_signature_parameter(idx)
+                && let Some(&cached) = self.ctx.node_types.get(&idx.0)
                 && cached != TypeId::ERROR
             {
                 return cached;
