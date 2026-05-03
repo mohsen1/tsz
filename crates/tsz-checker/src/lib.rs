@@ -141,6 +141,9 @@ mod generator_union_return_type_tests;
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
+#[path = "tests/index_sig_param_intersection_validity_tests.rs"]
+mod index_sig_param_intersection_validity_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_postfix_nullable_type_tests.rs"]
 mod jsdoc_postfix_nullable_type_tests;
 #[cfg(test)]
@@ -282,6 +285,9 @@ mod ts2540_readonly_tests;
 #[path = "../tests/ts2558_new_type_args_tests.rs"]
 mod ts2558_new_type_args_tests;
 #[cfg(test)]
+#[path = "tests/ts2574_rest_tuple_element_type_tests.rs"]
+mod ts2574_rest_tuple_element_type_tests;
+#[cfg(test)]
 #[path = "../tests/ts2589_tests.rs"]
 mod ts2589_tests;
 #[cfg(test)]
@@ -354,6 +360,9 @@ mod class_index_signature_compat_tests;
 #[cfg(test)]
 #[path = "tests/closure_destructuring_top_level_diagnostics_tests.rs"]
 mod closure_destructuring_top_level_diagnostics_tests;
+#[cfg(test)]
+#[path = "../tests/conditional_alias_unreduced_keeps_alias_display_tests.rs"]
+mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_infer_tests.rs"]
 mod conditional_infer_tests;

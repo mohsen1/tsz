@@ -1319,17 +1319,121 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 members.iter().any(|&m| self.is_complex_type(m))
             }
             TypeData::Array(_) | TypeData::Tuple(_) => self.has_nested_complex_marker(type_id),
-            // Function types with Application return types are complex because
-            // bypass_evaluation doesn't prevent check_return_compat from fully
-            // evaluating Application return types. This causes structurally similar
-            // but distinct return types (e.g., Generator<T> vs AsyncGenerator<T>)
-            // to be incorrectly collapsed via remove_redundant_members.
-            TypeData::Function(fn_id) => {
-                let shape = self.interner.function_shape(fn_id);
-                matches!(
-                    self.interner.lookup(shape.return_type),
-                    Some(TypeData::Application(_) | TypeData::Lazy(_))
-                )
+            // Function types with Application/Lazy return *or parameter* types are
+            // complex because the simplify-union subtype checker runs with
+            // bypass_evaluation=true, which prevents Application/Lazy from being
+            // expanded to their structural form during the comparison. Without
+            // expansion, two distinct generic instantiations (e.g.,
+            // `(x: Foo<any>) => void` vs `(x: Bar<any>) => void`, or
+            // `() => Generator<T>` vs `() => AsyncGenerator<T>`) can be
+            // incorrectly collapsed via remove_redundant_members.
+            TypeData::Function(fn_id) => self.is_complex_function(fn_id),
+            // Object types whose property types are functions with Application/Lazy
+            // params/returns are also affected by the bypass_evaluation issue: when
+            // the SubtypeChecker compares two such objects, comparing the function
+            // properties contravariantly may incorrectly conclude they are mutually
+            // compatible because Application bases aren't expanded structurally.
+            // Without this guard, `(I1 | I2)["f"]` collapses I1/I2 before indexing
+            // for `interface I1 { f: (e: Foo<any>) => void; }` shapes.
+            //
+            // We deliberately keep this check narrow — only flag when a property
+            // is a *Function* with complex params/return — to avoid over-flagging
+            // ordinary objects (e.g. React component types) that have generic
+            // properties but whose union simplification is otherwise correct.
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                let shape = self.interner.object_shape(shape_id);
+                // Only treat the object as complex when the offending property
+                // is an *optional* / *nullable* function-bearing union. The
+                // bypass-evaluation collapse problem manifests when two
+                // structurally-distinct objects each have an optional or
+                // null-tolerating function property whose param/return
+                // depends on Application expansion (the
+                // `(I1 | I2)["f"]` indexed-access pattern).
+                //
+                // Non-optional, non-nullable function properties (e.g.
+                // `interface Prop { children: (user: User) => JSX.Element }`)
+                // are intentionally NOT covered: their union simplification
+                // is well-behaved and the JSX render-prop diagnostic
+                // prioritisation depends on it.
+                shape.properties.iter().any(|p| {
+                    (p.optional || self.is_nullable_union(p.type_id))
+                        && self.contains_complex_function(p.type_id)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns true if `type_id` is an Application/Lazy type, or a
+    /// union/intersection whose members contain Application/Lazy. Used by
+    /// `is_complex_function` to detect when a function's params/return rely
+    /// on Application expansion that `bypass_evaluation=true` forbids.
+    fn has_nested_application_or_lazy(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Application(_) | TypeData::Lazy(_)) => true,
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                members
+                    .iter()
+                    .any(|&m| self.has_nested_application_or_lazy(m))
+            }
+            Some(TypeData::Tuple(tuple_list)) => {
+                let elements = self.interner.tuple_list(tuple_list);
+                elements
+                    .iter()
+                    .any(|el| self.has_nested_application_or_lazy(el.type_id))
+            }
+            Some(TypeData::Array(elem)) => self.has_nested_application_or_lazy(elem),
+            _ => false,
+        }
+    }
+
+    /// Returns true if a function shape has parameters or a return type that
+    /// contain Application/Lazy types. Such functions cannot be safely
+    /// simplified by `simplify_union_members` because the `SubtypeChecker`
+    /// runs with `bypass_evaluation=true`, which prevents structural
+    /// expansion of Application bases during the comparison.
+    fn is_complex_function(&self, fn_id: crate::types::FunctionShapeId) -> bool {
+        let shape = self.interner.function_shape(fn_id);
+        if self.has_nested_application_or_lazy(shape.return_type) {
+            return true;
+        }
+        shape
+            .params
+            .iter()
+            .any(|p| self.has_nested_application_or_lazy(p.type_id))
+    }
+
+    /// Returns true if `type_id` is a union containing `null` or `undefined`.
+    /// Used to gate the Object-property complex flag so it only fires for
+    /// nullable / optional function-bearing properties.
+    fn is_nullable_union(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Union(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                members
+                    .iter()
+                    .any(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED)
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns true if `type_id` is a complex Function, or a union/intersection
+    /// containing one. Used by `is_complex_type` for Object shapes whose
+    /// property types are nullable function types like `(... ) => T | null`.
+    fn contains_complex_function(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Function(fn_id)) => self.is_complex_function(fn_id),
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                members.iter().any(|&m| self.contains_complex_function(m))
             }
             _ => false,
         }

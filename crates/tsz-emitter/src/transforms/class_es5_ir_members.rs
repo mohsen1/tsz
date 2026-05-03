@@ -13,7 +13,10 @@ use tsz_parser::syntax::transform_utils::{
 };
 use tsz_scanner::SyntaxKind;
 
-use super::{ES5ClassTransformer, PropertyNameIR, collect_accessor_pairs, get_identifier_text};
+use super::{
+    ES5ClassTransformer, PropertyNameIR, collect_accessor_pairs, get_identifier_text,
+    has_effective_static_modifier,
+};
 
 impl<'a> ES5ClassTransformer<'a> {
     /// Emit prototype methods as IR (superseded by `emit_all_members_ir`)
@@ -501,9 +504,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 || m_node.kind == syntax_kind_ext::SET_ACCESSOR)
                 && let Some(acc_data) = self.arena.get_accessor(m_node)
             {
-                return self
-                    .arena
-                    .has_modifier(&acc_data.modifiers, SyntaxKind::StaticKeyword)
+                return has_effective_static_modifier(self.arena, &acc_data.modifiers)
                     && !(self
                         .arena
                         .has_modifier(&acc_data.modifiers, SyntaxKind::AbstractKeyword)
@@ -1136,9 +1137,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
                 if let Some(accessor_data) = self.arena.get_accessor(member_node) {
-                    let is_static = self
-                        .arena
-                        .has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword);
+                    let is_static =
+                        has_effective_static_modifier(self.arena, &accessor_data.modifiers);
                     let is_abstract = self
                         .arena
                         .has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword);

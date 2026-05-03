@@ -527,6 +527,22 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
                         if !self.is_unresolved_import_symbol(qn.left) && !left_name.is_empty() {
+                            // TS1212/TS1213/TS1214: when the lead identifier of a
+                            // qualified type name is a strict-mode reserved word
+                            // (`public.bar`, `private.x`, `interface.B`, ...) and we
+                            // are in strict mode, tsc emits the reserved-word error
+                            // alongside TS2503. The general TypeReference path covers
+                            // bare identifiers; qualified-name resolution lands here
+                            // and was missing the check.
+                            if crate::state_checking::is_strict_mode_reserved_name(
+                                left_name.as_str(),
+                            ) && self.is_strict_mode_for_node(qn.left)
+                            {
+                                self.emit_strict_mode_reserved_word_error_with_ast_walk(
+                                    qn.left,
+                                    left_name.as_str(),
+                                );
+                            }
                             // Route through boundary for TS2503/TS2552 with suggestions
                             let req = crate::query_boundaries::name_resolution::NameResolutionRequest::namespace(
                                 left_name.as_str(),
@@ -1333,50 +1349,14 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(super) fn is_type_query_in_non_flow_sensitive_signature_parameter(
+    pub(crate) fn is_type_query_in_non_flow_sensitive_signature_parameter(
         &self,
         idx: NodeIndex,
     ) -> bool {
-        let mut current = idx;
-        let mut saw_parameter = false;
-
-        while let Some(ext) = self.ctx.arena.get_extended(current) {
-            let parent = ext.parent;
-            if parent.is_none() {
-                break;
-            }
-
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                break;
-            };
-
-            match parent_node.kind {
-                syntax_kind_ext::PARAMETER => saw_parameter = true,
-                k if k == syntax_kind_ext::CALL_SIGNATURE
-                    || k == syntax_kind_ext::CONSTRUCT_SIGNATURE
-                    || k == syntax_kind_ext::METHOD_SIGNATURE
-                    || k == syntax_kind_ext::FUNCTION_TYPE
-                    || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
-                {
-                    return saw_parameter;
-                }
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION
-                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || k == syntax_kind_ext::ARROW_FUNCTION
-                    || k == syntax_kind_ext::METHOD_DECLARATION
-                    || k == syntax_kind_ext::CONSTRUCTOR
-                    || k == syntax_kind_ext::GET_ACCESSOR
-                    || k == syntax_kind_ext::SET_ACCESSOR =>
-                {
-                    return false;
-                }
-                _ => {}
-            }
-
-            current = parent;
-        }
-
-        false
+        crate::types_domain::type_node_helpers::is_type_query_in_non_flow_sensitive_signature_parameter(
+            self.ctx.arena,
+            idx,
+        )
     }
 
     /// Get type from a type query node (typeof X).

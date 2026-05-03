@@ -84,6 +84,14 @@ fn arrow_default_optional_chain_temp_is_scoped_to_es5_body() {
 }
 
 #[test]
+fn optional_parameter_missing_initializer_skips_question_after_trivia() {
+    let source = "function f(a ? = ) {}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert_eq!(output, "function f(a = ) { }\n");
+}
+
+#[test]
 fn decorated_anonymous_class_expression_sets_empty_function_name() {
     let source = "declare let dec: any;\n(@dec class {});";
     let output = parse_lower_print(
@@ -227,7 +235,7 @@ fn test_optional_call_spread_downlevel_es5() {
 }
 
 #[test]
-fn test_commonjs_empty_named_import_emits_bare_require() {
+fn test_commonjs_empty_named_import_is_elided() {
     let source = "import {} from \"./side\";\n";
     let output = parse_lower_print(
         source,
@@ -238,7 +246,7 @@ fn test_commonjs_empty_named_import_emits_bare_require() {
         },
     );
 
-    assert!(output.contains("require(\"./side\");"));
+    assert!(!output.contains("require(\"./side\");"));
     assert!(!output.contains("var side_1 = require(\"./side\");"));
 }
 
@@ -255,6 +263,40 @@ fn test_commonjs_type_only_named_import_is_elided() {
     );
 
     assert!(!output.contains("require(\"./types\")"));
+}
+
+#[test]
+fn commonjs_preamble_stays_after_source_prologue_strings() {
+    let source = "\"hey!\";\n\" use strict \";\nexport function f() {}\n";
+    let output = parse_lower_print(source, PrintOptions::es5_commonjs());
+
+    let strict_pos = output
+        .find("\"use strict\";")
+        .expect("CJS output should include synthetic use strict");
+    let first_prologue_pos = output
+        .find("\"hey!\";")
+        .expect("First source prologue should be emitted");
+    let second_prologue_pos = output
+        .find("\" use strict \";")
+        .expect("Second source prologue should be emitted");
+    let marker_pos = output
+        .find("Object.defineProperty(exports, \"__esModule\"")
+        .expect("CJS output should include __esModule marker");
+    let export_pos = output
+        .find("exports.f = f;")
+        .expect("Function export should be hoisted");
+    let function_pos = output
+        .find("function f()")
+        .expect("Function declaration should be emitted");
+
+    assert!(strict_pos < first_prologue_pos, "Output:\n{output}");
+    assert!(
+        first_prologue_pos < second_prologue_pos,
+        "Output:\n{output}"
+    );
+    assert!(second_prologue_pos < marker_pos, "Output:\n{output}");
+    assert!(marker_pos < export_pos, "Output:\n{output}");
+    assert!(export_pos < function_pos, "Output:\n{output}");
 }
 
 #[test]
@@ -541,6 +583,184 @@ export const msg = "Hello!";
     assert!(
         !output.contains("/// <reference"),
         "Fallback bang-module detection should ignore non-module export declarations with string literals.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_function_expression_parameter_shadows_exported_name_es2015() {
+    let source = r#"namespace Foo {
+    export function a() {}
+    export const fn = function(a: number) {
+        return a;
+    };
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("return a;"),
+        "Function expression body should reference its parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return Foo.a;"),
+        "Function expression parameter should shadow namespace exported names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_arrow_parameter_shadows_exported_name_es2015() {
+    let source = r#"namespace Foo {
+    export function a() {}
+    export const arrow = (a: number) => a;
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("Foo.arrow = (a) => a;"),
+        "Arrow concise body should reference its parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("=> Foo.a"),
+        "Arrow parameter should shadow namespace exported names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_function_default_parameter_shadows_exported_name_es2015() {
+    let source = r#"namespace Foo {
+    export let a = 10;
+    export const fn = function(a: number, b = a) {
+        return b;
+    };
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("function (a, b = a)"),
+        "Function default parameter should reference the prior parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("b = Foo.a"),
+        "Function default parameter should not qualify a shadowed namespace export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_arrow_default_parameter_shadows_exported_name_es2015() {
+    let source = r#"namespace Foo {
+    export let a = 10;
+    export const arrow = (a: number, b = a) => b;
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("Foo.arrow = (a, b = a) => b;"),
+        "Arrow default parameter should reference the prior parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("b = Foo.a"),
+        "Arrow default parameter should not qualify a shadowed namespace export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_arrow_default_prologue_shadows_exported_name_es2016() {
+    let source = r#"namespace Foo {
+    export function a() {
+        return 10;
+    }
+    declare function complex(): number;
+    export const arrow = (a: () => number | undefined, b = a() ?? complex()) => a();
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2016,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("b = (_a = a()) !== null"),
+        "Default prologue should reference the parameter before the fallback.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return a();") && !output.contains("return Foo.a();"),
+        "Default prologue arrow body should reference the shadowing parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Foo.a()") && !output.contains("= Foo.a"),
+        "Default prologue should not qualify shadowed namespace parameter references.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_exported_object_binding_non_identifier_property_uses_destructuring_path() {
+    let source = r#"declare const obj: any;
+export let { "foo": bar } = obj;
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::System,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports_1(\"bar\", bar = obj[\"foo\"]);"),
+        "String-literal binding property names should access the source property, not the binding name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("obj.bar"),
+        "System binding shortcut must not use the binding name as the property name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_exported_object_binding_bracket_access_does_not_add_numeric_dot() {
+    let source = r#"export let { "foo": bar } = 42.5;
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::System,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports_1(\"bar\", bar = 42.5[\"foo\"]);"),
+        "Bracket access after numeric literal should not emit an extra dot.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("42.5.["),
+        "Extra numeric-literal dot before bracket access is invalid JS.\nOutput:\n{output}"
     );
 }
 

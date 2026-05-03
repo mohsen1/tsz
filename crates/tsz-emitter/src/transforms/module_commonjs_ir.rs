@@ -138,7 +138,7 @@ impl<'a> CommonJsTransformContext<'a> {
         // var module_1 = require("./module");
         statements.push(IRNode::RequireStatement {
             var_name: var_name.clone().into(),
-            module_spec: module_spec.clone().into(),
+            module_spec: module_spec.into(),
         });
 
         // Process import bindings
@@ -211,8 +211,8 @@ impl<'a> CommonJsTransformContext<'a> {
                 // `import { type Foo } from "x"` is fully erased in JS output.
                 return None;
             }
-            // `import {} from "x"` should preserve runtime side effects without temp module binding.
-            return Some(IRNode::Raw(format!("require(\"{module_spec}\");").into()));
+            // `import {} from "x"` has no value bindings in default TS emit.
+            return None;
         }
 
         Some(IRNode::Block(statements))

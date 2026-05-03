@@ -108,6 +108,27 @@ fn transform_and_emit_commonjs(source: &str) -> String {
 // =========================================================================
 
 #[test]
+fn default_parameter_references_prior_shadowing_parameter() {
+    let output = transform_and_emit(
+        r#"namespace Foo {
+    export let a = 10;
+    export function c(a: number, b = a) {
+        return b;
+    }
+}"#,
+    );
+
+    assert!(
+        output.contains("if (b === void 0) { b = a; }"),
+        "Default value should reference the prior parameter, not the namespace export.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("b = Foo.a"),
+        "Default value must not be rewritten to the namespace export after parameter shadowing.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_namespace_es5_empty_namespace_skipped() {
     let ir = transform_namespace("namespace M { }");
     assert!(ir.is_none(), "Empty namespace should produce no IR");

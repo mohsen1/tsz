@@ -662,15 +662,8 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
-        let is_es_module_export = self.ctx.target_es5
-            && matches!(
-                self.ctx.options.module,
-                ModuleKind::ES2015 | ModuleKind::ESNext
-            )
-            && self
-                .arena
-                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
-        if is_es_module_export && self.emit_es5_empty_binding_pattern_export(&var_stmt.declarations)
+        if self.is_es5_empty_binding_pattern_export_statement(node)
+            && self.emit_es5_empty_binding_pattern_export(&var_stmt.declarations)
         {
             return;
         }
@@ -1540,6 +1533,63 @@ impl<'a> Printer<'a> {
             }
         }
         names
+    }
+
+    pub(in crate::emitter) fn is_es5_empty_binding_pattern_export_statement(
+        &self,
+        node: &Node,
+    ) -> bool {
+        if !self.ctx.target_es5
+            || !matches!(
+                self.ctx.options.module,
+                ModuleKind::ES2015 | ModuleKind::ESNext
+            )
+        {
+            return false;
+        }
+
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        if !self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+        {
+            return false;
+        }
+
+        self.variable_declarations_are_initialized_empty_binding_patterns(&var_stmt.declarations)
+    }
+
+    fn variable_declarations_are_initialized_empty_binding_patterns(
+        &self,
+        declarations: &NodeList,
+    ) -> bool {
+        let mut has_initializer = false;
+
+        for &decl_list_idx in &declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                return false;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                return false;
+            };
+
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    return false;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    return false;
+                };
+                if !self.binding_pattern_is_empty(decl.name) || decl.initializer.is_none() {
+                    return false;
+                }
+                has_initializer = true;
+            }
+        }
+
+        has_initializer
     }
 
     fn emit_es5_empty_binding_pattern_export(&mut self, declarations: &NodeList) -> bool {

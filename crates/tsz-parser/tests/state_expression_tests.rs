@@ -583,6 +583,62 @@ fn negative_legacy_octal_literal_emits_ts1121() {
 }
 
 #[test]
+fn legacy_octal_with_bigint_suffix_recovers_with_comma_expected() {
+    // `const x = 0123n;` — `0123` is legacy octal (TS1121) and the scanner
+    // returns `0123` as a complete numeric literal, leaving `n` as a
+    // separate identifier. tsc's parser recovers by treating this as a
+    // missing-comma in the declarator list — `const x = 0123, n;` — and
+    // reports "',' expected." at the position of `n`. We must match that
+    // recovery shape, not bubble out of the declarator loop and emit
+    // "';' expected." from parse_semicolon.
+    let (parser, _root) = parse_source("const x = 0123n;");
+    let diags = parser.get_diagnostics();
+
+    let has_ts1121 = diags.iter().any(|d| d.code == 1121);
+    assert!(
+        has_ts1121,
+        "Expected TS1121 (legacy octal) for `0123n`, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+
+    let ts1005_messages: Vec<&str> = diags
+        .iter()
+        .filter(|d| d.code == 1005)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(
+        ts1005_messages.contains(&"',' expected."),
+        "Expected TS1005 \"',' expected.\" recovery for `0123n`, got TS1005 messages: {ts1005_messages:?}"
+    );
+    assert!(
+        !ts1005_messages.contains(&"';' expected."),
+        "Should not emit \"';' expected.\" — that comes from a stale early-break before the missing-comma recovery: TS1005 messages: {ts1005_messages:?}"
+    );
+}
+
+#[test]
+fn legacy_octal_with_bigint_suffix_recovers_param_name_independent() {
+    // Same rule as the test above but with a different binding name —
+    // locks the recovery as structural, not name-specific
+    // (per the anti-hardcoding directive in CLAUDE.md §25).
+    let (parser, _root) = parse_source("const arbitraryName = 0567n;");
+    let diags = parser.get_diagnostics();
+    let ts1005_messages: Vec<&str> = diags
+        .iter()
+        .filter(|d| d.code == 1005)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(
+        ts1005_messages.contains(&"',' expected."),
+        "Expected TS1005 \"',' expected.\" recovery for `0567n`, got TS1005 messages: {ts1005_messages:?}"
+    );
+    assert!(
+        !ts1005_messages.contains(&"';' expected."),
+        "Should not emit \"';' expected.\": TS1005 messages: {ts1005_messages:?}"
+    );
+}
+
+#[test]
 fn invalid_numeric_separator_followed_by_identifier_does_not_emit_ts2304() {
     // tsc emits TS6188 (separator-not-allowed) and TS1351 (identifier
     // cannot follow numeric literal) for inputs like `0_X0101`. It does

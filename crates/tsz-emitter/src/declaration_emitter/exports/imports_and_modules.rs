@@ -423,6 +423,9 @@ impl<'a> DeclarationEmitter<'a> {
                         .iter()
                         .any(|(_, targets)| targets.contains(&stmt_idx))
                     {
+                        if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                        }
                         continue;
                     }
                     self.emit_statement(stmt_idx);

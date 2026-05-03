@@ -401,6 +401,29 @@ const q: PromiseLike<number> = p;
 }
 
 #[test]
+fn unrelated_thenable_application_requires_compatible_then_signature() {
+    let source = r#"
+interface ExpectedThenable<T> {
+    then<U>(cb: (value: T) => U): ExpectedThenable<U>;
+}
+
+interface BadThenable<T> {
+    then(): void;
+}
+
+declare const bad: BadThenable<number>;
+const target: ExpectedThenable<number> = bad;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for unrelated thenables with incompatible then signatures, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_return_alias_instantiation_mismatch() {
     let source = r#"
         type Box<T> = { value: T };

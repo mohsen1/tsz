@@ -18,5 +18,6 @@ pub mod generics;
 pub mod intrinsics;
 pub mod literals;
 pub mod objects;
+pub mod promise_like;
 pub mod tuples;
 pub mod unions;

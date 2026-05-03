@@ -1,9 +1,13 @@
 //! Tests for TS2320: Interface inherits conflicting declarations from base types.
 
-use crate::test_utils::check_source_codes;
+use crate::test_utils::{check_source_code_messages, check_source_codes};
 
 fn has_error(source: &str, code: u32) -> bool {
     check_source_codes(source).contains(&code)
+}
+
+fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    check_source_code_messages(source)
 }
 
 #[test]
@@ -333,5 +337,46 @@ interface I3 extends I1, I2 { }
     assert!(
         !has_error(source, 2320),
         "Did not expect TS2320 when two bases declare matching `[Symbol.iterator]` methods"
+    );
+}
+
+#[test]
+fn ts2320_recursive_collection_base_conflict_with_derived_override() {
+    // Reduced from TypeScript's complexRecursiveCollections.ts. The derived
+    // interface redeclares the `this`-based members, but the inherited bases
+    // still conflict with each other after recursive substitution.
+    let source = r#"
+interface Collection<K, V> {
+    readonly size: number;
+    concat<C>(...values: C[]): Collection<K, V | C>;
+    toSeq(): this;
+}
+
+interface Seq<K, V> extends Collection<K, V> {
+    readonly size: number | undefined;
+    concat<C>(...values: C[]): Seq<K, V | C>;
+    toSeq(): this;
+}
+
+interface CollectionIndexed<T> extends Collection<number, T> {
+    concat<C>(...values: C[]): CollectionIndexed<T | C>;
+}
+
+interface SeqIndexed<T> extends Seq<number, T>, CollectionIndexed<T> {
+    concat<C>(...values: C[]): SeqIndexed<T | C>;
+    toSeq(): this;
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2320_msgs: Vec<_> = diags
+        .iter()
+        .filter(|(code, message)| *code == 2320 && message.contains("SeqIndexed"))
+        .map(|(_, message)| message)
+        .collect();
+    assert_eq!(
+        ts2320_msgs.len(),
+        1,
+        "Expected one TS2320 for SeqIndexed's conflicting recursive bases. Got: {diags:?}"
     );
 }

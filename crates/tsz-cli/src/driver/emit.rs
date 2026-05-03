@@ -442,6 +442,7 @@ pub(crate) fn emit_outputs(
                         &cache_view,
                         &context.program.type_interner,
                         std::sync::Arc::clone(&file.arena),
+                        Some(file.file_name.clone()),
                         &import_name_map,
                         is_js_input,
                     );

@@ -378,6 +378,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 );
                             }
                             seen_rest = true;
+                        } else if Self::ast_kind_is_obviously_non_array(
+                            self.ctx.arena,
+                            wrapped.type_node,
+                        ) {
+                            self.emit_rest_element_type_must_be_array(elem_node.pos, elem_node.end);
                         }
                         elements.push(TupleElement {
                             type_id: elem_type,
@@ -410,6 +415,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     );
                                 }
                                 seen_rest = true;
+                            } else if Self::ast_kind_is_obviously_non_array(
+                                self.ctx.arena,
+                                data.type_node,
+                            ) {
+                                self.emit_rest_element_type_must_be_array(
+                                    elem_node.pos,
+                                    elem_node.end,
+                                );
                             }
                         } else if data.question_token {
                             // TS1266: An optional element cannot follow a rest element
@@ -1146,7 +1159,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 self.ctx.types,
                                 key_type,
                             );
-                        if !is_valid_index_type && let Some(pnode) = self.ctx.arena.get(param_idx) {
+                        // AST fallback: unions of valid types and non-generic
+                        // intersections (`string | number`, `string & Tag`)
+                        // resolve to composite TypeIds that don't match the
+                        // primitive checks above.
+                        let is_valid_via_ast = !is_valid_index_type
+                            && crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
+                                self.ctx.arena,
+                                self.ctx.binder,
+                                param_data.type_annotation,
+                            );
+                        if !is_valid_index_type
+                            && !is_valid_via_ast
+                            && let Some(pnode) = self.ctx.arena.get(param_idx)
+                        {
                             self.ctx.error(
                                     pnode.pos,
                                     pnode.end - pnode.pos,

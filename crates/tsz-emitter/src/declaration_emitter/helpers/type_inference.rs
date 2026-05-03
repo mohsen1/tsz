@@ -1489,10 +1489,15 @@ impl<'a> DeclarationEmitter<'a> {
             || !self.initializer_is_new_expression(initializer))
             && let Some(type_text) = self.preferred_expression_type_text(initializer)
         {
-            return Self::strip_synthetic_anonymous_object_members(&type_text);
+            let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
+            return self
+                .enum_value_index_access_alias_type_text(&type_text)
+                .unwrap_or(type_text);
         }
 
-        Self::strip_synthetic_anonymous_object_members(printed_type_text)
+        let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
+        self.enum_value_index_access_alias_type_text(&type_text)
+            .unwrap_or(type_text)
     }
 
     pub(in crate::declaration_emitter) fn strip_synthetic_anonymous_object_members(
@@ -1904,6 +1909,67 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena
             .get_type_alias(declaration_node)
             .map(|alias| alias.type_node)
+    }
+
+    fn enum_value_index_access_alias_type_text(&self, type_text: &str) -> Option<String> {
+        let mut inner = type_text.trim();
+        let mut array_suffix = String::new();
+        while let Some(next) = inner.strip_suffix("[]") {
+            array_suffix.push_str("[]");
+            inner = next.trim_end();
+        }
+
+        let (alias, key_alias) = inner.split_once("[keyof ")?;
+        let alias = alias.trim();
+        let key_alias = key_alias.strip_suffix(']')?.trim();
+        if alias != key_alias || !Self::is_simple_identifier_text(alias) {
+            return None;
+        }
+
+        let enum_name = self.typeof_enum_alias_target_name(alias)?;
+        Some(format!("{enum_name}{array_suffix}"))
+    }
+
+    fn typeof_enum_alias_target_name(&self, alias: &str) -> Option<String> {
+        let alias_type_node = self.find_local_type_alias_type_node(alias)?;
+        let alias_type = self.arena.get(alias_type_node)?;
+        if alias_type.kind != syntax_kind_ext::TYPE_QUERY {
+            return None;
+        }
+        let query = self.arena.get_type_query(alias_type)?;
+        let enum_name = self.type_reference_name_text(query.expr_name)?;
+        self.local_enum_declaration_exists(&enum_name)
+            .then_some(enum_name)
+    }
+
+    fn local_enum_declaration_exists(&self, name: &str) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder
+            .file_locals
+            .get(name)
+            .or_else(|| binder.current_scope.get(name))
+        else {
+            return false;
+        };
+        let Some(symbol_data) = binder.symbols.get(symbol) else {
+            return false;
+        };
+        symbol_data.declarations.iter().copied().any(|decl_idx| {
+            self.arena
+                .get(decl_idx)
+                .is_some_and(|node| self.arena.get_enum(node).is_some())
+        })
+    }
+
+    fn is_simple_identifier_text(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
     pub(in crate::declaration_emitter) fn type_reference_name_text(
@@ -3025,13 +3091,10 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 Some(Self::object_type_top_level_member_names(ty, true))
             })
-            .collect::<Option<Vec<_>>>();
-        let Some(object_arm_names) = object_arm_names else {
-            return;
-        };
+            .collect::<Vec<_>>();
 
         let mut property_names = Vec::<String>::new();
-        for names in &object_arm_names {
+        for names in object_arm_names.iter().flatten() {
             for name in names {
                 if !property_names.iter().any(|existing| existing == name) {
                     property_names.push(name.clone());
@@ -3065,6 +3128,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         for (ty, present_names) in types.iter_mut().zip(object_arm_names) {
+            let Some(present_names) = present_names else {
+                continue;
+            };
             let missing_names = property_names
                 .iter()
                 .filter(|name| !present_names.iter().any(|present| present == *name))
@@ -3123,8 +3189,11 @@ impl<'a> DeclarationEmitter<'a> {
         let mut depth = 0usize;
         for line in trimmed.lines() {
             if depth == 1
-                && Self::object_type_member_name_from_line(line, true)
-                    .is_some_and(|name| line.trim_start().starts_with(&format!("{name}(")))
+                && Self::object_type_member_name_from_line(line, true).is_some_and(|name| {
+                    let trimmed_line = line.trim_start();
+                    trimmed_line.starts_with(&format!("{name}("))
+                        || trimmed_line.starts_with(&format!("{name}?("))
+                })
             {
                 return true;
             }
@@ -4788,6 +4857,26 @@ mod tests {
     }
 
     #[test]
+    fn empty_object_union_arm_expands_with_mixed_non_object_arm() {
+        let mut types = vec![
+            "{\n    foo: number;\n}".to_string(),
+            "{}".to_string(),
+            "number".to_string(),
+        ];
+
+        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
+
+        assert_eq!(
+            types,
+            vec![
+                "{\n    foo: number;\n}".to_string(),
+                "{\n    foo?: undefined;\n}".to_string(),
+                "number".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn object_union_arms_expand_missing_sibling_properties_and_methods() {
         let mut types = vec![
             "{\n    foo: number;\n    m(): void;\n}".to_string(),
@@ -4801,6 +4890,26 @@ mod tests {
             vec![
                 "{\n    foo: number;\n    m(): void;\n    bar?: undefined;\n}".to_string(),
                 "{\n    bar: number;\n    foo?: undefined;\n    m?: undefined;\n}".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn optional_method_triggers_object_union_sibling_expansion() {
+        let mut types = vec![
+            "{\n    m?(): void;\n}".to_string(),
+            "{\n    value: number;\n}".to_string(),
+            "string".to_string(),
+        ];
+
+        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
+
+        assert_eq!(
+            types,
+            vec![
+                "{\n    m?(): void;\n    value?: undefined;\n}".to_string(),
+                "{\n    value: number;\n    m?: undefined;\n}".to_string(),
+                "string".to_string(),
             ]
         );
     }

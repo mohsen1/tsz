@@ -784,6 +784,96 @@ namespace X.Y.base.Z {
 }
 
 #[test]
+fn declaration_emit_type_reference_typeof_uses_referenced_global_value_without_import() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(&base.join("ref.d.ts"), "export interface $ { x: any }\n");
+    write_file(
+        &base.join("types/lib/index.d.ts"),
+        "declare let $: { x: number }\n",
+    );
+    write_file(
+        &base.join("app.ts"),
+        r#"/// <reference types="lib"/>
+import {$} from "./ref";
+
+export interface A {
+    x: typeof $;
+    y: () => typeof $;
+}
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "typeRoots": ["./types"],
+    "types": ["lib"]
+  },
+  "files": ["app.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    compile(&args, base).expect("compile should succeed");
+    let dts = fs::read_to_string(base.join("app.d.ts")).expect("read app.d.ts");
+    assert!(
+        !dts.contains("import { $ } from \"./ref\";"),
+        "interface-only import should not be preserved for typeof satisfied by referenced global: {dts}"
+    );
+    assert!(
+        dts.contains("x: typeof $;") && dts.contains("y: () => typeof $;"),
+        "expected typeof references to be emitted unchanged: {dts}"
+    );
+}
+
+#[test]
+fn declaration_emit_type_reference_typeof_keeps_imported_value() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(&base.join("ref.ts"), "export const $ = { x: 1 };\n");
+    write_file(
+        &base.join("app.ts"),
+        r#"import {$} from "./ref";
+
+export interface A {
+    x: typeof $;
+}
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true
+  },
+  "files": ["app.ts", "ref.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    compile(&args, base).expect("compile should succeed");
+    let dts = fs::read_to_string(base.join("app.d.ts")).expect("read app.d.ts");
+    assert!(
+        dts.contains("import { $ } from \"./ref\";"),
+        "value import used by typeof should be preserved: {dts}"
+    );
+    assert!(
+        dts.contains("x: typeof $;"),
+        "expected typeof reference: {dts}"
+    );
+}
+
+#[test]
 fn declaration_emit_local_annotation_alias_preserves_class_instance_references() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();

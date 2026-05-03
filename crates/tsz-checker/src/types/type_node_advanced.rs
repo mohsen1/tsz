@@ -8,7 +8,8 @@
 
 use super::type_node::TypeNodeChecker;
 use super::type_node_helpers::{
-    get_string_literal_from_type_index, is_typeof_global_this_type_node,
+    get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
+    is_typeof_global_this_type_node,
 };
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -620,6 +621,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .as_ref()
             .map(|args| args.nodes.clone())
             .unwrap_or_default();
+        let use_flow_sensitive_query =
+            !is_type_query_in_non_flow_sensitive_signature_parameter(self.ctx.arena, idx);
 
         // `default` is a reserved keyword and cannot be used as an identifier in
         // expression position. `typeof default` must always report TS2304 even when
@@ -678,7 +681,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         // Prefer the already-computed value-space type at this query site when available.
         // This preserves flow-sensitive narrowing for `typeof expr` in type positions.
-        if let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
+        if use_flow_sensitive_query
+            && let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
             && expr_type != TypeId::ERROR
         {
             // Apply type arguments from `typeof expr<Args>` instantiation expressions.
@@ -800,6 +804,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && declared_type != TypeId::ANY
                 && declared_type != TypeId::ERROR
             {
+                if !use_flow_sensitive_query {
+                    if !type_arg_node_indices.is_empty() {
+                        let type_args: Vec<TypeId> = type_arg_node_indices
+                            .iter()
+                            .map(|&arg_idx| self.check(arg_idx))
+                            .collect();
+                        return self.ctx.types.application(declared_type, type_args);
+                    }
+                    return declared_type;
+                }
+
                 // Find a flow node at or above the expression name for narrowing.
                 let flow_node = self
                     .ctx
@@ -939,6 +954,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return TypeId::ERROR;
                     }
                 }
+                if !use_flow_sensitive_query
+                    && let Some(declared_type) = self.declared_type_for_type_query_symbol(sym_id)
+                {
+                    if !type_arg_node_indices.is_empty() {
+                        let type_args: Vec<TypeId> = type_arg_node_indices
+                            .iter()
+                            .map(|&arg_idx| self.check(arg_idx))
+                            .collect();
+                        return self.ctx.types.application(declared_type, type_args);
+                    }
+                    return declared_type;
+                }
                 let factory = self.ctx.types.factory();
                 let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
                 if !type_arg_node_indices.is_empty() {
@@ -993,6 +1020,44 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         );
 
         lowering.lower_type(idx)
+    }
+
+    fn declared_type_for_type_query_symbol(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<TypeId> {
+        if let Some(type_id) = self
+            .ctx
+            .symbol_types
+            .get(&sym_id)
+            .copied()
+            .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
+        {
+            return Some(type_id);
+        }
+
+        let decl = self.ctx.binder.get_symbol(sym_id)?.value_declaration;
+        if decl.is_none() {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(decl)?;
+        let type_ann = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+            var_decl
+                .type_annotation
+                .is_some()
+                .then_some(var_decl.type_annotation)
+        } else if decl_node.kind == syntax_kind_ext::PARAMETER {
+            let param = self.ctx.arena.get_parameter(decl_node)?;
+            param
+                .type_annotation
+                .is_some()
+                .then_some(param.type_annotation)
+        } else {
+            None
+        }?;
+
+        Some(self.check(type_ann)).filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
     }
 
     /// Emit TS2693 for a type-only symbol used in a typeof type query.

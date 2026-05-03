@@ -28,6 +28,19 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if !self.suppress_ns_qualification
+            && let Some((class_name, class_alias)) = self.scoped_class_expression_self_alias.clone()
+            && original_text == class_name.as_ref()
+        {
+            if let Some(source_pos) = self.take_pending_source_pos() {
+                self.writer
+                    .write_node_with_name(class_alias.as_ref(), source_pos, original_text);
+            } else {
+                self.writer.write(class_alias.as_ref());
+            }
+            return;
+        }
+
         // tsc preserves unicode escape sequences in identifiers verbatim.
         // When the parser detects unicode escapes (e.g., \u0041 for 'A'),
         // it stores the original source text in `original_text`. Use it

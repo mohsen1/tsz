@@ -1743,7 +1743,13 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn emit_js_require_property_import_aliases(&mut self) {
         let aliases = std::mem::take(&mut self.js_require_property_import_aliases);
         for (local_name, module_name, export_name) in &aliases {
-            let module_alias = format!("{local_name}_1");
+            let module_alias_candidate = format!("{local_name}_1");
+            let module_alias = if self.reserved_names.contains(&module_alias_candidate) {
+                self.generate_unique_name(local_name)
+            } else {
+                module_alias_candidate
+            };
+            self.reserved_names.insert(module_alias.clone());
             self.write_indent();
             self.write("import ");
             self.write(&module_alias);

@@ -216,7 +216,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // TSC's grammarErrorOnNode suppresses TS1101 when hasParseDiagnostics is true.
-        if !self.has_syntax_parse_errors()
+        // Scope the suppression to THIS statement's span: an unrelated parse
+        // error elsewhere in the file (including the parser's own TS1101 emitted
+        // for a `with` inside a class/module) must not silence the strict-mode
+        // diagnostic for an unrelated `with` (e.g., a top-level one under
+        // `--alwaysStrict`).
+        if !self.node_span_contains_parse_error(stmt_idx)
             && self.is_with_statement_in_strict_mode_context(stmt_idx)
         {
             self.error_at_node(

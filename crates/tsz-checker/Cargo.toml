@@ -186,6 +186,10 @@ name = "control_flow_type_guard_tests"
 path = "tests/control_flow_type_guard_tests.rs"
 
 [[test]]
+name = "typeof_function_like_flow_tests"
+path = "tests/typeof_function_like_flow_tests.rs"
+
+[[test]]
 name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
 
@@ -644,6 +648,14 @@ path = "tests/jsdoc_template_variance_function_tests.rs"
 [[test]]
 name = "type_param_modifier_diagnostics_tests"
 path = "tests/type_param_modifier_diagnostics_tests.rs"
+
+[[test]]
+name = "strict_mode_reserved_word_in_qualified_type_tests"
+path = "tests/strict_mode_reserved_word_in_qualified_type_tests.rs"
+
+[[test]]
+name = "union_index_access_function_application_param_tests"
+path = "tests/union_index_access_function_application_param_tests.rs"
 
 [lints]
 workspace = true

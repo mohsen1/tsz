@@ -1363,7 +1363,30 @@ impl<'a> CheckerState<'a> {
                         && (crate::context::is_js_file_name(&self.ctx.file_name)
                             || remote_decl_in_js(decl_idx, decl_is_local)
                             || remote_decl_in_js(other_idx, other_is_local));
+                    let class_side_in_js = if (decl_flags & symbol_flags::CLASS) != 0 {
+                        if decl_is_local {
+                            crate::context::is_js_file_name(&self.ctx.file_name)
+                        } else {
+                            remote_decl_in_js(decl_idx, false)
+                        }
+                    } else if (other_flags & symbol_flags::CLASS) != 0 {
+                        if other_is_local {
+                            crate::context::is_js_file_name(&self.ctx.file_name)
+                        } else {
+                            remote_decl_in_js(other_idx, false)
+                        }
+                    } else {
+                        false
+                    };
+                    let value_side_is_block_scoped = if (decl_flags & symbol_flags::VARIABLE) != 0 {
+                        (decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                    } else if (other_flags & symbol_flags::VARIABLE) != 0 {
+                        (other_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                    } else {
+                        false
+                    };
                     let checked_js_value_merges_remote_class = any_side_is_checked_js
+                        && (!class_side_in_js || !value_side_is_block_scoped)
                         && (decl_is_local != other_is_local)
                         && (((decl_flags & symbol_flags::VARIABLE) != 0
                             && (other_flags & symbol_flags::CLASS) != 0)
