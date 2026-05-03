@@ -65,6 +65,94 @@ fn multiline_comment_before_first_call_argument_starts_on_next_line() {
 }
 
 #[test]
+fn object_literal_accessor_leading_comment_stays_before_accessor() {
+    let source = r#"var v = {
+ /**
+  * @type {number}
+  */
+ get bar(): number {
+  return 12;
+ }
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("var v = {\n    /**\n     * @type {number}\n     */\n    get bar() {"),
+        "Object literal accessor leading comment should stay before the accessor.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("get bar() {\n/**"),
+        "Object literal accessor leading comment should not move into the accessor body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_literal_property_comments_stay_around_function_value() {
+    let source = r#"var Person = makeClass(
+   {
+       /**
+        This is just another way to define a constructor.
+        @constructs
+        @param {string} name The name of the person.
+        */
+       initialize: function(name) {
+           this.name = name;
+       } /* trailing comment 1*/,
+   }
+);"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("*/\n    initialize: function (name) {"),
+        "Leading block comment should end before the property line.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("    } /* trailing comment 1*/,"),
+        "Trailing block comment before a property comma should stay before the comma.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_object_literal_method_comments_stay_on_members() {
+    let source = r#"var v = {
+ //property
+ prop: 1 /* multiple trailing comments */ /*trailing comments*/,
+ //property
+ func: function () {
+ },
+ //PropertyName + CallSignature
+ func1() { },
+ //getter
+ get a() {
+  return this.prop;
+ } /*trailing 1*/,
+ //setter
+ set a(value) {
+  this.prop = value;
+ } // trailing 2
+};"#;
+
+    let output = parse_and_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains(
+            "    //property\n    prop: 1 /* multiple trailing comments */ /*trailing comments*/,"
+        ),
+        "ES5 object literal property comments should stay on the property.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("    //PropertyName + CallSignature\n    func1: function () { },"),
+        "ES5 method-lowering should preserve method-leading comments.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("    } /*trailing 1*/,\n    //setter\n    set a(value) {"),
+        "Accessor trailing and next-member leading comments should not drift into parameters.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 
