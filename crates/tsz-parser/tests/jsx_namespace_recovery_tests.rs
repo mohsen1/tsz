@@ -191,6 +191,38 @@ fn jsx_attribute_with_leading_spread_in_initializer_reports_expression_then_iden
 }
 
 #[test]
+fn jsx_namespaced_tag_local_unicode_escape_reports_ts17021() {
+    let source = "let x = <a:\\u0062 />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let escape_pos = source.find("\\u0062").expect("unicode escape") as u32;
+
+    assert!(
+        diagnostics.iter().any(|(code, start, message)| {
+            *code == diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE
+                && *start == escape_pos
+                && message == "Unicode escape sequence cannot appear here."
+        }),
+        "expected TS17021 for unicode escape in JSX namespaced tag local name, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_namespaced_attribute_local_unicode_escape_reports_ts17021() {
+    let source = "let x = <div a:\\u0062=\"x\" />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let escape_pos = source.find("\\u0062").expect("unicode escape") as u32;
+
+    assert!(
+        diagnostics.iter().any(|(code, start, message)| {
+            *code == diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE
+                && *start == escape_pos
+                && message == "Unicode escape sequence cannot appear here."
+        }),
+        "expected TS17021 for unicode escape in JSX namespaced attribute local name, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_attribute_names_starting_with_number_or_minus_follow_tsc_recovery() {
     let source = "declare namespace JSX {\n\tinterface Element { }\n\tinterface IntrinsicElements {\n\t\ttest1: { \"data-foo\"?: string };\n\t\ttest2: { \"data-foo\"?: string };\n\t}\n}\n\n<test1 32data={32} />;\n<test2 -data={32} />;\n";
     let diagnostics = parse_diagnostics(source);
