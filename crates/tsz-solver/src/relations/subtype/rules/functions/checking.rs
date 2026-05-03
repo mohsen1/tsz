@@ -41,6 +41,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Track type param equivalences scope for cleanup at end of function.
         let equiv_start = self.type_param_equivalences.len();
 
+        // Capture and reset the callback-param-check flag at function entry so
+        // it cannot be prematurely consumed by intermediate sub-checks (return
+        // type, this/type-predicate, generic constraint checks, recursive
+        // signature comparisons) that occur before the parameter comparison
+        // below. Without this early capture, a nested call into
+        // `check_function_subtype_impl` would steal the flag and the outer
+        // signature would lose method-bivariance suppression for its callback
+        // parameters. Resetting to `false` here also matches tsc, where
+        // level-3+ recursions start fresh without the Callback bit.
+        let in_callback_param_check = self.in_callback_param_check;
+        self.in_callback_param_check = false;
+
         // Generic source vs generic target (same arity): normalize both signatures so they
         // can be compared structurally.
         //
@@ -599,14 +611,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //
         // tsc's StrictCallback/BivariantCallback override: when the immediately-
         // enclosing comparison was a callback parameter check, methods do *not*
-        // get bivariance-loosening for this signature comparison. We consume the
-        // flag here (resetting it to false for nested comparisons) so that
-        // level-3+ recursions reached through `compareTypes` start fresh — that
-        // matches tsc's `getSingleCallSignature` returning undefined inside
-        // callback mode and the next callback recursion starting via
-        // `isRelatedToWorker` without the Callback bit set.
-        let in_callback_param_check = self.in_callback_param_check;
-        self.in_callback_param_check = false;
+        // get bivariance-loosening for this signature comparison. The flag was
+        // captured and cleared at the top of this function (see above) so that
+        // nested sub-checks performed before this point cannot consume it; we
+        // read the captured local here.
         let constructor_param_bivariance = allow_constructor_bivariance
             && (source_instantiated.is_constructor || target_instantiated.is_constructor);
         let is_method = !in_callback_param_check
