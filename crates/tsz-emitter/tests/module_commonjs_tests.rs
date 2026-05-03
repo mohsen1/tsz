@@ -316,19 +316,11 @@ fn side_effect_import_emits_bare_require() {
 }
 
 #[test]
-fn empty_named_import_emits_bare_require() {
+fn empty_named_import_is_elided() {
     let nodes = parse_transform_cjs("import {} from \"./side\";");
     assert!(
-        nodes
-            .iter()
-            .any(|n| matches!(n, IRNode::Raw(s) if s == "require(\"./side\");")),
-        "empty named import should emit bare require call"
-    );
-    assert!(
-        !nodes
-            .iter()
-            .any(|n| matches!(n, IRNode::RequireStatement { .. })),
-        "empty named import should not emit intermediate module binding"
+        nodes.is_empty(),
+        "empty named import should not emit runtime IR"
     );
 }
 
