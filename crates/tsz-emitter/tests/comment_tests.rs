@@ -274,6 +274,50 @@ function f(first, .../* comment f */rest) {
 }
 
 #[test]
+fn line_comment_after_spread_token_does_not_swallow_operand() {
+    // Regression: emit_comments_after_dot_dot_dot must emit a newline after a
+    // line (`//`) comment placed between `...` and the operand, otherwise the
+    // operand is appended to the same line and becomes part of the comment.
+    let source = r#"const a = [...// comment
+    x];
+const b = [...// comment 1
+    // comment 2
+    y];
+function f(...// rest comment
+    rest) {
+    return rest;
+}
+"#;
+    let mut bindings = String::from("declare var x: any;\ndeclare var y: any;\n");
+    bindings.push_str(source);
+
+    let output = parse_and_print(&bindings);
+
+    assert!(
+        output.contains("[... // comment\n    x]"),
+        "Line comment between `...` and array spread operand must be followed by a newline.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("[... // comment 1\n    // comment 2\n    y]"),
+        "Multiple line comments between `...` and operand must each be followed by a newline.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function f(... // rest comment\n") && output.contains("rest)"),
+        "Line comment between `...` and rest parameter name must be followed by a newline so the name isn't swallowed.\nOutput:\n{output}"
+    );
+    // Direct anti-regression: the operand identifier must NOT appear on the
+    // same line as the `// ...` comment.
+    assert!(
+        !output.contains("// rest commentrest"),
+        "Rest parameter must not be glued onto a `//` comment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("// commentx") && !output.contains("// comment 2y"),
+        "Spread operand must not be glued onto a `//` comment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 
