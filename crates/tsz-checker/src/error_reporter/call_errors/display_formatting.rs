@@ -1728,7 +1728,40 @@ impl<'a> CheckerState<'a> {
             return self.format_assignability_type_for_message(widened_param_type, arg_type);
         }
 
+        // When the parameter is a union mixing a non-primitive member (e.g.
+        // `object`) with `null`/`undefined`, tsc strips the nullish members in
+        // the TS2345 target display (`object | null` → `object`). When every
+        // remaining member after stripping is a primitive (e.g.
+        // `boolean | null | undefined` → `boolean`), tsc preserves the full
+        // union — the structural rule is "strip only when the result contains
+        // at least one non-primitive member."
+        if let Some(stripped) =
+            self.strip_nullish_for_non_primitive_union_target(param_type, arg_type)
+        {
+            return self.format_type_for_assignability_message(stripped);
+        }
+
         self.format_assignability_type_for_message_preserving_nullish(param_type, arg_type)
+    }
+
+    fn strip_nullish_for_non_primitive_union_target(
+        &mut self,
+        param_type: TypeId,
+        arg_type: TypeId,
+    ) -> Option<TypeId> {
+        let stripped = self.strip_nullish_for_assignability_display(param_type, arg_type)?;
+        let stripped_members = query_common::union_members(self.ctx.types, stripped);
+        let has_non_primitive = match stripped_members {
+            Some(members) => members
+                .iter()
+                .any(|&m| !query_common::is_primitive_type(self.ctx.types, m)),
+            None => !query_common::is_primitive_type(self.ctx.types, stripped),
+        };
+        if has_non_primitive {
+            Some(stripped)
+        } else {
+            None
+        }
     }
 
     /// When the argument is a non-tuple spread (e.g. `...mixed` where

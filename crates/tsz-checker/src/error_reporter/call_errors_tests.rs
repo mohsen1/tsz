@@ -447,6 +447,56 @@ f("hello");
 }
 
 #[test]
+fn ts2345_call_parameter_display_strips_null_for_non_primitive_union() {
+    // When the target union mixes a non-primitive member (`object`) with
+    // `null`, tsc shows just the non-primitive part in the TS2345 target
+    // display. The structural rule is "strip nullish only when the remaining
+    // member set contains at least one non-primitive type."
+    let source = r#"
+declare function takes(value: object | null): void;
+takes(1);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("parameter of type 'object'"),
+        "TS2345 should strip `null` from `object | null` when target reduces to a non-primitive, got: {diag:?}"
+    );
+    assert!(
+        !diag
+            .message_text
+            .contains("parameter of type 'object | null'"),
+        "TS2345 should not preserve `object | null` in target display, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_call_parameter_display_strips_null_param_name_independent() {
+    // Locks the rule is structural — using a different parameter name produces
+    // the same target display.
+    let source = r#"
+declare function g(thing: object | null): void;
+g(false);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("parameter of type 'object'"),
+        "TS2345 should strip `null` from non-primitive union regardless of parameter name, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2345_call_argument_display_widens_literal_for_optional_parameter_target() {
     let source = r#"
 interface Item {
