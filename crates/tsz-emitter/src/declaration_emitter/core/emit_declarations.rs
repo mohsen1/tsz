@@ -70,6 +70,7 @@ impl<'a> DeclarationEmitter<'a> {
                     cache,
                     interner,
                     std::sync::Arc::clone(current_arena),
+                    self.current_file_path.clone(),
                     &self.import_name_map,
                     self.arena
                         .get(root_idx)

@@ -88,6 +88,8 @@ pub struct UsageAnalyzer<'a> {
     memoizing_types: FxHashSet<tsz_solver::TypeId>,
     /// The current file's arena (for distinguishing local vs foreign symbols)
     current_arena: Arc<NodeArena>,
+    /// Current source file path, used to resolve relative import aliases.
+    current_file_path: Option<String>,
     /// Whether the current source file is JavaScript.
     source_is_js_file: bool,
     /// Set of symbols from other modules that need imports
@@ -104,6 +106,7 @@ impl<'a> UsageAnalyzer<'a> {
         type_cache: &'a TypeCacheView,
         type_interner: &'a TypeInterner,
         current_arena: Arc<NodeArena>,
+        current_file_path: Option<String>,
         import_name_map: &'a FxHashMap<String, SymbolId>,
         source_is_js_file: bool,
     ) -> Self {
@@ -119,6 +122,7 @@ impl<'a> UsageAnalyzer<'a> {
             type_symbol_cache: FxHashMap::default(),
             memoizing_types: FxHashSet::default(),
             current_arena,
+            current_file_path,
             source_is_js_file,
             foreign_symbols: FxHashSet::default(),
             in_value_pos: false,
@@ -1196,13 +1200,10 @@ impl<'a> UsageAnalyzer<'a> {
             // Even though typeof appears in a type position, it requires the value to exist
             k if k == syntax_kind_ext::TYPE_QUERY => {
                 if let Some(type_query) = self.arena.get_type_query(type_node) {
-                    // Set in_value_pos = true for typeof expressions
-                    self.in_value_pos = true;
-                    self.analyze_entity_name(type_query.expr_name);
+                    self.analyze_type_query_entity_name(type_query.expr_name);
                     // Also track import alias dependencies so that non-exported
                     // `import =` aliases referenced via `typeof` are preserved.
                     self.analyze_local_import_equals_dependency(type_query.expr_name);
-                    self.in_value_pos = false; // Restore after
 
                     // Walk type arguments (e.g., typeof X<A, B>)
                     if let Some(ref type_args) = type_query.type_arguments {
@@ -1383,6 +1384,164 @@ impl<'a> UsageAnalyzer<'a> {
             .copied()
             .and_then(|type_id| visitor::literal_value(self.type_interner, type_id))
             .is_some()
+    }
+
+    fn analyze_type_query_entity_name(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(sym_id) = self.resolve_type_query_value_symbol(name_idx) {
+                    self.mark_symbol_used(sym_id, UsageKind::VALUE);
+                }
+            }
+            k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                if let Some(name) = self.arena.get_qualified_name(name_node) {
+                    self.analyze_type_query_entity_name(name.left);
+                    self.analyze_type_query_entity_name(name.right);
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(name_node) {
+                    self.analyze_type_query_entity_name(access.expression);
+                    self.analyze_type_query_entity_name(access.name_or_argument);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn resolve_type_query_value_symbol(&self, name_idx: NodeIndex) -> Option<SymbolId> {
+        let name_node = self.arena.get(name_idx)?;
+        let ident = self.arena.get_identifier(name_node)?;
+        if ident.escaped_text == "default" {
+            return None;
+        }
+
+        if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0)
+            && let Some(sym_id) = self.type_query_value_dependency_symbol(sym_id)
+        {
+            return Some(sym_id);
+        }
+
+        if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text)
+            && let Some(sym_id) = self.type_query_value_dependency_symbol(sym_id)
+        {
+            return Some(sym_id);
+        }
+
+        if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text)
+            && let Some(sym_id) = self.type_query_value_dependency_symbol(sym_id)
+        {
+            return Some(sym_id);
+        }
+
+        for scope in self.binder.scopes.iter() {
+            if let Some(sym_id) = scope.table.get(&ident.escaped_text)
+                && let Some(sym_id) = self.type_query_value_dependency_symbol(sym_id)
+            {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
+    fn type_query_value_dependency_symbol(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        let symbol = self.binder.symbols.get(sym_id)?;
+
+        if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) && symbol.import_module.is_some() {
+            let Some(resolved_sym_id) = self.resolve_import_alias_target_symbol(sym_id) else {
+                // If the module graph is unavailable, preserve the source import.
+                return Some(sym_id);
+            };
+            return self
+                .symbol_has_type_query_value_meaning(resolved_sym_id)
+                .then_some(sym_id);
+        }
+
+        self.symbol_has_type_query_value_meaning(sym_id)
+            .then_some(sym_id)
+    }
+
+    fn resolve_import_alias_target_symbol(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        if let Some(resolved) = self.binder.resolve_import_symbol(sym_id) {
+            return Some(resolved);
+        }
+
+        let symbol = self.binder.symbols.get(sym_id)?;
+        let module_specifier = symbol.import_module.as_deref()?;
+        let export_name = symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(symbol.escaped_name.as_str());
+
+        for module_key in self.relative_module_export_keys(module_specifier) {
+            if let Some(exports) = self.binder.module_exports.get(&module_key)
+                && let Some(target) = exports.get(export_name)
+            {
+                return Some(target);
+            }
+        }
+
+        None
+    }
+
+    fn relative_module_export_keys(&self, module_specifier: &str) -> Vec<String> {
+        if !module_specifier.starts_with('.') {
+            return vec![module_specifier.to_string()];
+        }
+
+        let Some(current_file_name) = self.current_file_path.as_deref().or_else(|| {
+            self.current_arena
+                .source_files
+                .first()
+                .map(|source_file| source_file.file_name.as_str())
+        }) else {
+            return vec![module_specifier.to_string()];
+        };
+
+        let current_dir = std::path::Path::new(current_file_name)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new(""));
+        let joined = Self::normalize_path(current_dir.join(module_specifier));
+        let mut keys = Vec::new();
+        keys.push(joined.display().to_string());
+
+        if joined.extension().is_none() {
+            for ext in [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx"] {
+                keys.push(format!("{}{}", joined.display(), ext));
+            }
+        }
+
+        keys
+    }
+
+    fn normalize_path(path: std::path::PathBuf) -> std::path::PathBuf {
+        let mut parts = Vec::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    parts.pop();
+                }
+                other => parts.push(other),
+            }
+        }
+        parts.iter().collect()
+    }
+
+    fn symbol_has_type_query_value_meaning(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if symbol.is_type_only {
+            return false;
+        }
+        symbol
+            .has_any_flags(tsz_binder::symbol_flags::VALUE | tsz_binder::symbol_flags::EXPORT_VALUE)
     }
 
     /// Analyze an entity name to extract the leftmost symbol.
@@ -1755,8 +1914,11 @@ impl<'a> UsageAnalyzer<'a> {
             }
         }
 
-        if let Some(sym_ref) = visitor::type_query_symbol(self.type_interner, type_id) {
-            Self::add_symbol_usage(usages, tsz_binder::SymbolId(sym_ref.0), UsageKind::VALUE);
+        if let Some(sym_ref) = visitor::type_query_symbol(self.type_interner, type_id)
+            && let Some(sym_id) =
+                self.type_query_value_dependency_symbol(tsz_binder::SymbolId(sym_ref.0))
+        {
+            Self::add_symbol_usage(usages, sym_id, UsageKind::VALUE);
         }
 
         if let Some(sym_ref) = visitor::unique_symbol_ref(self.type_interner, type_id) {
