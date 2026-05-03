@@ -1,11 +1,11 @@
 {
   "summary": {
     "jsTotal": 13526,
-    "jsPass": 12558,
-    "jsFail": 968,
+    "jsPass": 12559,
+    "jsFail": 967,
     "jsSkip": 1,
     "jsTimeout": 0,
-    "jsPassRate": 92.8,
+    "jsPassRate": 92.9,
     "dtsTotal": 1670,
     "dtsPass": 1379,
     "dtsFail": 291,
