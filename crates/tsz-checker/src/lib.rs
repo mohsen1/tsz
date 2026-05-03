@@ -490,6 +490,9 @@ mod ts2339_js_this_function_name_display_tests;
 #[path = "tests/ts2341_private_access_via_type_param_constraint_tests.rs"]
 mod ts2341_private_access_via_type_param_constraint_tests;
 #[cfg(test)]
+#[path = "tests/ts2565_jsdoc_prototype_type_decl_tests.rs"]
+mod ts2565_jsdoc_prototype_type_decl_tests;
+#[cfg(test)]
 #[path = "tests/ts2590_array_literal_identity_skip_tests.rs"]
 mod ts2590_array_literal_identity_skip_tests;
 #[cfg(test)]

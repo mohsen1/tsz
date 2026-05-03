@@ -941,16 +941,39 @@ impl<'a> CheckerState<'a> {
                 );
             }
             if js_expando_before_assignment {
-                use crate::diagnostics::format_message;
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    access.name_or_argument,
-                    &format_message(
-                        diagnostic_messages::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
-                        &[property_name],
-                    ),
-                    diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
-                );
+                // Suppress TS2565 when a leading JSDoc `@type` annotation
+                // declares the property's type AND the receiver is a
+                // function-as-constructor (not an ES `class`):
+                //   function C() { this.x = false; }
+                //   /** @type {number} */
+                //   C.prototype.x;
+                // tsc treats this as a typed declaration of `C.prototype.x`
+                // and skips the "used before being assigned" error so the
+                // JSDoc type can flow into downstream `this.x = ...` checks.
+                // For ES `class`-declared receivers tsc still emits TS2565
+                // (the prototype shape is the class's instance type, so
+                // late-attaching a property via prototype is genuinely
+                // "used before assigned"). Restricting to FUNCTION-flagged
+                // receivers preserves that behavior.
+                let suppress_for_jsdoc_type_decl = self.is_js_file()
+                    && self.ctx.compiler_options.check_js
+                    && self.expando_receiver_is_function_constructor(access.expression)
+                    && self
+                        .enclosing_expression_statement(idx)
+                        .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
+                        .is_some();
+                if !suppress_for_jsdoc_type_decl {
+                    use crate::diagnostics::format_message;
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        access.name_or_argument,
+                        &format_message(
+                            diagnostic_messages::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                            &[property_name],
+                        ),
+                        diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                    );
+                }
             }
             if let Some(result) = self.try_resolve_global_this_property_access(
                 idx,
