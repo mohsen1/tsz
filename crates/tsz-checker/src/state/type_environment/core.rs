@@ -1535,11 +1535,16 @@ impl<'a> CheckerState<'a> {
         // seed the cache with the class arity before the interface-side defaults are
         // merged. Recompute those through the merged declaration walk instead of
         // trusting a potentially stale cache entry.
+        //
+        // For non-lib symbols, unconstrained params with no defaults are valid final
+        // AST results, not placeholders. Keep those cached to avoid recomputing every
+        // user-defined generic access.
         let cached_params = (!prefers_type_only_decls)
             .then(|| self.ctx.def_type_params.borrow().get(&def_id).cloned())
             .flatten();
         if let Some(cached) = cached_params {
-            let cached_is_placeholder = !cached.is_empty()
+            let cached_is_placeholder = self.ctx.symbol_is_from_lib(sym_id)
+                && !cached.is_empty()
                 && cached
                     .iter()
                     .all(|param| param.constraint.is_none() && param.default.is_none());
