@@ -3,11 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const outputDir = path.resolve(process.argv[2] || "");
-if (!outputDir) {
+const outputArg = process.argv[2];
+if (!outputArg) {
   console.error("Usage: generate-next-app-fixture.mjs <output-dir>");
   process.exit(1);
 }
+const outputDir = path.resolve(outputArg);
 
 const dependencies = [
   "zod",

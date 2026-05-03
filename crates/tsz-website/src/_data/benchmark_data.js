@@ -1193,9 +1193,7 @@ function categoryBelongsToMode(category, mode) {
 
 function failedBelongsToMode(row, mode) {
   const category = categoryFor(row.name || "", row.lines);
-  if (mode === "projects") return isProjectCategory(category);
-  if (mode === "micro") return !isProjectCategory(category);
-  return true;
+  return categoryBelongsToMode(category, mode);
 }
 
 function generateCharts(data, mode = "projects") {
