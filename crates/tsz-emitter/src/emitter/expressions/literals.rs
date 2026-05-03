@@ -708,6 +708,7 @@ impl<'a> Printer<'a> {
                         te > 0 && te <= bytes.len() && bytes[te - 1] == b','
                     });
                 if needs_comma {
+                    let mut emit_pre_comma_comments_after_comma = None;
                     if let Some(comma_pos) = self.find_comma_pos_after(token_end, node.end) {
                         // Only emit pre-comma trailing comments when the comma is on
                         // the same source line as the value. Otherwise, a line comment
@@ -722,9 +723,14 @@ impl<'a> Printer<'a> {
                         });
                         if comma_same_line {
                             self.emit_trailing_comments_before(token_end, comma_pos);
+                        } else {
+                            emit_pre_comma_comments_after_comma = Some(comma_pos);
                         }
                     }
                     self.write(",");
+                    if let Some(comma_pos) = emit_pre_comma_comments_after_comma {
+                        self.emit_trailing_comments_before(token_end, comma_pos);
+                    }
                 }
 
                 // Check if next property is on the same line in source

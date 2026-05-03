@@ -112,6 +112,10 @@ fn object_literal_property_comments_stay_around_function_value() {
         output.contains("    } /* trailing comment 1*/,"),
         "Trailing block comment before a property comma should stay before the comma.\nOutput:\n{output}"
     );
+    assert!(
+        output.contains("    } /* trailing comment 1*/,\n"),
+        "Pre-comma trailing block comment should not leave a space after the comma.\nOutput:\n{output}"
+    );
 }
 
 #[test]
