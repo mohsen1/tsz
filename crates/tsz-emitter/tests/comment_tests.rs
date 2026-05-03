@@ -33,7 +33,6 @@ a(
     // bar
     /*last*/
 );"#;
-
     let output = parse_and_print(source);
 
     assert!(
@@ -149,6 +148,32 @@ fn es5_object_literal_method_comments_stay_on_members() {
     assert!(
         output.contains("    } /*trailing 1*/,\n    //setter\n    set a(value) {"),
         "Accessor trailing and next-member leading comments should not drift into parameters.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn element_access_internal_comments_stay_with_brackets() {
+    let source = r#"/*0*/ Array /*1*/[ /*2*/ "toString" /*3*/ ] /*4*/;
+
+/*0*/ Array
+    // single line
+    /*1*/[ /*2*/ "toString"
+    // single line
+    /*3*/ ] /*4*/"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains(r#"/*0*/ Array /*1*/[ /*2*/"toString" /*3*/] /*4*/;"#),
+        "Single-line element access comments should stay around brackets.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("/*0*/ Array\n// single line\n/*1*/"),
+        "Multiline comments between element access base and bracket should stay in place.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("/*2*/\"toString\"\n// single line\n/*3*/"),
+        "Multiline comments inside element access brackets should stay in place.\nOutput:\n{output}"
     );
 }
 

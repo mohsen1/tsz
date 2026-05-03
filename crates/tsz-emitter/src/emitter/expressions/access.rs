@@ -451,9 +451,207 @@ impl<'a> Printer<'a> {
         self.paren_in_access_position = true;
         self.emit(access.expression);
         self.paren_in_access_position = prev;
+        if let (Some(expr_node), Some(arg_node)) = (
+            self.arena.get(access.expression),
+            self.arena.get(access.name_or_argument),
+        ) && let Some(open_bracket_pos) =
+            self.find_element_access_open_bracket_position(expr_node, arg_node)
+        {
+            let close_bracket_pos =
+                self.find_element_access_close_bracket_position(open_bracket_pos, node);
+            self.emit_element_access_internal_comments(expr_node.end, open_bracket_pos);
+            self.write("[");
+            self.emit_element_access_internal_comments(open_bracket_pos + 1, arg_node.pos);
+            self.emit(access.name_or_argument);
+            if let Some(close_bracket_pos) = close_bracket_pos {
+                self.emit_element_access_internal_comments(arg_node.end, close_bracket_pos);
+                self.write("]");
+                if let Some(semicolon_pos) =
+                    self.find_element_access_following_semicolon(close_bracket_pos)
+                {
+                    self.emit_element_access_internal_comments(
+                        close_bracket_pos + 1,
+                        semicolon_pos,
+                    );
+                }
+            } else {
+                self.write("]");
+            }
+            return;
+        }
         self.write("[");
         self.emit(access.name_or_argument);
         self.write("]");
+    }
+
+    fn find_element_access_open_bracket_position(
+        &self,
+        expr_node: &Node,
+        arg_node: &Node,
+    ) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = std::cmp::min(expr_node.end as usize, bytes.len());
+        let end = std::cmp::min(arg_node.pos as usize, bytes.len());
+        (start..end)
+            .position(|i| bytes[i] == b'[')
+            .map(|offset| (start + offset) as u32)
+    }
+
+    fn find_element_access_close_bracket_position(
+        &self,
+        open_bracket_pos: u32,
+        node: &Node,
+    ) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut pos = std::cmp::min(open_bracket_pos as usize, bytes.len());
+        let end = std::cmp::min(node.end as usize, bytes.len());
+        let mut depth = 0i32;
+
+        while pos < end {
+            match bytes[pos] {
+                b'[' => {
+                    depth += 1;
+                    pos += 1;
+                }
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(pos as u32);
+                    }
+                    pos += 1;
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < end {
+                        if bytes[pos] == b'\\' {
+                            pos += 2;
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < end && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < end {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+
+        None
+    }
+
+    fn find_element_access_following_semicolon(&self, close_bracket_pos: u32) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut pos = std::cmp::min(close_bracket_pos as usize + 1, bytes.len());
+
+        while pos < bytes.len() {
+            match bytes[pos] {
+                b';' => return Some(pos as u32),
+                b'/' if pos + 1 < bytes.len() && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < bytes.len() {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                b' ' | b'\t' => pos += 1,
+                _ => return None,
+            }
+        }
+
+        None
+    }
+
+    fn emit_element_access_internal_comments(&mut self, from_pos: u32, to_pos: u32) -> bool {
+        if self.ctx.options.remove_comments || from_pos >= to_pos {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let bytes = text.as_bytes();
+        let mut scan_idx = self.comment_emit_idx;
+        let mut previous_pos = from_pos;
+        let mut previous_comment_had_trailing_newline = false;
+        let mut emitted_any = false;
+
+        while scan_idx < self.all_comments.len() {
+            let comment_pos = self.all_comments[scan_idx].pos;
+            let comment_end = self.all_comments[scan_idx].end;
+            let has_trailing_new_line = self.all_comments[scan_idx].has_trailing_new_line;
+            if comment_end <= from_pos {
+                scan_idx += 1;
+                continue;
+            }
+            if comment_pos >= to_pos {
+                break;
+            }
+            if comment_pos < from_pos || comment_end > to_pos {
+                scan_idx += 1;
+                continue;
+            }
+
+            if previous_comment_had_trailing_newline {
+                // The previous comment already moved to the next output line.
+            } else if self.element_access_range_contains_newline(previous_pos, comment_pos, bytes) {
+                self.write_line();
+            } else {
+                self.write_space();
+            }
+
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+                emitted_any = true;
+                if has_trailing_new_line {
+                    self.write_line();
+                }
+            }
+
+            previous_pos = comment_end;
+            previous_comment_had_trailing_newline = has_trailing_new_line;
+            self.comment_emit_idx = scan_idx + 1;
+            scan_idx += 1;
+        }
+
+        emitted_any
+    }
+
+    fn element_access_range_contains_newline(
+        &self,
+        from_pos: u32,
+        to_pos: u32,
+        bytes: &[u8],
+    ) -> bool {
+        let start = std::cmp::min(from_pos as usize, bytes.len());
+        let end = std::cmp::min(to_pos as usize, bytes.len());
+        bytes[start..end].iter().any(|&b| b == b'\n' || b == b'\r')
     }
 
     fn emit_parenthesized_object_literal_access<F>(
