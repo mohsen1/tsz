@@ -12,6 +12,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
+use super::lib_name_text::{entity_name_text_from_decl_arenas, entity_name_text_in_arena};
 use super::lib_scoped_heritage::LibHeritageBase;
 
 /// Index from identifier text to `(file_idx, SymbolId)` entries in `file_locals`.
@@ -133,35 +134,6 @@ pub(crate) fn dedup_decl_arenas<'a>(
     out
 }
 
-fn entity_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-    let node = arena.get(idx)?;
-
-    if node.kind == SyntaxKind::Identifier as u16 {
-        return arena
-            .get_identifier(node)
-            .map(|ident| ident.escaped_text.clone());
-    }
-
-    if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-        let qn = arena.get_qualified_name(node)?;
-        let left = entity_name_text_in_arena(arena, qn.left)?;
-        let right = entity_name_text_in_arena(arena, qn.right)?;
-        return Some(format!("{left}.{right}"));
-    }
-
-    if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        && let Some(access) = arena.get_access_expr(node)
-    {
-        let left = entity_name_text_in_arena(arena, access.expression)?;
-        let right = arena
-            .get(access.name_or_argument)
-            .and_then(|right_node| arena.get_identifier(right_node))?;
-        return Some(format!("{left}.{}", right.escaped_text));
-    }
-
-    None
-}
-
 /// Resolve a `NodeIndex` directly to a `DefId` via the merged binder.
 ///
 /// This is the stable one-step helper for lib lowering: it combines
@@ -192,8 +164,16 @@ pub(crate) fn lib_def_id_from_node_in_lib_contexts(
     fallback_arena: &NodeArena,
     lib_contexts: &[crate::context::LibContext],
 ) -> Option<tsz_solver::DefId> {
-    resolve_lib_node_in_lib_contexts(node_idx, decl_arenas, fallback_arena, lib_contexts)
-        .map(|sym_id| ctx.get_lib_def_id(sym_id))
+    let sym_id =
+        resolve_lib_node_in_lib_contexts(node_idx, decl_arenas, fallback_arena, lib_contexts)?;
+    let name = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena)?;
+    let expected_name = name
+        .strip_prefix("globalThis.")
+        .unwrap_or(&name)
+        .rsplit('.')
+        .next()
+        .unwrap_or(&name);
+    Some(ctx.get_canonical_lib_def_id(expected_name, sym_id))
 }
 
 /// Resolve a `NodeIndex` directly to a `DefId` via the augmentation resolution
@@ -213,15 +193,25 @@ pub(crate) fn augmentation_def_id_from_node(
     all_binders: Option<&[std::sync::Arc<tsz_binder::BinderState>]>,
     lib_contexts: &[crate::context::LibContext],
 ) -> Option<tsz_solver::DefId> {
-    resolve_augmentation_node(
+    let sym_id = resolve_augmentation_node(
         binder,
         arena,
         node_idx,
         global_file_locals_index,
         all_binders,
         lib_contexts,
-    )
-    .map(|sym_id| ctx.get_lib_def_id(sym_id))
+    )?;
+    if let Some(name) = entity_name_text_in_arena(arena, node_idx) {
+        let expected_name = name
+            .strip_prefix("globalThis.")
+            .unwrap_or(&name)
+            .rsplit('.')
+            .next()
+            .unwrap_or(&name);
+        Some(ctx.get_or_create_def_id_for_symbol_name(sym_id, expected_name))
+    } else {
+        Some(ctx.get_lib_def_id(sym_id))
+    }
 }
 
 /// Resolve a lib node through node bindings, lexical scopes, and file-level symbols.

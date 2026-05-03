@@ -1281,8 +1281,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
-        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
-        let resolved = if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+        let (sym_id, owner_file_idx) = self.ctx.def_symbol_identity(def_id)?;
+        if let Some(file_idx) = owner_file_idx
+            && file_idx != self.ctx.current_file_idx
+        {
+            self.ctx.register_symbol_file_target(sym_id, file_idx);
+        }
+        let resolved = if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
             if symbol.has_any_flags(symbol_flags::CLASS) {
                 // Keep class references in type position as instance types to avoid
                 // constructor/instance split diagnostics (e.g. `Type 'Dataset' is not
@@ -1468,7 +1473,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<(bool, TypeId)> {
-        if let Some(original_sym_id) = self.ctx.def_to_symbol_id(def_id) {
+        if let Some((original_sym_id, owner_file_idx)) = self.ctx.def_symbol_identity(def_id) {
+            if let Some(file_idx) = owner_file_idx
+                && file_idx != self.ctx.current_file_idx
+            {
+                self.ctx
+                    .register_symbol_file_target(original_sym_id, file_idx);
+            }
             // For CLASS symbols, prefer the instance type over the constructor
             // type returned by get_type_of_symbol.  During class construction
             // (Phase 2 of get_class_instance_type_inner), symbol_instance_types
@@ -1485,7 +1496,7 @@ impl<'a> CheckerState<'a> {
             let (sym_id, symbol, was_alias_resolved) = {
                 let alias_target = self.ctx.resolve_import_alias_and_register(original_sym_id);
                 if let Some(target) = alias_target {
-                    let target_sym = self.get_symbol_globally(target);
+                    let target_sym = self.get_cross_file_symbol(target);
                     let is_class_target = target_sym
                         .is_some_and(|s| s.has_any_flags(tsz_binder::symbol_flags::CLASS));
                     if is_class_target {
@@ -1493,14 +1504,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         (
                             original_sym_id,
-                            self.get_symbol_globally(original_sym_id),
+                            self.get_cross_file_symbol(original_sym_id),
                             false,
                         )
                     }
                 } else {
                     (
                         original_sym_id,
-                        self.get_symbol_globally(original_sym_id),
+                        self.get_cross_file_symbol(original_sym_id),
                         false,
                     )
                 }
@@ -1565,7 +1576,12 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<(bool, TypeId)> {
-        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+        if let Some((sym_id, owner_file_idx)) = self.ctx.def_symbol_identity(def_id) {
+            if let Some(file_idx) = owner_file_idx
+                && file_idx != self.ctx.current_file_idx
+            {
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+            }
             let resolved = self.type_reference_symbol_type(sym_id);
             let inserted = self.insert_type_env_symbol(sym_id, resolved);
             Some((inserted, resolved))

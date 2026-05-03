@@ -5,11 +5,12 @@
 //! (promise detection, comparability, contextual type parameter extraction).
 
 use crate::TypeDatabase;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::type_queries::{
-    StringLiteralKeyKind, classify_for_string_literal_keys, get_string_literal_value,
-    get_union_members, is_invokable_type,
+    StringLiteralKeyKind, classify_for_string_literal_keys, get_array_element_type,
+    get_callable_shape_for_type, get_string_literal_value, get_union_members, is_invokable_type,
 };
-use crate::types::{TypeData, TypeId};
+use crate::types::{CallSignature, ParamInfo, TypeData, TypeId};
 use tsz_common::Atom;
 
 // =============================================================================
@@ -849,9 +850,150 @@ fn types_are_comparable_for_assertion_inner(
         return types_are_comparable_for_assertion_inner(db, constraint, target, depth + 1);
     }
 
+    if callable_signatures_overlap_for_assertion(db, source, target, depth) {
+        return true;
+    }
+
     // For type assertions, only check that overlapping properties are comparable.
     // Do NOT require all target properties to exist in the source.
     types_have_common_properties_relaxed(db, source, target, depth)
+}
+
+fn callable_signatures_overlap_for_assertion(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+    depth: u32,
+) -> bool {
+    if !is_direct_callable_for_assertion(db, source)
+        || !is_direct_callable_for_assertion(db, target)
+    {
+        return false;
+    }
+
+    let Some(source_shape) = get_callable_shape_for_type(db, source) else {
+        return false;
+    };
+    let Some(target_shape) = get_callable_shape_for_type(db, target) else {
+        return false;
+    };
+
+    source_shape.call_signatures.iter().any(|source_sig| {
+        target_shape.call_signatures.iter().any(|target_sig| {
+            assertion_signatures_are_comparable(db, source_sig, target_sig, depth)
+        })
+    }) || source_shape.construct_signatures.iter().any(|source_sig| {
+        target_shape.construct_signatures.iter().any(|target_sig| {
+            assertion_signatures_are_comparable(db, source_sig, target_sig, depth)
+        })
+    })
+}
+
+fn is_direct_callable_for_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::Function(_) | TypeData::Callable(_))
+    )
+}
+
+fn assertion_signatures_are_comparable(
+    db: &dyn TypeDatabase,
+    source: &CallSignature,
+    target: &CallSignature,
+    depth: u32,
+) -> bool {
+    let (source_params, source_return) = erase_signature_for_assertion(db, source);
+    let (target_params, target_return) = erase_signature_for_assertion(db, target);
+    let min_params = source_params.len().min(target_params.len());
+
+    for i in 0..min_params {
+        let source_type = comparable_param_type(db, &source_params[i]);
+        let target_type = comparable_param_type(db, &target_params[i]);
+        if !signature_param_types_are_comparable_for_assertion(db, source_type, target_type, depth)
+        {
+            return false;
+        }
+    }
+
+    types_are_comparable_for_assertion_inner(db, source_return, target_return, depth + 1)
+}
+
+fn signature_param_types_are_comparable_for_assertion(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+    depth: u32,
+) -> bool {
+    if let (Some(source_members), Some(target_members)) = (
+        nullable_callable_union_members(db, source),
+        nullable_callable_union_members(db, target),
+    ) {
+        return source_members.iter().any(|&source_member| {
+            target_members.iter().any(|&target_member| {
+                types_are_comparable_for_assertion_inner(
+                    db,
+                    source_member,
+                    target_member,
+                    depth + 1,
+                )
+            })
+        });
+    }
+
+    types_are_comparable_for_assertion_inner(db, source, target, depth + 1)
+}
+
+fn nullable_callable_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    let members = get_union_members(db, type_id)?;
+    let has_nullable = members.iter().any(|member| member.is_nullable());
+    if !has_nullable {
+        return None;
+    }
+
+    let callable_members: Vec<TypeId> = members
+        .into_iter()
+        .filter(|&member| is_direct_callable_for_assertion(db, member))
+        .collect();
+    if callable_members.is_empty() {
+        None
+    } else {
+        Some(callable_members)
+    }
+}
+
+fn erase_signature_for_assertion(
+    db: &dyn TypeDatabase,
+    sig: &CallSignature,
+) -> (Vec<ParamInfo>, TypeId) {
+    if sig.type_params.is_empty() {
+        return (sig.params.clone(), sig.return_type);
+    }
+
+    let mut substitution = TypeSubstitution::new();
+    for param in &sig.type_params {
+        substitution.insert(param.name, TypeId::ANY);
+    }
+
+    let params = sig
+        .params
+        .iter()
+        .map(|param| ParamInfo {
+            name: param.name,
+            type_id: instantiate_type(db, param.type_id, &substitution),
+            optional: param.optional,
+            rest: param.rest,
+        })
+        .collect();
+    let return_type = instantiate_type(db, sig.return_type, &substitution);
+    (params, return_type)
+}
+
+fn comparable_param_type(db: &dyn TypeDatabase, param: &ParamInfo) -> TypeId {
+    if param.rest {
+        get_array_element_type(db, param.type_id).unwrap_or(param.type_id)
+    } else {
+        param.type_id
+    }
 }
 
 /// Returns true when `type_id` represents an "object-like" type for the

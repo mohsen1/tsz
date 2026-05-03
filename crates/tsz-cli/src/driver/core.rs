@@ -1798,13 +1798,12 @@ fn normalize_ts2883_diagnostics_in_place(
     for diagnostic in diagnostics.drain(..) {
         let mut diagnostic = diagnostic;
         let mut was_canonicalized = false;
-        if diagnostic.code == 2883 {
-            if let Some(message) =
+        if diagnostic.code == 2883
+            && let Some(message) =
                 canonical_ts2883_named_reference_message(&diagnostic.message_text)
-            {
-                diagnostic.message_text = message;
-                was_canonicalized = true;
-            }
+        {
+            diagnostic.message_text = message;
+            was_canonicalized = true;
         }
         let exact_key = (
             diagnostic.code,

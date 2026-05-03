@@ -1052,7 +1052,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Used to prefer structural matches over naked type params when constraining
     /// against union targets with multiple placeholder members.
     pub(super) fn types_share_outer_structure_for_constraint(
-        &self,
+        &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
@@ -1068,6 +1068,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
         let source = unwrap_readonly(source);
         let target = unwrap_readonly(target);
+
+        if self.checker.promise_like_type_argument(source).is_some()
+            && self.checker.promise_like_type_argument(target).is_some()
+        {
+            return true;
+        }
+
+        if self.type_has_own_then_property_for_constraint(source)
+            && self.type_has_own_then_property_for_constraint(target)
+        {
+            return true;
+        }
 
         let (Some(s_key), Some(t_key)) =
             (self.interner.lookup(source), self.interner.lookup(target))
@@ -1086,6 +1098,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | (TypeData::Function(_), TypeData::Function(_))
             | (TypeData::Tuple(_), TypeData::Tuple(_))
             | (TypeData::Array(_), TypeData::Array(_)) => true,
+            _ => false,
+        }
+    }
+
+    fn type_has_own_then_property_for_constraint(&mut self, type_id: TypeId) -> bool {
+        if self.object_type_has_own_then_property_for_constraint(type_id) {
+            return true;
+        }
+        let evaluated = self.checker.evaluate_type(type_id);
+        evaluated != type_id && self.object_type_has_own_then_property_for_constraint(evaluated)
+    }
+
+    fn object_type_has_own_then_property_for_constraint(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => matches!(
+                self.interner
+                    .object_property_index(shape_id, self.interner.intern_string("then")),
+                crate::types::PropertyLookup::Found(_)
+            ),
             _ => false,
         }
     }

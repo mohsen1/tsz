@@ -1720,6 +1720,31 @@ const f: (s: number) => string = make((x) => x.toUpperCase());
 }
 
 #[test]
+fn direct_callback_body_property_error_on_outer_type_param_is_retained() {
+    let source = r#"
+namespace ns {
+    export function funkyFor<T, U>(array: T[], callback: (element: T, index: number) => U): U {
+        return callback(array[0], 0);
+    }
+}
+
+function reversed<T>(array: T[]) {
+    return ns.funkyFor(array, t => t.toString());
+}
+"#;
+    let diagnostics = check_default(source);
+    let ts2339: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        !ts2339.is_empty(),
+        "Expected TS2339 for toString on unconstrained outer T, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_parenthesized_conditional_callbacks_preserve_contextual_typing() {
     let source = r#"
 type FuncType = (x: <T>(p: T) => T) => typeof x;

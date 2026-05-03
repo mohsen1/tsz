@@ -131,6 +131,19 @@ fn jsx_ignored_data_attribute_keeps_real_type_in_missing_prop_display() {
 }
 
 #[test]
+fn jsx_component_type_missing_prop_display_uses_props_type_arg() {
+    let diagnostics = check_jsx_strict(
+        r#"declare namespace JSX { interface Element {} interface ElementClass { render(): any; } interface ElementAttributesProperty { props: {}; } } type Readonly<T> = { readonly [P in keyof T]: T[P]; }; declare namespace React { interface Component<P> { props: Readonly<P>; render(): JSX.Element; } interface ComponentClass<P = {}> { new(props: P, context?: any): Component<P>; } interface FunctionComponent<P = {}> { (props: P, context?: any): JSX.Element | null; } type ComponentType<P = {}> = ComponentClass<P> | FunctionComponent<P>; } declare const Elem: React.ComponentType<{ someKey: string }>; const bad = <Elem />;"#,
+    );
+    let msg = &diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741 for missing required prop")
+        .message_text;
+    assert!(msg.contains("required in type '{ someKey: string; }'") && !msg.contains("Readonly"));
+}
+
+#[test]
 fn jsx_key_error_in_parenthesized_callback_body_is_not_dropped() {
     let diagnostics = check_jsx(
         r#"

@@ -12,9 +12,9 @@
 
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries;
-use crate::types::TypeId;
 #[cfg(test)]
 use crate::types::*;
+use crate::types::{TypeData, TypeId};
 use crate::{TypeDatabase, TypeSubstitution, instantiate_type};
 use std::cell::RefCell;
 
@@ -127,25 +127,40 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
             return ApplicationResult::NotApplication(type_id);
         };
 
-        // Get DefId from Lazy type instead of SymbolRef
-        let Some(def_id) = type_queries::get_lazy_def_id(self.interner, base) else {
-            return ApplicationResult::NotApplication(type_id);
-        };
-
-        // Resolve the DefId to get its body type
-        let Some(body_type) = self.resolver.resolve_lazy(def_id, self.interner) else {
-            return ApplicationResult::ResolutionFailed(type_id);
-        };
+        let (body_type, type_params) =
+            if let Some(def_id) = type_queries::get_lazy_def_id(self.interner, base) {
+                let Some(body_type) = self.resolver.resolve_lazy(def_id, self.interner) else {
+                    return ApplicationResult::ResolutionFailed(type_id);
+                };
+                let type_params = self
+                    .resolver
+                    .get_lazy_type_params(def_id)
+                    .unwrap_or_default();
+                (body_type, type_params)
+            } else if let Some(TypeData::TypeQuery(symbol_ref)) = self.interner.lookup(base) {
+                let Some(body_type) = self.resolver.resolve_symbol_ref(symbol_ref, self.interner)
+                else {
+                    return ApplicationResult::ResolutionFailed(type_id);
+                };
+                let symbol_params = self.resolver.get_type_params(symbol_ref);
+                let lazy_params = self
+                    .resolver
+                    .symbol_to_def_id(symbol_ref)
+                    .and_then(|def_id| self.resolver.get_lazy_type_params(def_id));
+                let type_params = match (symbol_params, lazy_params) {
+                    (Some(symbol), Some(lazy)) if lazy.len() > symbol.len() => lazy,
+                    (Some(symbol), _) => symbol,
+                    (_, Some(lazy)) => lazy,
+                    _ => Vec::new(),
+                };
+                (body_type, type_params)
+            } else {
+                return ApplicationResult::NotApplication(type_id);
+            };
 
         if body_type == TypeId::ANY || body_type == TypeId::ERROR {
             return ApplicationResult::Resolved(type_id);
         }
-
-        // Get type parameters for this DefId
-        let type_params = self
-            .resolver
-            .get_lazy_type_params(def_id)
-            .unwrap_or_default();
 
         if type_params.is_empty() {
             return ApplicationResult::Resolved(body_type);
