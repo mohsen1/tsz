@@ -324,6 +324,15 @@ pub(crate) fn should_report_own_member_type_mismatch(
     if checker.is_assignable_to_no_erase_generics(source, target) {
         return false;
     }
+    // Fallback: when the strict no-erase-generics relation rejects but the
+    // standard assignable-to relation accepts, the rejection is generic-arity
+    // bookkeeping rather than a real mismatch (e.g. `IteratorResult<T, any>`
+    // source vs `IteratorResult<T, void>` target — `any` is a universal sink
+    // for the standard relation but the strict path keeps the args nominally
+    // distinct). tsc does not emit TS2416 here.
+    if checker.is_assignable_to(source, target) {
+        return false;
+    }
     if source_this_parameter_is_acceptable_for_target_without_this(checker, source, target) {
         return false;
     }
