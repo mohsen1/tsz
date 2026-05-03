@@ -820,6 +820,32 @@ impl ParserState {
         }
     }
 
+    /// Emit TS1275 "'accessor' modifier can only appear on a property declaration."
+    /// at the position of the `accessor` modifier in the given modifier list.
+    /// Used when a class member with an `accessor` modifier turns out to be a
+    /// constructor, method, getter, or setter rather than a property declaration.
+    pub(crate) fn emit_accessor_modifier_only_on_property_error(
+        &mut self,
+        modifiers: &Option<NodeList>,
+    ) {
+        if let Some(mods) = modifiers {
+            for &idx in &mods.nodes {
+                if let Some(node) = self.arena.get(idx)
+                    && node.kind == SyntaxKind::AccessorKeyword as u16
+                {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at(
+                        node.pos,
+                        node.end - node.pos,
+                        "'accessor' modifier can only appear on a property declaration.",
+                        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
     /// Parse set accessor with modifiers: static set foo(value) { }
     pub(crate) fn parse_set_accessor_with_modifiers(
         &mut self,
@@ -1198,6 +1224,15 @@ impl ParserState {
             })
         });
 
+        let has_accessor_modifier = modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                self.arena
+                    .nodes
+                    .get(idx.0 as usize)
+                    .is_some_and(|node| node.kind == SyntaxKind::AccessorKeyword as u16)
+            })
+        });
+
         if self.is_token(SyntaxKind::ConstructorKeyword) && !has_var_let_modifier {
             // TS1206: Decorators are not valid on constructors
             if has_decorators {
@@ -1237,6 +1272,11 @@ impl ParserState {
                 );
             }
 
+            // TS1275: 'accessor' modifier can only appear on a property declaration.
+            if has_accessor_modifier {
+                self.emit_accessor_modifier_only_on_property_error(&modifiers);
+            }
+
             return self.parse_constructor_with_modifiers(modifiers);
         }
 
@@ -1249,6 +1289,10 @@ impl ParserState {
             // TS1031: 'declare' modifier cannot appear on class elements of this kind
             if has_declare_modifier {
                 self.emit_declare_on_non_property_error(&modifiers);
+            }
+            // TS1275: 'accessor' modifier can only appear on a property declaration.
+            if has_accessor_modifier {
+                self.emit_accessor_modifier_only_on_property_error(&modifiers);
             }
             let saved_member_flags = self.context_flags;
             self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
@@ -1263,6 +1307,10 @@ impl ParserState {
             // TS1031: 'declare' modifier cannot appear on class elements of this kind
             if has_declare_modifier {
                 self.emit_declare_on_non_property_error(&modifiers);
+            }
+            // TS1275: 'accessor' modifier can only appear on a property declaration.
+            if has_accessor_modifier {
+                self.emit_accessor_modifier_only_on_property_error(&modifiers);
             }
             let saved_member_flags = self.context_flags;
             self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
@@ -1525,12 +1573,25 @@ impl ParserState {
         }
 
         // Parse optional ? or ! after property name
+        let question_token_pos = self.token_pos();
+        let question_token_end = self.token_end();
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
         let exclamation_token = if question_token {
             false
         } else {
             self.parse_optional(SyntaxKind::ExclamationToken)
         };
+
+        // TS1276: An 'accessor' property cannot be declared optional.
+        // tsc anchors at the `?` token via grammarErrorOnNode(node.questionToken).
+        if question_token && has_accessor_modifier {
+            self.parse_error_at(
+                question_token_pos,
+                question_token_end - question_token_pos,
+                "An 'accessor' property cannot be declared optional.",
+                diagnostic_codes::AN_ACCESSOR_PROPERTY_CANNOT_BE_DECLARED_OPTIONAL,
+            );
+        }
 
         // TS1436: Decorator after property name (e.g., `private prop @decorator`).
         // Detect `@` after the member name where `:`, `=`, `;`, `(`, or `<` is expected.
@@ -1569,6 +1630,10 @@ impl ParserState {
             // (methods cannot be declared, only properties can)
             if has_declare_modifier {
                 self.emit_declare_on_non_property_error(&modifiers);
+            }
+            // TS1275: 'accessor' modifier can only appear on a property declaration.
+            if has_accessor_modifier {
+                self.emit_accessor_modifier_only_on_property_error(&modifiers);
             }
 
             // Parse optional type parameters: foo<T, U>()
