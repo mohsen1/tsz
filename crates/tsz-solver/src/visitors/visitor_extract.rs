@@ -461,14 +461,28 @@ pub fn is_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Check whether this is an explicit error type.
 ///
 /// Returns true for `TypeId::ERROR` (fast-path), `TypeData::Error`, or
-/// display-preserving unresolved type names.
+/// display-preserving unresolved type names, including applications whose base
+/// is an unresolved type name.
 pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::ERROR
-        || extract_type_data(types, type_id, |key| match key {
-            TypeData::Error | TypeData::UnresolvedTypeName(_) => Some(true),
-            _ => None,
-        })
-        .unwrap_or(false)
+    let mut current = type_id;
+    let mut seen = FxHashSet::default();
+
+    loop {
+        if current == TypeId::ERROR {
+            return true;
+        }
+        if !seen.insert(current) {
+            return false;
+        }
+
+        match types.lookup(current) {
+            Some(TypeData::Error | TypeData::UnresolvedTypeName(_)) => return true,
+            Some(TypeData::Application(app_id)) => {
+                current = types.type_application(app_id).base;
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// Extract the function shape id if this is a function type.

@@ -1064,7 +1064,16 @@ impl<'a> TypeInstantiator<'a> {
                         }
                         return self.interner.union(results);
                     }
-                    if let Some(TypeData::Union(members)) = self.interner.lookup(substituted) {
+                    let distribution_source = match self.interner.lookup(substituted) {
+                        Some(TypeData::Union(_)) => substituted,
+                        _ => crate::evaluation::evaluate::evaluate_type(
+                            self.interner,
+                            substituted,
+                        ),
+                    };
+                    if let Some(TypeData::Union(members)) =
+                        self.interner.lookup(distribution_source)
+                    {
                         let members = self.interner.type_list(members);
                         // Limit distribution to prevent OOM with large unions
                         // (e.g., string literal unions with thousands of members)
