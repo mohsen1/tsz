@@ -318,6 +318,10 @@ name = "speculation_rollback_tests"
 path = "tests/speculation_rollback_tests.rs"
 
 [[test]]
+name = "equality_narrow_unknown_to_const_intrinsic_tests"
+path = "tests/equality_narrow_unknown_to_const_intrinsic_tests.rs"
+
+[[test]]
 name = "flow_observation_boundary_tests"
 path = "tests/flow_observation_boundary_tests.rs"
 
