@@ -647,6 +647,7 @@ impl<'a> Printer<'a> {
                         {
                             self.pending_commonjs_class_export_name =
                                 Some(ident.escaped_text.clone());
+                            self.pending_commonjs_class_export_node = Some(idx);
                         }
                         let prev_module = self.ctx.options.module;
                         let prev_original = self.ctx.original_module_kind;
@@ -660,6 +661,7 @@ impl<'a> Printer<'a> {
                         // static blocks/fields, so emit_class_es6_with_options was not
                         // reached, or the class was ambient), emit it now as a fallback.
                         if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+                            self.pending_commonjs_class_export_node = None;
                             if !self.writer.is_at_line_start() {
                                 self.write_line();
                             }
@@ -1468,6 +1470,7 @@ impl<'a> Printer<'a> {
                         && let Some(ident) = self.arena.identifiers.get(*name_id as usize)
                     {
                         self.pending_commonjs_class_export_name = Some(ident.escaped_text.clone());
+                        self.pending_commonjs_class_export_node = Some(idx);
                     }
                     let prev_module = self.ctx.options.module;
                     let prev_original = self.ctx.original_module_kind;
@@ -1482,6 +1485,7 @@ impl<'a> Printer<'a> {
                     self.ctx.options.module = prev_module;
                     self.ctx.original_module_kind = prev_original;
                     if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+                        self.pending_commonjs_class_export_node = None;
                         if !self.writer.is_at_line_start() {
                             self.write_line();
                         }

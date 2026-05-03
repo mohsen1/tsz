@@ -27,7 +27,7 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_class_es6_with_options(
         &mut self,
         node: &Node,
-        _idx: NodeIndex,
+        idx: NodeIndex,
         suppress_modifiers: bool,
         assignment_prefix: Option<(&str, String)>,
         static_initializer_self_alias: Option<&str>,
@@ -46,7 +46,7 @@ impl<'a> Printer<'a> {
                     // from the parent VariableDeclaration node. This is needed for
                     // private field WeakMap naming (e.g., `_C_field`).
                     if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
-                        self.resolve_class_expr_binding_name(_idx)
+                        self.resolve_class_expr_binding_name(idx)
                     } else {
                         None
                     }
@@ -262,17 +262,17 @@ impl<'a> Printer<'a> {
         let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
             && self.ctx.options.target != ScriptTarget::ESNext;
         let private_fields: Vec<PrivateFieldInfo> = if needs_private_field_lowering {
-            collect_private_fields(self.arena, _idx, &class_name)
+            collect_private_fields(self.arena, idx, &class_name)
         } else {
             Vec::new()
         };
         let private_methods: Vec<PrivateMethodInfo> = if needs_private_field_lowering {
-            collect_private_methods(self.arena, _idx, &class_name)
+            collect_private_methods(self.arena, idx, &class_name)
         } else {
             Vec::new()
         };
         let private_accessors: Vec<PrivateAccessorInfo> = if needs_private_field_lowering {
-            collect_private_accessors(self.arena, _idx, &class_name)
+            collect_private_accessors(self.arena, idx, &class_name)
         } else {
             Vec::new()
         };
@@ -578,7 +578,7 @@ impl<'a> Printer<'a> {
         let class_expr_comma_needs_parens = needs_any_comma_expr
             && self
                 .arena
-                .get_extended(_idx)
+                .get_extended(idx)
                 .and_then(|ext| self.arena.get(ext.parent))
                 .is_none_or(|parent| {
                     parent.kind != syntax_kind_ext::RETURN_STATEMENT
@@ -1827,7 +1827,13 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+        let should_emit_commonjs_class_export = self
+            .pending_commonjs_class_export_node
+            .is_none_or(|pending_idx| pending_idx == idx);
+        if should_emit_commonjs_class_export
+            && let Some(class_name) = self.pending_commonjs_class_export_name.take()
+        {
+            self.pending_commonjs_class_export_node = None;
             self.write_line();
             self.write("exports.");
             self.write(&class_name);

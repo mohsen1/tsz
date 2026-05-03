@@ -429,6 +429,7 @@ impl<'a> Printer<'a> {
                         // Keep named class export assignment immediately after the class
                         // declaration and before lowered static blocks/IIFEs.
                         self.pending_commonjs_class_export_name = Some(name);
+                        self.pending_commonjs_class_export_node = Some(export.export_clause);
                         named_export_emitted_with_class = true;
                     }
 
@@ -445,6 +446,7 @@ impl<'a> Printer<'a> {
                             // exports.X = X; — the decorator assignment path handles the
                             // pre-assignment itself via emit_commonjs_pre_assignment=true.
                             self.pending_commonjs_class_export_name = None;
+                            self.pending_commonjs_class_export_node = None;
                             if self.ctx.target_es5 {
                                 // Check for member decorators too
                                 let has_member_decorators =

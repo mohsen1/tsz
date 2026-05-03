@@ -378,6 +378,9 @@ pub struct Printer<'a> {
     /// For CommonJS class exports, emit `exports.X = X;` immediately after class
     /// declaration and before post-class lowered statements (static fields/blocks).
     pub(crate) pending_commonjs_class_export_name: Option<String>,
+    /// Class node that owns `pending_commonjs_class_export_name`; nested classes
+    /// emitted from heritage expressions must not consume the outer export.
+    pub(crate) pending_commonjs_class_export_node: Option<NodeIndex>,
 
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(crate) declared_namespace_names: FxHashSet<String>,
@@ -842,6 +845,7 @@ impl<'a> Printer<'a> {
             pending_cjs_namespace_export_fold: false,
             suppress_default_export_merge_iife: false,
             pending_commonjs_class_export_name: None,
+            pending_commonjs_class_export_node: None,
             declared_namespace_names: FxHashSet::default(),
             namespace_iife_param_counter: FxHashMap::default(),
             namespace_prior_exports: FxHashMap::default(),
