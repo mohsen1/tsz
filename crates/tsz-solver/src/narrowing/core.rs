@@ -1942,6 +1942,9 @@ impl<'a> NarrowingContext<'a> {
                     // Equality: narrow to the literal type
                     self.narrow_to_type(source_type, *literal_type)
                 } else {
+                    if !crate::type_queries::is_unit_type(self.db, *literal_type) {
+                        return source_type;
+                    }
                     // Inequality: exclude the literal type — resolve Lazy types first
                     let resolved = self.resolve_for_exclusion_narrowing(source_type);
                     self.narrow_excluding_type(resolved, *literal_type)

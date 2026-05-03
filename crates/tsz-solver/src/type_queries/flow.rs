@@ -497,8 +497,8 @@ pub fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 /// Primitive intrinsics participate in equality narrowing of `unknown` /
 /// `any` sources: tsc treats `if (u === aString)` (where `aString: string`)
 /// as a guard that narrows `u: unknown` to `string`. For non-unknown / non-
-/// `any` sources, `narrow_to_type` reduces the source's union members to the
-/// matching primitive, which is the same behaviour tsc applies.
+/// `any` sources, the positive equality branch can narrow to the matching
+/// primitive. Negative equality branches must still only exclude unit types.
 ///
 /// Returns `None` for all other types.
 pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -507,8 +507,8 @@ pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
         return Some(type_id);
     }
     // Primitive intrinsics that the assignment site might compare against.
-    // STRING / NUMBER / BOOLEAN / BIGINT / SYMBOL are valid narrowing
-    // comparands for `unknown` and union sources alike.
+    // These are valid positive-branch comparands for `unknown`/`any` sources,
+    // but they are not unit types and must not be excluded from negative branches.
     if matches!(
         type_id,
         TypeId::STRING
