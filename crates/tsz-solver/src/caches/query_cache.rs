@@ -1689,6 +1689,19 @@ impl QueryDatabase for QueryCache<'_> {
         result
     }
 
+    fn resolve_any_index_access(
+        &self,
+        object_type: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> Option<crate::operations::property::PropertyAccessResult> {
+        let exact_optional_property_types =
+            crate::caches::db::QueryDatabase::exact_optional_property_types(self);
+        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator.set_exact_optional_property_types(exact_optional_property_types);
+        evaluator.resolve_any_index_access(object_type)
+    }
+
     fn resolve_element_access_type(
         &self,
         object_type: TypeId,

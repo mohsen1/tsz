@@ -308,6 +308,60 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved).is_some()
     }
 
+    /// Decide whether a write-context element access on a *concrete* receiver
+    /// should keep the deferred `IndexAccess(receiver, index)` form instead
+    /// of resolving through the receiver's index signature.
+    ///
+    /// This fires when the index expression is a generic key — `keyof T`
+    /// (directly), an intersection containing `keyof T`, or a type parameter
+    /// whose constraint reduces to `keyof T` — and `T` evaluates to the same
+    /// type as the receiver. Preserving the deferred form lets the
+    /// assignability gate report TS2322 with a `Receiver[K]` target display
+    /// (matching tsc) and prevents the read-side `noUncheckedIndexedAccess`
+    /// widening from making `undefined` writes silently typecheck.
+    ///
+    /// Companion to `should_preserve_generic_indexed_write_target`, which
+    /// covers the dual case (generic receiver, keyof-mentioning index).
+    pub(crate) fn concrete_receiver_write_target_should_preserve_indexed_access(
+        &mut self,
+        receiver: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        let evaluated_receiver = self.evaluate_type_with_env(receiver);
+        if evaluated_receiver == TypeId::ERROR {
+            return false;
+        }
+        self.index_resolves_to_keyof_of_receiver(index_type, evaluated_receiver)
+    }
+
+    fn index_resolves_to_keyof_of_receiver(
+        &mut self,
+        index_type: TypeId,
+        evaluated_receiver: TypeId,
+    ) -> bool {
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
+        {
+            return members.iter().copied().any(|member| {
+                self.index_resolves_to_keyof_of_receiver(member, evaluated_receiver)
+            });
+        }
+        if let Some(inner) =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)
+        {
+            return self.evaluate_type_with_env(inner) == evaluated_receiver;
+        }
+        if let Some(param_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
+            && let Some(constraint) = param_info.constraint
+            && let Some(inner) =
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, constraint)
+        {
+            return self.evaluate_type_with_env(inner) == evaluated_receiver;
+        }
+        false
+    }
+
     /// Check if an index type is known to be a valid key for a given type parameter.
     ///
     /// Returns true for:
