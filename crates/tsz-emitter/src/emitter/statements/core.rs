@@ -1719,6 +1719,10 @@ impl<'a> Printer<'a> {
                 self.emit(expr_stmt.expression);
                 self.write(")");
             }
+        } else if self.emit_import_type_arguments_statement_expression(expr_stmt.expression) {
+            // Handled above: `import<T>;` erases to `import;`, while the same
+            // expression in value position still uses the generic
+            // ExpressionWithTypeArguments paren path.
         } else {
             self.emit(expr_stmt.expression);
         }
@@ -1728,6 +1732,36 @@ impl<'a> Printer<'a> {
             self.write_semicolon();
         }
         self.emit_trailing_comment_after_semicolon(node);
+    }
+
+    fn emit_import_type_arguments_statement_expression(&mut self, expression: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS {
+            return false;
+        }
+        let Some(data) = self.arena.get_expr_type_args(expr_node) else {
+            return false;
+        };
+        let Some(inner) = self.arena.get(data.expression) else {
+            return false;
+        };
+        if inner.kind != SyntaxKind::ImportKeyword as u16 {
+            return false;
+        }
+
+        self.emit(data.expression);
+        if !self.ctx.options.remove_comments
+            && let Some(type_arguments) = data.type_arguments.as_ref()
+        {
+            for ta_idx in &type_arguments.nodes {
+                if let Some(ta_node) = self.arena.get(*ta_idx) {
+                    self.skip_comments_in_range(ta_node.pos, ta_node.end);
+                }
+            }
+        }
+        true
     }
 
     fn emit_invalid_prefix_await_expression_statement(

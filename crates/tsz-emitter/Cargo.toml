@@ -74,5 +74,9 @@ path = "tests/duplicate_extends_recovery_tests.rs"
 name = "class_member_recovery_tests"
 path = "tests/class_member_recovery_tests.rs"
 
+[[test]]
+name = "expression_with_type_arguments_tests"
+path = "tests/expression_with_type_arguments_tests.rs"
+
 [lints]
 workspace = true
