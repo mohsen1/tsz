@@ -423,7 +423,10 @@ impl<'a> Printer<'a> {
         }
 
         // ES2015-ES2017: lower object rest assignment patterns.
+        // Skip when targeting ES5; the ES5 destructuring lowering below
+        // already handles object rest with fully ES5-compatible output.
         if self.ctx.needs_es2018_lowering
+            && !self.ctx.target_es5
             && binary.operator_token == SyntaxKind::EqualsToken as u16
             && self.assignment_pattern_has_object_rest(binary.left)
         {
