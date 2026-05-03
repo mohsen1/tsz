@@ -1360,26 +1360,26 @@ impl<'a> DeclarationEmitter<'a> {
         let mut ordered = Vec::new();
 
         for &member_idx in &members {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                && let Some(name) = self.member_name_source_text(member_idx)
+                && self.class_members_have_setter_named(&members, &name)
+            {
+                continue;
+            }
+
             if !emitted.insert(member_idx) {
                 continue;
             }
 
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
             if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                 && self
                     .class_computed_property_key_text(member_idx)
                     .is_some_and(|key| backing_field_keys.contains(&key))
             {
                 deferred_backing_fields.push(member_idx);
-                continue;
-            }
-
-            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                && let Some(name) = self.member_name_source_text(member_idx)
-                && self.class_members_have_setter_named(&members, &name)
-            {
                 continue;
             }
 

@@ -1955,6 +1955,35 @@ Point2D.prototype = {
 }
 
 #[test]
+fn test_js_class_getter_before_setter_preserves_both_accessors() {
+    let output = emit_js_dts(
+        r#"
+class C {
+    /** @returns {number} */
+    get value() {
+        return 1;
+    }
+    /** @param {number} next */
+    set value(next) {
+    }
+}
+"#,
+    );
+
+    let setter_pos = output
+        .find("set value(next: number);")
+        .expect("missing setter in output");
+    let getter_pos = output
+        .find("get value(): number;")
+        .expect("missing getter in output");
+
+    assert!(
+        setter_pos < getter_pos,
+        "Expected setter/getter pair to be emitted together even when getter appears first: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_export_equals_class_expression_shadowing_preserves_root_name() {
     let output = emit_js_dts(
         r#"
