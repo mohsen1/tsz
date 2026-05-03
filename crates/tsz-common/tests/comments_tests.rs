@@ -259,6 +259,33 @@ fn test_slash_not_followed_by_slash_or_star() {
 }
 
 #[test]
+fn test_comment_like_text_inside_strings_is_ignored() {
+    let source = r#"const a = "not // a comment"; const b = 'not /* a comment */'; // real"#;
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "// real");
+}
+
+#[test]
+fn test_comment_like_text_inside_regex_character_class_is_ignored() {
+    let source = r#"var foo2 = "a//".replace(/.[//]/g, ""); // real"#;
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "// real");
+}
+
+#[test]
+fn test_comment_after_return_regex_is_found() {
+    let source = r#"function f() { return /.[/*]/g; } /* real */"#;
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "/* real */");
+}
+
+#[test]
 fn test_adjacent_multi_line_comments() {
     let source = "/* a *//* b */";
     let comments = get_comment_ranges(source);
