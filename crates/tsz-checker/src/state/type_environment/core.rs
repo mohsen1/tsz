@@ -1538,7 +1538,40 @@ impl<'a> CheckerState<'a> {
             .then(|| self.ctx.def_type_params.borrow().get(&def_id).cloned())
             .flatten();
         if let Some(cached) = cached_params {
-            let cached_is_placeholder = self.ctx.symbol_is_from_lib(sym_id)
+            // Detect placeholder caches that lost constraint/default information
+            // during initial collection. The original gate only fired for
+            // `symbol_is_from_lib(sym_id)` symbols, but lib types whose
+            // declarations have been merged into the user binder no longer
+            // carry the lib arena origin in `symbol_arenas` and report
+            // `from_lib = false`. Broaden the trigger to *any* cross-arena
+            // symbol — the user's current arena keeps its existing
+            // single-shot collection semantics, while cross-arena symbols
+            // (lib originals plus merged-into-user lib symbols) get
+            // re-collection when their cached entry is uniformly empty.
+            let from_lib = self.ctx.symbol_is_from_lib(sym_id);
+            let from_other_arena = !from_lib
+                && self
+                    .ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .is_some_and(|arena| !std::ptr::eq(arena.as_ref(), self.ctx.arena));
+            let any_decl_in_other_arena = !from_lib
+                && !from_other_arena
+                && self.get_symbol_globally(sym_id).is_some_and(|symbol| {
+                    symbol.declarations.iter().any(|&decl_idx| {
+                        self.ctx
+                            .binder
+                            .declaration_arenas
+                            .get(&(sym_id, decl_idx))
+                            .is_some_and(|arenas| {
+                                arenas
+                                    .iter()
+                                    .any(|arena| !std::ptr::eq(arena.as_ref(), self.ctx.arena))
+                            })
+                    })
+                });
+            let cached_is_placeholder = (from_lib || from_other_arena || any_decl_in_other_arena)
                 && !cached.is_empty()
                 && cached
                     .iter()

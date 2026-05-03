@@ -430,6 +430,10 @@ name = "missing_global_type_diagnostics_tests"
 path = "tests/missing_global_type_diagnostics_tests.rs"
 
 [[test]]
+name = "cross_arena_default_type_args_tests"
+path = "tests/cross_arena_default_type_args_tests.rs"
+
+[[test]]
 name = "import_attributes_resolution_mode_tests"
 path = "tests/import_attributes_resolution_mode_tests.rs"
 
