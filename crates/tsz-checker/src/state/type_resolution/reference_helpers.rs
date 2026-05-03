@@ -365,64 +365,102 @@ impl<'a> CheckerState<'a> {
         let mixed_class_interface = symbol.has_any_flags(symbol_flags::CLASS)
             && symbol.has_any_flags(symbol_flags::INTERFACE);
 
+        let mut merged: Vec<tsz_solver::TypeParamInfo> = Vec::new();
+        let mut jsdoc_fallback: Option<Vec<tsz_solver::TypeParamInfo>> = None;
         for &decl_idx in &declarations {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };
 
-            if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
-                if let Some(name_node) = self.ctx.arena.get(type_alias.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && ident.escaped_text != expected_name
-                {
-                    continue;
+            let decl_params: Option<Vec<tsz_solver::TypeParamInfo>> = if let Some(type_alias) =
+                self.ctx.arena.get_type_alias(node)
+            {
+                let name_matches = self
+                    .ctx
+                    .arena
+                    .get(type_alias.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_none_or(|ident| ident.escaped_text == expected_name);
+                if name_matches {
+                    let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                    self.pop_type_parameters(updates);
+                    Some(params)
+                } else {
+                    None
                 }
-                let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
-                self.pop_type_parameters(updates);
-                if !params.is_empty() {
-                    return params;
+            } else if let Some(iface) = self.ctx.arena.get_interface(node) {
+                let name_matches = self
+                    .ctx
+                    .arena
+                    .get(iface.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_none_or(|ident| ident.escaped_text == expected_name);
+                if name_matches {
+                    let (params, updates) = self.push_type_parameters(&iface.type_parameters);
+                    self.pop_type_parameters(updates);
+                    Some(params)
+                } else {
+                    None
                 }
-            }
+            } else if !mixed_class_interface && let Some(class) = self.ctx.arena.get_class(node) {
+                let name_matches = self
+                    .ctx
+                    .arena
+                    .get(class.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_none_or(|ident| ident.escaped_text == expected_name);
+                if name_matches {
+                    let (params, updates) = self.push_type_parameters(&class.type_parameters);
+                    self.pop_type_parameters(updates);
+                    if params.is_empty()
+                        && self.is_js_file()
+                        && let Some(jsdoc_params) =
+                            self.jsdoc_template_type_params_for_class_decl(decl_idx)
+                        && !jsdoc_params.is_empty()
+                    {
+                        jsdoc_fallback.get_or_insert(jsdoc_params);
+                        None
+                    } else {
+                        Some(params)
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
-            if let Some(iface) = self.ctx.arena.get_interface(node) {
-                if let Some(name_node) = self.ctx.arena.get(iface.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && ident.escaped_text != expected_name
-                {
-                    continue;
-                }
-                let (params, updates) = self.push_type_parameters(&iface.type_parameters);
-                self.pop_type_parameters(updates);
-                if !params.is_empty() {
-                    return params;
-                }
+            let Some(params) = decl_params else {
+                continue;
+            };
+            if params.is_empty() {
+                continue;
             }
-
-            if !mixed_class_interface && let Some(class) = self.ctx.arena.get_class(node) {
-                if let Some(name_node) = self.ctx.arena.get(class.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && ident.escaped_text != expected_name
-                {
-                    continue;
-                }
-                let (params, updates) = self.push_type_parameters(&class.type_parameters);
-                self.pop_type_parameters(updates);
-                if !params.is_empty() {
-                    return params;
-                }
-                // JS class declared with `@template T` JSDoc but no syntax-level
-                // `<T>` list: surface the JSDoc-derived params so a reference
-                // like `Foo<number>` is not flagged as `not generic` (TS2315).
-                if self.is_js_file()
-                    && let Some(jsdoc_params) =
-                        self.jsdoc_template_type_params_for_class_decl(decl_idx)
-                    && !jsdoc_params.is_empty()
-                {
-                    return jsdoc_params;
+            if merged.is_empty() {
+                merged = params;
+                continue;
+            }
+            // Merge defaults across declarations of a merged class/interface.
+            // tsc spreads type-parameter defaults across all merged declarations:
+            // a default specified on any declaration applies for the unsupplied
+            // position. Only fill missing slots so the leftmost-with-default wins.
+            for (slot, incoming) in merged.iter_mut().zip(params.iter()) {
+                if slot.default.is_none() && incoming.default.is_some() {
+                    *slot = tsz_solver::TypeParamInfo {
+                        name: slot.name,
+                        constraint: slot.constraint,
+                        default: incoming.default,
+                        is_const: slot.is_const,
+                    };
                 }
             }
         }
-
+        if !merged.is_empty() {
+            return merged;
+        }
+        if let Some(jsdoc_params) = jsdoc_fallback {
+            return jsdoc_params;
+        }
         Vec::new()
     }
 
