@@ -286,6 +286,19 @@ fn test_comment_after_return_regex_is_found() {
 }
 
 #[test]
+fn test_comment_after_modulo_regex_is_found() {
+    // `%` is a single-character binary operator that can precede a regex
+    // literal just like `+`, `-`, `*`, etc. The leading `/` after `%` must
+    // be recognized as starting a regex literal so the trailing comment is
+    // identified correctly.
+    let source = r#"x % /[//]/g; /* real */"#;
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "/* real */");
+}
+
+#[test]
 fn test_adjacent_multi_line_comments() {
     let source = "/* a *//* b */";
     let comments = get_comment_ranges(source);
