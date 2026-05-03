@@ -122,6 +122,36 @@ function f<T>() {
 }
 
 #[test]
+fn ts2352_concrete_generic_class_instantiation_still_reports() {
+    let diags = check_source_diagnostics(
+        r#"
+class A<T> { foo(x: T) { }}
+const foo = new A<number>();
+const r: A<number> = <A<A<number>>>foo;
+"#,
+    );
+    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    let assignment: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "Expected one TS2352 for incompatible concrete generic instantiations, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        assignment.len(),
+        1,
+        "Expected one TS2322 for incompatible concrete generic assignment, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        matching[0].message_text.contains("type 'A<A<number>>'"),
+        "Expected TS2352 target display to preserve `A<A<number>>`, got: {:?}",
+        matching[0]
+    );
+}
+
+#[test]
 fn ts2352_typeof_instantiation_expands_constructor_call_intersection() {
     let diags = check_source_diagnostics(
         r#"
