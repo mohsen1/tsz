@@ -222,10 +222,10 @@ jobs:
       # when Cargo.lock/profile inputs changed and the gate intentionally ran
       # main CI to refresh the exact shared cache key.
       TSZ_CI_CACHE_SAVE_CARGO_TARGETS: ${{ needs.gate.outputs.rust_cache_refresh == 'true' && '1' || '0' }}
-      # Keep artifact production independent from sccache service hangs. The
-      # dist-fast build is short enough without sccache, and all harness suites
-      # are blocked until this artifact uploads.
-      TSZ_CI_DISABLE_SCCACHE: "1"
+      # dist-binaries is the critical path for conformance/emit/fourslash.
+      # Let PRs read main's content-keyed sccache entries, but do not let
+      # unmerged code publish new compiler outputs from this job.
+      SCCACHE_GCS_RW_MODE: READ_ONLY
     steps:
       - uses: actions/checkout@v4
         with:
