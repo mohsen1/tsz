@@ -393,6 +393,17 @@ pub struct Printer<'a> {
     /// so the transformer can rewrite `x` → `M.x`.
     pub(crate) namespace_prior_exports: FxHashMap<String, std::collections::HashSet<String>>,
 
+    /// Names of exported classes, functions, and enums per namespace. Kept
+    /// separate from `namespace_prior_exports` because qualification rules
+    /// differ: nested namespaces (e.g. `namespace A { namespace B {} }`) see
+    /// the parent's class/fn/enum declarations through the surrounding
+    /// IIFE's lexical scope and must NOT qualify them, while *reopened*
+    /// blocks of the same namespace (a second `namespace A { ... }`) MUST
+    /// qualify because the original `class` local lives in a previous IIFE
+    /// that has already exited.
+    pub(crate) namespace_prior_class_fn_enum_exports:
+        FxHashMap<String, std::collections::HashSet<String>>,
+
     /// Exported variable/function/class names in the current namespace IIFE.
     /// Used to qualify identifier references: `foo` → `ns.foo`.
     pub(crate) namespace_exported_names: FxHashSet<String>,
@@ -829,6 +840,7 @@ impl<'a> Printer<'a> {
             declared_namespace_names: FxHashSet::default(),
             namespace_iife_param_counter: FxHashMap::default(),
             namespace_prior_exports: FxHashMap::default(),
+            namespace_prior_class_fn_enum_exports: FxHashMap::default(),
             namespace_exported_names: FxHashSet::default(),
             namespace_parent_exported_names: FxHashSet::default(),
             commonjs_exported_var_names: FxHashSet::default(),

@@ -821,16 +821,26 @@ impl<'a> Printer<'a> {
             return false;
         };
 
+        let namespace_matches = |namespace: &String| {
+            namespace == &parent
+                || namespace
+                    .strip_suffix(parent.as_str())
+                    .is_some_and(|prefix| prefix.ends_with('.'))
+        };
+        // Heritage expressions guard against shadowing inside the same
+        // surface scope (e.g. an ambient `class B` declared earlier in the
+        // namespace), so they qualify both `var` exports and class/fn/enum
+        // declarations of the parent — even though regular identifier
+        // references can rely on the surrounding IIFE's lexical scope for
+        // class/fn/enum visibility (see `emit_identifier`).
         let is_parent_export = self
             .namespace_prior_exports
             .iter()
-            .any(|(namespace, exports)| {
-                exports.contains(name.as_str())
-                    && (namespace == &parent
-                        || namespace
-                            .strip_suffix(parent.as_str())
-                            .is_some_and(|prefix| prefix.ends_with('.')))
-            });
+            .any(|(ns, exports)| namespace_matches(ns) && exports.contains(name.as_str()))
+            || self
+                .namespace_prior_class_fn_enum_exports
+                .iter()
+                .any(|(ns, exports)| namespace_matches(ns) && exports.contains(name.as_str()));
         if !is_parent_export {
             return false;
         }
