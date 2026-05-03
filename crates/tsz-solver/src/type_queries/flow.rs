@@ -488,17 +488,20 @@ pub fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 /// Check if a type is suitable as a narrowing literal value.
 ///
 /// Returns `Some(type_id)` for types that can be used as the comparand in
-/// discriminant or literal equality narrowing:
+/// discriminant or literal equality narrowing for general (non-unknown,
+/// non-any) sources:
 /// - Literal types (string, number, boolean, bigint)
 /// - Enum member types (nominal enum values like `Types.Str`)
-/// - Primitive intrinsics (string, number, boolean, bigint, symbol)
 /// - `unique symbol` types
 ///
-/// Primitive intrinsics participate in equality narrowing of `unknown` /
-/// `any` sources: tsc treats `if (u === aString)` (where `aString: string`)
-/// as a guard that narrows `u: unknown` to `string`. For non-unknown / non-
-/// `any` sources, `narrow_to_type` reduces the source's union members to the
-/// matching primitive, which is the same behaviour tsc applies.
+/// Mirrors tsc's `isNarrowingLiteralType`, which only accepts unit types
+/// (`TypeFlags.Literal | UniqueESSymbol | Nullable`). Primitive intrinsics
+/// (`string`, `number`, …) are intentionally NOT accepted here: in the
+/// false branch of `x !== y` where `y: string`, narrowing a union source
+/// `string | number` against the primitive `string` would incorrectly
+/// remove the `string` member. Primitive-intrinsic comparands are only
+/// valid when the source is `unknown` / `any`; that case is handled
+/// separately via [`is_unknown_narrowing_literal`].
 ///
 /// Returns `None` for all other types.
 pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -506,9 +509,25 @@ pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
     if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
         return Some(type_id);
     }
-    // Primitive intrinsics that the assignment site might compare against.
-    // STRING / NUMBER / BOOLEAN / BIGINT / SYMBOL are valid narrowing
-    // comparands for `unknown` and union sources alike.
+    let key = db.lookup(type_id)?;
+    match key {
+        TypeData::Literal(_) | TypeData::Enum(_, _) | TypeData::UniqueSymbol(_) => Some(type_id),
+        _ => None,
+    }
+}
+
+/// Like [`is_narrowing_literal`], but additionally accepts primitive
+/// intrinsics (`string`, `number`, `boolean`, `bigint`, `symbol`,
+/// `object`) as valid narrowing comparands.
+///
+/// Use this only at call sites where the source is `unknown` or `any`:
+/// `if (u === aString)` where `u: unknown` and `aString: string` should
+/// narrow `u` to `string` in the true branch. Primitive intrinsics MUST
+/// NOT flow through `is_narrowing_literal` because the false-branch
+/// `narrow_excluding_type` path would then incorrectly strip primitive
+/// members from union sources (e.g. narrow `string | number` to `number`
+/// when the comparand is `string`).
+pub fn is_unknown_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     if matches!(
         type_id,
         TypeId::STRING
@@ -520,11 +539,7 @@ pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
     ) {
         return Some(type_id);
     }
-    let key = db.lookup(type_id)?;
-    match key {
-        TypeData::Literal(_) | TypeData::Enum(_, _) | TypeData::UniqueSymbol(_) => Some(type_id),
-        _ => None,
-    }
+    is_narrowing_literal(db, type_id)
 }
 
 /// Check if a type is a "unit type" — a type with exactly one inhabitant.

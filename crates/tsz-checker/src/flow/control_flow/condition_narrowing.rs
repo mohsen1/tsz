@@ -6,7 +6,7 @@
 use super::FlowAnalyzer;
 use crate::query_boundaries::common::{is_union_type, union_members};
 use crate::query_boundaries::flow as flow_boundary;
-use crate::query_boundaries::flow_analysis::is_unit_type;
+use crate::query_boundaries::flow_analysis::{is_unit_type, is_unknown_narrowing_literal};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
@@ -1446,6 +1446,27 @@ impl<'a> FlowAnalyzer<'a> {
                 }
                 return narrowing.narrow_excluding_type(type_id, literal_type);
             }
+
+            // Equality narrowing of `unknown` / `any` against a primitive-
+            // intrinsic-typed value (e.g. `if (u === aString)` where
+            // `u: unknown` and `aString: string`). tsc narrows `u` to
+            // `string` in the true branch and leaves `u` unchanged in the
+            // false branch — primitive intrinsics are NOT unit types, so
+            // they cannot exclude members of a union source.
+            //
+            // This path is intentionally limited to `unknown` / `any`
+            // sources; for any other source, primitive-intrinsic
+            // comparands are not narrowing literals (see
+            // `is_narrowing_literal`).
+            if (type_id == TypeId::UNKNOWN || type_id == TypeId::ANY)
+                && let Some(literal_type) =
+                    self.literal_comparison_for_unknown_target(bin.left, bin.right, target)
+            {
+                if effective_truth {
+                    return narrowing.narrow_to_type(type_id, literal_type);
+                }
+                return type_id;
+            }
         }
 
         // Bidirectional narrowing: x === y where both are references
@@ -1855,6 +1876,48 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
+        None
+    }
+
+    /// Variant of `literal_type_from_node` for narrowing an
+    /// `unknown`/`any` source. Falls back to primitive-intrinsic
+    /// acceptance when the standard path returns `None`. Callers MUST
+    /// only use this when the source is `unknown`/`any` and MUST NOT
+    /// exclude the result in the false branch — primitive intrinsics
+    /// are not unit types.
+    fn literal_type_from_node_for_unknown_target(&self, idx: NodeIndex) -> Option<TypeId> {
+        if let Some(t) = self.literal_type_from_node(idx) {
+            return Some(t);
+        }
+        let idx = self.skip_parenthesized(idx);
+        let node = self.arena.get(idx)?;
+        if let Some(node_types) = self.node_types
+            && let Some(&type_id) = node_types.get(&idx.0)
+            && let Some(t) = is_unknown_narrowing_literal(self.interner, type_id)
+        {
+            return Some(t);
+        }
+        if let Some(type_id) = self.resolve_const_identifier_type(idx, node) {
+            return is_unknown_narrowing_literal(self.interner, type_id);
+        }
+        None
+    }
+
+    /// Variant of `literal_comparison` for narrowing an `unknown`/`any`
+    /// source. Same caller obligations as
+    /// [`Self::literal_type_from_node_for_unknown_target`].
+    fn literal_comparison_for_unknown_target(
+        &self,
+        left: NodeIndex,
+        right: NodeIndex,
+        target: NodeIndex,
+    ) -> Option<TypeId> {
+        if self.is_matching_reference(left, target) {
+            return self.literal_type_from_node_for_unknown_target(right);
+        }
+        if self.is_matching_reference(right, target) {
+            return self.literal_type_from_node_for_unknown_target(left);
+        }
         None
     }
 }
