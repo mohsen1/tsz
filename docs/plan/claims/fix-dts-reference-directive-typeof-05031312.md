@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-03
 - **Branch**: `fix/dts-reference-directive-typeof-05031312`
-- **PR**: TBD
+- **PR**: #2570
 - **Status**: ready
 - **Workstream**: §2 (Emit pass rate)
 
