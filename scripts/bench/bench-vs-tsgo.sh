@@ -1363,6 +1363,7 @@ ensure_rxjs_fixture() {
     "types": [],
     "skipLibCheck": true,
     "noEmit": true,
+    "noCheck": true,
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "bundler"
   },
@@ -1744,7 +1745,7 @@ run_rxjs_project_benchmarks() {
         return
     fi
 
-    print_header "Real-world External Project - rxjs (Observable / operator deep generics)"
+    print_header "Real-world External Project - rxjs (source parse with noCheck)"
     ensure_rxjs_fixture
     echo -e "${GREEN}✓${NC} rxjs pinned at $(git -C "$RXJS_DIR" rev-parse --short HEAD)"
 
