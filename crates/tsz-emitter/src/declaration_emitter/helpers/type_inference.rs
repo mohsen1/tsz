@@ -1489,10 +1489,15 @@ impl<'a> DeclarationEmitter<'a> {
             || !self.initializer_is_new_expression(initializer))
             && let Some(type_text) = self.preferred_expression_type_text(initializer)
         {
-            return Self::strip_synthetic_anonymous_object_members(&type_text);
+            let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
+            return self
+                .enum_value_index_access_alias_type_text(&type_text)
+                .unwrap_or(type_text);
         }
 
-        Self::strip_synthetic_anonymous_object_members(printed_type_text)
+        let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
+        self.enum_value_index_access_alias_type_text(&type_text)
+            .unwrap_or(type_text)
     }
 
     pub(in crate::declaration_emitter) fn strip_synthetic_anonymous_object_members(
@@ -1904,6 +1909,67 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena
             .get_type_alias(declaration_node)
             .map(|alias| alias.type_node)
+    }
+
+    fn enum_value_index_access_alias_type_text(&self, type_text: &str) -> Option<String> {
+        let mut inner = type_text.trim();
+        let mut array_suffix = String::new();
+        while let Some(next) = inner.strip_suffix("[]") {
+            array_suffix.push_str("[]");
+            inner = next.trim_end();
+        }
+
+        let (alias, key_alias) = inner.split_once("[keyof ")?;
+        let alias = alias.trim();
+        let key_alias = key_alias.strip_suffix(']')?.trim();
+        if alias != key_alias || !Self::is_simple_identifier_text(alias) {
+            return None;
+        }
+
+        let enum_name = self.typeof_enum_alias_target_name(alias)?;
+        Some(format!("{enum_name}{array_suffix}"))
+    }
+
+    fn typeof_enum_alias_target_name(&self, alias: &str) -> Option<String> {
+        let alias_type_node = self.find_local_type_alias_type_node(alias)?;
+        let alias_type = self.arena.get(alias_type_node)?;
+        if alias_type.kind != syntax_kind_ext::TYPE_QUERY {
+            return None;
+        }
+        let query = self.arena.get_type_query(alias_type)?;
+        let enum_name = self.type_reference_name_text(query.expr_name)?;
+        self.local_enum_declaration_exists(&enum_name)
+            .then_some(enum_name)
+    }
+
+    fn local_enum_declaration_exists(&self, name: &str) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder
+            .file_locals
+            .get(name)
+            .or_else(|| binder.current_scope.get(name))
+        else {
+            return false;
+        };
+        let Some(symbol_data) = binder.symbols.get(symbol) else {
+            return false;
+        };
+        symbol_data.declarations.iter().copied().any(|decl_idx| {
+            self.arena
+                .get(decl_idx)
+                .is_some_and(|node| self.arena.get_enum(node).is_some())
+        })
+    }
+
+    fn is_simple_identifier_text(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
     pub(in crate::declaration_emitter) fn type_reference_name_text(

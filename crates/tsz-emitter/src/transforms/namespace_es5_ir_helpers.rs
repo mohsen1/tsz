@@ -576,7 +576,7 @@ pub(super) fn rewrite_exported_var_refs(
             let mut body_names = names.clone();
             for param in parameters {
                 if let Some(default_value) = &mut param.default_value {
-                    rewrite_exported_var_refs(default_value, ns_name, names);
+                    rewrite_exported_var_refs(default_value, ns_name, &body_names);
                 }
                 body_names.remove(param.name.as_ref());
             }

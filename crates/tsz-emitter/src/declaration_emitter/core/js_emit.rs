@@ -229,6 +229,9 @@ impl<'a> DeclarationEmitter<'a> {
                     } else if let Some(type_text) =
                         self.js_namespace_value_member_type_text(prop.initializer)
                     {
+                        self.record_js_require_property_import_alias_for_new_expression(
+                            prop.initializer,
+                        );
                         self.emit_js_namespace_value_member(prop.name, &type_text);
                     }
                 }

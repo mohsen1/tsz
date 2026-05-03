@@ -841,6 +841,58 @@ module.exports.A.B = {
 }
 
 #[test]
+fn test_js_exported_object_literal_namespace_records_new_expression_import_alias() {
+    let source = r#"
+const Something = require("fs").Something;
+const ns = {
+    thing: new Something()
+};
+export { ns };
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export namespace ns {\n    let thing: Something;\n}"),
+        "Expected exported object literal to emit as a namespace with a constructor member: {output}"
+    );
+    assert!(
+        output.contains(
+            "import Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
+        ),
+        "Expected new-expression constructor type to record its require-property import alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_require_property_import_alias_avoids_existing_module_alias_name() {
+    let source = r#"
+const Something = require("fs").Something;
+const Something_1 = 1;
+const thing = new Something();
+module.exports = {
+    thing,
+    Something_1
+};
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export const Something_1: 1;"),
+        "Expected real exported binding to keep its name: {output}"
+    );
+    assert!(
+        output.contains(
+            "import Something_2 = require(\"fs\");\nimport Something = Something_2.Something;"
+        ),
+        "Require-property module alias should skip the real Something_1 binding: {output}"
+    );
+    assert!(
+        !output.contains("import Something_1 = require(\"fs\");"),
+        "Synthetic module alias must not collide with the real Something_1 binding: {output}"
+    );
+}
+
+#[test]
 fn test_js_export_import_equals_drops_export_keyword() {
     let source = "export import fs2 = require(\"fs\");";
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
