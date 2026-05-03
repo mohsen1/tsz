@@ -419,7 +419,7 @@ impl<'a> Printer<'a> {
                 // Use node.end of the call expression to approximate '(' position
                 // Actually, we need to find the '(' position more carefully
                 let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
-                self.emit_unemitted_comments_between(paren_pos, arg_node.pos);
+                self.emit_call_leading_argument_comments(paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&valid_args);
             if let Some(last_arg) = valid_args.last()
@@ -459,7 +459,7 @@ impl<'a> Printer<'a> {
                 && let Some(arg_node) = self.arena.get(*first_arg)
             {
                 let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
-                self.emit_unemitted_comments_between(paren_pos, arg_node.pos);
+                self.emit_call_leading_argument_comments(paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&valid_args);
             if let Some(last_arg) = valid_args.last()
@@ -967,6 +967,7 @@ impl<'a> Printer<'a> {
         let mut scan_idx = self.comment_emit_idx;
         let mut previous_pos = open_paren_pos + 1;
         let mut previous_comment_had_trailing_newline = false;
+
         while scan_idx < self.all_comments.len() {
             let comment_pos = self.all_comments[scan_idx].pos;
             let comment_end = self.all_comments[scan_idx].end;
@@ -985,7 +986,7 @@ impl<'a> Printer<'a> {
 
             if previous_comment_had_trailing_newline {
                 // The previous comment already advanced to the next output line.
-            } else if self.range_contains_newline(previous_pos, comment_pos, bytes) {
+            } else if self.call_comment_range_contains_newline(previous_pos, comment_pos, bytes) {
                 self.write_line();
             } else {
                 self.write_space();
@@ -1008,7 +1009,101 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn range_contains_newline(&self, from_pos: u32, to_pos: u32, bytes: &[u8]) -> bool {
+    fn emit_call_leading_argument_comments(&mut self, open_paren_pos: u32, arg_pos: u32) {
+        if self.ctx.options.remove_comments || open_paren_pos >= arg_pos {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        if let Some(comment) = self.all_comments.get(self.comment_emit_idx)
+            && comment.pos >= open_paren_pos
+            && comment.end <= arg_pos
+        {
+            let gap_start = std::cmp::min(open_paren_pos as usize + 1, bytes.len());
+            let gap_end = std::cmp::min(comment.pos as usize, bytes.len());
+            let gap_after_start = std::cmp::min(comment.end as usize, bytes.len());
+            let gap_after_end = std::cmp::min(arg_pos as usize, bytes.len());
+            if bytes[gap_start..gap_end]
+                .iter()
+                .chain(bytes[gap_after_start..gap_after_end].iter())
+                .any(|&b| b == b'\n' || b == b'\r')
+            {
+                self.emit_call_leading_multiline_argument_comments(open_paren_pos + 1, arg_pos);
+                return;
+            }
+        }
+
+        self.emit_unemitted_comments_between(open_paren_pos, arg_pos);
+    }
+
+    fn emit_call_leading_multiline_argument_comments(&mut self, from_pos: u32, arg_pos: u32) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let mut scan_idx = self.comment_emit_idx;
+        let mut previous_pos = from_pos;
+        let mut previous_comment_had_trailing_newline = false;
+        let mut emitted_any = false;
+
+        while scan_idx < self.all_comments.len() {
+            let comment_pos = self.all_comments[scan_idx].pos;
+            let comment_end = self.all_comments[scan_idx].end;
+            let has_trailing_new_line = self.all_comments[scan_idx].has_trailing_new_line;
+            if comment_end <= from_pos {
+                scan_idx += 1;
+                continue;
+            }
+            if comment_pos >= arg_pos {
+                break;
+            }
+            if comment_pos < from_pos || comment_end > arg_pos {
+                scan_idx += 1;
+                continue;
+            }
+
+            if previous_comment_had_trailing_newline {
+                // The previous comment already moved to the next output line.
+            } else if self.call_comment_range_contains_newline(previous_pos, comment_pos, bytes) {
+                self.write_line();
+            } else if emitted_any {
+                self.write_space();
+            }
+
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+                emitted_any = true;
+                if has_trailing_new_line {
+                    self.write_line();
+                }
+            }
+
+            previous_pos = comment_end;
+            previous_comment_had_trailing_newline = has_trailing_new_line;
+            self.comment_emit_idx = scan_idx + 1;
+            scan_idx += 1;
+        }
+
+        if emitted_any
+            && !previous_comment_had_trailing_newline
+            && self.call_comment_range_contains_newline(previous_pos, arg_pos, bytes)
+        {
+            self.write_line();
+        }
+    }
+
+    fn call_comment_range_contains_newline(
+        &self,
+        from_pos: u32,
+        to_pos: u32,
+        bytes: &[u8],
+    ) -> bool {
         let start = std::cmp::min(from_pos as usize, bytes.len());
         let end = std::cmp::min(to_pos as usize, bytes.len());
         bytes[start..end].iter().any(|&b| b == b'\n' || b == b'\r')

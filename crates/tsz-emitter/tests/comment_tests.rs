@@ -47,6 +47,24 @@ a(
 }
 
 #[test]
+fn multiline_comment_before_first_call_argument_starts_on_next_line() {
+    let source = r#"var Person = makeClass(
+   /**
+     @scope Person
+   */
+   {
+   }
+);"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("makeClass(\n/**\n  @scope Person\n*/\n{}"),
+        "Multiline comment before first call argument should stay on the line after `(`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 
