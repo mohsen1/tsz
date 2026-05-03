@@ -4823,6 +4823,33 @@ let err =
 }
 
 #[test]
+fn jsx_single_callable_child_body_mismatch_elaborates_at_return() {
+    // When the children prop is a single callable type and the JSX body
+    // child is a function expression with a wrong return value, tsc
+    // reports the body-level literal mismatch (e.g.
+    // `Type '"y"' is not assignable to type '"x"'`) at the return
+    // expression, not the whole-callable mismatch on the function.
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface LitProps<T> {{ prop: T, children: (x: this) => T }}
+const ElemLit = <T extends string>(p: LitProps<T>) => <div></div>;
+const argchild = <ElemLit prop="x">{{p => "y"}}</ElemLit>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let body_elab = diags.iter().any(|(code, message)| {
+        *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+            && message.contains("Type '\"y\"'")
+            && message.contains("'\"x\"'")
+    });
+    assert!(
+        body_elab,
+        "Single-callable target should produce body-level TS2322 elaboration `Type '\"y\"' is not assignable to type '\"x\"'`, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_union_children_multiple_children_prefer_array_branch() {
     let source = format!(
         r#"

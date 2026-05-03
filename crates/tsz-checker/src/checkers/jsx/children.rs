@@ -106,6 +106,13 @@ impl<'a> CheckerState<'a> {
             .get_jsx_component_prop_annotation_text(tag_name_idx, &children_prop_name)
             .unwrap_or_else(|| self.jsx_children_type_display(props_type, children_type));
         let multiple_children_type = self.select_jsx_multiple_children_target_type(children_type);
+        let children_type_is_originally_compound =
+            crate::query_boundaries::common::union_members(self.ctx.types, children_type).is_some()
+                || crate::query_boundaries::common::intersection_members(
+                    self.ctx.types,
+                    children_type,
+                )
+                .is_some();
 
         if child_count == 1
             && !matches!(synthesized_children_type, TypeId::ANY | TypeId::ERROR)
@@ -147,6 +154,7 @@ impl<'a> CheckerState<'a> {
                             raw_zero_param_child_type,
                             tag_name_idx,
                             &children_type_str,
+                            children_type_is_originally_compound,
                         );
                     }
                     return;
@@ -162,6 +170,7 @@ impl<'a> CheckerState<'a> {
                         synthesized_children_type,
                         tag_name_idx,
                         &children_type_str,
+                        children_type_is_originally_compound,
                     );
                     return;
                 }
@@ -984,6 +993,7 @@ impl<'a> CheckerState<'a> {
         actual_child_type: TypeId,
         tag_name_idx: NodeIndex,
         children_type_text: &str,
+        children_type_is_originally_compound: bool,
     ) {
         if matches!(actual_child_type, TypeId::ANY | TypeId::ERROR) {
             return;
@@ -1039,13 +1049,46 @@ impl<'a> CheckerState<'a> {
         }
 
         let diagnostics_before = self.ctx.diagnostics.len();
-        let assignable = self
-            .check_assignable_or_report_at_exact_anchor_without_source_elaboration(
+        // Function-expression children (`<C>{p => "y"}</C>`) carry a
+        // contextual return type from the children parameter; tsc reports
+        // the body-level mismatch (e.g. `Type '"y"' is not assignable to
+        // type '"x"'`) at the body expression rather than the whole-callable
+        // mismatch on the function. Route those through the
+        // source-elaborating variant so the body diagnostic surfaces.
+        //
+        // Restrict to single-callable target shapes: union or intersection
+        // children types (`Cb | Cb[]`) keep the whole-callable mismatch so
+        // the message reports against the whole union, mirroring tsc.
+        // Other shapes (JSX elements, primitives, object literals) keep the
+        // non-elaborating path so JSX-element source rewrites and
+        // structural-mismatch displays stay intact.
+        let diag_node_kind = self.ctx.arena.get(diag_node).map(|n| n.kind);
+        let target_is_single_callable = !children_type_is_originally_compound
+            && crate::query_boundaries::common::union_members(self.ctx.types, children_type)
+                .is_none()
+            && crate::query_boundaries::common::intersection_members(self.ctx.types, children_type)
+                .is_none()
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, children_type);
+        let use_source_elaboration = matches!(
+            diag_node_kind,
+            Some(k) if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+        ) && target_is_single_callable;
+        let assignable = if use_source_elaboration {
+            self.check_assignable_or_report_at_exact_anchor(
                 actual_child_type,
                 children_type,
                 diag_node,
                 diag_node,
-            );
+            )
+        } else {
+            self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
+                actual_child_type,
+                children_type,
+                diag_node,
+                diag_node,
+            )
+        };
         if !assignable
             && child_is_jsx_element_like
             && self.format_type(actual_child_type) == "Element"
