@@ -3,7 +3,7 @@ use super::namespace::rewrite_enum_iife_for_namespace_export;
 use crate::transforms::enum_es5::EnumES5Transformer;
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{Node, VariableDeclarationData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -251,6 +251,11 @@ impl<'a> Printer<'a> {
         if decl.initializer.is_none() {
             if self.emit_missing_initializer_as_void_0 {
                 self.write(" = void 0");
+            } else if self.variable_declaration_has_recovered_empty_initializer(node, decl) {
+                if let Some(name_node) = self.arena.get(decl.name) {
+                    self.map_source_offset(name_node.end);
+                }
+                self.write(" = ");
             }
             return;
         }
@@ -269,6 +274,29 @@ impl<'a> Printer<'a> {
             }
         }
         self.emit_expression(decl.initializer);
+    }
+
+    fn variable_declaration_has_recovered_empty_initializer(
+        &self,
+        node: &Node,
+        decl: &VariableDeclarationData,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let anchor_end = if decl.type_annotation.is_some() {
+            self.arena
+                .get(decl.type_annotation)
+                .map_or(node.pos, |type_node| type_node.end)
+        } else {
+            self.arena
+                .get(decl.name)
+                .map_or(node.pos, |name_node| name_node.end)
+        };
+        let start = anchor_end.min(node.end) as usize;
+        let end = node.end.min(text.len() as u32) as usize;
+        text.get(start..end)
+            .is_some_and(|tail| tail.as_bytes().contains(&b'='))
     }
 
     // =========================================================================
