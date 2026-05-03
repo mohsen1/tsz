@@ -637,15 +637,13 @@ impl ParserState {
     pub(crate) fn parse_export_declaration_or_statement(&mut self, start_pos: u32) -> NodeIndex {
         let declaration = self.parse_exported_declaration(start_pos);
 
-        // If the inner parse already produced an EXPORT_DECLARATION (because the
-        // recovery path forwarded `import = ...` through `parse_export_import_equals`,
-        // which wraps), don't double-wrap. Otherwise the binder sees an
-        // EXPORT_DECLARATION whose export_clause is itself another EXPORT_DECLARATION
-        // and never reaches `bind_import_equals_declaration` for the inner alias —
-        // causing false TS2304 ("Cannot find name 'X'") for later references to the
-        // import alias.
+        // If the inner parse already produced an export wrapper, don't double-wrap.
+        // `export import = ...` produces an EXPORT_DECLARATION so the binder can
+        // reach the import-equals alias, and `export export = ...` recovers as an
+        // EXPORT_ASSIGNMENT with an invalid extra modifier.
         if let Some(declaration_node) = self.arena.get(declaration)
-            && declaration_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && (declaration_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                || declaration_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT)
         {
             return declaration;
         }
