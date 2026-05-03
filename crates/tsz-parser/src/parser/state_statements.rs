@@ -879,9 +879,11 @@ impl ParserState {
     fn parse_statement_accessor_keyword(&mut self) -> NodeIndex {
         if self.look_ahead_is_accessor_declaration() {
             use tsz_common::diagnostics::diagnostic_codes;
+            // tsc emits TS1275 via grammarErrorOnNode for the `accessor` modifier
+            // on any non-property-declaration node (top-level class/interface/var/...).
             self.parse_error_at_current_token(
-                "Modifiers cannot appear here.",
-                diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                "'accessor' modifier can only appear on a property declaration.",
+                diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
             );
             self.next_token();
             self.parse_statement()

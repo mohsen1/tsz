@@ -1397,7 +1397,10 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1017 // An index signature cannot have a rest parameter
         | 1019 // An index signature parameter cannot have a question mark
         | 1021 // An index signature must have a type annotation
+        | 1029 // '{0}' modifier must precede '{1}' modifier
+        | 1030 // '{0}' modifier already seen
         | 1031 // '{0}' modifier cannot appear on class elements of this kind
+        | 1040 // '{0}' modifier cannot be used in an ambient context
         | 1042 // 'async' modifier cannot be used here
         | 1044 // '{0}' modifier cannot appear on a module or namespace element
         | 1054 // A 'get' accessor cannot have parameters
@@ -1426,6 +1429,9 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1210 // Code contained in a class is evaluated in strict mode
         | 1212 // Identifier expected. '{0}' is a reserved word in strict mode
         | 1213 // Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+        | 1243 // '{0}' modifier cannot be used with '{1}' modifier
+        | 1275 // 'accessor' modifier can only appear on a property declaration
+        | 1276 // An 'accessor' property cannot be declared optional
         | 8038 // Decorators may not appear after 'export' or 'export default' if they also appear before 'export'
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block

@@ -216,3 +216,114 @@ fn type_param_modifier_diag_independent_of_param_name() {
         );
     }
 }
+
+// =========================================================================
+// TS1275: 'accessor' modifier can only appear on a property declaration
+// TS1276: An 'accessor' property cannot be declared optional
+// =========================================================================
+
+#[test]
+fn accessor_on_method_emits_ts1275() {
+    let source = r"
+class C {
+    accessor m() {}
+}
+";
+    assert_eq!(count_error(source, 1275), 1);
+}
+
+#[test]
+fn accessor_on_get_accessor_emits_ts1275() {
+    let source = r"
+class C {
+    accessor get x() { return 1; }
+}
+";
+    assert_eq!(count_error(source, 1275), 1);
+}
+
+#[test]
+fn accessor_on_set_accessor_emits_ts1275() {
+    let source = r"
+class C {
+    accessor set x(v: any) {}
+}
+";
+    assert_eq!(count_error(source, 1275), 1);
+}
+
+#[test]
+fn accessor_on_constructor_emits_ts1275() {
+    let source = r"
+class C {
+    accessor constructor() {}
+}
+";
+    assert_eq!(count_error(source, 1275), 1);
+}
+
+#[test]
+fn accessor_on_top_level_class_emits_ts1275() {
+    let source = "accessor class C3 {}";
+    assert_eq!(count_error(source, 1275), 1);
+}
+
+#[test]
+fn accessor_on_top_level_var_emits_ts1275() {
+    let source = "accessor var V1: any;";
+    assert_eq!(count_error(source, 1275), 1);
+}
+
+#[test]
+fn accessor_on_top_level_function_emits_ts1275() {
+    let source = "accessor function F1() {}";
+    assert_eq!(count_error(source, 1275), 1);
+}
+
+#[test]
+fn accessor_on_top_level_import_emits_ts1275() {
+    let source = "accessor import \"x\";";
+    assert_eq!(count_error(source, 1275), 1);
+}
+
+#[test]
+fn accessor_optional_property_emits_ts1276() {
+    let source = r"
+class C {
+    accessor p?: any;
+}
+";
+    assert_eq!(count_error(source, 1276), 1);
+}
+
+#[test]
+fn accessor_required_property_no_ts1276() {
+    let source = r"
+class C {
+    accessor p: any;
+}
+";
+    assert!(!has_error(source, 1276));
+    assert!(!has_error(source, 1275));
+}
+
+#[test]
+fn accessor_property_keys_off_token_kind_not_member_name() {
+    // The same diagnostic must fire whichever identifier the user picks for
+    // the auto-accessor property — confirms the parser keys off token kind.
+    for name in ["a", "myProp", "_x", "$_"] {
+        let optional_src = format!("class C {{ accessor {name}?: any; }}");
+        assert_eq!(
+            count_error(&optional_src, 1276),
+            1,
+            "optional accessor property `{name}?: any` should emit TS1276"
+        );
+
+        let method_src = format!("class C {{ accessor {name}() {{}} }}");
+        assert_eq!(
+            count_error(&method_src, 1275),
+            1,
+            "accessor on method `{name}()` should emit TS1275"
+        );
+    }
+}
