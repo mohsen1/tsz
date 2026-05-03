@@ -996,6 +996,10 @@ impl ParserState {
                 || (kind == SyntaxKind::CloseBraceToken
                     && self.is_token(SyntaxKind::EndOfFileToken)
                     && !self.last_error_was_unterminated_literal()
+                    && self.last_error_pos != self.token_pos())
+                || (kind == SyntaxKind::LessThanSlashToken
+                    && self.is_token(SyntaxKind::EndOfFileToken)
+                    && !self.last_error_was_unterminated_literal()
                     && self.last_error_pos != self.token_pos());
 
             // Only emit error if we haven't already emitted one at this position
