@@ -211,7 +211,9 @@ impl<'a> Printer<'a> {
             self.deferred_exported_var_initializers(loop_stmt.initializer);
         if hoisted_initializer_exports.len() == 1 {
             let (local_name, export_name, init_idx) = &hoisted_initializer_exports[0];
-            self.write("var ");
+            if !self.in_system_execute_body {
+                self.write("var ");
+            }
             self.write(local_name);
             self.write(" = ");
             self.emit(*init_idx);
