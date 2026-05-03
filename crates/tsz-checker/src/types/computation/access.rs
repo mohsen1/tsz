@@ -1301,15 +1301,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Value-level element access whose index expression has type `any`.
-        // tsc routes through the receiver's applicable index signature for
-        // expression-level access, so `noUncheckedIndexedAccess` still widens
-        // the read type to `T | undefined` and rejects writes of `undefined`
-        // against the un-widened slot type. Without this branch, the
-        // type-level `T[any] = any` rule short-circuits `obj[anyExpr]` to
-        // `any` and silently bypasses NUIA on both reads and writes (e.g.
-        // `strMap[null as any]` and `strMap[null as any] = undefined`).
+        // Under noUncheckedIndexedAccess, tsc routes value-level access with
+        // an `any` index through the receiver's applicable index signature, so
+        // reads still widen to `T | undefined` and writes reject `undefined`.
+        // With NUIA disabled, keep the type-level `T[any] = any` behavior.
         if result_type.is_none()
             && index_type == TypeId::ANY
+            && self.ctx.compiler_options.no_unchecked_indexed_access
             && let Some(any_result) = self.ctx.types.resolve_any_index_access(
                 object_type_for_access,
                 self.ctx.compiler_options.no_unchecked_indexed_access,

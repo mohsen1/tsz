@@ -28,6 +28,15 @@ fn diags_for_strict_nuia(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     crate::test_utils::check_source(source, "test.ts", opts)
 }
 
+fn diags_for_strict(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+    let opts = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    crate::test_utils::check_source(source, "test.ts", opts)
+}
+
 /// Read-side: an `any`-typed index expression must still widen the access
 /// type to `T | undefined`, otherwise assigning the result to a non-undefined
 /// slot silently typechecks as `any`.
@@ -42,6 +51,20 @@ const e: boolean = strMap[null as any];
     assert!(
         codes.contains(&2322),
         "NUIA read with any-typed index must emit TS2322 (boolean|undefined → boolean). Got: {codes:?}",
+    );
+}
+
+#[test]
+fn non_nuia_read_with_any_index_keeps_any_and_does_not_emit_ts2322() {
+    let source = r#"
+declare const strMap: { [s: string]: boolean };
+const e: string = strMap[null as any];
+"#;
+    let diags = diags_for_strict(source);
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Non-NUIA value access with any-typed index must keep the any fallback. Got: {codes:?}",
     );
 }
 
