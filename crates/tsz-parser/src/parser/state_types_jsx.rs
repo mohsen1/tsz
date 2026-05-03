@@ -1167,6 +1167,26 @@ impl ParserState {
         )
     }
 
+    /// Emit TS17021 if the current token (a JSX identifier) was scanned via
+    /// a Unicode escape sequence.  tsc forbids `\uXXXX` / `\u{XXXXX}` in JSX
+    /// tag names and attribute names; the scanner sets `TokenFlags::UnicodeEscape`
+    /// whenever it consumed an escape while building the identifier, so we can
+    /// surface the diagnostic at the token's start position.
+    fn check_no_unicode_escape_in_jsx_identifier(&mut self) {
+        let flags = self.scanner.get_token_flags();
+        if (flags & tsz_scanner::scanner_impl::TokenFlags::UnicodeEscape as u32) == 0 {
+            return;
+        }
+        let pos = self.token_pos();
+        let end = self.token_end();
+        self.parse_error_at(
+            pos,
+            end - pos,
+            "Unicode escape sequence cannot appear here.",
+            tsz_common::diagnostics::diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE,
+        );
+    }
+
     /// Parse JSX element name (identifier, this, namespaced, or property access).
     pub(crate) fn parse_jsx_element_name(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -1225,6 +1245,7 @@ impl ParserState {
             if self.is_token(SyntaxKind::ColonToken) {
                 self.next_token(); // consume :
                 self.scanner.scan_jsx_identifier();
+                self.check_no_unicode_escape_in_jsx_identifier();
                 let local_name = self.parse_identifier_name();
                 // The namespaced-name node ends at the local name, not at the
                 // next token. Using `token_end()` here would extend the span
@@ -1250,6 +1271,7 @@ impl ParserState {
             // scan_jsx_identifier handles both identifiers and keywords,
             // extending the token to include hyphens (e.g., public-foo)
             self.scanner.scan_jsx_identifier();
+            self.check_no_unicode_escape_in_jsx_identifier();
             let name = self.parse_identifier_name();
 
             // Check for namespaced name (a:b)
@@ -1495,6 +1517,7 @@ impl ParserState {
         // scan_jsx_identifier handles both identifiers and keywords,
         // extending the token to include hyphens (e.g., class-id, data-testid)
         self.scanner.scan_jsx_identifier();
+        self.check_no_unicode_escape_in_jsx_identifier();
         // Use parse_identifier_name to allow keywords as attribute names
         let name = self.parse_identifier_name();
 
