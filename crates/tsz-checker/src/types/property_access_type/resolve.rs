@@ -1079,15 +1079,14 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 let property_name = &ident.escaped_text;
-                if self.known_declared_receiver_has_property(
-                    access.expression,
-                    display_object_type,
-                    property_name,
-                ) {
-                    return TypeId::ERROR;
-                }
+                // tsc emits TS2339 on property access against `never` even when
+                // the property exists on the un-narrowed declared receiver —
+                // the narrowed type is `never`, the code is unreachable, so the
+                // property genuinely doesn't exist on the value at this point.
+                // The earlier blanket suppression hid the diagnostic for type-
+                // predicate / typeof narrowing chains that exhaust a union to
+                // never (e.g. `instanceofWithStructurallyIdenticalTypes`).
                 if !property_name.starts_with('#') {
-                    // Report at the property name node, not the full expression (matches tsc behavior)
                     self.error_property_not_exist_at(
                         property_name,
                         TypeId::NEVER,
