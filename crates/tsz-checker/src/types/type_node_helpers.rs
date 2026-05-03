@@ -489,6 +489,70 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Used by TS1265/TS1266 checks to distinguish concrete rest elements from variadic
     /// type parameter spreads. Only concrete array/tuple rest elements are subject to
     /// the "rest after rest" and "optional after rest" restrictions.
+    /// Conservative AST-only check for "this rest-tuple element type is
+    /// obviously not an array type" (TS2574).
+    ///
+    /// Returns true only when the AST shape is unambiguously a non-array
+    /// primitive: `string`/`number`/`boolean`/`bigint`/`symbol`/`object`/
+    /// `null`/`undefined`/`void`/`never`/`unknown` keyword (parsed either
+    /// as a bare keyword node or as a `TYPE_REFERENCE` to one of those names),
+    /// or a literal type. Type parameters, conditional types, mapped types,
+    /// type applications, index access, infer, type aliases, and
+    /// unions/intersections all bypass this check because they may resolve
+    /// to array/tuple at solver time and we don't want to false-flag
+    /// variadic-tuple usage.
+    pub(super) fn ast_kind_is_obviously_non_array(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::StringKeyword as u16 => true,
+            k if k == SyntaxKind::NumberKeyword as u16 => true,
+            k if k == SyntaxKind::BooleanKeyword as u16 => true,
+            k if k == SyntaxKind::BigIntKeyword as u16 => true,
+            k if k == SyntaxKind::SymbolKeyword as u16 => true,
+            k if k == SyntaxKind::ObjectKeyword as u16 => true,
+            k if k == SyntaxKind::NullKeyword as u16 => true,
+            k if k == SyntaxKind::UndefinedKeyword as u16 => true,
+            k if k == SyntaxKind::VoidKeyword as u16 => true,
+            k if k == SyntaxKind::NeverKeyword as u16 => true,
+            k if k == syntax_kind_ext::LITERAL_TYPE => true,
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                // Detect bare-keyword forms parsed as TYPE_REFERENCE (the
+                // common path in our parser): `string`, `number`, etc.
+                if let Some(type_ref) = arena.get_type_ref(node)
+                    && let Some(name_node) = arena.get(type_ref.type_name)
+                    && let Some(ident) = arena.get_identifier(name_node)
+                {
+                    let has_type_args = type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_some_and(|a| !a.nodes.is_empty());
+                    if !has_type_args {
+                        return matches!(
+                            ident.escaped_text.as_str(),
+                            "string"
+                                | "number"
+                                | "boolean"
+                                | "bigint"
+                                | "symbol"
+                                | "object"
+                                | "null"
+                                | "undefined"
+                                | "void"
+                                | "never"
+                        );
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     pub(super) fn is_array_or_tuple_type(&self, type_id: tsz_solver::TypeId) -> bool {
         crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
             || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)

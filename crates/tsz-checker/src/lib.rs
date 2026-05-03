@@ -282,6 +282,9 @@ mod ts2540_readonly_tests;
 #[path = "../tests/ts2558_new_type_args_tests.rs"]
 mod ts2558_new_type_args_tests;
 #[cfg(test)]
+#[path = "tests/ts2574_rest_tuple_element_type_tests.rs"]
+mod ts2574_rest_tuple_element_type_tests;
+#[cfg(test)]
 #[path = "../tests/ts2589_tests.rs"]
 mod ts2589_tests;
 #[cfg(test)]
