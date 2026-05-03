@@ -241,25 +241,23 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Elide empty, non-exported, non-declare inner namespaces nested
-        // inside another non-ambient namespace, when nothing references them.
+        // inside another non-ambient namespace.
         // tsc emits nothing for `namespace A { }` in that position: the body
-        // has no declarations to contribute to the type surface, and nothing
-        // depends on it by name. Used by declFileWithInternalModuleNameConflicts*
+        // has no declarations to contribute to the type surface. Used by
+        // declFileWithInternalModuleNameConflicts*
         // where an empty inner `namespace A { }` exists only for source-level
-        // name resolution.
+        // name resolution, and may collide textually with an outer `A` used
+        // in exported heritage clauses.
         //
         // Keep the namespace when:
         //   - it's exported
         //   - the source carried `declare`
         //   - we're inside an ambient/`declare` namespace (ambient contexts
         //     preserve structure — e.g. declarationEmitLocalClassHasRequiredDeclare)
-        //   - it's referenced by an exported member (e.g.
-        //     aliasInaccessibleModule: `export import X = N` keeps `namespace N`)
         if !is_exported
             && !self.arena.is_declare(&module.modifiers)
             && self.inside_non_ambient_namespace
             && self.is_module_body_effectively_empty(module.body)
-            && !self.is_ns_member_used_by_exports(module_idx)
         {
             return;
         }
