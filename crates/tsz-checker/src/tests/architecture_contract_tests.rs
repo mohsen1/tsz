@@ -964,10 +964,6 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "property_access_type should not call solver type_queries::classifiers directly; use property_access query boundaries"
     );
     assert!(
-        property_checker_src.contains("query::is_type_usable_as_property_name("),
-        "property_checker computed-name checks should route through query_boundaries::property_checker"
-    );
-    assert!(
         !property_checker_src.contains("tsz_solver::type_queries::"),
         "property_checker should not call solver type_queries directly; use property_checker query boundaries"
     );

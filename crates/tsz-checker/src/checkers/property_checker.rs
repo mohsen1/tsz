@@ -1,7 +1,6 @@
 //! Property access checking (accessibility, computed names, const modifiers).
 
 use crate::classes_domain::class_summary::ClassMemberKind;
-use crate::query_boundaries::checkers::property as query;
 use crate::query_boundaries::type_computation::complex::{
     ClassDeclTypeKind, classify_for_class_decl,
 };
@@ -930,28 +929,17 @@ impl<'a> CheckerState<'a> {
         }
 
         // Always evaluate the expression to trigger side-effect diagnostics (e.g., TS2585
-        // for `Symbol` at ES5 target). Entity name expressions skip the TS1169/TS1170
-        // structural error but still need type evaluation.
-        let expr_type = self.get_type_of_node(computed.expression);
+        // for `Symbol` at ES5 target).
+        let _expr_type = self.get_type_of_node(computed.expression);
+        let _ = self.report_computed_this_property_missing(computed.expression);
 
-        let emitted_computed_this_missing =
-            self.report_computed_this_property_missing(computed.expression);
-
-        if expr_type == tsz_solver::TypeId::ERROR {
-            if emitted_computed_this_missing {
-                self.error_at_node(name_idx, message, code);
-            }
-            return;
-        }
-
-        if emitted_computed_this_missing {
-            self.error_at_node(name_idx, message, code);
-            return;
-        }
-
-        if !query::is_type_usable_as_property_name(self.ctx.types, expr_type) {
-            self.error_at_node(name_idx, message, code);
-        }
+        // Past this point, the expression is not a literal, not an entity-name chain,
+        // not an assignment, and (for class properties) not a type assertion. tsc rejects
+        // such expressions in TS1166/TS1169/TS1170 contexts regardless of whether the
+        // computed type happens to be a literal or unique symbol — the syntactic form
+        // matters. This catches parenthesized entity-name access (which breaks the
+        // entity-name chain), conditionals, calls, computed access, etc.
+        self.error_at_node(name_idx, message, code);
     }
 
     /// Check a computed property name for type errors (TS2464).
