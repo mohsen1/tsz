@@ -1844,6 +1844,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Skip duplicate `extends` clauses on a class (TS1172 parser error).
+        let mut extends_seen = false;
+
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
                 continue;
@@ -1854,6 +1857,10 @@ impl<'a> CheckerState<'a> {
             if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
                 continue;
             }
+            if extends_seen {
+                continue;
+            }
+            extends_seen = true;
 
             let Some(&type_idx) = heritage.types.nodes.first() else {
                 continue;
