@@ -63,6 +63,10 @@ name = "prefix_unary_recovery_tests"
 path = "tests/prefix_unary_recovery_tests.rs"
 
 [[test]]
+name = "comma_expression_recovery_tests"
+path = "tests/comma_expression_recovery_tests.rs"
+
+[[test]]
 name = "property_access_recovery_tests"
 path = "tests/property_access_recovery_tests.rs"
 
