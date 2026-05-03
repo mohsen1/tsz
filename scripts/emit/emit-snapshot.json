@@ -1,8 +1,8 @@
 {
   "summary": {
     "jsTotal": 13526,
-    "jsPass": 12552,
-    "jsFail": 974,
+    "jsPass": 12553,
+    "jsFail": 973,
     "jsSkip": 1,
     "jsTimeout": 0,
     "jsPassRate": 92.8,
