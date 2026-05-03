@@ -324,12 +324,6 @@ jobs:
             --json-file "$GITHUB_WORKSPACE/bench-results-${{ matrix.label }}.json" \
             2>&1 | tee "$GITHUB_WORKSPACE/bench-run-${{ matrix.label }}.log"
 
-      - name: Save GCS caches
-        if: success()
-        env:
-          _TSZ_CI_SUITE: bench
-        run: scripts/ci/gcp-cache.sh save
-
       - name: Upload benchmark shard artifacts
         if: always()
         uses: actions/upload-artifact@v4
