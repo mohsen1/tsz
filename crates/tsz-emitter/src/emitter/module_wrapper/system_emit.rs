@@ -428,7 +428,7 @@ impl<'a> Printer<'a> {
             }
 
             if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                self.emit_system_variable_initializers(stmt_node);
+                self.emit_system_variable_initializers(stmt_node, false);
             } else if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
                 // Non-exported class declarations: var is hoisted, emit as assignment
                 self.emit_system_class_as_expression(stmt_node, stmt_idx);
@@ -611,7 +611,7 @@ impl<'a> Printer<'a> {
             }
 
             if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                self.emit_system_variable_initializers(stmt_node);
+                self.emit_system_variable_initializers(stmt_node, false);
             } else {
                 self.emit(stmt_idx);
             }
@@ -1214,7 +1214,7 @@ impl<'a> Printer<'a> {
         }
 
         if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-            self.emit_system_variable_initializers(clause_node);
+            self.emit_system_variable_initializers(clause_node, true);
             return true;
         }
 
@@ -1417,13 +1417,18 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_system_variable_initializers(&mut self, node: &tsz_parser::parser::node::Node) {
+    fn emit_system_variable_initializers(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+        force_exported: bool,
+    ) {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };
-        let is_exported = self
-            .arena
-            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
+        let is_exported = force_exported
+            || self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -1442,6 +1447,10 @@ impl<'a> Printer<'a> {
                 };
 
                 if decl.initializer.is_none() {
+                    continue;
+                }
+
+                if self.emit_system_empty_binding_pattern_initializer(decl_idx, decl, is_exported) {
                     continue;
                 }
 
@@ -1468,6 +1477,42 @@ impl<'a> Printer<'a> {
                 self.write_semicolon();
             }
         }
+    }
+
+    fn emit_system_empty_binding_pattern_initializer(
+        &mut self,
+        decl_idx: NodeIndex,
+        decl: &tsz_parser::parser::node::VariableDeclarationData,
+        is_exported: bool,
+    ) -> bool {
+        let Some((source_temp, export_temp)) = self
+            .system_empty_binding_pattern_temps
+            .get(&decl_idx)
+            .cloned()
+        else {
+            return false;
+        };
+
+        if is_exported && self.ctx.target_es5 {
+            let export_temp = export_temp.unwrap_or_else(|| self.make_unique_name());
+            self.write("exports_1(\"");
+            self.write(&export_temp);
+            self.write("\", ");
+            self.write(&export_temp);
+            self.write(" = ");
+        }
+        self.write(&source_temp);
+        self.write(" = ");
+        if decl.initializer.is_none() {
+            self.write("void 0");
+        } else {
+            self.emit_expression(decl.initializer);
+        }
+        if is_exported && self.ctx.target_es5 {
+            self.write(")");
+        }
+        self.write_semicolon();
+        true
     }
 
     fn emit_system_binding_pattern_initializer(

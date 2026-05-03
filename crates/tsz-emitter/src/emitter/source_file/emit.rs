@@ -835,6 +835,7 @@ impl<'a> Printer<'a> {
             // tsc places these BEFORE the __esModule marker.
             self.cjs_destr_hoist_byte_offset = self.writer.len();
             self.cjs_destr_hoist_line = self.writer.current_line();
+            self.cjs_destr_hoist_indent_level = self.writer.indent_level();
             self.cjs_destructuring_export_temps.clear();
 
             // Emit __esModule if this is an ES module.
@@ -1743,7 +1744,11 @@ impl<'a> Printer<'a> {
 
         // Insert CJS destructuring export temps before the __esModule marker.
         if !self.cjs_destructuring_export_temps.is_empty() {
-            let var_decl = format!("var {};", self.cjs_destructuring_export_temps.join(", "));
+            let var_decl = format!(
+                "{}var {};",
+                "    ".repeat(self.cjs_destr_hoist_indent_level as usize),
+                self.cjs_destructuring_export_temps.join(", ")
+            );
             self.writer.insert_line_at(
                 self.cjs_destr_hoist_byte_offset,
                 self.cjs_destr_hoist_line,

@@ -1126,7 +1126,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn binding_pattern_has_export_names(&self, pattern_idx: NodeIndex) -> bool {
+    pub(in crate::emitter) fn binding_pattern_has_export_names(
+        &self,
+        pattern_idx: NodeIndex,
+    ) -> bool {
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
             return false;
         };
@@ -1162,6 +1165,12 @@ impl<'a> Printer<'a> {
         initializer: NodeIndex,
     ) {
         let temp_name = self.make_unique_name_cjs_destructuring();
+        if self.ctx.target_es5 {
+            let export_temp = self.make_unique_name();
+            self.write("exports.");
+            self.write(&export_temp);
+            self.write(" = ");
+        }
         self.write(&temp_name);
         self.write(" = ");
         if initializer.is_none() {
