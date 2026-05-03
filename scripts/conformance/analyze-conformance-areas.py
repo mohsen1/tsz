@@ -9,6 +9,7 @@ import sys
 import os
 import json
 import argparse
+import re
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -26,6 +27,12 @@ NC = "\033[0m"
 
 # Common prefix stripped from all test paths
 PATH_PREFIX = "TypeScript/tests/cases/"
+_ABS_PREFIX_RE = re.compile(r"^.*(TypeScript/)")
+
+
+def normalize_path(path):
+    """Normalize absolute harness paths to start at TypeScript/."""
+    return _ABS_PREFIX_RE.sub(r"\1", path, count=1)
 
 
 def parse_results(tmpfile):
@@ -36,7 +43,7 @@ def parse_results(tmpfile):
         status = rec["status"]
         if status == "XFAIL":
             status = "FAIL"
-        results.append((path, status))
+        results.append((normalize_path(path), status))
     return results
 
 
@@ -53,7 +60,7 @@ def extract_area(path, depth):
       conformance/parser/ecmascript5/foo.ts -> parser/ecmascript5
       compiler/foo.ts -> compiler  (no deeper segment)
     """
-    stripped = path
+    stripped = normalize_path(path)
     if stripped.startswith(PATH_PREFIX):
         stripped = stripped[len(PATH_PREFIX):]
 
