@@ -1155,4 +1155,90 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    /// True when `attr_name` resolves to an OPTIONAL property declared on an
+    /// ANONYMOUS object type (no symbol/alias on the source). tsc's TS2322
+    /// target-display rule preserves `| undefined` for optional props from
+    /// anonymous inline `IntrinsicElements` types but strips it for named
+    /// interfaces / aliases. Used to widen the displayed property type for
+    /// bare string-literal JSX attribute initializers (`<x n='true' />`).
+    pub(crate) fn jsx_attr_prop_is_optional_in_anonymous_source(
+        &self,
+        direct_prop_access: &crate::query_boundaries::common::PropertyAccessResult,
+        as_intrinsic_props: Option<TypeId>,
+        props_type: TypeId,
+        attr_name: &str,
+    ) -> bool {
+        let props_lookup = match (direct_prop_access, as_intrinsic_props) {
+            (
+                crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. },
+                Some(intrinsic),
+            ) => intrinsic,
+            _ => props_type,
+        };
+        if crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, props_lookup)
+        {
+            return false;
+        }
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_lookup)
+            .and_then(|shape| {
+                shape.properties.iter().find_map(|p| {
+                    if self.ctx.types.resolve_atom(p.name) == attr_name {
+                        Some(p.optional)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    /// Pick the displayed target type for a JSX attribute TS2322. For
+    /// optional props on anonymous source types, return `T | undefined`
+    /// (matching tsc's display); otherwise return the write-position type.
+    pub(crate) fn jsx_attr_display_target_type(
+        &mut self,
+        write_check_type: TypeId,
+        declared_type_id: TypeId,
+        prop_is_optional_in_anonymous_source: bool,
+    ) -> TypeId {
+        if !prop_is_optional_in_anonymous_source {
+            return write_check_type;
+        }
+        if write_check_type == declared_type_id {
+            self.ctx
+                .types
+                .factory()
+                .union2(write_check_type, TypeId::UNDEFINED)
+        } else {
+            declared_type_id
+        }
+    }
+
+    /// JSX bare-string-literal attribute write to an optional anonymous prop:
+    /// emits TS2322 with `T | undefined` as the displayed target. tsc's
+    /// general assignability display strips `| undefined`, so this path
+    /// bypasses it. Returns `Some(false)` if it emitted (caller should treat
+    /// as not-assignable), or `None` if the special path didn't apply.
+    pub(crate) fn try_emit_jsx_bare_string_attr_undefined_target(
+        &mut self,
+        actual_type: TypeId,
+        expected_type: TypeId,
+        original_property_type: TypeId,
+        anchor_idx: NodeIndex,
+        initializer_is_bare_string_literal: bool,
+    ) -> Option<bool> {
+        if !initializer_is_bare_string_literal
+            || original_property_type == expected_type
+            || self.is_assignable_to(actual_type, expected_type)
+        {
+            return None;
+        }
+        self.error_type_not_assignable_at_with_display_types_widened(
+            actual_type,
+            original_property_type,
+            anchor_idx,
+        );
+        Some(false)
+    }
 }
