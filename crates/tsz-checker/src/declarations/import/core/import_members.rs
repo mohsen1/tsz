@@ -154,6 +154,8 @@ impl<'a> CheckerState<'a> {
         let quoted_module = format!("\"{module_name}\"");
         let has_json_default_export =
             self.module_has_json_default_export(module_name, Some(self.ctx.current_file_idx));
+        let json_default_only =
+            has_json_default_export && self.current_file_uses_esm_import_syntax();
         let has_module_exports_binding =
             self.module_uses_module_exports_interop(module_name, resolution_mode);
         let has_default_binding = has_json_default_export
@@ -548,6 +550,10 @@ impl<'a> CheckerState<'a> {
                 if !exports_table.has(import_name)
                     && !self.has_named_export_via_export_equals(&exports_table, import_name)
                 {
+                    if has_json_default_export && !json_default_only {
+                        continue;
+                    }
+
                     // Before emitting TS2305, check if this import can be resolved
                     // through re-export chains (wildcard or named re-exports).
                     let found_via_reexport = self.named_import_found_via_reexport(
@@ -618,11 +624,27 @@ impl<'a> CheckerState<'a> {
                             // TS2497 + TS2616/TS2595/TS2597 already emitted
                             // earlier in this function for the export-equals
                             // import mismatch.
-                        } else if has_json_default_export
+                        } else if json_default_only
                             || has_module_exports_binding
                             || exports_table.has("default")
                             || exports_table.has("export=")
                         {
+                            if json_default_only
+                                && self.ctx.compiler_options.module.is_node_module()
+                            {
+                                let module_kind = self.module_kind_display_name();
+                                let message = format_message(
+                                    diagnostic_messages::NAMED_IMPORTS_FROM_A_JSON_FILE_INTO_AN_ECMASCRIPT_MODULE_ARE_NOT_ALLOWED_WHEN_MO,
+                                    &[module_kind],
+                                );
+                                self.error_at_node(
+                                    name_idx,
+                                    &message,
+                                    diagnostic_codes::NAMED_IMPORTS_FROM_A_JSON_FILE_INTO_AN_ECMASCRIPT_MODULE_ARE_NOT_ALLOWED_WHEN_MO,
+                                );
+                                continue;
+                            }
+
                             // Before emitting TS2614, try a type-level resolution for
                             // `export =` modules where the member may be a key of a
                             // mapped type stored as the type of the `export =` target.
