@@ -1560,6 +1560,9 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
                 if let Some(spread) = self.arena.get_spread(node) {
                     self.write("...");
+                    if let Some(expr_node) = self.arena.get(spread.expression) {
+                        self.emit_comments_after_dot_dot_dot(node.pos, expr_node.pos, true);
+                    }
                     self.emit_expression(spread.expression);
                 }
             }

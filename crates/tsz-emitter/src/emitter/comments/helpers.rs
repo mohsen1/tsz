@@ -436,6 +436,98 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Emit comments written between a `...` token and the following operand
+    /// or binding name. TSC keeps these comments glued to the spread/rest token
+    /// instead of treating them as ordinary leading comments on the operand.
+    pub(in crate::emitter) fn emit_comments_after_dot_dot_dot(
+        &mut self,
+        dot_dot_dot_pos: u32,
+        target_pos: u32,
+        preserve_newline_before_comment: bool,
+    ) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let token_start = self.skip_trivia_forward(dot_dot_dot_pos, target_pos);
+        let token_end = token_start.saturating_add(3);
+        let mut scan_idx = self.comment_emit_idx;
+        while scan_idx < self.all_comments.len() && self.all_comments[scan_idx].end <= token_end {
+            scan_idx += 1;
+        }
+        if scan_idx >= self.all_comments.len() {
+            return false;
+        }
+
+        let first = &self.all_comments[scan_idx];
+        if first.pos < token_end || first.end > target_pos {
+            return false;
+        }
+
+        let bytes = text.as_bytes();
+        let has_newline_before_first = bytes
+            .get(token_end as usize..std::cmp::min(first.pos as usize, bytes.len()))
+            .is_some_and(|gap| gap.iter().any(|&b| b == b'\n' || b == b'\r'));
+
+        if preserve_newline_before_comment && has_newline_before_first {
+            self.write_line();
+        } else {
+            self.write_space();
+        }
+
+        let first_comment_started_on_later_line = has_newline_before_first;
+        while scan_idx < self.all_comments.len() {
+            let comment = &self.all_comments[scan_idx];
+            if comment.pos < token_end || comment.end > target_pos {
+                break;
+            }
+
+            let c_pos = comment.pos;
+            let c_end = comment.end;
+            if let Ok(comment_text) = crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(c_pos));
+            }
+            self.comment_emit_idx = scan_idx + 1;
+            scan_idx += 1;
+
+            let next_pos = if scan_idx < self.all_comments.len()
+                && self.all_comments[scan_idx].pos >= token_end
+                && self.all_comments[scan_idx].end <= target_pos
+            {
+                self.all_comments[scan_idx].pos
+            } else {
+                target_pos
+            };
+            let has_newline_after = bytes
+                .get(c_end as usize..std::cmp::min(next_pos as usize, bytes.len()))
+                .is_some_and(|gap| gap.iter().any(|&b| b == b'\n' || b == b'\r'));
+
+            if next_pos == target_pos {
+                if preserve_newline_before_comment
+                    && first_comment_started_on_later_line
+                    && has_newline_after
+                {
+                    self.write_line();
+                } else if preserve_newline_before_comment && first_comment_started_on_later_line {
+                    self.write_space();
+                }
+            } else if preserve_newline_before_comment && has_newline_after {
+                self.write_line();
+            } else {
+                self.write_space();
+            }
+        }
+
+        self.pending_block_comment_space = false;
+        true
+    }
+
     /// Check (without advancing the cursor) whether there is a comment in
     /// `[start_pos, end_pos)` that introduces a newline break. This is used
     /// to detect cases where a line comment between a keyword (`yield`) and

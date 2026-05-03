@@ -79,6 +79,9 @@ impl<'a> Printer<'a> {
         // Rest element: ...x
         if elem.dot_dot_dot_token {
             self.write("...");
+            if let Some(name_node) = self.arena.get(elem.name) {
+                self.emit_comments_after_dot_dot_dot(node.pos, name_node.pos, false);
+            }
         }
 
         // propertyName: name  or just name

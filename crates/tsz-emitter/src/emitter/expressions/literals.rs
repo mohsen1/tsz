@@ -75,6 +75,9 @@ impl<'a> Printer<'a> {
                     return true;
                 }
             }
+            if self.array_last_element_has_newline_before_close(node, &array.elements.nodes) {
+                return true;
+            }
             false
         });
         let has_trailing_comma = self.has_trailing_comma_in_source(node, &array.elements.nodes);
@@ -380,10 +383,52 @@ impl<'a> Printer<'a> {
                 {
                     self.write(",");
                 }
+                if self.array_last_element_has_newline_before_close(node, &array.elements.nodes) {
+                    self.write_line();
+                }
                 self.decrease_indent();
                 self.write("]");
             }
         }
+    }
+
+    fn array_last_element_has_newline_before_close(
+        &self,
+        array_node: &Node,
+        elements: &[NodeIndex],
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(&last_idx) = elements.last() else {
+            return false;
+        };
+        let Some(last_node) = self.arena.get(last_idx) else {
+            return false;
+        };
+
+        let bytes = text.as_bytes();
+        let mut close = std::cmp::min(array_node.end as usize, bytes.len());
+        while close > 0 {
+            close -= 1;
+            if bytes[close] == b']' {
+                break;
+            }
+        }
+        if close <= last_node.pos as usize {
+            return false;
+        }
+
+        let last_content_end = if last_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+            self.arena
+                .get_spread(last_node)
+                .and_then(|spread| self.arena.get(spread.expression))
+                .map_or(last_node.end, |expr_node| expr_node.end)
+        } else {
+            self.find_token_end_before_trivia(last_node.pos, close as u32)
+        };
+        let start = std::cmp::min(last_content_end as usize, close);
+        text[start..close].contains('\n')
     }
 
     pub(in crate::emitter) fn emit_object_literal(&mut self, node: &Node) {
