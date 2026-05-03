@@ -391,9 +391,30 @@ fn visit_children<F: FnMut(NodeIndex)>(arena: &NodeArena, node: &Node, mut visit
                 visitor(access.name_or_argument);
             }
         }
+        k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION =>
+        {
+            if let Some(lit) = arena.get_literal_expr(node) {
+                for &elem_idx in &lit.elements.nodes {
+                    visitor(elem_idx);
+                }
+            }
+        }
+        k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+            if let Some(prop) = arena.get_property_assignment(node) {
+                visitor(prop.name);
+                visitor(prop.initializer);
+            }
+        }
+        k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+            if let Some(prop) = arena.get_shorthand_property(node) {
+                visitor(prop.name);
+                visitor(prop.object_assignment_initializer);
+            }
+        }
         k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-            if let Some(unary) = arena.get_unary_expr(node) {
-                visitor(unary.operand);
+            if let Some(paren) = arena.get_parenthesized(node) {
+                visitor(paren.expression);
             }
         }
         k if k == syntax_kind_ext::IF_STATEMENT => {
