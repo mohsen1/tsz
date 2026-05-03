@@ -86,3 +86,20 @@ if (u === aDifferentName) {
         "Expected no TS2322 regardless of const name choice, got: {codes:?}"
     );
 }
+
+#[test]
+fn primitive_const_inequality_does_not_exclude_from_union_false_branch() {
+    let source = r#"
+declare const y: string;
+function f(x: string | number) {
+    if (x !== y) {
+        let n: number = x;
+    }
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 because `x !== y` with `y: string` must not narrow `x` to number, got: {codes:?}"
+    );
+}

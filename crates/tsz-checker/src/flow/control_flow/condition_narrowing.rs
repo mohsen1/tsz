@@ -1444,6 +1444,9 @@ impl<'a> FlowAnalyzer<'a> {
                     }
                     return TypeId::NEVER;
                 }
+                if !is_unit_type(self.interner, literal_type) {
+                    return type_id;
+                }
                 return narrowing.narrow_excluding_type(type_id, literal_type);
             }
         }
