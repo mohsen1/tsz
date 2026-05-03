@@ -1266,7 +1266,13 @@ impl<'a> Printer<'a> {
             && self.in_system_execute_body
         {
             let before_len = self.writer.len();
-            self.emit_class_es6_with_options(node, idx, false, Some(("", binding_name.clone())));
+            self.emit_class_es6_with_options(
+                node,
+                idx,
+                false,
+                Some(("", binding_name.clone())),
+                None,
+            );
             let after_len = self.writer.len();
             let full_output = self.writer.get_output().to_string();
             let emitted = &full_output[before_len..after_len];

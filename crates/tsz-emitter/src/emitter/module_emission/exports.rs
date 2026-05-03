@@ -551,6 +551,7 @@ impl<'a> Printer<'a> {
                                     export.export_clause,
                                     true,
                                     Some(("let", name.clone())),
+                                    None,
                                 );
                                 self.write_line();
                                 // CommonJS export assignment
