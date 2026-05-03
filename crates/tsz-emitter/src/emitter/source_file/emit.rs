@@ -1168,6 +1168,7 @@ impl<'a> Printer<'a> {
         self.iterator_for_of_depth = 0;
 
         self.prepare_logical_assignment_value_temps(source_idx);
+        self.prepare_object_rest_assignment_temps(source_idx);
 
         let mut hoisted_var_byte_offset = self.writer.len();
         let mut hoisted_var_line = self.writer.current_line();

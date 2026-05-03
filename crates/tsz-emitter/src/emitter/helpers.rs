@@ -629,6 +629,123 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn count_object_rest_assignment_temps(&self, node_idx: NodeIndex) -> usize {
+        if !self.ctx.needs_es2018_lowering || node_idx.is_none() {
+            return 0;
+        }
+
+        let mut count = 0usize;
+        let mut stack = vec![node_idx];
+
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.arena.get(current) else {
+                continue;
+            };
+
+            if let Some(binary) = self.arena.get_binary_expr(node)
+                && binary.operator_token == SyntaxKind::EqualsToken as u16
+                && self.assignment_pattern_has_object_rest(binary.left)
+            {
+                let source_simple = self
+                    .arena
+                    .get(binary.right)
+                    .is_some_and(|n| n.is_identifier());
+                count +=
+                    self.estimate_object_rest_assignment_pattern_temps(binary.left, source_simple);
+            }
+
+            if self.is_logical_assignment_temp_scope_boundary(node) {
+                continue;
+            }
+
+            for child in self.arena.get_children(current) {
+                stack.push(child);
+            }
+        }
+
+        count
+    }
+
+    fn estimate_object_rest_assignment_pattern_temps(
+        &self,
+        pattern_idx: NodeIndex,
+        source_simple: bool,
+    ) -> usize {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return 0;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return 0;
+            };
+
+            let has_own_rest = lit.elements.nodes.iter().any(|&elem_idx| {
+                self.arena
+                    .get(elem_idx)
+                    .is_some_and(|elem| elem.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+            });
+            let mut count = usize::from(has_own_rest && !source_simple);
+
+            for &elem_idx in &lit.elements.nodes {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    continue;
+                };
+                if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    && let Some(prop) = self.arena.get_property_assignment(elem_node)
+                    && self.assignment_pattern_has_object_rest(prop.initializer)
+                {
+                    let nested_source_simple = self
+                        .arena
+                        .get(prop.initializer)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
+                    count += self.estimate_object_rest_assignment_pattern_temps(
+                        prop.initializer,
+                        nested_source_simple,
+                    );
+                }
+            }
+
+            return count;
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return 0;
+            };
+
+            let mut count = 0usize;
+            for &elem_idx in &lit.elements.nodes {
+                if !self.assignment_pattern_has_object_rest(elem_idx) {
+                    continue;
+                }
+                count += 1;
+                let nested_pattern = self
+                    .arena
+                    .get(elem_idx)
+                    .and_then(|elem| {
+                        if elem.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                            self.arena.get_spread(elem).map(|spread| spread.expression)
+                        } else {
+                            Some(elem_idx)
+                        }
+                    })
+                    .unwrap_or(elem_idx);
+                count += self.estimate_object_rest_assignment_pattern_temps(nested_pattern, true);
+            }
+            return count;
+        }
+
+        0
+    }
+
+    pub(super) fn prepare_object_rest_assignment_temps(&mut self, node_idx: NodeIndex) {
+        let count = self.count_object_rest_assignment_temps(node_idx);
+        if count > 0 {
+            self.preallocate_assignment_temps(count);
+        }
+    }
+
     /// Like `make_unique_name` but also records the temp for hoisting as a `var` declaration.
     /// Used for assignment destructuring temps which need `var _a, _b, ...;` at scope top.
     pub(super) fn make_unique_name_hoisted(&mut self) -> String {
