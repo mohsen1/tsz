@@ -378,6 +378,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 );
                             }
                             seen_rest = true;
+                        } else if Self::ast_kind_is_obviously_non_array(
+                            self.ctx.arena,
+                            wrapped.type_node,
+                        ) {
+                            self.emit_rest_element_type_must_be_array(elem_node.pos, elem_node.end);
                         }
                         elements.push(TupleElement {
                             type_id: elem_type,
@@ -410,6 +415,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     );
                                 }
                                 seen_rest = true;
+                            } else if Self::ast_kind_is_obviously_non_array(
+                                self.ctx.arena,
+                                data.type_node,
+                            ) {
+                                self.emit_rest_element_type_must_be_array(
+                                    elem_node.pos,
+                                    elem_node.end,
+                                );
                             }
                         } else if data.question_token {
                             // TS1266: An optional element cannot follow a rest element
