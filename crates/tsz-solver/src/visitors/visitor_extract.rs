@@ -465,14 +465,10 @@ pub fn is_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// is an unresolved type name.
 pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     let mut current = type_id;
-    let mut seen = FxHashSet::default();
 
-    loop {
+    for _ in 0..16 {
         if current == TypeId::ERROR {
             return true;
-        }
-        if !seen.insert(current) {
-            return false;
         }
 
         match types.lookup(current) {
@@ -483,6 +479,8 @@ pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
             _ => return false,
         }
     }
+
+    false
 }
 
 /// Extract the function shape id if this is a function type.
