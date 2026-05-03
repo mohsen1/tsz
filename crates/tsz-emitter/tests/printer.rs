@@ -227,7 +227,7 @@ fn test_optional_call_spread_downlevel_es5() {
 }
 
 #[test]
-fn test_commonjs_empty_named_import_emits_bare_require() {
+fn test_commonjs_empty_named_import_is_elided() {
     let source = "import {} from \"./side\";\n";
     let output = parse_lower_print(
         source,
@@ -238,7 +238,7 @@ fn test_commonjs_empty_named_import_emits_bare_require() {
         },
     );
 
-    assert!(output.contains("require(\"./side\");"));
+    assert!(!output.contains("require(\"./side\");"));
     assert!(!output.contains("var side_1 = require(\"./side\");"));
 }
 
