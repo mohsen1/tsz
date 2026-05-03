@@ -50,7 +50,7 @@ impl<'a> CheckerState<'a> {
             let mut element_types = Vec::with_capacity(members.len());
             for &member in &members {
                 let member = unwrap_readonly(self.ctx.types, self.evaluate_type_with_env(member));
-                if matches!(member, TypeId::ANY | TypeId::ERROR) {
+                if member == TypeId::ANY {
                     return TypeId::ANY;
                 }
                 if let Some(element_type) = array_element_type(self.ctx.types, member) {

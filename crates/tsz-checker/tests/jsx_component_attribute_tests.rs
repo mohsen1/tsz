@@ -4234,6 +4234,30 @@ let ok = <div>{...widened}</div>;
 }
 
 #[test]
+fn jsx_spread_child_union_error_member_emits_ts2609() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}
+declare var React: any;
+declare let items: MissingSpreadMember | JSX.Element[];
+
+let bad = <div>{...items}</div>;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::JSX_SPREAD_CHILD_MUST_BE_AN_ARRAY_TYPE
+        ),
+        "Union with an error-typed JSX spread member must still emit TS2609, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_spread_child_array_normalizes_to_multiple_children() {
     let source = format!(
         r#"
