@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-05-03T11:54:31Z",
-  "git_sha": "81aa00c539ead69ee6c9d40048a9f191db3ff1f8",
+  "timestamp": "2026-05-03T12:14:24Z",
+  "git_sha": "009ce0d0bf2a40249d1f18652c1cf73b05b1b618",
   "summary": {
     "total_tests": 12582,
-    "passed": 12374,
-    "failed": 208,
-    "pass_rate": 98.3
+    "passed": 12375,
+    "failed": 207,
+    "pass_rate": 98.4
   },
   "areas_by_pass_rate": [
     {
@@ -207,9 +207,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6418,
-      "failed": 102,
-      "pass_rate": 98.44
+      "passed": 6419,
+      "failed": 101,
+      "pass_rate": 98.45
     },
     {
       "area": "externalModules/typeOnly",
@@ -1054,10 +1054,6 @@
       "count": 2
     },
     {
-      "code": "TS2416",
-      "count": 1
-    },
-    {
       "code": "TS2769",
       "count": 1
     },
@@ -1102,10 +1098,6 @@
     {
       "code": "TS2339",
       "count": 3
-    },
-    {
-      "code": "TS2416",
-      "count": 1
     },
     {
       "code": "TS2741",
@@ -1320,10 +1312,6 @@
       "count": 1
     },
     {
-      "code": "TS2416",
-      "count": 1
-    },
-    {
       "code": "TS2741",
       "count": 1
     },
@@ -1453,7 +1441,7 @@
     }
   ],
   "categories": {
-    "false_positive": 13,
+    "false_positive": 12,
     "all_missing": 12,
     "wrong_code": 57,
     "fingerprint_only": 126,
