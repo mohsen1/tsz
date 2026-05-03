@@ -421,30 +421,36 @@ impl<'a> DeclarationEmitter<'a> {
             return self.binding_pattern_has_used_identifier(name_idx);
         }
 
-        let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) else {
-            // Some declaration name nodes are not mapped directly; fall back
-            // to root-scope lookup by identifier text.
-            let Some(name_node) = self.arena.get(name_idx) else {
-                return false;
-            };
-            let Some(name_ident) = self.arena.get_identifier(name_node) else {
-                return false;
-            };
-            // Check file_locals first (matches UsageAnalyzer's lookup path)
-            if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text) {
-                return used.contains_key(&sym_id);
-            }
-            // Fall back to root scope table
-            let Some(root_scope) = binder.scopes.first() else {
-                return false;
-            };
-            let Some(scope_sym_id) = root_scope.table.get(&name_ident.escaped_text) else {
-                return false;
-            };
-            return used.contains_key(&scope_sym_id);
-        };
+        if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0)
+            && used.contains_key(&sym_id)
+        {
+            return true;
+        }
 
-        used.contains_key(&sym_id)
+        // Some declaration name nodes are mapped to a different SymbolId than
+        // the export-specifier reference that marked the local binding as used.
+        // Fall back to name lookup even when a direct node symbol exists so
+        // ambiguous type-modifier export clauses keep their referenced locals.
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(name_ident) = self.arena.get_identifier(name_node) else {
+            return false;
+        };
+        // Check file_locals first (matches UsageAnalyzer's lookup path)
+        if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text)
+            && used.contains_key(&sym_id)
+        {
+            return true;
+        }
+        // Fall back to root scope table
+        let Some(root_scope) = binder.scopes.first() else {
+            return false;
+        };
+        let Some(scope_sym_id) = root_scope.table.get(&name_ident.escaped_text) else {
+            return false;
+        };
+        used.contains_key(&scope_sym_id)
     }
 
     /// Walk a binding pattern's leaf identifiers and return true if any one

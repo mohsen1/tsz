@@ -243,6 +243,7 @@ mod class_features;
 mod comprehensive_parity;
 mod computed_properties;
 mod enum_template_and_advanced;
+mod export_specifiers;
 mod fix_verification;
 mod generics_and_ambient;
 mod misc_features;
