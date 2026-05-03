@@ -877,18 +877,37 @@ impl<'a> Printer<'a> {
                     leaf_name.clone()
                 };
                 if !leaf_name.is_empty() {
-                    let entry = self.namespace_prior_exports.entry(root_name).or_default();
-                    // Merge PRIOR exports into local set BEFORE adding this block's names.
-                    // This ensures names from earlier blocks are qualified in this block,
-                    // but this block's own declarations are NOT qualified here.
+                    // Merge prior var exports into local set first: a `var`
+                    // declared in an earlier block of the same namespace lives
+                    // on the namespace object only (its IIFE has exited), so
+                    // any reference here must qualify as `ns.x`.
+                    let entry = self
+                        .namespace_prior_exports
+                        .entry(root_name.clone())
+                        .or_default();
                     for name in entry.iter() {
                         local_exports.insert(name.clone());
                     }
-                    // Add this block's variable exports for future reopenings
                     entry.extend(local_exports.iter().cloned());
-                    // Register class/function/enum names for qualification in
-                    // subsequent reopenings only (not in this block's local_exports).
-                    entry.extend(class_fn_enum_names);
+
+                    // Class/fn/enum names from EARLIER reopenings of this same
+                    // namespace must also qualify in this block (their IIFE
+                    // has exited too) — but THIS block's own class/fn/enum
+                    // declarations stay unqualified, since they're emitted as
+                    // locals inside the current IIFE. Tracking these in a
+                    // separate map keeps them out of the var-keyed
+                    // `namespace_prior_exports` so nested namespaces (which
+                    // read parent's var exports as their qualification set)
+                    // do NOT see them and keep them unqualified — matching
+                    // tsc's reliance on the surrounding IIFE's lexical scope.
+                    let class_entry = self
+                        .namespace_prior_class_fn_enum_exports
+                        .entry(root_name)
+                        .or_default();
+                    for name in class_entry.iter() {
+                        local_exports.insert(name.clone());
+                    }
+                    class_entry.extend(class_fn_enum_names);
                 }
             }
             // Remove locally-declared non-exported names — they shadow prior exports
