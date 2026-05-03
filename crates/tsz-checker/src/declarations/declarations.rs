@@ -1714,13 +1714,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     if param.type_annotation.is_none() {
                         continue;
                     }
-                    let Some(type_node) = self.ctx.arena.get(param.type_annotation) else {
-                        continue;
-                    };
-                    let is_valid = type_node.kind == tsz_scanner::SyntaxKind::StringKeyword as u16
-                        || type_node.kind == tsz_scanner::SyntaxKind::NumberKeyword as u16
-                        || type_node.kind == tsz_scanner::SyntaxKind::SymbolKeyword as u16
-                        || type_node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE;
+                    let is_valid =
+                        crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
+                            self.ctx.arena,
+                            self.ctx.binder,
+                            param.type_annotation,
+                        );
                     if !is_valid && let Some((pos, end)) = self.ctx.get_node_span(param_idx) {
                         self.ctx.error(
                             pos,
