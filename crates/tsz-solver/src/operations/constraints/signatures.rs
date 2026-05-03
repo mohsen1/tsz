@@ -663,25 +663,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        for target_sig in target_signatures {
-            if target_sig.type_params.is_empty() {
-                let target_fn = self.function_type_from_signature(target_sig, is_constructor);
-                if let Some(index) = self.select_signature_for_target(
-                    source_signatures,
-                    target_fn,
-                    var_map,
-                    is_constructor,
-                ) {
-                    self.constrain_signature_erasing_source_type_params(
-                        ctx,
-                        var_map,
-                        &source_signatures[index],
-                        target_sig,
-                        priority,
-                        is_constructor,
-                    );
-                }
+        // Match tsc's `inferFromSignatures`: pair overloads from the bottom up.
+        // If the source has fewer signatures than the target, the first source
+        // signature is reused for the excess leading target signatures.
+        let source_len = source_signatures.len();
+        let target_len = target_signatures.len();
+        for (target_index, target_sig) in target_signatures.iter().enumerate() {
+            if !target_sig.type_params.is_empty() {
+                continue;
             }
+            let source_index = if source_len >= target_len {
+                source_len - target_len + target_index
+            } else {
+                target_index.saturating_sub(target_len - source_len)
+            };
+            self.constrain_signature_erasing_source_type_params(
+                ctx,
+                var_map,
+                &source_signatures[source_index],
+                target_sig,
+                priority,
+                is_constructor,
+            );
         }
     }
 
