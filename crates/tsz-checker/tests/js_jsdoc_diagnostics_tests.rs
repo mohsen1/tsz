@@ -139,6 +139,36 @@ console.log(typeof TruffleContract);
 }
 
 #[test]
+fn checked_js_cross_file_typedef_and_script_globals_duplicate() {
+    let files = &[
+        ("mod1.js", "/** @typedef {number} Foo */\nclass Bar {}\n"),
+        ("mod2.js", "class Foo { }\nconst Bar = 3;\n"),
+    ];
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+
+    let mut diagnostics = compile_named_files(files, "mod1.js", options.clone());
+    diagnostics.extend(compile_named_files(files, "mod2.js", options));
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 2300 && msg.contains("'Foo'")),
+        "Expected TS2300 for cross-file @typedef Foo vs class Foo. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 2451 && msg.contains("'Bar'")),
+        "Expected TS2451 for cross-file class Bar vs const Bar. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn checked_js_elided_default_namespace_import_reports_duplicate_and_value_errors() {
     let files = [
         (
