@@ -589,7 +589,16 @@ impl<'a> Printer<'a> {
                         .map(|off| (start + off + 1) as u32)
                         .unwrap_or(node.pos + 1)
                 });
-                self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
+                let wrote_leading_newline =
+                    self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
+                if !wrote_leading_newline
+                    && self.object_literal_comment_range_ends_with_newline(
+                        open_brace_end,
+                        prop_node.pos,
+                    )
+                {
+                    self.write_line();
+                }
                 self.emit_object_property(prop);
                 if has_trailing_comma {
                     self.write(",");
@@ -665,7 +674,16 @@ impl<'a> Printer<'a> {
                 }
                 // Emit leading comments before the first property (e.g. /** own x*/)
                 if i == 0 {
-                    self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
+                    let wrote_leading_newline =
+                        self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
+                    if !wrote_leading_newline
+                        && self.object_literal_comment_range_ends_with_newline(
+                            open_brace_end,
+                            prop_node.pos,
+                        )
+                    {
+                        self.write_line();
+                    }
                 }
                 self.emit_object_property(prop);
 
@@ -690,6 +708,9 @@ impl<'a> Printer<'a> {
                         te > 0 && te <= bytes.len() && bytes[te - 1] == b','
                     });
                 if needs_comma {
+                    if let Some(comma_pos) = self.find_comma_pos_after(token_end, node.end) {
+                        self.emit_trailing_comments_before(token_end, comma_pos);
+                    }
                     self.write(",");
                 }
 
@@ -902,6 +923,37 @@ impl<'a> Printer<'a> {
             return false;
         };
         self.node_text_contains_newline(node.pos as usize, node.end as usize)
+    }
+
+    fn object_literal_comment_range_ends_with_newline(&self, from_pos: u32, to_pos: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut scan_idx = 0;
+        let mut last_comment_end = None;
+
+        while scan_idx < self.all_comments.len() {
+            let comment = &self.all_comments[scan_idx];
+            if comment.end <= from_pos {
+                scan_idx += 1;
+                continue;
+            }
+            if comment.pos >= to_pos {
+                break;
+            }
+            if comment.pos >= from_pos && comment.end <= to_pos {
+                last_comment_end = Some(comment.end);
+            }
+            scan_idx += 1;
+        }
+
+        let Some(comment_end) = last_comment_end else {
+            return false;
+        };
+        let start = std::cmp::min(comment_end as usize, bytes.len());
+        let end = std::cmp::min(to_pos as usize, bytes.len());
+        bytes[start..end].iter().any(|&b| b == b'\n' || b == b'\r')
     }
 
     fn should_drop_recovered_object_method_without_body(&self, node_idx: NodeIndex) -> bool {

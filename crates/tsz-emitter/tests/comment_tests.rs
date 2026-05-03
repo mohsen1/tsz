@@ -88,6 +88,33 @@ fn object_literal_accessor_leading_comment_stays_before_accessor() {
 }
 
 #[test]
+fn object_literal_property_comments_stay_around_function_value() {
+    let source = r#"var Person = makeClass(
+   {
+       /**
+        This is just another way to define a constructor.
+        @constructs
+        @param {string} name The name of the person.
+        */
+       initialize: function(name) {
+           this.name = name;
+       } /* trailing comment 1*/,
+   }
+);"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("*/\n    initialize: function (name) {"),
+        "Leading block comment should end before the property line.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("    } /* trailing comment 1*/,"),
+        "Trailing block comment before a property comma should stay before the comma.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 
