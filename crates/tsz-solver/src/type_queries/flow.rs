@@ -491,6 +491,14 @@ pub fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 /// discriminant or literal equality narrowing:
 /// - Literal types (string, number, boolean, bigint)
 /// - Enum member types (nominal enum values like `Types.Str`)
+/// - Primitive intrinsics (string, number, boolean, bigint, symbol)
+/// - `unique symbol` types
+///
+/// Primitive intrinsics participate in equality narrowing of `unknown` /
+/// `any` sources: tsc treats `if (u === aString)` (where `aString: string`)
+/// as a guard that narrows `u: unknown` to `string`. For non-unknown / non-
+/// `any` sources, `narrow_to_type` reduces the source's union members to the
+/// matching primitive, which is the same behaviour tsc applies.
 ///
 /// Returns `None` for all other types.
 pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -498,9 +506,23 @@ pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
     if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
         return Some(type_id);
     }
+    // Primitive intrinsics that the assignment site might compare against.
+    // STRING / NUMBER / BOOLEAN / BIGINT / SYMBOL are valid narrowing
+    // comparands for `unknown` and union sources alike.
+    if matches!(
+        type_id,
+        TypeId::STRING
+            | TypeId::NUMBER
+            | TypeId::BOOLEAN
+            | TypeId::BIGINT
+            | TypeId::SYMBOL
+            | TypeId::OBJECT
+    ) {
+        return Some(type_id);
+    }
     let key = db.lookup(type_id)?;
     match key {
-        TypeData::Literal(_) | TypeData::Enum(_, _) => Some(type_id),
+        TypeData::Literal(_) | TypeData::Enum(_, _) | TypeData::UniqueSymbol(_) => Some(type_id),
         _ => None,
     }
 }

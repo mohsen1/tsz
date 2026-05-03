@@ -1493,14 +1493,10 @@ impl<'a> FlowAnalyzer<'a> {
         let decl_node = self.arena.get(decl_id)?;
         let decl_data = self.arena.get_variable_declaration(decl_node)?;
 
-        // Check explicit type annotation first: `const x: null` or `const x: undefined`
-        if decl_data.type_annotation.is_some() {
-            let ann_node = self.arena.get(decl_data.type_annotation)?;
-            match ann_node.kind {
-                k if k == SyntaxKind::NullKeyword as u16 => return Some(TypeId::NULL),
-                k if k == SyntaxKind::UndefinedKeyword as u16 => return Some(TypeId::UNDEFINED),
-                _ => {}
-            }
+        // Recognize primitive-annotated consts so equality narrowing of
+        // `unknown`/`any` against a typed const reaches `is_narrowing_literal`.
+        if let Some(ty) = self.const_annotation_intrinsic_type(decl_data.type_annotation) {
+            return Some(ty);
         }
 
         // Fall back to initializer: `const x = null` or `const x = undefined`
@@ -1938,6 +1934,10 @@ impl<'a> FlowAnalyzer<'a> {
             return self.literal_type_from_node(left);
         }
         None
+    }
+
+    fn const_annotation_intrinsic_type(&self, ann_idx: NodeIndex) -> Option<TypeId> {
+        super::narrowing_helpers::const_annotation_intrinsic_type(self.arena, ann_idx)
     }
 
     /// For `typeof a.prop === "undefined"`, extract the property path from
