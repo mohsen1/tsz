@@ -1786,6 +1786,23 @@ impl<'a> CheckerState<'a> {
                     || member == TypeId::BOOLEAN_FALSE
             })
     }
+
+    /// Whether `type_id` is a union whose every member is function-like
+    /// (function shape or callable shape). Used by
+    /// `widen_function_like_display_type` to avoid collapsing such unions to
+    /// a single member, matching tsc's TS2322 source display for conditional
+    /// expressions assigned to function-typed annotations.
+    pub(in crate::error_reporter) fn union_is_all_function_like(&self, type_id: TypeId) -> bool {
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        members.iter().all(|&m| {
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, m).is_some()
+                || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, m)
+                    .is_some()
+        })
+    }
 }
 
 /// Strip file extensions from module specifiers for display.
