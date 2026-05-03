@@ -1637,16 +1637,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // For generic Application types whose type alias body is an IndexedAccess
-        // or Conditional type, use the evaluated form. tsc doesn't preserve the
-        // alias name through these computed type forms, even when free type
-        // parameters are present:
-        // - `type Cb<T> = {noAlias: () => T}["noAlias"]` → show `() => number`, not `Cb<number>`
-        // - `type IsArray<T> = T extends unknown[] ? true : false` → show `boolean`, not `IsArray<T>`
-        //
-        // This check MUST run before the generic-type-parameter guard below —
-        // these alias shapes should substitute their evaluated form for display
-        // even when the reference contains free type parameters.
+        // Generic Application of a TypeAlias whose body is IndexedAccess or
+        // Conditional: expand only when evaluation reduces to a concrete
+        // (non-conditional, non-indexed-access) shape. tsc keeps the alias
+        // when reduction stalls (e.g. free type params in a conditional).
+        // Must run before the contains-type-parameters guard below.
         if crate::query_boundaries::common::is_generic_application(self.ctx.types, ty)
             && let Some(def_id) =
                 crate::query_boundaries::common::get_application_lazy_def_id(self.ctx.types, ty)
@@ -1656,7 +1651,13 @@ impl<'a> CheckerState<'a> {
             && (crate::query_boundaries::common::is_index_access_type(self.ctx.types, body)
                 || crate::query_boundaries::common::is_conditional_type(self.ctx.types, body))
         {
-            return true;
+            return !crate::query_boundaries::common::is_conditional_type(
+                self.ctx.types,
+                evaluated,
+            ) && !crate::query_boundaries::common::is_index_access_type(
+                self.ctx.types,
+                evaluated,
+            );
         }
 
         if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
