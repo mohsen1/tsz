@@ -24,7 +24,6 @@ FAIL TypeScript/tests/cases/compiler/esmNoSynthesizedDefault.ts | expected:[TS11
 FAIL TypeScript/tests/cases/compiler/excessPropertyCheckWithMultipleDiscriminants.ts | expected:[TS2353] actual:[TS2353]
 FAIL TypeScript/tests/cases/compiler/excessivelyLargeTupleSpread.ts | expected:[TS2799,TS2800] actual:[TS2589]
 FAIL TypeScript/tests/cases/compiler/extractInferenceImprovement.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
-FAIL TypeScript/tests/cases/compiler/flatArrayNoExcessiveStackDepth.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/fuzzy.ts | expected:[TS2322,TS2352,TS2420] actual:[TS2322,TS2352,TS2420]
 FAIL TypeScript/tests/cases/compiler/genericFunctionInference1.ts | expected:[TS2345] actual:[TS2322,TS2345,TS2362]
 FAIL TypeScript/tests/cases/compiler/homomorphicMappedTypeWithNonHomomorphicInstantiationSpreadable1.ts | expected:[] actual:[TS2322]
@@ -2836,6 +2835,7 @@ PASS TypeScript/tests/cases/compiler/fixTypeParameterInSignatureWithRestParamete
 PASS TypeScript/tests/cases/compiler/fixingTypeParametersRepeatedly1.ts
 PASS TypeScript/tests/cases/compiler/fixingTypeParametersRepeatedly2.ts
 PASS TypeScript/tests/cases/compiler/fixingTypeParametersRepeatedly3.ts
+PASS TypeScript/tests/cases/compiler/flatArrayNoExcessiveStackDepth.ts
 PASS TypeScript/tests/cases/compiler/flowAfterFinally1.ts
 PASS TypeScript/tests/cases/compiler/flowControlTypeGuardThenSwitch.ts
 PASS TypeScript/tests/cases/compiler/flowInFinally1.ts
