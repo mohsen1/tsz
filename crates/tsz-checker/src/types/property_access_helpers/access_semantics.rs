@@ -59,6 +59,45 @@ impl<'a> CheckerState<'a> {
         (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
     }
 
+    /// Whether `access_expr` (the receiver of a `.prototype.X` access) refers
+    /// to a function-as-constructor binding rather than an ES `class`. tsc
+    /// treats `function C() {}` as an expando-friendly constructor where
+    /// late-attaching a JSDoc-typed prototype property is a declaration; for
+    /// `class C {}` the prototype shape is the class instance type and a
+    /// late attachment is genuinely "used before assigned".
+    pub(crate) fn expando_receiver_is_function_constructor(&self, access_expr: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(access_expr) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(member) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let is_prototype = member.kind == SyntaxKind::Identifier as u16
+            && self
+                .ctx
+                .arena
+                .get_identifier(member)
+                .is_some_and(|ident| ident.escaped_text == "prototype");
+        if !is_prototype {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(access.expression) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let is_function = (symbol.flags & symbol_flags::FUNCTION) != 0;
+        let is_class = (symbol.flags & symbol_flags::CLASS) != 0;
+        is_function && !is_class
+    }
+
     pub(crate) fn property_access_is_write_target_or_base(
         &self,
         property_access_idx: NodeIndex,
