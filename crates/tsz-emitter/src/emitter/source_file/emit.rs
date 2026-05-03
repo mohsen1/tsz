@@ -1485,7 +1485,25 @@ impl<'a> Printer<'a> {
                         self.write(&recovered_operator);
                     }
                 }
+                let use_deferred_nested_cjs_exports = is_top_level_cjs
+                    && !cjs_deferred_export_names.is_empty()
+                    && stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT
+                    && stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION;
+                let prev_deferred_local_export_bindings = if use_deferred_nested_cjs_exports {
+                    let bindings = cjs_deferred_export_names
+                        .iter()
+                        .map(|name| (name.clone(), name.clone()))
+                        .collect();
+                    self.deferred_local_export_bindings.replace(bindings)
+                } else {
+                    None
+                };
+
                 self.emit(stmt_idx);
+
+                if use_deferred_nested_cjs_exports {
+                    self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+                }
             }
             let emitted_output = self.writer.len() > before_len;
             let mut handled_legacy_decorated_deferred_export = false;

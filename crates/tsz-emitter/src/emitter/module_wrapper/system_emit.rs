@@ -359,6 +359,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let prev_deferred_local_export_bindings = self
+            .deferred_local_export_bindings
+            .replace(self.system_reexported_names.clone());
+
         for &stmt_idx in &source.statements.nodes {
             // Skip function declarations that were already hoisted to the outer scope
             if hoisted_func_stmts.contains(&stmt_idx) {
@@ -508,6 +512,7 @@ impl<'a> Printer<'a> {
             }
         }
 
+        self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
         self.ctx.options.module = prev_module;
         self.ctx.auto_detect_module = prev_auto_detect;
         self.ctx.original_module_kind = prev_original;
