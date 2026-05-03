@@ -11,3 +11,14 @@ fn empty_let_declaration_has_no_space_before_semicolon() {
     assert!(output.contains("\nlet;"), "unexpected output: {output}");
     assert!(!output.contains("\nlet ;"), "unexpected output: {output}");
 }
+
+#[test]
+fn recovered_empty_variable_initializer_preserves_equals() {
+    let source = "var NUMBER1 = var NUMBER-;";
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("var NUMBER1 = ;"),
+        "unexpected output: {output}"
+    );
+}
