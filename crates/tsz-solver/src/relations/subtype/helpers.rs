@@ -127,6 +127,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.disable_method_bivariance {
             flags |= RelationFlags::DISABLE_METHOD_BIVARIANCE;
         }
+        if self.in_callback_param_check {
+            flags |= RelationFlags::IN_CALLBACK_PARAM_CHECK;
+        }
         if self.allow_void_return {
             flags |= RelationFlags::ALLOW_VOID_RETURN;
         }

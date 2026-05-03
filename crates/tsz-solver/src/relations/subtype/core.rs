@@ -170,6 +170,16 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     // When true, disables method bivariance (methods use contravariance).
     // Default: false (methods are bivariant in TypeScript for compatibility).
     pub disable_method_bivariance: bool,
+    /// When true, the immediate function comparison about to start is happening
+    /// inside a callback parameter check. This corresponds to tsc's
+    /// `SignatureCheckMode.Callback` bit: even if both signatures are method
+    /// declarations, params are checked contravariantly (no method-bivariance
+    /// loosening). This flag is set by `are_parameters_compatible_impl` before
+    /// recursing into callable parameter types and is consumed (reset) on entry
+    /// to `check_function_subtype_impl`, matching tsc's behavior where
+    /// `getSingleCallSignature` returns undefined inside callback mode and the
+    /// next callback recursion starts fresh through `compareTypes`.
+    pub(crate) in_callback_param_check: bool,
     /// Optional inheritance graph for O(1) nominal class subtype checking.
     /// When provided, enables fast nominal checks for class inheritance.
     pub inheritance_graph: Option<&'a crate::classes::inheritance::InheritanceGraph>,
@@ -263,6 +273,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
+            in_callback_param_check: false,
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,
@@ -304,6 +315,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
+            in_callback_param_check: false,
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,

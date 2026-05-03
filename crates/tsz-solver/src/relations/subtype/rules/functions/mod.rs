@@ -355,6 +355,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Returns `true` when the type is callable and the (first) call signature
+    /// originates from a method declaration. Used by
+    /// `are_parameters_compatible_impl` to decide whether the strict-callback
+    /// override would actually change behavior — if neither side is method-
+    /// flavored, the override is a no-op and we skip the cache-slot split.
+    fn callable_first_signature_is_method(&self, type_id: TypeId) -> bool {
+        if let Some(shape_id) = crate::visitor::function_shape_id(self.interner, type_id) {
+            return self.interner.function_shape(shape_id).is_method;
+        }
+        if let Some(shape_id) = crate::visitor::callable_shape_id(self.interner, type_id) {
+            let shape = self.interner.callable_shape(shape_id);
+            if let Some(sig) = shape.call_signatures.first() {
+                return sig.is_method;
+            }
+        }
+        false
+    }
+
     /// Check parameter compatibility with method bivariance support.
     /// Methods are bivariant even when `strict_function_types` is enabled.
     pub(crate) fn are_parameters_compatible_impl(
@@ -403,7 +421,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let method_should_be_bivariant = is_method && !self.disable_method_bivariance;
         let use_bivariance = method_should_be_bivariant || !self.strict_function_types;
 
-        if !use_bivariance {
+        // When the parameter types are themselves callable (callbacks), tsc treats
+        // the recursive comparison strictly regardless of whether the inner
+        // signatures originated from method declarations. This mirrors
+        // `SignatureCheckMode.Callback` in `compareSignaturesRelated`: inside a
+        // callback, params skip the bivariant first-half so methods do not
+        // loosen the contravariance check. The flag is consumed on entry to
+        // `check_function_subtype_impl`, so deeper-level (level 3+) checks fall
+        // back to normal method bivariance — matching tsc, where the inner
+        // recursion goes through `compareTypes` and starts a fresh
+        // `compareSignaturesRelated` without the Callback bit set.
+        //
+        // Narrowing: only flip the flag when at least one of the inner
+        // signatures is method-flavored. If neither callable is a method, the
+        // override-to-strict in `check_function_subtype_impl` is a no-op, and
+        // adding `IN_CALLBACK_PARAM_CHECK` to the cache key would only split
+        // cache slots without changing the result — paying for nothing.
+        let entering_callback_check = s_has_call
+            && t_has_call
+            && (self.callable_first_signature_is_method(source_type)
+                || self.callable_first_signature_is_method(target_type));
+        let saved_in_callback = self.in_callback_param_check;
+        if entering_callback_check {
+            self.in_callback_param_check = true;
+        }
+
+        let result = if !use_bivariance {
             // Contravariant check: Target <: Source
             // This applies even when parameter types contain `this` types.
             // The `this` type is polymorphic but does not change parameter variance.
@@ -412,11 +455,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Bivariant: either direction works (Unsound, Legacy TS behavior)
             // Try contravariant first: Target <: Source
             if self.check_subtype(target_type, source_type).is_true() {
+                self.in_callback_param_check = saved_in_callback;
                 return true;
             }
             // If contravariant fails, try covariant: Source <: Target
             self.check_subtype(source_type, target_type).is_true()
-        }
+        };
+
+        self.in_callback_param_check = saved_in_callback;
+        result
     }
 
     /// Check if `this` parameters are compatible.

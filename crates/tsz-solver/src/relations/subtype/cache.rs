@@ -303,6 +303,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // type whose method signatures carry `ThisType` return types.
         let has_this_type =
             contains_this_type(self.interner, source) || contains_this_type(self.interner, target);
+        // The `in_callback_param_check` state is encoded in
+        // `RelationFlags::IN_CALLBACK_PARAM_CHECK` via `make_cache_key`, so
+        // callback-mode results live in a separate cache slot from
+        // non-callback-mode results and cannot poison each other.
         if !self.identity_cycle_check
             && !has_this_type
             && let Some(db) = self.query_db

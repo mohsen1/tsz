@@ -596,11 +596,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Method/constructor bivariance: strictFunctionTypes only applies to function
         // type literals, not to methods or construct signatures (new (...) => T).
+        //
+        // tsc's StrictCallback/BivariantCallback override: when the immediately-
+        // enclosing comparison was a callback parameter check, methods do *not*
+        // get bivariance-loosening for this signature comparison. We consume the
+        // flag here (resetting it to false for nested comparisons) so that
+        // level-3+ recursions reached through `compareTypes` start fresh — that
+        // matches tsc's `getSingleCallSignature` returning undefined inside
+        // callback mode and the next callback recursion starting via
+        // `isRelatedToWorker` without the Callback bit set.
+        let in_callback_param_check = self.in_callback_param_check;
+        self.in_callback_param_check = false;
         let constructor_param_bivariance = allow_constructor_bivariance
             && (source_instantiated.is_constructor || target_instantiated.is_constructor);
-        let is_method = source_instantiated.is_method
-            || target_instantiated.is_method
-            || constructor_param_bivariance;
+        let is_method = !in_callback_param_check
+            && (source_instantiated.is_method
+                || target_instantiated.is_method
+                || constructor_param_bivariance);
 
         // The lib iterator/generator declarations encode `next(value?)` as a single
         // rest parameter with tuple-list type `[] | [TNext]`. Compare that whole
