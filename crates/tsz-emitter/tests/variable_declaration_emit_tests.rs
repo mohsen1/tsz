@@ -1,7 +1,8 @@
 #[path = "test_support.rs"]
 mod test_support;
 
-use test_support::parse_and_print;
+use test_support::{parse_and_lower_print, parse_and_print};
+use tsz_emitter::output::printer::PrintOptions;
 
 #[test]
 fn empty_let_declaration_has_no_space_before_semicolon() {
@@ -10,6 +11,21 @@ fn empty_let_declaration_has_no_space_before_semicolon() {
 
     assert!(output.contains("\nlet;"), "unexpected output: {output}");
     assert!(!output.contains("\nlet ;"), "unexpected output: {output}");
+}
+
+#[test]
+fn object_rest_without_initializer_recovery_stays_syntactically_valid() {
+    let source = "const { ...rest };";
+    let output = parse_and_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("var _a = void 0, rest = __rest(_a, []);"),
+        "unexpected output: {output}"
+    );
+    assert!(
+        !output.contains("= ,"),
+        "object rest recovery should not emit an empty assignment RHS: {output}"
+    );
 }
 
 #[test]

@@ -165,6 +165,22 @@ class D extends B {
     );
 }
 
+#[test]
+fn accessor_optional_method_reports_ts1275_without_ts1276() {
+    let source = "class C { accessor m?() {} }";
+
+    assert_eq!(
+        count_error(source, 1275),
+        1,
+        "accessor method should emit TS1275"
+    );
+    assert_eq!(
+        count_error(source, 1276),
+        0,
+        "TS1276 only applies to accessor properties, not methods"
+    );
+}
+
 // =========================================================================
 // TS1029 / TS1030: Variance modifier ordering on type parameters.
 //
