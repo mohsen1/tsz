@@ -222,6 +222,18 @@ fn object_literal_comments_stay_after_source_commas() {
 }
 
 #[test]
+fn comment_scanner_ignores_regex_character_class_slashes() {
+    let source = r#"var foo2 = "a//".replace(/.[//]/g, "");"#;
+
+    let output = parse_and_print_with_opts(source, PrintOptions::es6());
+
+    assert!(
+        output.contains(r#"var foo2 = "a//".replace(/.[//]/g, "");"#),
+        "String and regex slashes should not leak as comments.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn comments_after_spread_tokens_stay_after_ellipsis() {
     let source = r#"const a = { .../*#__PURE__*/identity({ b: 1 }) };
 const b = {
