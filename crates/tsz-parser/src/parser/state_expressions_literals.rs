@@ -1318,6 +1318,7 @@ impl ParserState {
 
         let mut elements = Vec::new();
         let mut emit_semicolon_expected_at_close_bracket = false;
+        let mut recovered_empty_array_end = None;
         while !self.is_token(SyntaxKind::CloseBracketToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -1353,6 +1354,9 @@ impl ParserState {
                     );
                     if terminated_by_outer_closer {
                         self.error_expression_or_comma_expected();
+                        if elements.is_empty() {
+                            recovered_empty_array_end = Some(start_pos + 1);
+                        }
                     } else {
                         self.error_expression_expected();
                     }
@@ -1442,7 +1446,7 @@ impl ParserState {
             self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
         }
 
-        let end_pos = self.token_end();
+        let end_pos = recovered_empty_array_end.unwrap_or_else(|| self.token_end());
         self.parse_expected(SyntaxKind::CloseBracketToken);
 
         self.arena.add_literal_expr(
