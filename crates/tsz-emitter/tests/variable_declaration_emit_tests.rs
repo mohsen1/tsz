@@ -16,10 +16,10 @@ fn empty_let_declaration_has_no_space_before_semicolon() {
 #[test]
 fn object_rest_without_initializer_recovery_stays_syntactically_valid() {
     let source = "const { ...rest };";
-    let output = parse_and_lower_print(source, PrintOptions::es5());
+    let output = parse_and_lower_print(source, PrintOptions::es6());
 
     assert!(
-        output.contains("var _a = void 0, rest = __rest(_a, []);"),
+        output.contains("const _a = void 0, rest = __rest(_a, []);"),
         "unexpected output: {output}"
     );
     assert!(

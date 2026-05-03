@@ -370,6 +370,9 @@ impl<'a> Printer<'a> {
                     // Only rest but no initializer: keep recovery output
                     // syntactically valid by avoiding an empty assignment RHS.
                     source_name = self.get_temp_var_name();
+                    self.write(&source_name);
+                    self.write(" = void 0");
+                    emitted_prefix = true;
                 } else if !nested_rest_indices.is_empty() {
                     source_name = self.get_temp_var_name();
                     self.write(&source_name.clone());
