@@ -418,6 +418,9 @@ mod jsdoc_type_expression_tests;
 #[path = "../tests/jsdoc_type_tag_tests.rs"]
 mod jsdoc_type_tag_tests;
 #[cfg(test)]
+#[path = "tests/jsdoc_typedef_distinct_alias_names_tests.rs"]
+mod jsdoc_typedef_distinct_alias_names_tests;
+#[cfg(test)]
 #[path = "tests/jsx_element_type_constraint_tests.rs"]
 mod jsx_element_type_constraint_tests;
 #[cfg(test)]
