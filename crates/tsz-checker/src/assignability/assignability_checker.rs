@@ -686,20 +686,85 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn is_promise_like_application_pair(&self, source: TypeId, target: TypeId) -> bool {
-        fn generic_head(display: &str) -> Option<&str> {
-            display.split_once('<').map(|(head, _)| head.trim())
-        }
-
-        let source_display = self.format_type(source);
-        let target_display = self.format_type(target);
-        let Some(source_head) = generic_head(&source_display) else {
+    fn is_promise_like_application_pair(&mut self, source: TypeId, target: TypeId) -> bool {
+        let Some((source_base, _)) = self.application_info_or_display_alias(source) else {
             return false;
         };
-        if !source_head.ends_with("Promise") && !source_head.ends_with("PromiseLike") {
+        let Some((target_base, _)) = self.application_info_or_display_alias(target) else {
             return false;
-        }
-        generic_head(&target_display) == Some(source_head)
+        };
+        source_base == target_base
+            && (source_base == TypeId::PROMISE_BASE
+                || crate::query_boundaries::flow_analysis::is_promise_like_type(
+                    self.ctx.types,
+                    source,
+                )
+                || crate::query_boundaries::flow_analysis::is_promise_like_type(
+                    self.ctx.types,
+                    target,
+                )
+                || self.application_has_callable_then_member(source)
+                || self.application_has_callable_then_member(target)
+                || self.application_base_declares_then_method(source_base))
+    }
+
+    fn application_has_callable_then_member(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::property_access::resolve_property_access(
+            self.ctx.types,
+            type_id,
+            "then",
+        )
+        .success_type()
+        .and_then(|then_type| {
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, then_type)
+        })
+        .is_some_and(|signatures| !signatures.is_empty())
+    }
+
+    fn application_base_declares_then_method(&self, base: TypeId) -> bool {
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+            return false;
+        };
+        let Some(symbol) = self.get_symbol_globally(sym_id) else {
+            return false;
+        };
+        let arena = self.ctx.get_arena_for_file(symbol.decl_file_idx);
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(class) = arena.get_class_at(decl_idx) else {
+                return false;
+            };
+            class.members.nodes.iter().any(|&member_idx| {
+                let Some(method) = arena.get_method_decl_at(member_idx) else {
+                    return false;
+                };
+                crate::types_domain::queries::core::get_literal_property_name(arena, method.name)
+                    .as_deref()
+                    == Some("then")
+            })
+        })
+    }
+
+    fn is_unknown_source_application_fallback(&mut self, source: TypeId, target: TypeId) -> bool {
+        let Some(((source_base, source_args), (target_base, target_args))) =
+            self.application_info_or_display_alias(source).zip(
+                crate::query_boundaries::common::application_info(self.ctx.types, target),
+            )
+        else {
+            return false;
+        };
+
+        source_base == target_base
+            && source_args.len() == target_args.len()
+            && !source_args.is_empty()
+            && source_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
+            && target_args.contains(&TypeId::NEVER)
+            && target_args.iter().any(|&arg| arg != TypeId::NEVER)
+            && target_args.iter().all(|&arg| {
+                matches!(arg, TypeId::UNKNOWN | TypeId::NEVER)
+                    || crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, arg)
+            })
+            && self.is_promise_like_application_pair(source, target)
     }
 
     pub(crate) fn is_nested_same_wrapper_application_assignment(
@@ -1890,29 +1955,7 @@ impl<'a> CheckerState<'a> {
         // narrow: it doesn't match user-written `A<unknown>` against
         // `A<string>`, `A<never>`, or `A<never, string>`, where variance must
         // be respected.
-        if self
-            .application_info_or_display_alias(source)
-            .zip(crate::query_boundaries::common::application_info(
-                self.ctx.types,
-                target,
-            ))
-            .is_some_and(|((source_base, source_args), (target_base, target_args))| {
-                source_base == target_base
-                    && source_args.len() == target_args.len()
-                    && !source_args.is_empty()
-                    && source_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
-                    && target_args.contains(&TypeId::NEVER)
-                    && target_args.iter().any(|&arg| arg != TypeId::NEVER)
-                    && target_args.iter().all(|&arg| {
-                        matches!(arg, TypeId::UNKNOWN | TypeId::NEVER)
-                            || crate::query_boundaries::common::is_type_parameter_like(
-                                self.ctx.types,
-                                arg,
-                            )
-                    })
-                    && self.is_promise_like_application_pair(source, target)
-            })
-        {
+        if self.is_unknown_source_application_fallback(source, target) {
             return true;
         }
 

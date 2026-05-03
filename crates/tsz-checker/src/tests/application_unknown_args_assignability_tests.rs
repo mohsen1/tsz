@@ -146,3 +146,25 @@ const concrete: Result<never, string> = result;
         "Expected TS2322 'Result<unknown, unknown>' not assignable to 'Result<never, string>'; got: {diags:?}"
     );
 }
+
+#[test]
+fn ts2322_emitted_for_promise_named_class_without_then_method() {
+    let diags = diags_strict(
+        r#"
+declare class FooPromise<E, A> {
+    error: E;
+    value: A;
+}
+declare const source: FooPromise<unknown, unknown>;
+function f<A>(): FooPromise<never, A> {
+    return source;
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2322
+            && d.message_text.contains("'FooPromise<unknown, unknown>'")
+            && d.message_text.contains("'FooPromise<never, A>'")),
+        "Expected TS2322 for Promise-suffixed generic without a then method; got: {diags:?}"
+    );
+}
