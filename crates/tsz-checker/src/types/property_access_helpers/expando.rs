@@ -511,6 +511,121 @@ impl<'a> CheckerState<'a> {
         latest_match.map(|(_, rhs_idx)| rhs_idx)
     }
 
+    pub(in crate::types_domain) fn prior_js_prototype_object_literal_assignment_display(
+        &mut self,
+        prototype_root_expr: NodeIndex,
+        read_pos: u32,
+    ) -> Option<String> {
+        let rhs_idx =
+            self.prior_js_prototype_object_literal_assignment_node(prototype_root_expr, read_pos)?;
+        self.prototype_object_literal_display(rhs_idx)
+    }
+
+    fn prototype_object_literal_display(&mut self, object_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(object_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let obj_lit = self.ctx.arena.get_literal_expr(node)?;
+        let mut parts = Vec::new();
+
+        for elem_idx in obj_lit.elements.nodes.clone() {
+            let elem_node = self.ctx.arena.get(elem_idx)?;
+            match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                    let name = self.prototype_object_literal_display_name(prop.name)?;
+                    let value_node = self.ctx.arena.get(prop.initializer)?;
+                    let value_display = if value_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION {
+                        self.prototype_callable_display(prop.initializer)
+                    } else {
+                        let value_type = self.get_type_of_node(prop.initializer);
+                        self.format_type_for_assignability_message(value_type)
+                    };
+                    parts.push(format!("{name}: {value_display}"));
+                }
+                syntax_kind_ext::METHOD_DECLARATION => {
+                    let method = self.ctx.arena.get_method_decl(elem_node)?;
+                    let name = self.prototype_object_literal_display_name(method.name)?;
+                    let method_display = self.prototype_callable_display(elem_idx);
+                    parts.push(Self::prototype_method_display(&name, &method_display));
+                }
+                _ => {}
+            }
+        }
+
+        Some(if parts.is_empty() {
+            "{}".to_string()
+        } else {
+            format!("{{ {}; }}", parts.join("; "))
+        })
+    }
+
+    fn prototype_callable_display(&mut self, callable_idx: NodeIndex) -> String {
+        let callable_type = self.shallow_object_literal_callable_type(callable_idx);
+        let display = self.format_type_for_assignability_message(callable_type);
+        if self.prototype_callable_has_no_value_return(callable_idx)
+            && let Some(prefix) = display.strip_suffix(" => any")
+        {
+            return format!("{prefix} => void");
+        }
+
+        display
+    }
+
+    fn prototype_callable_has_no_value_return(&self, callable_idx: NodeIndex) -> bool {
+        let Some(callable_node) = self.ctx.arena.get(callable_idx) else {
+            return false;
+        };
+        let body = self
+            .ctx
+            .arena
+            .get_method_decl(callable_node)
+            .map(|method| method.body)
+            .or_else(|| {
+                self.ctx
+                    .arena
+                    .get_function(callable_node)
+                    .map(|func| func.body)
+            });
+        body.is_some_and(|body| !self.body_has_return_with_value(body))
+    }
+
+    fn prototype_object_literal_display_name(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.clone()),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx
+                    .arena
+                    .get_literal(name_node)
+                    .map(|lit| format!("\"{}\"", lit.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .ctx
+                .arena
+                .get_literal(name_node)
+                .map(|lit| lit.text.clone()),
+            _ => self.get_property_name(name_idx),
+        }
+    }
+
+    fn prototype_method_display(name: &str, function_display: &str) -> String {
+        if let Some(signature) = function_display.strip_prefix('(')
+            && let Some((params, return_type)) = signature.split_once(") => ")
+        {
+            return format!("{name}({params}): {return_type}");
+        }
+
+        format!("{name}: {function_display}")
+    }
+
     pub(in crate::types_domain) fn prior_js_prototype_object_literal_declares_property(
         &self,
         prototype_root_expr: NodeIndex,
