@@ -704,6 +704,24 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.in_system_execute_body
+            && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                || unary.operator == SyntaxKind::MinusMinusToken as u16)
+            && let Some(operand_node) = self.arena.get(unary.operand)
+            && operand_node.kind == SyntaxKind::Identifier as u16
+        {
+            let local_name = self.get_identifier_text_idx(unary.operand);
+            if let Some(export_name) = self.system_reexported_names.get(&local_name).cloned() {
+                self.write("exports_1(\"");
+                self.write(&export_name);
+                self.write("\", ");
+                self.write(get_operator_text(unary.operator));
+                self.write(&local_name);
+                self.write(")");
+                return;
+            }
+        }
+
         self.write(get_operator_text(unary.operator));
         if unary.operator == SyntaxKind::AsteriskToken as u16 {
             self.write_space();
