@@ -409,7 +409,10 @@ impl<'a> IRPrinter<'a> {
             }
             // Strip leading whitespace, then add one space before * or */
             let trimmed = line.trim_start();
-            if !first && (trimmed.starts_with('*') || trimmed.starts_with('/')) {
+            if !first
+                && (trimmed.starts_with('/')
+                    || (trimmed.starts_with('*') && !trimmed.starts_with("*/")))
+            {
                 self.write(" ");
             }
             self.write(trimmed.trim_end());

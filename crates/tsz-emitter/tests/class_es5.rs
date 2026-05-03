@@ -168,6 +168,49 @@ fn test_constructor_trailing_comment_preserved() {
 }
 
 #[test]
+fn test_empty_constructor_inner_comments_preserved() {
+    let output = emit_class(
+        r#"class C {
+            /** constructor comment
+            */
+            constructor() {
+                /** constructor comment2
+                */
+            }
+        }"#,
+    );
+
+    assert!(
+        output.contains("    /** constructor comment\n    */\n    function C() {"),
+        "Constructor leading block comment should keep TypeScript's ES5 indentation.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "    function C() {\n        /** constructor comment2\n                */\n    }"
+        ),
+        "Detached block comment inside an empty constructor should be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_empty_constructor_detached_line_comments_preserved() {
+    let output = emit_class(
+        r#"class C {
+            constructor() {
+                /// detached
+
+                // before close
+            }
+        }"#,
+    );
+
+    assert!(
+        output.contains("    function C() {\n        /// detached\n        // before close\n    }"),
+        "Detached line comments inside an empty constructor should be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_var_function_recovery_supports_dollar_identifier() {
     let output = emit_class(
         r#"class C {
