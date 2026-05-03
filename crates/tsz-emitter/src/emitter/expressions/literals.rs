@@ -579,6 +579,17 @@ impl<'a> Printer<'a> {
                     self.increase_indent();
                 }
 
+                let open_brace_end = self.source_text.map_or(node.pos + 1, |text| {
+                    let bytes = text.as_bytes();
+                    let start = node.pos as usize;
+                    let end = std::cmp::min(node.end as usize, bytes.len());
+                    bytes[start..end]
+                        .iter()
+                        .position(|&b| b == b'{')
+                        .map(|off| (start + off + 1) as u32)
+                        .unwrap_or(node.pos + 1)
+                });
+                self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
                 self.emit_object_property(prop);
                 if has_trailing_comma {
                     self.write(",");

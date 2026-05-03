@@ -65,6 +65,29 @@ fn multiline_comment_before_first_call_argument_starts_on_next_line() {
 }
 
 #[test]
+fn object_literal_accessor_leading_comment_stays_before_accessor() {
+    let source = r#"var v = {
+ /**
+  * @type {number}
+  */
+ get bar(): number {
+  return 12;
+ }
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("var v = {\n    /**\n     * @type {number}\n     */\n    get bar() {"),
+        "Object literal accessor leading comment should stay before the accessor.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("get bar() {\n/**"),
+        "Object literal accessor leading comment should not move into the accessor body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 
