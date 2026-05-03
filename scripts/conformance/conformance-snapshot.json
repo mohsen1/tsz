@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-03T19:16:54Z",
-  "git_sha": "59eb22e6b1f57b5cd5e16c46f41baf946d652068",
+  "timestamp": "2026-05-03T19:43:14Z",
+  "git_sha": "52cca7c59519f44bf36dfbffee767abf7bd1cadc",
   "summary": {
     "total_tests": 12582,
-    "passed": 12391,
-    "failed": 191,
+    "passed": 12392,
+    "failed": 190,
     "pass_rate": 98.5
   },
   "areas_by_pass_rate": [
@@ -135,18 +135,18 @@
       "pass_rate": 94.87
     },
     {
-      "area": "salsa",
-      "total": 191,
-      "passed": 182,
-      "failed": 9,
-      "pass_rate": 95.29
-    },
-    {
       "area": "types/literal",
       "total": 44,
       "passed": 42,
       "failed": 2,
       "pass_rate": 95.45
+    },
+    {
+      "area": "salsa",
+      "total": 191,
+      "passed": 183,
+      "failed": 8,
+      "pass_rate": 95.81
     },
     {
       "area": "types/typeRelationships",
@@ -1412,7 +1412,7 @@
     "false_positive": 7,
     "all_missing": 9,
     "wrong_code": 56,
-    "fingerprint_only": 119,
+    "fingerprint_only": 118,
     "same_code_count_drift": 0,
     "close_to_passing": 38
   }
