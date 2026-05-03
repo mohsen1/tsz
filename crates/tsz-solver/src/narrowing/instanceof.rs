@@ -465,13 +465,32 @@ impl<'a> NarrowingContext<'a> {
                             );
                             return Some(member);
                         }
-                        // Non-class types: fall back to structural checks
-                        // Member assignable to instance type → keep member
+                        // Non-class types: fall back to structural checks.
+                        // Member assignable to instance type → keep member.
                         if self.is_assignable_to(member, instance_type) {
                             return Some(member);
                         }
+                        // When the instance type is a union (e.g. from a
+                        // `[Symbol.hasInstance]` predicate `value is C1 | C2`
+                        // or from multiple construct signatures), we must
+                        // NOT widen the union member back to the candidate
+                        // just because the candidate is structurally a
+                        // subtype of `member`. tsc's `isTypeDerivedFrom`
+                        // requires a nominal heritage relationship for
+                        // non-class types; an interface like `A` that
+                        // happens to be a structural supertype of `C1 | C2`
+                        // is NOT derived from it and must be dropped.
+                        let instance_is_union =
+                            crate::visitor::union_list_id(self.db, instance_type).is_some();
+                        if instance_is_union {
+                            return None;
+                        }
                         // Instance type assignable to member → narrow to instance
-                        // (e.g., member=Animal, instance=Dog → Dog)
+                        // (e.g., member=Animal interface, instance=Dog class with Dog ⊆ Animal → Dog).
+                        // Limited to single instance types: a structural
+                        // subtype-narrow to a *single* candidate is the
+                        // standard "Animal | string instanceof Dog → Dog"
+                        // behaviour and matches tsc's mapType fallback.
                         if self.is_assignable_to(instance_type, member) {
                             return Some(instance_type);
                         }

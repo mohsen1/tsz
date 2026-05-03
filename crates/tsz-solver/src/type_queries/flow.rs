@@ -212,9 +212,13 @@ pub fn classify_for_constructor_instance(
 
 /// Extract the instance type from a constructor type.
 ///
-/// Follows tsc's `getInstanceType` logic:
-/// 1. Check for a `prototype` property whose type is not `any` (highest priority)
-/// 2. Fall back to construct signature return types
+/// Follows tsc's `getInstanceType` / `narrowTypeByInstanceof` logic:
+/// 1. Check for `[Symbol.hasInstance]` whose call signature carries a
+///    `value is T` type predicate — `T` is the instance type, overriding
+///    `prototype` and any construct signatures (matches tsc:
+///    `getNarrowedTypeForInstanceofPredicate`).
+/// 2. Otherwise check for a `prototype` property whose type is not `any`.
+/// 3. Otherwise fall back to construct signature return types.
 ///
 /// Recursively handles union types (collecting from all members) and intersection types
 /// (returning from the first member with construct signatures).
@@ -223,7 +227,14 @@ pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) ->
         return Some(type_id);
     }
 
-    // Step 1: Check for `prototype` property (highest priority per tsc spec).
+    // Step 1: A `[Symbol.hasInstance](value: ...): value is T` predicate, when
+    // present, defines the instance type. This wins over `prototype` and over
+    // construct signature return types per tsc.
+    if let Some(predicate_type) = instance_type_from_symbol_has_instance(db, type_id) {
+        return Some(predicate_type);
+    }
+
+    // Step 2: Check for `prototype` property (next priority per tsc spec).
     // If the constructor has a `prototype` property whose type is not `any`,
     // that type IS the instance type. This handles interfaces like:
     //   interface C1 { (): C1; prototype: C1; p1: string; }
@@ -283,6 +294,69 @@ pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) ->
         }
         ConstructorInstanceKind::None => None,
     }
+}
+
+/// Extract the instance type from a `[Symbol.hasInstance]` type predicate, if any.
+///
+/// Mirrors tsc's behaviour for `narrowTypeByInstanceof`: if the right-hand side
+/// of `instanceof` declares `[Symbol.hasInstance](value: ...): value is T`,
+/// the predicate's asserted type `T` IS the instance type used for narrowing,
+/// overriding both `prototype` and construct signature return types.
+///
+/// Returns `None` when:
+/// - The constructor type has no `[Symbol.hasInstance]` method,
+/// - The method has no call signature with a type predicate, or
+/// - The predicate is `asserts` only / has no `type_id`.
+///
+/// Handles unions (returns the union of per-member results) and intersections
+/// (returns the first member result, matching tsc's "first signature wins").
+pub fn instance_type_from_symbol_has_instance(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+
+    // Recurse into union members and union the results so that
+    // `(typeof A | typeof B)` with predicates on both members narrows
+    // through the union of their predicate types.
+    if let Some(TypeData::Union(list_id)) = db.lookup(type_id) {
+        let members = db.type_list(list_id).to_vec();
+        let predicate_types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&m| instance_type_from_symbol_has_instance(db, m))
+            .collect();
+        return match predicate_types.len() {
+            0 => None,
+            1 => Some(predicate_types[0]),
+            _ => Some(db.union(predicate_types)),
+        };
+    }
+
+    // For intersections, the first member with a predicate defines the
+    // instance type — matches tsc's `getSymbolHasInstanceMethodOfObjectType`
+    // which picks the first signature it finds.
+    if let Some(TypeData::Intersection(list_id)) = db.lookup(type_id) {
+        let members = db.type_list(list_id).to_vec();
+        for m in members {
+            if let Some(t) = instance_type_from_symbol_has_instance(db, m) {
+                return Some(t);
+            }
+        }
+        return None;
+    }
+
+    let has_instance_prop =
+        crate::type_queries::find_property_in_type_by_str(db, type_id, "[Symbol.hasInstance]")?;
+    let signature = extract_predicate_signature(db, has_instance_prop.type_id)?;
+    let predicate_type = signature.predicate.type_id?;
+    if signature.predicate.asserts {
+        // `asserts value is T` does not narrow the instanceof source type
+        // (tsc treats only non-asserting predicates as narrowing).
+        return None;
+    }
+    Some(predicate_type)
 }
 
 /// Classification for type parameter constraint access.
@@ -1911,6 +1985,206 @@ mod tests {
         assert!(
             types_are_comparable_for_assertion(&db, source, target),
             "Object with string property should be comparable to object with string enum property"
+        );
+    }
+
+    /// `instance_type_from_constructor` returns the predicate type of
+    /// `[Symbol.hasInstance]` (overriding construct signature returns).
+    ///
+    /// This locks in tsc parity for `interface T { new (): A; [Symbol.hasInstance](v: unknown): value is B; }` —
+    /// the predicate type `B` defines the instance type, NOT the construct
+    /// signature return `A`. Variable name is verified with two iteration
+    /// names (P, K) in `instance_type_from_symbol_has_instance_predicate_works_for_any_value_name`.
+    #[test]
+    fn instance_type_from_constructor_uses_symbol_has_instance_predicate() {
+        use crate::types::{
+            CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypePredicate,
+            TypePredicateTarget, Visibility,
+        };
+
+        let db = crate::intern::TypeInterner::new();
+        let value_atom = db.intern_string("value");
+        let has_instance_atom = db.intern_string("[Symbol.hasInstance]");
+
+        // [Symbol.hasInstance](value: unknown): value is STRING
+        let has_instance_fn = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(value_atom),
+                type_id: TypeId::UNKNOWN,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::BOOLEAN,
+            type_predicate: Some(TypePredicate {
+                asserts: false,
+                target: TypePredicateTarget::Identifier(value_atom),
+                type_id: Some(TypeId::STRING),
+                parameter_index: Some(0),
+            }),
+            is_constructor: false,
+            is_method: false,
+        });
+
+        // Constructor: { new (): NUMBER; [Symbol.hasInstance](value: unknown): value is STRING }
+        let constructor = db.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![CallSignature::new(vec![], TypeId::NUMBER)],
+            properties: vec![PropertyInfo {
+                name: has_instance_atom,
+                type_id: has_instance_fn,
+                write_type: has_instance_fn,
+                optional: false,
+                readonly: false,
+                is_method: true,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+                is_string_named: false,
+                single_quoted_name: false,
+            }],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+
+        let result = super::instance_type_from_constructor(&db, constructor);
+        assert_eq!(
+            result,
+            Some(TypeId::STRING),
+            "Predicate type STRING must override construct sig return NUMBER"
+        );
+    }
+
+    /// `instance_type_from_symbol_has_instance` does not depend on the
+    /// user-chosen parameter name — `value` and `x` give identical results.
+    /// Locks in §25 of `.claude/CLAUDE.md` (no hardcoded user-chosen names).
+    #[test]
+    fn instance_type_from_symbol_has_instance_predicate_works_for_any_value_name() {
+        use crate::types::{
+            CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypePredicate,
+            TypePredicateTarget, Visibility,
+        };
+
+        for &param_name in &["value", "x"] {
+            let db = crate::intern::TypeInterner::new();
+            let name_atom = db.intern_string(param_name);
+            let has_instance_atom = db.intern_string("[Symbol.hasInstance]");
+
+            let fn_id = db.function(FunctionShape {
+                type_params: vec![],
+                params: vec![ParamInfo {
+                    name: Some(name_atom),
+                    type_id: TypeId::UNKNOWN,
+                    optional: false,
+                    rest: false,
+                }],
+                this_type: None,
+                return_type: TypeId::BOOLEAN,
+                type_predicate: Some(TypePredicate {
+                    asserts: false,
+                    target: TypePredicateTarget::Identifier(name_atom),
+                    type_id: Some(TypeId::NUMBER),
+                    parameter_index: Some(0),
+                }),
+                is_constructor: false,
+                is_method: false,
+            });
+
+            let constructor = db.callable(CallableShape {
+                call_signatures: vec![],
+                construct_signatures: vec![],
+                properties: vec![PropertyInfo {
+                    name: has_instance_atom,
+                    type_id: fn_id,
+                    write_type: fn_id,
+                    optional: false,
+                    readonly: false,
+                    is_method: true,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                    is_string_named: false,
+                    single_quoted_name: false,
+                }],
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            });
+
+            assert_eq!(
+                super::instance_type_from_symbol_has_instance(&db, constructor),
+                Some(TypeId::NUMBER),
+                "Predicate type must be parameter-name-independent (got param={param_name})"
+            );
+        }
+    }
+
+    /// `asserts value is T` does NOT carry through to instanceof narrowing —
+    /// tsc only uses non-asserting predicates for the instanceof candidate.
+    #[test]
+    fn instance_type_from_symbol_has_instance_ignores_asserts_predicate() {
+        use crate::types::{
+            CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypePredicate,
+            TypePredicateTarget, Visibility,
+        };
+
+        let db = crate::intern::TypeInterner::new();
+        let value_atom = db.intern_string("value");
+        let has_instance_atom = db.intern_string("[Symbol.hasInstance]");
+
+        let fn_id = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(value_atom),
+                type_id: TypeId::UNKNOWN,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::BOOLEAN,
+            type_predicate: Some(TypePredicate {
+                asserts: true,
+                target: TypePredicateTarget::Identifier(value_atom),
+                type_id: Some(TypeId::STRING),
+                parameter_index: Some(0),
+            }),
+            is_constructor: false,
+            is_method: false,
+        });
+
+        let constructor = db.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![],
+            properties: vec![PropertyInfo {
+                name: has_instance_atom,
+                type_id: fn_id,
+                write_type: fn_id,
+                optional: false,
+                readonly: false,
+                is_method: true,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+                is_string_named: false,
+                single_quoted_name: false,
+            }],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+
+        assert_eq!(
+            super::instance_type_from_symbol_has_instance(&db, constructor),
+            None,
+            "asserts predicates must not be used for instanceof narrowing"
         );
     }
 
