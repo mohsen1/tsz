@@ -1509,6 +1509,14 @@ impl<'a> CheckerState<'a> {
             // Without this guard, function declarations get duplicate diagnostics.
             if is_closure {
                 self.check_parameter_initializers(&parameters.nodes);
+                // Top-level destructuring iterability/nullish checks for closures.
+                // Function declarations get this from `check_parameter_binding_pattern_defaults`
+                // via the statement-callback bridge; closures need it here so that
+                // `(([]) => 0)({})` and `(({}) => 0)(undefined)` produce TS2488/TS2532.
+                self.check_closure_destructuring_top_level_diagnostics(
+                    &parameters.nodes,
+                    &destructuring_context_param_types,
+                );
             }
 
             // Check async function requirements (needed before TS7010 check)
