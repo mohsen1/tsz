@@ -1951,7 +1951,7 @@ fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
         0
     };
 
-    while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t' | b'\r' | b'\n' | b'*') {
+    while pos < bytes.len() && matches!(bytes[pos], b'/' | b' ' | b'\t' | b'\r' | b'\n' | b'*') {
         pos += 1;
     }
 
@@ -2421,6 +2421,31 @@ const value = 1;
         assert_eq!(directives.len(), 1);
         assert!(directives[0].is_expect_error);
         assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_scan_keeps_triple_slash_directives() {
+        let directives = find_ts_directives("/// @ts-ignore\nx();");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_scan_keeps_block_comment_directives() {
+        let directives = find_ts_directives(
+            r#"/**
+ @ts-expect-error */
+texts.push(100);
+
+{/*@ts-ignore*/}
+<MyComponent foo={100} />"#,
+        );
+        assert_eq!(directives.len(), 2);
+        assert!(directives[0].is_expect_error);
+        assert!(!directives[1].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 2);
+        assert_eq!(directives[1].suppressed_line, 5);
     }
 
     #[test]
