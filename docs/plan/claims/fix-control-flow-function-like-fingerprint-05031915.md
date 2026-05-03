@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-03
 - **Branch**: `fix/control-flow-function-like-fingerprint-05031915`
-- **PR**: TBD
+- **PR**: #2612
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
