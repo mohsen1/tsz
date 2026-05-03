@@ -159,6 +159,9 @@ mod name_resolution_boundary_tests;
 #[path = "../tests/no_filename_based_behavior_tests.rs"]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
+#[path = "tests/noUIA_any_index_emits_ts2322_tests.rs"]
+mod nuia_any_index_emits_ts2322_tests;
+#[cfg(test)]
 #[path = "tests/noUIA_write_index_signature_emits_ts2322_tests.rs"]
 mod nuia_write_index_signature_emits_ts2322_tests;
 #[cfg(test)]
@@ -474,6 +477,9 @@ mod strict_null_manual;
 #[cfg(test)]
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
+#[cfg(test)]
+#[path = "tests/ts1170_computed_property_syntactic_form_tests.rs"]
+mod ts1170_computed_property_syntactic_form_tests;
 #[cfg(test)]
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;

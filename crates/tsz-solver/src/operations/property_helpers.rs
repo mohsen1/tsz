@@ -916,6 +916,32 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
     }
 
+    /// Resolve a value-level element access whose index expression has type
+    /// `any` against the receiver's applicable index signature.
+    ///
+    /// Type-level `T[any]` evaluates to `any` (handled by the index-access
+    /// evaluator). Value-level `obj[anyExpr]` is different in tsc: the
+    /// access flows through whichever index signature applies, so
+    /// `noUncheckedIndexedAccess` still widens reads to `T | undefined`
+    /// and writes still reject `undefined` against the un-widened slot
+    /// type. Without this, `strMap[null as any]` silently typechecks as
+    /// `any`, dropping the NUIA gate.
+    ///
+    /// Returns `None` when the receiver has no string or number index
+    /// signature; callers should fall back to the standard `T[any] = any`
+    /// behaviour in that case.
+    pub fn resolve_any_index_access(&self, obj_type: TypeId) -> Option<PropertyAccessResult> {
+        use crate::objects::index_signatures::IndexSignatureResolver;
+        let resolver = IndexSignatureResolver::new(self.interner());
+        // String index signatures cover string and numeric keys (number falls
+        // through to string when no number signature exists). Try string first
+        // and fall back to number-only.
+        let value_type = resolver
+            .resolve_string_index(obj_type)
+            .or_else(|| resolver.resolve_number_index(obj_type))?;
+        Some(self.index_signature_result_with_nuia_write_type(value_type))
+    }
+
     pub(crate) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
         crate::utils::optional_property_type(self.interner(), prop)
     }

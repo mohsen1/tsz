@@ -691,14 +691,27 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        // This heuristic accepts `Wrapper<Wrapper<T>>` as assignable to `Wrapper<U>`
+        // This heuristic accepts `PromiseLike<PromiseLike<T>>` as assignable to `PromiseLike<U>`
         // when the TARGET's argument is NOT also the same wrapper (e.g., `Wrapper<V>`
         // where V is a plain type, not `Wrapper<something>`).
         //
         // This correctly handles `PromiseLike<PromiseLike<T>>` vs `PromiseLike<T>`
-        // (coinductively compatible via the then-method cycle) while correctly
-        // rejecting `Box<Box<number>>` vs `Box<Box<string>>` (target arg is also
-        // a nested wrapper with a different inner type — requires actual type checking).
+        // (coinductively compatible via the then-method cycle) without making
+        // ordinary generic classes like `A<A<number>>` assignable to `A<number>`.
+        fn is_promise_like_wrapper(display: &str) -> bool {
+            let Some((head, _)) = display.split_once('<') else {
+                return false;
+            };
+            let head = head.trim();
+            head.ends_with("Promise") || head.ends_with("PromiseLike")
+        }
+
+        let source_display = self.format_type(source);
+        let target_display = self.format_type(target);
+        if !is_promise_like_wrapper(&source_display) || !is_promise_like_wrapper(&target_display) {
+            return false;
+        }
+
         if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
             self.application_info_or_display_alias(source),
             self.application_info_or_display_alias(target),
@@ -719,11 +732,12 @@ impl<'a> CheckerState<'a> {
             display.split_once('<').map(|(head, _)| head.trim())
         }
 
-        let source_display = self.format_type(source);
-        let target_display = self.format_type(target);
         let Some(source_head) = generic_head(&source_display) else {
             return false;
         };
+        if !source_head.ends_with("Promise") && !source_head.ends_with("PromiseLike") {
+            return false;
+        }
         if generic_head(&target_display) != Some(source_head) {
             return false;
         }
@@ -1991,6 +2005,48 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    /// Type assertion overlap uses tsc's comparable relation, not ordinary
+    /// assignment. In particular, method bivariance must not make distinct
+    /// generic instantiations appear to overlap.
+    pub(crate) fn is_assignable_for_type_assertion_overlap(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if source == target {
+            return true;
+        }
+        self.ensure_relation_inputs_ready(&[source, target]);
+        let source = self.substitute_this_type_if_needed(source);
+        let target = self.substitute_this_type_if_needed(target);
+
+        {
+            let flags = self.ctx.pack_relation_flags()
+                | crate::query_boundaries::assignability::RelationFlags::DISABLE_METHOD_BIVARIANCE;
+            let inputs = AssignabilityQueryInputs {
+                db: self.ctx.types,
+                resolver: &self.ctx,
+                source,
+                target,
+                flags,
+                inheritance_graph: &self.ctx.inheritance_graph,
+                sound_mode: self.ctx.sound_mode(),
+            };
+            if let Some(result) = check_application_variance_assignability(&inputs) {
+                return result;
+            }
+        }
+
+        let source = self.evaluate_type_for_assignability(source);
+        let target = self.evaluate_type_for_assignability(target);
+        self.check_assignability_cached(
+            source,
+            target,
+            crate::query_boundaries::assignability::RelationFlags::DISABLE_METHOD_BIVARIANCE,
+            "is_assignable_for_type_assertion_overlap",
+        )
     }
 
     fn is_concrete_source_to_deferred_keyof_index_access(

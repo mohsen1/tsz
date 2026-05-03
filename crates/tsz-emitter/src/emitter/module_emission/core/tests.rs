@@ -615,6 +615,37 @@ fn export_assignment_suppresses_hoisted_func_export() {
     );
 }
 
+#[test]
+fn export_assignment_preserves_declared_namespace_runtime_value() {
+    let source = r#"declare namespace M1 {
+    export var a: string;
+    export function b(): number;
+}
+export = M1;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("module.exports = M1;"),
+        "Declared namespace export assignment should emit a CommonJS export.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Object.defineProperty(exports, \"__esModule\""),
+        "CommonJS export assignment should suppress the __esModule marker.\nOutput:\n{output}"
+    );
+}
+
 /// When `export = B` is present alongside `export class C {}`, the
 /// `exports.C = void 0;` initialization should still be emitted (tsc behavior),
 /// but hoisted function exports should be suppressed.
