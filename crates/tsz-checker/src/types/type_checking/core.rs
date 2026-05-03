@@ -1392,11 +1392,27 @@ impl<'a> CheckerState<'a> {
             } else {
                 element_type
             };
+            // If the nested type still includes `undefined` after stripping
+            // (because this binding element has no default to fill the
+            // undefined slot), accessing properties through it produces
+            // TS2339/TS2532. tsc only reports the upstream property-access
+            // error and suppresses cascading default-value TS2322s inside
+            // the nested pattern (e.g. `{ nested: { p = 'c' } }: { nested?:
+            // { p: 'a' | 'b' } }` — only the `.p` access TS2339 fires; the
+            // `'c' → 'a' | 'b'` default mismatch is dropped). Mirror that
+            // suppression by disabling default-assignability checks for the
+            // nested recursion when the nested type is undefined-tainted.
+            let nested_check_default_assignability = check_default_assignability
+                && !(self.ctx.strict_null_checks()
+                    && crate::query_boundaries::class_type::type_includes_undefined(
+                        self.ctx.types,
+                        nested_type,
+                    ));
             let nested_request = request.read().contextual(nested_type);
             self.check_binding_pattern_with_request(
                 element_data.name,
                 nested_type,
-                check_default_assignability,
+                nested_check_default_assignability,
                 &nested_request,
             );
         }
