@@ -753,6 +753,26 @@ fn parse_literal_reserved_parameter_after_suppressed_error_keeps_type_annotation
     );
 }
 
+#[test]
+fn parse_default_keyword_parameter_after_suppressed_error_keeps_type_annotation() {
+    let source = "function f(a,,default: number) {}";
+    let default_pos = source.find("default").expect("expected default keyword") as u32;
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let param_idx = find_parameter_named_at(arena, root, default_pos)
+        .expect("expected recovered `default` parameter");
+    let param = arena
+        .get(param_idx)
+        .and_then(|node| arena.get_parameter(node))
+        .expect("expected parameter data");
+
+    assert!(
+        param.type_annotation.is_some(),
+        "suppressed TS1359 recovery should still consume `default` and attach `: number`; diagnostics: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
 fn find_parameter_named_at(
     arena: &NodeArena,
     node_idx: NodeIndex,
