@@ -93,6 +93,8 @@ pub(crate) mod flow;
 )]
 pub(crate) mod flow_analysis;
 #[allow(dead_code)]
+pub(crate) mod index_signature;
+#[allow(dead_code)]
 pub(crate) mod inference;
 #[allow(
     dead_code,
