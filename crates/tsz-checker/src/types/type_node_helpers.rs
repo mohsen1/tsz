@@ -59,6 +59,52 @@ pub(super) fn is_typeof_global_this_type_node(
     }
 }
 
+pub(crate) fn is_type_query_in_non_flow_sensitive_signature_parameter(
+    arena: &tsz_parser::parser::NodeArena,
+    idx: NodeIndex,
+) -> bool {
+    let mut current = idx;
+    let mut saw_parameter = false;
+
+    while let Some(ext) = arena.get_extended(current) {
+        let parent = ext.parent;
+        if parent.is_none() {
+            break;
+        }
+
+        let Some(parent_node) = arena.get(parent) else {
+            break;
+        };
+
+        match parent_node.kind {
+            syntax_kind_ext::PARAMETER => saw_parameter = true,
+            k if k == syntax_kind_ext::CALL_SIGNATURE
+                || k == syntax_kind_ext::CONSTRUCT_SIGNATURE
+                || k == syntax_kind_ext::METHOD_SIGNATURE
+                || k == syntax_kind_ext::FUNCTION_TYPE
+                || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+            {
+                return saw_parameter;
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::METHOD_DECLARATION
+                || k == syntax_kind_ext::CONSTRUCTOR
+                || k == syntax_kind_ext::GET_ACCESSOR
+                || k == syntax_kind_ext::SET_ACCESSOR =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+
+        current = parent;
+    }
+
+    false
+}
+
 // Check duplicate parameters from a TypeNodeChecker context.
 pub(crate) fn check_duplicate_parameters_in_type(
     ctx: &mut crate::CheckerContext,
