@@ -482,9 +482,7 @@ pub(crate) fn classify_for_predicate_signature(
     tsz_solver::type_queries::classify_for_predicate_signature(db, type_id)
 }
 
-pub(crate) fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    tsz_solver::type_queries::is_narrowing_literal(db, type_id)
-}
+pub(crate) use tsz_solver::type_queries::{is_narrowing_literal, is_unknown_narrowing_literal};
 
 pub(crate) fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
     tsz_solver::type_queries::stringify_literal_type(db, type_id)

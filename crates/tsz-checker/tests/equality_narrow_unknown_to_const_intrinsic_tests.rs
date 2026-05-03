@@ -87,6 +87,9 @@ if (u === aDifferentName) {
     );
 }
 
+/// Regression: primitive-intrinsic comparands MUST NOT narrow union sources
+/// in the false branch. Mirrors tsc behaviour — `string` is not a unit type,
+/// so `x !== y` (where `y: string`) leaves `x: string | number` unchanged.
 #[test]
 fn primitive_const_inequality_does_not_exclude_from_union_false_branch() {
     let source = r#"
@@ -100,6 +103,25 @@ function f(x: string | number) {
     let codes = diag_codes(source);
     assert!(
         codes.contains(&2322),
-        "Expected TS2322 because `x !== y` with `y: string` must not narrow `x` to number, got: {codes:?}"
+        "Expected TS2322 — `x !== y` must not narrow `x: string | number` to `number` in else branch (string is not a unit type), got: {codes:?}"
+    );
+}
+
+#[test]
+fn union_equality_with_number_const_does_not_narrow_false_branch() {
+    let source = r#"
+declare const n: number;
+function f(x: string | number) {
+    if (x === n) {
+        // true branch: narrows to number — OK
+    } else {
+        let s: string = x;
+    }
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 — false branch of `x === n` (n: number) must leave `x: string | number` unchanged, got: {codes:?}"
     );
 }

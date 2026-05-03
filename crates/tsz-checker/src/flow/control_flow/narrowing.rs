@@ -1450,7 +1450,7 @@ impl<'a> FlowAnalyzer<'a> {
     ///   - `: undefined` → `TypeId::UNDEFINED`
     ///   - no annotation, but initializer is `null` literal → `TypeId::NULL`
     ///   - no annotation, but initializer is `undefined` identifier → `TypeId::UNDEFINED`
-    fn resolve_const_identifier_type(
+    pub(crate) fn resolve_const_identifier_type(
         &self,
         idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,
