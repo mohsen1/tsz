@@ -223,7 +223,11 @@ impl<'a> CheckerState<'a> {
                 method_bindings,
                 this_props,
                 ..
-            } = self.collect_prototype_members_and_this_properties(func_idx, &func_name, sym_id);
+            } = self.collect_prototype_members_and_this_properties(
+                func_idx,
+                &func_name,
+                Some(sym_id),
+            );
             for (name, prop) in method_bindings {
                 properties.entry(name).or_insert(prop);
             }

@@ -11,6 +11,7 @@ use super::complex_constructors::PrototypeMembers;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -30,47 +31,63 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
         use tsz_solver::PropertyInfo;
 
+        let expando_constructor_assignment =
+            self.js_self_defaulting_expando_constructor_assignment(expr_idx);
+        let analysis_expr_idx = expando_constructor_assignment
+            .as_ref()
+            .map(|(function_idx, _, _)| *function_idx)
+            .unwrap_or(expr_idx);
+
         // Resolve the function symbol from the new expression target
-        let expr_node = self.ctx.arena.get(expr_idx)?;
+        let expr_node = self.ctx.arena.get(analysis_expr_idx)?;
         let expr_kind = expr_node.kind;
         let callable_symbol = query::callable_shape_for_type(self.ctx.types, constructor_type)
             .and_then(|shape| shape.symbol);
-        let sym_id = if expr_kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-            self.ctx
-                .binder
-                .resolve_identifier(self.ctx.arena, expr_idx)
-                .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
-                .or(callable_symbol)
-        } else {
-            self.ctx
-                .binder
-                .get_node_symbol(expr_idx)
-                .or_else(|| {
+        let sym_id = expando_constructor_assignment
+            .as_ref()
+            .and_then(|(_, sym_id, _)| *sym_id)
+            .or_else(|| {
+                if expr_kind == tsz_scanner::SyntaxKind::Identifier as u16 {
                     self.ctx
-                        .arena
-                        .get_function(expr_node)
-                        .and_then(|func| func.name.into_option())
-                        .and_then(|name_idx| {
+                        .binder
+                        .resolve_identifier(self.ctx.arena, analysis_expr_idx)
+                        .or_else(|| self.ctx.binder.get_node_symbol(analysis_expr_idx))
+                        .or(callable_symbol)
+                } else {
+                    self.ctx
+                        .binder
+                        .get_node_symbol(analysis_expr_idx)
+                        .or_else(|| {
+                            self.ctx
+                                .arena
+                                .get_function(expr_node)
+                                .and_then(|func| func.name.into_option())
+                                .and_then(|name_idx| {
+                                    self.ctx
+                                        .binder
+                                        .resolve_identifier(self.ctx.arena, name_idx)
+                                        .or_else(|| self.ctx.binder.get_node_symbol(name_idx))
+                                })
+                        })
+                        .or_else(|| {
+                            self.ctx
+                                .arena
+                                .get_variable_declaration(expr_node)
+                                .and_then(|decl| {
+                                    self.ctx
+                                        .binder
+                                        .resolve_identifier(self.ctx.arena, decl.name)
+                                        .or_else(|| self.ctx.binder.get_node_symbol(decl.name))
+                                })
+                        })
+                        .or(callable_symbol)
+                        .or_else(|| {
                             self.ctx
                                 .binder
-                                .resolve_identifier(self.ctx.arena, name_idx)
-                                .or_else(|| self.ctx.binder.get_node_symbol(name_idx))
+                                .resolve_identifier(self.ctx.arena, analysis_expr_idx)
                         })
-                })
-                .or_else(|| {
-                    self.ctx
-                        .arena
-                        .get_variable_declaration(expr_node)
-                        .and_then(|decl| {
-                            self.ctx
-                                .binder
-                                .resolve_identifier(self.ctx.arena, decl.name)
-                                .or_else(|| self.ctx.binder.get_node_symbol(decl.name))
-                        })
-                })
-                .or(callable_symbol)
-                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))
-        };
+                }
+            });
 
         // When the caller passes a function declaration/expression node directly,
         // prefer reading the function body from that node — bypassing symbol-based
@@ -98,8 +115,13 @@ impl<'a> CheckerState<'a> {
                         .get(name_idx)
                         .and_then(|n| self.ctx.arena.get_identifier(n))
                 })
-                .map(|ident| ident.escaped_text.clone());
-            (func, func_name, expr_idx)
+                .map(|ident| ident.escaped_text.clone())
+                .or_else(|| {
+                    expando_constructor_assignment
+                        .as_ref()
+                        .map(|(_, _, key)| key.clone())
+                });
+            (func, func_name, analysis_expr_idx)
         } else if let Some(sym_id) = sym_id {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
             let value_decl = self
@@ -326,11 +348,11 @@ impl<'a> CheckerState<'a> {
         // 1. Method bindings (added directly as instance properties)
         // 2. this.prop assignments inside prototype methods (typed as T | undefined)
         let mut has_prototype_evidence = false;
-        if let Some(ref func_name_s) = func_name_str
-            && let Some(sym_id) = sym_id
-        {
-            let symbol = self.ctx.binder.get_symbol(sym_id);
-            let value_decl = symbol.map(|s| s.value_declaration).unwrap_or(expr_idx);
+        if let Some(ref func_name_s) = func_name_str {
+            let symbol = sym_id.and_then(|sym_id| self.ctx.binder.get_symbol(sym_id));
+            let value_decl = symbol
+                .map(|s| s.value_declaration)
+                .unwrap_or(analysis_expr_idx);
             let PrototypeMembers {
                 method_bindings,
                 this_props,
@@ -358,16 +380,17 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            for (name, prop) in self.collect_define_property_bindings_on_function_prototype(
-                value_decl,
-                func_name_s,
-                sym_id,
-            ) {
-                has_prototype_evidence = true;
-                properties.entry(name).or_insert(prop);
+            if let Some(sym_id) = sym_id {
+                for (name, prop) in self.collect_define_property_bindings_on_function_prototype(
+                    value_decl,
+                    func_name_s,
+                    sym_id,
+                ) {
+                    has_prototype_evidence = true;
+                    properties.entry(name).or_insert(prop);
+                }
             }
         }
-
         for prop in properties.values_mut() {
             if prop.write_type == TypeId::ANY
                 && (prop.type_id == TypeId::NULL || prop.type_id == TypeId::UNDEFINED)
@@ -378,31 +401,32 @@ impl<'a> CheckerState<'a> {
 
         if properties.is_empty() {
             if has_prototype_evidence {
-                if let Some(sym_id) = sym_id {
-                    let brand_name = self
-                        .ctx
-                        .types
-                        .intern_string(&format!("__js_ctor_brand_{}", sym_id.0));
-                    properties.insert(
-                        brand_name,
-                        PropertyInfo {
-                            name: brand_name,
-                            type_id: TypeId::UNKNOWN,
-                            write_type: TypeId::UNKNOWN,
-                            optional: false,
-                            readonly: false,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: tsz_solver::Visibility::Public,
-                            parent_id: Some(sym_id),
-                            declaration_order: 0,
-                            is_string_named: false,
-                            single_quoted_name: false,
-                        },
-                    );
-                } else {
-                    return None;
-                }
+                let brand_key = sym_id
+                    .map(|sym_id| format!("__js_ctor_brand_{}", sym_id.0))
+                    .or_else(|| {
+                        func_name_str
+                            .as_ref()
+                            .map(|name| format!("__js_ctor_brand_{name}"))
+                    })
+                    .unwrap_or_else(|| "__js_ctor_brand".to_string());
+                let brand_name = self.ctx.types.intern_string(&brand_key);
+                properties.insert(
+                    brand_name,
+                    PropertyInfo {
+                        name: brand_name,
+                        type_id: TypeId::UNKNOWN,
+                        write_type: TypeId::UNKNOWN,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: tsz_solver::Visibility::Public,
+                        parent_id: sym_id,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        single_quoted_name: false,
+                    },
+                );
             } else {
                 return None;
             }
@@ -445,6 +469,95 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(instance_type)
+    }
+
+    fn js_self_defaulting_expando_constructor_assignment(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(NodeIndex, Option<tsz_binder::SymbolId>, String)> {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let target_key = self.property_access_chain_text(expr_idx)?;
+        let read_pos = self.ctx.arena.get(expr_idx)?.pos;
+        let source_file = self
+            .ctx
+            .arena
+            .source_files
+            .get(self.ctx.current_file_idx)
+            .or_else(|| self.ctx.arena.source_files.first())?;
+        let mut best: Option<(u32, NodeIndex, Option<tsz_binder::SymbolId>)> = None;
+
+        fn visit(
+            checker: &CheckerState<'_>,
+            idx: NodeIndex,
+            target_key: &str,
+            read_pos: u32,
+            best: &mut Option<(u32, NodeIndex, Option<tsz_binder::SymbolId>)>,
+        ) {
+            let Some(node) = checker.ctx.arena.get(idx) else {
+                return;
+            };
+            if node.pos >= read_pos {
+                return;
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = checker.ctx.arena.get_binary_expr(node)
+                && binary.operator_token == SyntaxKind::EqualsToken as u16
+                && checker.property_access_chain_text(binary.left).as_deref() == Some(target_key)
+                && let Some(function_idx) =
+                    checker.self_defaulting_constructor_rhs(binary.right, target_key)
+                && best.is_none_or(|(best_pos, _, _)| node.pos >= best_pos)
+            {
+                *best = Some((
+                    node.pos,
+                    function_idx,
+                    checker.ctx.binder.get_node_symbol(binary.left),
+                ));
+            }
+
+            for child_idx in checker.ctx.arena.get_children(idx) {
+                visit(checker, child_idx, target_key, read_pos, best);
+            }
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            visit(self, stmt_idx, &target_key, read_pos, &mut best);
+        }
+
+        best.map(|(_, function_idx, sym_id)| (function_idx, sym_id, target_key))
+    }
+
+    fn self_defaulting_constructor_rhs(
+        &self,
+        rhs_idx: NodeIndex,
+        target_key: &str,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let rhs_idx = self.ctx.arena.skip_parenthesized(rhs_idx);
+        let rhs_node = self.ctx.arena.get(rhs_idx)?;
+        if rhs_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION {
+            return Some(rhs_idx);
+        }
+        if rhs_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.ctx.arena.get_binary_expr(rhs_node)?;
+        if !matches!(
+            binary.operator_token,
+            op if op == SyntaxKind::BarBarToken as u16
+                || op == SyntaxKind::QuestionQuestionToken as u16
+        ) {
+            return None;
+        }
+        if self.property_access_chain_text(binary.left).as_deref() != Some(target_key) {
+            return None;
+        }
+        let right_idx = self.ctx.arena.skip_parenthesized(binary.right);
+        let right_node = self.ctx.arena.get(right_idx)?;
+        (right_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION).then_some(right_idx)
     }
 
     /// Collect this-property assignments from a generic JS constructor function body.
