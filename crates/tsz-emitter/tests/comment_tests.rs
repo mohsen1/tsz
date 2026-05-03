@@ -35,6 +35,17 @@ fn template_substitution_comment_with_dollar_brace_is_preserved() {
 }
 
 #[test]
+fn parenthesized_expression_open_paren_comment_has_no_extra_space_after_block() {
+    let source = "var j;\nvar f: () => any;\n<any>( /* Preserve */ j = f());\n";
+    let output = parse_and_print_with_opts(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("( /* Preserve */j = f());"),
+        "block comment after open paren should not force an extra post-comment space; output:\n{output}"
+    );
+}
+
+#[test]
 fn test_skip_whitespace_forward_only_skips_whitespace() {
     use tsz_emitter::emitter::Printer;
     use tsz_parser::parser::node::NodeArena;

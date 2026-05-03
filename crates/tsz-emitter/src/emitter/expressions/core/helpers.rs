@@ -261,14 +261,20 @@ impl<'a> Printer<'a> {
         {
             let actual_inner_start =
                 self.skip_trivia_forward(inner_node.pos, inner_node.pos + 2048);
-            if self.has_newline_comment_in_range(node.pos, inner_node.pos)
+            let inserted_same_line_separator = if self
+                .has_newline_comment_in_range(node.pos, inner_node.pos)
                 || self.source_range_has_newline(node.pos, actual_inner_start)
             {
                 self.write_line();
+                false
             } else {
                 self.write(" ");
-            }
+                true
+            };
             self.emit_comments_before_pos(inner_node.pos);
+            if inserted_same_line_separator {
+                self.pending_block_comment_space = false;
+            }
         }
         // The explicit parens already provide grouping, so clear the
         // "needs parens" flags to avoid double-parenthesization when the
