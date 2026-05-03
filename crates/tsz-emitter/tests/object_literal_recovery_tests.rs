@@ -133,3 +133,18 @@ fn rest_array_binding_initializer_is_preserved_in_declaration() {
         "invalid rest binding initializer should be preserved for JS emit; output:\n{output}"
     );
 }
+
+#[test]
+fn object_rest_with_recovered_property_name_uses_initializer_directly() {
+    let source = "const { ...a: b } = {};\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("const b = __rest({}, []);"),
+        "only-rest recovery should pass the initializer to __rest directly; output:\n{output}"
+    );
+    assert!(
+        !output.contains("__rest(_a, [])"),
+        "only-rest recovery should not use an unassigned temp; output:\n{output}"
+    );
+}

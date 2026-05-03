@@ -362,10 +362,12 @@ impl<'a> Printer<'a> {
                 }
             } else {
                 // Need a temp variable
-                source_name = self.get_temp_var_name();
-                if non_rest_elements.is_empty() {
-                    // Only rest: temp will be assigned in the __rest call below
+                if non_rest_elements.is_empty() && initializer_idx.is_some() {
+                    // Only rest: no temp is needed because the initializer can be
+                    // passed directly into __rest().
+                    source_name = String::new();
                 } else if !nested_rest_indices.is_empty() {
+                    source_name = self.get_temp_var_name();
                     self.write(&source_name.clone());
                     self.write(" = ");
                     self.emit_expression(initializer_idx);
@@ -377,6 +379,7 @@ impl<'a> Printer<'a> {
                     );
                     emitted_prefix = true;
                 } else {
+                    source_name = self.get_temp_var_name();
                     // Emit: { nonRest } = temp = initializer
                     self.emit_object_pattern_without_rest(&non_rest_elements);
                     self.write(" = ");
@@ -428,7 +431,11 @@ impl<'a> Printer<'a> {
                 self.write(" = ");
                 self.write_helper("__rest");
                 self.write("(");
-                self.write(&source_name);
+                if source_name.is_empty() && initializer_idx.is_some() && source_temp.is_none() {
+                    self.emit_expression(initializer_idx);
+                } else {
+                    self.write(&source_name);
+                }
                 self.write(", [");
                 self.emit_excluded_props_list(&excluded_props);
                 self.write("])");
