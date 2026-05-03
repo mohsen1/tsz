@@ -1242,6 +1242,9 @@ impl<'a> Printer<'a> {
             }
             k if k == syntax_kind_ext::LABELED_STATEMENT => {
                 if let Some(labeled) = self.arena.get_labeled_statement(node) {
+                    if self.collect_system_labeled_variable_names(labeled.statement, names, seen) {
+                        return;
+                    }
                     self.collect_system_nested_top_level_var_hoisted_names(
                         labeled.statement,
                         names,
@@ -1260,6 +1263,43 @@ impl<'a> Printer<'a> {
             }
             _ => {}
         }
+    }
+
+    fn collect_system_labeled_variable_names(
+        &self,
+        stmt_idx: NodeIndex,
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        let variable_node = if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            stmt_node
+        } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                return false;
+            };
+            if export_decl.module_specifier.is_some() {
+                return false;
+            }
+            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                return false;
+            };
+            if clause_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                return false;
+            }
+            clause_node
+        } else {
+            return false;
+        };
+
+        for name in self.collect_variable_names_from_node(variable_node) {
+            if !name.is_empty() && seen.insert(name.clone()) {
+                names.push(name);
+            }
+        }
+        true
     }
 
     fn top_level_hoisted_var_statement_is_var(

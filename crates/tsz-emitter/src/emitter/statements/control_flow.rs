@@ -3,6 +3,7 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_if_statement(&mut self, node: &Node) {
@@ -1095,6 +1096,12 @@ impl<'a> Printer<'a> {
 
         self.emit(labeled.label);
         self.write(": ");
+        if (self.ctx.is_commonjs() || self.in_system_execute_body)
+            && self.labeled_body_is_initializerless_export_variable(labeled.statement)
+        {
+            self.write(";");
+            return;
+        }
         let before = self.writer.len();
         self.emit(labeled.statement);
         // If the labeled body was completely erased (e.g. const enum, interface),
@@ -1102,6 +1109,44 @@ impl<'a> Printer<'a> {
         if self.writer.len() == before {
             self.write(";");
         }
+    }
+
+    fn labeled_body_is_initializerless_export_variable(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        let variable_node = if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                return false;
+            };
+            if !self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                return false;
+            }
+            stmt_node
+        } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                return false;
+            };
+            if export_decl.module_specifier.is_some() {
+                return false;
+            }
+            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                return false;
+            };
+            if clause_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                return false;
+            }
+            clause_node
+        } else {
+            return false;
+        };
+
+        self.arena
+            .get_variable(variable_node)
+            .is_some_and(|var_stmt| self.all_declarations_lack_initializer(&var_stmt.declarations))
     }
 
     pub(in crate::emitter) fn emit_do_statement(&mut self, node: &Node) {
