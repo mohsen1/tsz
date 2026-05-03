@@ -574,7 +574,10 @@ impl<'a> Printer<'a> {
                 .arena
                 .get_extended(_idx)
                 .and_then(|ext| self.arena.get(ext.parent))
-                .is_none_or(|parent| parent.kind != syntax_kind_ext::RETURN_STATEMENT);
+                .is_none_or(|parent| {
+                    parent.kind != syntax_kind_ext::RETURN_STATEMENT
+                        && parent.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                });
         let class_expr_temp = if needs_any_comma_expr {
             let temp = if let Some(ref alias) = private_class_alias {
                 alias.clone()
