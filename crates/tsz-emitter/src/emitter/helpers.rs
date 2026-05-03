@@ -1381,6 +1381,23 @@ impl<'a> Printer<'a> {
         None
     }
 
+    pub(in crate::emitter) fn comma_immediately_before_pos(&self, pos: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut i = (pos as usize).min(bytes.len());
+        while i > 0 {
+            i -= 1;
+            match bytes[i] {
+                b',' => return true,
+                b' ' | b'\t' | b'\n' | b'\r' => continue,
+                _ => return false,
+            }
+        }
+        false
+    }
+
     /// Check if the source text has a trailing comma after the last element
     /// in a list (object literal, array literal, etc.)
     ///
