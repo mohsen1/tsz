@@ -206,6 +206,41 @@ fn precedence_comma_operator_in_expression() {
 }
 
 #[test]
+fn comma_expression_with_missing_rhs_preserves_binary_shape() {
+    let source = "(ANY, );";
+    let (parser, root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected TS1109 for missing comma RHS, got {codes:?}"
+    );
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let expr_stmt = arena
+        .get_expression_statement(stmt_node)
+        .expect("expr stmt");
+    let paren_node = arena.get(expr_stmt.expression).expect("paren node");
+    assert_eq!(paren_node.kind, syntax_kind_ext::PARENTHESIZED_EXPRESSION);
+    let paren = arena.get_parenthesized(paren_node).expect("paren data");
+    let inner = arena.get(paren.expression).expect("inner");
+    assert_eq!(inner.kind, syntax_kind_ext::BINARY_EXPRESSION);
+    let (_, op, right) = get_binary(arena, paren.expression);
+    assert_eq!(op, SyntaxKind::CommaToken as u16, "should keep comma op");
+    let right_node = arena.get(right).expect("missing rhs node");
+    assert_eq!(right_node.kind, SyntaxKind::Identifier as u16);
+    let right_ident = arena
+        .get_identifier(right_node)
+        .expect("missing rhs identifier");
+    assert!(
+        right_ident.escaped_text.is_empty(),
+        "missing comma RHS should be an empty recovery identifier"
+    );
+}
+
+#[test]
 fn precedence_assignment_right_associativity() {
     // `a = b = c` should parse as `a = (b = c)`
     let (parser, root) = parse_source("a = b = c;");

@@ -79,7 +79,7 @@ impl ParserState {
         // Comma expressions create a sequence, returning the last value
         while self.is_token(SyntaxKind::CommaToken) {
             self.next_token(); // consume comma
-            let right = self.parse_assignment_expression();
+            let mut right = self.parse_assignment_expression();
             if right.is_none() {
                 // Emit TS1109 for trailing comma or missing expression: expr, [missing]
                 // Reset last_error_pos to bypass suppression: when both operands of
@@ -92,7 +92,7 @@ impl ParserState {
                 if self.last_error_pos == 0 {
                     self.last_error_pos = saved_error_pos;
                 }
-                break; // Exit loop to prevent cascading errors
+                right = self.create_missing_expression();
             }
             let end_pos = self.token_end();
 
