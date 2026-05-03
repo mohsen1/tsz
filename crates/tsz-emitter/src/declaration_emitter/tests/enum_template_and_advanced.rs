@@ -921,6 +921,40 @@ fn take_diagnostics_drops_swapped_ts2883_when_canonical_exists() {
     );
 }
 
+#[test]
+fn take_diagnostics_keeps_ts2883_when_swapped_seen_before_canonical_duplicate() {
+    use tsz_common::diagnostics::Diagnostic;
+
+    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
+    let _ = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.diagnostics.push(Diagnostic::from_code(
+        2883,
+        "src/index.ts",
+        10,
+        3,
+        &["foo", "../node_modules/some-dep/dist/inner", "SomeType"],
+    ));
+    emitter.diagnostics.push(Diagnostic::from_code(
+        2883,
+        "src/index.ts",
+        10,
+        3,
+        &["foo", "SomeType", "../node_modules/some-dep/dist/inner"],
+    ));
+
+    let diagnostics = emitter.take_diagnostics();
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "expected one surviving canonical TS2883 diagnostic"
+    );
+    assert_eq!(
+        diagnostics[0].message_text,
+        "The inferred type of 'foo' cannot be named without a reference to 'SomeType' from '../node_modules/some-dep/dist/inner'. This is likely not portable. A type annotation is necessary."
+    );
+}
+
 // ── Private class namespace emission ────────────────────────────────
 
 #[test]

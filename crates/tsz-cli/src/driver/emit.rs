@@ -547,7 +547,6 @@ pub(crate) fn emit_outputs(
 }
 
 fn normalize_ts2883_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
-    let mut original_canonical_sites = FxHashSet::default();
     let mut exact_seen: FxHashMap<(u32, String, u32, u32, String), usize> = FxHashMap::default();
     let mut unique: Vec<(Diagnostic, bool)> = Vec::new();
 
@@ -555,14 +554,6 @@ fn normalize_ts2883_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic>
         let mut diagnostic = diagnostic;
         let mut was_canonicalized = false;
         if diagnostic.code == 2883 {
-            if let Some((first, second)) =
-                parse_ts2883_named_reference_message(&diagnostic.message_text)
-            {
-                let site = (diagnostic.file.clone(), diagnostic.start, diagnostic.length);
-                if !looks_like_module_path(&first) && looks_like_module_path(&second) {
-                    original_canonical_sites.insert(site);
-                }
-            }
             if let Some(message) =
                 canonical_ts2883_named_reference_message(&diagnostic.message_text)
             {
@@ -588,6 +579,18 @@ fn normalize_ts2883_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic>
         unique.push((diagnostic, was_canonicalized));
     }
 
+    let surviving_canonical_sites: FxHashSet<_> = unique
+        .iter()
+        .filter_map(|(diagnostic, was_canonicalized)| {
+            if diagnostic.code != 2883 || *was_canonicalized {
+                return None;
+            }
+            let (first, second) = parse_ts2883_named_reference_message(&diagnostic.message_text)?;
+            (!looks_like_module_path(&first) && looks_like_module_path(&second))
+                .then(|| (diagnostic.file.clone(), diagnostic.start, diagnostic.length))
+        })
+        .collect();
+
     unique
         .into_iter()
         .filter_map(|(diagnostic, was_canonicalized)| {
@@ -608,7 +611,7 @@ fn normalize_ts2883_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic>
                 return Some(diagnostic);
             }
 
-            (!original_canonical_sites.contains(&(
+            (!surviving_canonical_sites.contains(&(
                 diagnostic.file.clone(),
                 diagnostic.start,
                 diagnostic.length,
