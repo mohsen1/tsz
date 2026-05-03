@@ -405,7 +405,12 @@ impl<'a> Printer<'a> {
         if let Some(ref args) = call.arguments {
             // Filter out NodeIndex::NONE (omitted arguments from parser error recovery).
             // In call expressions, `foo(a,,b)` should emit `foo(a, b)`, not `foo(a, , b)`.
-            let valid_args: Vec<_> = args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+            let valid_args: Vec<_> = args
+                .nodes
+                .iter()
+                .copied()
+                .filter(|&idx| self.call_argument_should_emit(idx))
+                .collect();
             // For the first argument, emit any comments between '(' and the argument
             // This handles: func(/*comment*/ arg)
             if let Some(first_arg) = valid_args.first()
@@ -442,7 +447,12 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = false;
         self.ctx.flags.nullish_coalescing_needs_parens = false;
         if let Some(args) = args {
-            let valid_args: Vec<_> = args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+            let valid_args: Vec<_> = args
+                .nodes
+                .iter()
+                .copied()
+                .filter(|&idx| self.call_argument_should_emit(idx))
+                .collect();
             if let Some(first_arg) = valid_args.first()
                 && let Some(arg_node) = self.arena.get(*first_arg)
             {
@@ -461,6 +471,24 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.write(")");
+    }
+
+    fn call_argument_should_emit(&self, idx: NodeIndex) -> bool {
+        if idx.is_none() {
+            return false;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.end <= node.pos {
+            return false;
+        }
+        if node.kind == SyntaxKind::Unknown as u16 {
+            return false;
+        }
+        self.arena
+            .get_identifier(node)
+            .is_none_or(|ident| !ident.escaped_text.is_empty())
     }
 
     fn emit_optional_call_expression(
