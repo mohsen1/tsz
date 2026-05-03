@@ -1856,6 +1856,21 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Inference-fallback fast path for same-base Application types:
+        // when the source is `Foo<unknown, ...>` (all args `unknown`) AND the
+        // target has at least one `never` arg, treat the source as assignable.
+        //
+        // This handles the common Thenable / Promise inference pattern where
+        // a constructor call cannot infer type parameters used only in nested
+        // applications (e.g., `new EPromise(Promise.resolve(mkRight(a)))`
+        // where `EPromise<E, A>` takes `PromiseLike<Either<E, A>>`). Without
+        // explicit type args, the result is `EPromise<unknown, unknown>`,
+        // which must still be assignable to a declared return type like
+        // `EPromise<never, A>`.
+        //
+        // The `never` arg requirement keeps this fast path narrow: it doesn't
+        // match user-written `A<unknown>` against `A<string>`, where variance
+        // must be respected (unknown is NOT a subtype of string).
         if crate::query_boundaries::common::application_info(self.ctx.types, source)
             .or_else(|| {
                 self.ctx.types.get_display_alias(source).and_then(|alias| {
@@ -1871,9 +1886,7 @@ impl<'a> CheckerState<'a> {
                     && source_args.len() == target_args.len()
                     && !source_args.is_empty()
                     && source_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
-                    && target_args
-                        .iter()
-                        .any(|&arg| arg != TypeId::UNKNOWN && arg != TypeId::ERROR)
+                    && target_args.contains(&TypeId::NEVER)
             })
         {
             return true;
