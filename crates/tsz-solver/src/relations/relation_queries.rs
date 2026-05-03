@@ -442,8 +442,16 @@ pub fn check_application_variance<R: TypeResolver>(
     }
 
     // If all parameters are independent (no variance info), we can't make any
-    // conclusion from variance alone — fall through to structural checking.
+    // conclusion from variance alone — fall through to structural checking,
+    // EXCEPT when at least one target arg is `any`. `any` is the universal
+    // sink in any-propagation mode, so even with unknown variance, source
+    // -> target is trivially satisfied at that position. Returning True
+    // here prevents structural expansion of recursive aliases like
+    // `FlatArray<Arr, any>` from spuriously rejecting valid assignments.
     if variances.iter().all(|v| v.is_empty()) {
+        if !policy.strict_any_propagation && t_app.args.iter().any(|a| a.is_any()) {
+            return Some(true);
+        }
         return None;
     }
 

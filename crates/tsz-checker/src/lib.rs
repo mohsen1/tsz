@@ -328,6 +328,9 @@ mod yield_star_return_type_tests;
 #[path = "tests/application_arg_concrete_index_access_display_tests.rs"]
 mod application_arg_concrete_index_access_display_tests;
 #[cfg(test)]
+#[path = "tests/application_target_any_arg_assignability_tests.rs"]
+mod application_target_any_arg_assignability_tests;
+#[cfg(test)]
 #[path = "../tests/architecture_contract_tests.rs"]
 mod architecture_contract_tests;
 #[cfg(test)]
