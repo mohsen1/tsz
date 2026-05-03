@@ -1186,6 +1186,7 @@ impl Runner {
         let bytes = tokio::fs::read(path).await?;
         let key =
             cache::cache_key(path, test_dir).unwrap_or_else(|| path.to_string_lossy().to_string());
+        let ts_tests_lib_dir = tsz_wrapper::tests_lib_dir_for_cases_dir(test_dir);
 
         // Build file preview if requested (printed atomically by caller)
         let mut file_preview: Option<String> = None;
@@ -1299,15 +1300,17 @@ impl Runner {
                             let ext_clone = original_ext.clone();
                             let key_order = parsed.directives.option_order.clone();
                             let expected_error_codes = tsc_result.error_codes.clone();
+                            let ts_tests_lib_dir = ts_tests_lib_dir.clone();
 
                             let prepared = tokio::task::spawn_blocking(move || {
-                                tsz_wrapper::prepare_test_dir(
+                                tsz_wrapper::prepare_test_dir_with_lib_dir(
                                     &content_clone,
                                     &filenames,
                                     &variant_clone,
                                     ext_clone.as_deref(),
                                     &key_order,
                                     Some(&expected_error_codes),
+                                    Some(&ts_tests_lib_dir),
                                 )
                             })
                             .await??;
@@ -1605,14 +1608,16 @@ impl Runner {
                         let options = options.clone();
                         let ext = original_ext.clone();
                         let key_order = key_order.clone();
+                        let ts_tests_lib_dir = ts_tests_lib_dir.clone();
                         move || {
-                            tsz_wrapper::prepare_test_dir(
+                            tsz_wrapper::prepare_test_dir_with_lib_dir(
                                 &text,
                                 &filenames,
                                 &options,
                                 ext.as_deref(),
                                 &key_order,
                                 Some(&expected_error_codes),
+                                Some(&ts_tests_lib_dir),
                             )
                         }
                     })

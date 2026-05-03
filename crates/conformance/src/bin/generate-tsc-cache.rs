@@ -359,7 +359,16 @@ fn process_test_file(
 
     // Prepare test dir (Rust-side work — no semaphore needed)
     let prepared = if let Some(content) = &content {
-        tsz_wrapper::prepare_test_dir(content, &filenames, &options, original_extension, &[], None)?
+        let ts_tests_lib_dir = tsz_wrapper::tests_lib_dir_for_cases_dir(test_dir);
+        tsz_wrapper::prepare_test_dir_with_lib_dir(
+            content,
+            &filenames,
+            &options,
+            original_extension,
+            &[],
+            None,
+            Some(&ts_tests_lib_dir),
+        )?
     } else if let Some(bytes) = &binary_bytes {
         tsz_wrapper::prepare_binary_test_dir(bytes, original_extension.unwrap_or("ts"), &options)?
     } else {
