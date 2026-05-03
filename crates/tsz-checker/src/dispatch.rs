@@ -1235,7 +1235,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 // handles these permissively; treat as overlapping to
                                 // suppress false positive TS2352.
                                 let structured_generic_assertion_target =
-                                    generic_query::contains_type_parameters(
+                                    generic_query::contains_free_type_parameters(
                                         self.checker.ctx.types,
                                         effective_asserted,
                                     ) && !crate::query_boundaries::common::is_type_parameter_like(
@@ -1253,21 +1253,33 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 );
                                 let source_to_target = if structured_generic_assertion_target {
                                     if array_like_generic_assertion_target {
-                                        self.checker.is_assignable_to(expr_type, effective_asserted)
+                                        self.checker.is_assignable_for_type_assertion_overlap(
+                                            expr_type,
+                                            effective_asserted,
+                                        )
                                     } else {
                                         true // can't evaluate — assume overlap
                                     }
                                 } else {
-                                    self.checker.is_assignable_to(expr_type, effective_asserted)
+                                    self.checker.is_assignable_for_type_assertion_overlap(
+                                        expr_type,
+                                        effective_asserted,
+                                    )
                                 };
                                 let target_to_source = if structured_generic_assertion_target {
                                     if array_like_generic_assertion_target {
-                                        self.checker.is_assignable_to(effective_asserted, expr_type)
+                                        self.checker.is_assignable_for_type_assertion_overlap(
+                                            effective_asserted,
+                                            expr_type,
+                                        )
                                     } else {
                                         true // can't evaluate — assume overlap
                                     }
                                 } else {
-                                    self.checker.is_assignable_to(effective_asserted, expr_type)
+                                    self.checker.is_assignable_for_type_assertion_overlap(
+                                        effective_asserted,
+                                        expr_type,
+                                    )
                                 };
 
                                 if !source_to_target && !target_to_source {
@@ -1347,8 +1359,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         effective_asserted,
                                     ) {
                                         for member in members {
-                                            if self.checker.is_assignable_to(member, expr_type)
-                                                || self.checker.is_assignable_to(expr_type, member)
+                                            if self
+                                                .checker
+                                                .is_assignable_for_type_assertion_overlap(
+                                                    member, expr_type,
+                                                )
+                                                || self
+                                                    .checker
+                                                    .is_assignable_for_type_assertion_overlap(
+                                                        expr_type, member,
+                                                    )
                                             {
                                                 have_overlap = true;
                                                 break;
@@ -1364,10 +1384,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         for member in members {
                                             if self
                                                 .checker
-                                                .is_assignable_to(member, effective_asserted)
+                                                .is_assignable_for_type_assertion_overlap(
+                                                    member,
+                                                    effective_asserted,
+                                                )
                                                 || self
                                                     .checker
-                                                    .is_assignable_to(effective_asserted, member)
+                                                    .is_assignable_for_type_assertion_overlap(
+                                                        effective_asserted,
+                                                        member,
+                                                    )
                                             {
                                                 have_overlap = true;
                                                 break;

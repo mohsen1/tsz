@@ -1726,6 +1726,8 @@ impl<'a> CheckerState<'a> {
             diag.start == start
                 && diag.length == length
                 && diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag.code
+                    != diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV
         })
     }
 
