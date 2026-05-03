@@ -1124,6 +1124,72 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn assignment_object_literal_is_rest_only(&self, node: &Node) -> bool {
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        self.arena.get_literal_expr(node).is_some_and(|lit| {
+            lit.elements.nodes.len() == 1
+                && lit
+                    .elements
+                    .nodes
+                    .first()
+                    .copied()
+                    .and_then(|idx| self.arena.get(idx))
+                    .is_some_and(|elem| elem.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+        })
+    }
+
+    /// Lower rest-only object assignment for targets that do not support ES2018.
+    /// `({ ...rest } = source)` -> `rest = __rest(source, [])`.
+    pub(in crate::emitter) fn emit_assignment_object_rest_destructuring(
+        &mut self,
+        left_node: &Node,
+        right_idx: NodeIndex,
+    ) {
+        let Some(elements) = self.get_binding_or_literal_elements(left_node) else {
+            self.emit_node_default(left_node, right_idx);
+            return;
+        };
+
+        let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
+        let is_simple = self
+            .arena
+            .get(effective_right_idx)
+            .is_some_and(|n| n.is_identifier());
+        let needs_temp = !is_simple && self.count_object_destructuring_elements(&elements) > 1;
+
+        if !is_simple && !needs_temp {
+            // Rest-only object assignment can pass the RHS directly to __rest().
+            if let Some(spread_idx) = elements.first().copied()
+                && let Some(spread_node) = self.arena.get(spread_idx)
+                && spread_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+                && let Some(spread) = self.arena.get_spread(spread_node)
+            {
+                self.emit(spread.expression);
+                self.write(" = ");
+                self.write_helper("__rest");
+                self.write("(");
+                self.emit(right_idx);
+                self.write(", [])");
+                return;
+            }
+        }
+
+        let source_name = if is_simple {
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, effective_right_idx)
+        } else {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.write(&temp);
+            self.write(" = ");
+            self.emit(right_idx);
+            temp
+        };
+
+        let mut first = !needs_temp;
+        self.emit_assignment_object_destructuring(&elements, &source_name, &mut first);
+    }
+
     /// Emit lowered array assignment destructuring.
     /// `[, nameA, [primaryB, secondaryB]] = source` →
     /// `nameA = source[1], _a = source[2], primaryB = _a[0], secondaryB = _a[1]`

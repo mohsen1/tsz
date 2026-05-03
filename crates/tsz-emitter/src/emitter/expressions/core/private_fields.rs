@@ -422,6 +422,16 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // ES2015-ES2017: lower object rest assignment patterns.
+        if self.ctx.needs_es2018_lowering
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && let Some(left_node) = self.arena.get(binary.left)
+            && self.assignment_object_literal_is_rest_only(left_node)
+        {
+            self.emit_assignment_object_rest_destructuring(left_node, binary.right);
+            return;
+        }
+
         // ES5: lower assignment destructuring patterns
         if self.ctx.target_es5
             && binary.operator_token == SyntaxKind::EqualsToken as u16
