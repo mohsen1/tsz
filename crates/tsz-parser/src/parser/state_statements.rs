@@ -2015,7 +2015,26 @@ impl ParserState {
                 // When the variable name itself was erroneous (e.g., TS1389 for a
                 // reserved word like `const export`), stop this declaration list so
                 // the statement loop can reparse the keyword in the tsc-shaped way.
-                if decl_had_error && !self.is_token(SyntaxKind::CloseBracketToken) {
+                //
+                // Exception: if the most recent diagnostic from the declarator was
+                // TS1121 (legacy-octal scanned inside the initializer) AND the next
+                // token can start a new declarator (identifier-or-keyword not
+                // reserved, or a binding pattern), prefer the "missing comma between
+                // declarations" recovery below. tsc scans `0123n` as a legacy-octal
+                // literal (TS1121) plus a stray identifier `n` that starts a second
+                // declarator, so it emits `,' expected.` rather than `;' expected.`.
+                let last_diag_was_legacy_octal = self
+                    .parse_diagnostics
+                    .last()
+                    .is_some_and(|d| d.code == 1121);
+                let next_can_start_decl = (self.is_identifier_or_keyword()
+                    && !self.is_reserved_word())
+                    || self.is_token(SyntaxKind::OpenBraceToken)
+                    || self.is_token(SyntaxKind::OpenBracketToken);
+                if decl_had_error
+                    && !self.is_token(SyntaxKind::CloseBracketToken)
+                    && !(last_diag_was_legacy_octal && next_can_start_decl)
+                {
                     break;
                 }
 

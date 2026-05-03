@@ -122,6 +122,10 @@ mod node_modifiers_tests;
 #[path = "../../tests/this_param_modifier_tests.rs"]
 mod this_param_modifier_tests;
 
+#[cfg(test)]
+#[path = "../../tests/legacy_octal_bigint_continuation_tests.rs"]
+mod legacy_octal_bigint_continuation_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 
