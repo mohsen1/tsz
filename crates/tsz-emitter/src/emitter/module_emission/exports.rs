@@ -531,11 +531,12 @@ impl<'a> Printer<'a> {
                                     self.write(&output);
                                 }
                                 while self.comment_emit_idx < self.all_comments.len()
-                                    && self.all_comments[self.comment_emit_idx].end
-                                        <= clause_node.end
+                                    && self.all_comments[self.comment_emit_idx].pos
+                                        < clause_node.end
                                 {
                                     self.comment_emit_idx += 1;
                                 }
+                                self.skip_comments_for_erased_node(clause_node);
                                 self.write_line();
                                 // For ES5, decorator calls are inside the IIFE,
                                 // but we still need the CommonJS export assignment
