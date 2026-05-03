@@ -430,17 +430,46 @@ impl<'a> CheckerState<'a> {
                         // pass (e.g., Readonly<(string|number)[][]> instead of
                         // Readonly<[string,number][]>).
                         let final_return_type = if used_return_context_sub {
-                            let (re_result, _, _) = self.resolve_call_with_checker_adapter(
+                            // Compose round-1's argument-driven inference with
+                            // the return-context substitution and instantiate
+                            // the signature's return type. Mirrors the
+                            // composition logic used above to build
+                            // `retry_params`. The re-resolve below then
+                            // confirms argument compatibility, but the return
+                            // type is taken from this substitution so that
+                            // the contextual-return-type binding (e.g.
+                            // `E = SVGRectElement` from
+                            // `let r: SVGRectElement = qs(...)!`) is preserved
+                            // even when the call's positional arguments don't
+                            // pin down the type parameter and the re-resolve
+                            // would default it to its bound.
+                            let mut combined_sub = self.extract_arg_inference_substitution(
+                                &sig.params,
+                                instantiated_params,
+                                &sig.type_params,
+                            );
+                            for tp in &sig.type_params {
+                                if let Some(ty) = return_sub_for_retry.get(tp.name) {
+                                    combined_sub.insert(tp.name, ty);
+                                }
+                            }
+                            let from_sub = crate::query_boundaries::common::instantiate_type(
+                                self.ctx.types,
+                                sig.return_type,
+                                &combined_sub,
+                            );
+                            // Run the re-resolve for its side effects (argument
+                            // compatibility diagnostics) but discard the return
+                            // type — the substitution-derived value is
+                            // authoritative for the type-parameter binding.
+                            let _ = self.resolve_call_with_checker_adapter(
                                 resolved_func_type,
                                 &refreshed_arg_types,
                                 force_bivariant_callbacks,
                                 contextual_type,
                                 actual_this_type,
                             );
-                            match re_result {
-                                CallResult::Success(rt) => rt,
-                                _ => return_type,
-                            }
+                            from_sub
                         } else {
                             return_type
                         };
