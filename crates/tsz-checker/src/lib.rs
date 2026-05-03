@@ -391,6 +391,9 @@ mod generic_inference_manual;
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
+#[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
+mod in_narrow_bare_type_param_chained_tests;
+#[cfg(test)]
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
 #[cfg(test)]
