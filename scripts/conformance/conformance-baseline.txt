@@ -65,8 +65,7 @@ FAIL TypeScript/tests/cases/compiler/restParameterWithBindingPattern3.ts | expec
 FAIL TypeScript/tests/cases/compiler/reuseTypeAnnotationImportTypeInGlobalThisTypeArgument.ts | expected:[TS2304] actual:[TS2305,TS2694]
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypeNotCircular.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts | expected:[TS2322,TS2353] actual:[TS2322,TS2353]
-FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters3.ts | expected:[TS2345] actual:[]
-FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters4.ts | expected:[TS2345] actual:[]
+FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters4.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters5.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/strictFunctionTypesErrors.ts | expected:[TS2322,TS2328] actual:[TS2322,TS2328]
 FAIL TypeScript/tests/cases/compiler/strictModeReservedWord.ts | expected:[TS1212,TS1213,TS2300,TS2349,TS2480,TS2503,TS2507,TS2552,TS7006] actual:[TS1212,TS1213,TS2349,TS2480,TS2503,TS2552,TS7006]
@@ -123,7 +122,7 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution2.tsx |
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution6.tsx | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload4.tsx | expected:[TS2769] actual:[TS2769]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents2.tsx | expected:[TS2322,TS2339,TS2551,TS2564] actual:[TS2322,TS2339,TS2551,TS2564]
-FAIL TypeScript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx | expected:[TS17021] actual:[TS2304,TS2339,TS17002]
+FAIL TypeScript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx | expected:[TS17021] actual:[TS2304,TS2339,TS17002,TS17021]
 FAIL TypeScript/tests/cases/conformance/moduleResolution/bundler/bundlerNodeModules1.ts | expected:[] actual:[TS2305]
 FAIL TypeScript/tests/cases/conformance/node/nodeModules1.ts | expected:[TS1471,TS1479,TS2307,TS2834,TS2835] actual:[TS1471,TS1479,TS2307,TS2834,TS2835]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesCJSEmit1.ts | expected:[TS1192,TS2304,TS2882] actual:[TS2882]
@@ -5564,6 +5563,7 @@ PASS TypeScript/tests/cases/compiler/sideEffectImports4.ts
 PASS TypeScript/tests/cases/compiler/sigantureIsSubTypeIfTheyAreIdentical.ts
 PASS TypeScript/tests/cases/compiler/signatureCombiningRestParameters1.ts
 PASS TypeScript/tests/cases/compiler/signatureCombiningRestParameters2.ts
+PASS TypeScript/tests/cases/compiler/signatureCombiningRestParameters3.ts
 PASS TypeScript/tests/cases/compiler/signatureInstantiationWithRecursiveConstraints.ts
 PASS TypeScript/tests/cases/compiler/signatureLengthMismatchCall.ts
 PASS TypeScript/tests/cases/compiler/signatureLengthMismatchInOverload.ts
