@@ -266,12 +266,9 @@ impl<'a> Printer<'a> {
                     } else if ch == b'\\' {
                         in_escape = true;
                     } else if ch == b'/' && !in_character_class {
-                        i += 1; // Include closing /
-                        // Include any flags (g, i, m, etc.)
-                        while i < max_end && text.as_bytes()[i].is_ascii_alphabetic() {
-                            i += 1;
-                        }
-                        self.write(&text[regex_start..i]);
+                        // The parser's token span already includes trailing
+                        // regex flags, including non-ASCII identifier parts.
+                        self.write(&text[regex_start..max_end]);
                         return;
                     } else if ch == b'[' {
                         in_character_class = true;
@@ -686,6 +683,21 @@ fn format_js_number(value: f64) -> String {
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
+
+    #[test]
+    fn regex_literal_preserves_non_ascii_flags() {
+        let source = "const 𝘳𝘦𝘨𝘦𝘹 = /(?𝘴𝘪-𝘮:^𝘧𝘰𝘰.)/𝘨𝘮𝘶;";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+        assert!(
+            output.contains("/(?𝘴𝘪-𝘮:^𝘧𝘰𝘰.)/𝘨𝘮𝘶"),
+            "Non-ASCII regex flags should be preserved.\nGot: {output}"
+        );
+    }
 
     /// Legacy octal literals (01, 076, 009) must be converted to decimal
     /// in emitted JS, matching tsc behavior for ALL targets.

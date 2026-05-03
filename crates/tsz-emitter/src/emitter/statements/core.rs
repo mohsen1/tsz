@@ -789,6 +789,17 @@ impl<'a> Printer<'a> {
                 self.write(", ");
                 self.write(return_name);
             }
+            if let Some(last_end) =
+                self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations)
+            {
+                let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
+                if let Some(semi_after) =
+                    self.find_declaration_semicolon_after(last_end, effective_end)
+                {
+                    let comment_end = semi_after.saturating_sub(1);
+                    self.emit_comments_in_range(last_end, comment_end, true, false);
+                }
+            }
             self.map_trailing_semicolon(node);
             self.write_semicolon();
         }
@@ -1369,6 +1380,27 @@ impl<'a> Printer<'a> {
             }
         }
         effective_end
+    }
+
+    fn variable_statement_last_emitted_declaration_end(
+        &self,
+        declarations: &NodeList,
+    ) -> Option<u32> {
+        let mut last_end = None;
+        for &decl_list_idx in &declarations.nodes {
+            let decl_list_node = self.arena.get(decl_list_idx)?;
+            let decl_list = self.arena.get_variable(decl_list_node)?;
+            for &decl_idx in &decl_list.declarations.nodes {
+                let decl_node = self.arena.get(decl_idx)?;
+                let decl = self.arena.get_variable_declaration(decl_node)?;
+                if let Some(init_node) = self.arena.get(decl.initializer) {
+                    last_end = Some(init_node.end);
+                } else if let Some(name_node) = self.arena.get(decl.name) {
+                    last_end = Some(name_node.end);
+                }
+            }
+        }
+        last_end
     }
 
     fn find_declaration_semicolon_after(&self, start: u32, end: u32) -> Option<u32> {

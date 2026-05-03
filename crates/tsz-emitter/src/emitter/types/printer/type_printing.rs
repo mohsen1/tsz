@@ -888,19 +888,6 @@ impl<'a> TypePrinter<'a> {
         }
 
         // Add index signatures (tsc emits these before properties)
-        if let Some(ref idx) = callable.string_index {
-            let readonly = if idx.readonly { "readonly " } else { "" };
-            let param = idx
-                .param_name
-                .map(|a| self.resolve_atom(a))
-                .unwrap_or_else(|| "x".to_string());
-            parts.push(format!(
-                "{}[{}: string]: {}",
-                readonly,
-                param,
-                self.print_type(idx.value_type)
-            ));
-        }
         if let Some(ref idx) = callable.number_index {
             let readonly = if idx.readonly { "readonly " } else { "" };
             let param = idx
@@ -909,6 +896,19 @@ impl<'a> TypePrinter<'a> {
                 .unwrap_or_else(|| "x".to_string());
             parts.push(format!(
                 "{}[{}: number]: {}",
+                readonly,
+                param,
+                self.print_type(idx.value_type)
+            ));
+        }
+        if let Some(ref idx) = callable.string_index {
+            let readonly = if idx.readonly { "readonly " } else { "" };
+            let param = idx
+                .param_name
+                .map(|a| self.resolve_atom(a))
+                .unwrap_or_else(|| "x".to_string());
+            parts.push(format!(
+                "{}[{}: string]: {}",
                 readonly,
                 param,
                 self.print_type(idx.value_type)

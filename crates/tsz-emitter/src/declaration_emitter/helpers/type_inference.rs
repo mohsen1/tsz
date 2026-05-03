@@ -44,7 +44,23 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.emit_type_node_text_from_arena(source_arena, type_annotation))
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
-            printed.filter(|text| text != "any").unwrap_or(type_text)
+            match printed {
+                Some(printed)
+                    if printed != "any"
+                        && (!printed.contains("any") || type_text.contains("any"))
+                        && printed.contains("typeof ")
+                        && !type_text.contains("typeof ") =>
+                {
+                    printed.replace("typeof ", "")
+                }
+                Some(printed)
+                    if printed != "any"
+                        && (!printed.contains("any") || type_text.contains("any")) =>
+                {
+                    printed
+                }
+                _ => type_text,
+            }
         } else {
             let rewritten = self.qualify_foreign_imported_names_in_text(source_arena, &type_text);
             let rewritten = self

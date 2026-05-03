@@ -613,6 +613,135 @@ const a = { value: undefined };
     );
 }
 
+/// JSDoc `@typedef {object} A` should preserve the alias name `A` in TS2375
+/// diagnostic messages — tsc reports `Type '...' is not assignable to type
+/// 'A' with 'exactOptionalPropertyTypes: true'.`, not the expanded body
+/// shape `'{ value?: number; }'`. The fix attaches a display-alias
+/// (`body_type → lazy(def_for_A)`) so
+/// `format_exact_optional_target_type_for_message` can recover the
+/// authoritative def name.
+#[test]
+fn test_jsdoc_typedef_object_alias_name_preserved_in_ts2375() {
+    let source = r#"
+/**
+ * @typedef {object} MyAlias
+ * @property {number} [value]
+ */
+
+/** @type {MyAlias} */
+const a = { value: undefined };
+"#;
+    // Use the same harness as the existing TS2375 test but capture the
+    // message text so we can assert on the displayed target type.
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        strict: true,
+        exact_optional_property_types: true,
+        ..CheckerOptions::default()
+    };
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        options,
+    );
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    let ts2375: Vec<&Diagnostic> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2375)
+        .collect();
+    assert_eq!(
+        ts2375.len(),
+        1,
+        "Expected exactly one TS2375 for the typedef-aliased target, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+    let msg = &ts2375[0].message_text;
+    assert!(
+        msg.contains("'MyAlias'"),
+        "TS2375 target display must include the typedef name `'MyAlias'`, got: {msg}"
+    );
+    assert!(
+        !msg.contains("'{ value?: number; }'"),
+        "TS2375 target display must NOT expand to the body shape `'{{ value?: number; }}'`, got: {msg}"
+    );
+}
+
+/// Same alias-preservation rule with the inline `@typedef {{ ... }}` form
+/// — pins that the fix is structural (any `@typedef` registers the
+/// display-alias, not just the imperative `{object}` + `@property` form).
+#[test]
+fn test_jsdoc_typedef_inline_alias_name_preserved_in_ts2375() {
+    let source = r#"
+/**
+ * @typedef {{ flag?: string }} OtherAlias
+ */
+
+/** @type {OtherAlias} */
+const b = { flag: undefined };
+"#;
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        strict: true,
+        exact_optional_property_types: true,
+        ..CheckerOptions::default()
+    };
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        options,
+    );
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    let ts2375: Vec<&Diagnostic> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2375)
+        .collect();
+    assert_eq!(
+        ts2375.len(),
+        1,
+        "Expected exactly one TS2375 for the inline-typedef alias target, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+    let msg = &ts2375[0].message_text;
+    assert!(
+        msg.contains("'OtherAlias'"),
+        "TS2375 target display must include the inline-typedef name `'OtherAlias'`, got: {msg}"
+    );
+}
+
 /// Without `exactOptionalPropertyTypes`, the same `@property {T} [name]` pattern
 /// must still accept `name: undefined` because the property type widens to
 /// `T | undefined` under classic optional semantics. This guards against a

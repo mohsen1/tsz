@@ -141,7 +141,7 @@ impl<'a> Printer<'a> {
                     let has_newline_comment = self.all_comments.iter().any(|c| {
                         c.pos >= node.pos && c.end <= actual_inner_start && c.has_trailing_new_line
                     });
-                    if !has_newline_comment {
+                    if !has_newline_comment && !self.parenthesized_span_has_newline(node) {
                         self.emit(paren.expression);
                         return;
                     }
@@ -259,13 +259,16 @@ impl<'a> Printer<'a> {
         if let Some(inner_node) = self.arena.get(paren.expression)
             && self.has_pending_comment_before(inner_node.pos)
         {
-            if self.has_newline_comment_in_range(node.pos, inner_node.pos) {
+            let actual_inner_start =
+                self.skip_trivia_forward(inner_node.pos, inner_node.pos + 2048);
+            if self.has_newline_comment_in_range(node.pos, inner_node.pos)
+                || self.source_range_has_newline(node.pos, actual_inner_start)
+            {
                 self.write_line();
             } else {
                 self.write(" ");
             }
             self.emit_comments_before_pos(inner_node.pos);
-            self.pending_block_comment_space = false;
         }
         // The explicit parens already provide grouping, so clear the
         // "needs parens" flags to avoid double-parenthesization when the
@@ -291,6 +294,22 @@ impl<'a> Printer<'a> {
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.ctx.flags.paren_leftmost_function_or_object = prev_paren_leftmost;
         self.write(")");
+    }
+
+    fn parenthesized_span_has_newline(&self, node: &Node) -> bool {
+        self.source_range_has_newline(node.pos, node.end)
+    }
+
+    fn source_range_has_newline(&self, start: u32, end: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = std::cmp::min(start as usize, text.len());
+        let end = std::cmp::min(end as usize, text.len());
+        start < end
+            && text.as_bytes()[start..end]
+                .iter()
+                .any(|b| matches!(b, b'\n' | b'\r'))
     }
 
     /// Unwrap type assertion chain and return the kind of the underlying expression.

@@ -166,6 +166,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> TypeId {
+        if self.union_is_all_function_like(type_id) {
+            return type_id;
+        }
         let constructor_display_def = self
             .ctx
             .definition_store

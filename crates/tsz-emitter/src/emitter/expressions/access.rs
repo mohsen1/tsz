@@ -173,6 +173,25 @@ impl<'a> Printer<'a> {
         // reproduce the original layout:
         // - If dot is before newline: `expr.\n    name` -> emit ".\n    name"
         // - If dot is after newline: `expr\n    .name` -> emit "\n    .name"
+        if let Some(dot_before_newline) = self.property_access_line_break_position(node, access) {
+            if dot_before_newline {
+                // Dot before newline: `expr.\n    name`
+                self.write_dot_token(access.expression);
+                self.write_line();
+                self.increase_indent();
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+                self.decrease_indent();
+            } else {
+                // Newline before dot: `expr\n    .name`
+                self.write_line();
+                self.increase_indent();
+                self.write_dot_token(access.expression);
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+                self.decrease_indent();
+            }
+            return;
+        }
+
         if let Some(text) = self.source_text
             && let Some(expr_node) = self.arena.get(access.expression)
             && let Some(name_node) = self.arena.get(access.name_or_argument)
@@ -183,34 +202,16 @@ impl<'a> Printer<'a> {
             let between_start = std::cmp::min(expr_end, between_end);
             let between = &text[between_start..between_end];
             if between.contains('\n') {
-                // Find where the dot is relative to the newline
-                if let Some(dot_pos) = between.find('.') {
-                    let after_dot = &between[dot_pos + 1..];
-                    if after_dot.contains('\n') {
-                        // Dot before newline: `expr.\n    name`
-                        self.write_dot_token(access.expression);
-                        self.write_line();
-                        self.increase_indent();
-                        self.emit_property_name_without_import_substitution(
-                            access.name_or_argument,
-                        );
-                        self.decrease_indent();
-                    } else {
-                        // Newline before dot: `expr\n    .name`
-                        self.write_line();
-                        self.increase_indent();
-                        self.write_dot_token(access.expression);
-                        self.emit_property_name_without_import_substitution(
-                            access.name_or_argument,
-                        );
-                        self.decrease_indent();
-                    }
-                } else {
-                    self.write_dot_token(access.expression);
-                    self.emit_property_name_without_import_substitution(access.name_or_argument);
-                }
+                self.write_dot_token(access.expression);
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
                 return;
             }
+        }
+
+        if let Some(expr_node) = self.arena.get(access.expression)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            self.emit_comments_in_range(expr_node.end, name_node.pos, true, false);
         }
 
         // Map the `.` token to its source position
@@ -248,6 +249,59 @@ impl<'a> Printer<'a> {
             return;
         }
         self.emit_property_name_without_import_substitution(access.name_or_argument);
+    }
+
+    fn property_access_line_break_position(
+        &self,
+        node: &Node,
+        access: &AccessExprData,
+    ) -> Option<bool> {
+        let text = self.source_text?;
+        let name = self.get_identifier_text_idx(access.name_or_argument);
+        if name.is_empty() {
+            return None;
+        }
+
+        let bytes = text.as_bytes();
+        let span_start = std::cmp::min(node.pos as usize, bytes.len());
+        let span_end = std::cmp::min(node.end as usize, bytes.len());
+        if span_start >= span_end {
+            return None;
+        }
+
+        let span = &text[span_start..span_end];
+        let name_abs = span.rfind(&name).map(|rel| span_start + rel)?;
+
+        let mut cursor = name_abs;
+        while cursor > span_start && matches!(bytes[cursor - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            cursor -= 1;
+        }
+        if cursor == span_start || bytes[cursor - 1] != b'.' {
+            return None;
+        }
+        let dot_abs = cursor - 1;
+
+        let mut before_dot = dot_abs;
+        while before_dot > span_start
+            && matches!(bytes[before_dot - 1], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            before_dot -= 1;
+        }
+
+        let newline_before_dot = bytes[before_dot..dot_abs]
+            .iter()
+            .any(|b| matches!(b, b'\r' | b'\n'));
+        let newline_after_dot = bytes[dot_abs + 1..name_abs]
+            .iter()
+            .any(|b| matches!(b, b'\r' | b'\n'));
+
+        if newline_after_dot {
+            Some(true)
+        } else if newline_before_dot {
+            Some(false)
+        } else {
+            None
+        }
     }
 
     /// Write the `.` token for property access, adding an extra `.` when the
@@ -843,6 +897,30 @@ impl<'a> Printer<'a> {
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
+
+    fn emit_es6(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        printer.finish().code
+    }
+
+    #[test]
+    fn property_access_preserves_comments_between_base_and_dot() {
+        let output = emit_es6(
+            r#"let z = this.then(x => result)/*S*/.then(x => "abc")/*string*/.then(x => x.length)/*number*/;"#,
+        );
+
+        assert!(
+            output.contains(
+                r#"this.then(x => result) /*S*/.then(x => "abc") /*string*/.then(x => x.length) /*number*/"#
+            ),
+            "Comments between a property-access base and dot must stay before the dot.\nOutput:\n{output}"
+        );
+    }
 
     /// When lowering optional property access (`?.`) to ES2019 and below for
     /// complex base expressions, the emitter uses a temp variable:
