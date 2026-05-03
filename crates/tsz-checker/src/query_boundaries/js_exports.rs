@@ -550,6 +550,23 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|surface| surface.has_named_export(export_name, self.ctx.types))
     }
 
+    /// Check whether a CommonJS module has an export surface but not the requested
+    /// named export. This lets import validation prefer the semantic JS export
+    /// surface over the binder's syntactic `module_exports` table for cases like
+    /// `exports.x = void 0`, which tsc does not expose as a named export.
+    pub(crate) fn js_commonjs_export_surface_lacks_export(
+        &mut self,
+        module_name: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> bool {
+        self.resolve_js_export_surface_for_module(module_name, source_file_idx)
+            .is_some_and(|surface| {
+                surface.has_commonjs_exports
+                    && !surface.has_named_export(export_name, self.ctx.types)
+            })
+    }
+
     /// Build the namespace type for a CommonJS file from its export surface.
     ///
     /// This is the canonical replacement for `commonjs_namespace_type_for_file`.

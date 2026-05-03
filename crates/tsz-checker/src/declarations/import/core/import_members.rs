@@ -133,6 +133,10 @@ impl<'a> CheckerState<'a> {
                     || file_name.ends_with(".cjs");
                 let has_export_surface = if let Some(exports) = exports_table.as_ref() {
                     !exports.is_empty()
+                } else if resolution_mode.is_none() {
+                    self.resolve_js_export_surface(target_idx)
+                        .has_commonjs_exports
+                        || self.module_has_default_binding_fast_path(module_name, resolution_mode)
                 } else {
                     self.module_has_default_binding_fast_path(module_name, resolution_mode)
                 };
@@ -688,6 +692,20 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
+                } else if self.js_commonjs_export_surface_lacks_export(
+                    module_name,
+                    import_name,
+                    Some(self.ctx.current_file_idx),
+                ) {
+                    let message = format_message(
+                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                        &[&quoted_module, import_name],
+                    );
+                    self.error_at_node(
+                        name_idx,
+                        &message,
+                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                    );
                 } else {
                     // Import exists - check if it should be elided from JavaScript output.
                     // This must account for plain type aliases/interfaces, namespace-like

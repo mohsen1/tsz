@@ -88,7 +88,6 @@ fn check_commonjs_two_files(
     let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
     resolved_modules.insert(module_specifier.to_string());
     checker.ctx.set_resolved_modules(resolved_modules);
-
     checker.check_source_file(root_b);
 
     checker
@@ -130,6 +129,54 @@ fn check_commonjs_single_file(file_name: &str, source: &str) -> Vec<(u32, String
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+#[test]
+fn test_commonjs_void_zero_export_write_reports_missing_property() {
+    let diagnostics = check_commonjs_single_file(
+        "assignmentToVoidZero2.js",
+        r#"
+exports.j = 1;
+exports.k = void 0;
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("'k'")),
+        "Expected TS2339 for void-zero CommonJS export `k`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_named_import_rejects_void_zero_commonjs_export_write() {
+    let diagnostics = check_commonjs_two_files(
+        "assignmentToVoidZero2.js",
+        r#"
+exports.j = 1;
+exports.k = void 0;
+"#,
+        "importer.js",
+        r#"
+import { j, k } from './assignmentToVoidZero2';
+j + k;
+"#,
+        "./assignmentToVoidZero2",
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2305 && message.contains("'k'")),
+        "Expected TS2305 for void-zero CommonJS export `k`, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, message)| *code != 2305 || !message.contains("'j'")),
+        "Did not expect TS2305 for concrete CommonJS export `j`, got: {diagnostics:#?}"
+    );
 }
 
 fn check_named_files_entry(
