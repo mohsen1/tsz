@@ -351,6 +351,25 @@ impl<'a> Printer<'a> {
             }
             found
         };
+        let source_prologue_directive_count = source
+            .statements
+            .nodes
+            .iter()
+            .take_while(|&&idx| {
+                let Some(stmt_node) = self.arena.get(idx) else {
+                    return false;
+                };
+                if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                    return false;
+                }
+                let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                    return false;
+                };
+                self.arena
+                    .get(expr_stmt.expression)
+                    .is_some_and(|expr_node| expr_node.is_string_literal())
+            })
+            .count();
 
         // Pre-compute whether JSX auto-import will generate import/require statements.
         // `jsx_will_add_any_import` is true for both ESM and CJS.
@@ -753,6 +772,25 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let cjs_pre_preamble_prologue_count =
+            if self.ctx.is_commonjs() && is_file_module && !source_has_use_strict {
+                source_prologue_directive_count
+            } else {
+                0
+            };
+        for &stmt_idx in source
+            .statements
+            .nodes
+            .iter()
+            .take(cjs_pre_preamble_prologue_count)
+        {
+            let before_len = self.writer.len();
+            self.emit(stmt_idx);
+            if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+        }
+
         // Emit runtime helpers (must come BEFORE __esModule marker)
         // Order: "use strict" → jsx-import(ESM) → tslib-import(ESM) → helpers → __esModule → tslib-require(CJS) → exports init
 
@@ -1132,6 +1170,9 @@ impl<'a> Printer<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
+            if stmt_i < cjs_pre_preamble_prologue_count {
+                continue;
+            }
 
             if skip_recovered_yield_operand_statement {
                 skip_recovered_yield_operand_statement = false;
