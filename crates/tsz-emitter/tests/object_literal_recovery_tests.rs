@@ -122,3 +122,14 @@ fn object_binding_reserved_renaming_recovers_duplicate_empty_binding() {
         "reserved renamed binding should leave the token for the recovered duplicate binding; output:\n{output}"
     );
 }
+
+#[test]
+fn rest_array_binding_initializer_is_preserved_in_declaration() {
+    let source = "var [...x = a] = a;\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("var [...x = a] = a;"),
+        "invalid rest binding initializer should be preserved for JS emit; output:\n{output}"
+    );
+}

@@ -350,8 +350,7 @@ impl ParserState {
                 );
                 // Consume the = token and value to continue parsing
                 self.next_token();
-                self.parse_assignment_expression();
-                NodeIndex::NONE
+                self.parse_assignment_expression()
             } else {
                 NodeIndex::NONE
             };
