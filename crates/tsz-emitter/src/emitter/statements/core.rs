@@ -793,10 +793,12 @@ impl<'a> Printer<'a> {
                 self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations)
             {
                 let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
-                let comment_end = self
-                    .find_declaration_semicolon_after(last_end, effective_end)
-                    .map_or(effective_end, |semi_after| semi_after.saturating_sub(1));
-                self.emit_comments_in_range(last_end, comment_end, true, false);
+                if let Some(semi_after) =
+                    self.find_declaration_semicolon_after(last_end, effective_end)
+                {
+                    let comment_end = semi_after.saturating_sub(1);
+                    self.emit_comments_in_range(last_end, comment_end, true, false);
+                }
             }
             self.map_trailing_semicolon(node);
             self.write_semicolon();
