@@ -62,6 +62,19 @@ impl<'a> Printer<'a> {
             self.write(&ns_name);
             self.write(".");
             self.write_identifier(emit_text);
+        } else if self.in_namespace_iife
+            && !self.suppress_ns_qualification
+            && self
+                .namespace_parent_exported_names
+                .contains(original_text.as_str())
+            && let Some(ref parent_name) = self.parent_namespace_name
+        {
+            // Inside `namespace parent.Child`, sibling namespace references
+            // are qualified through the parent: `Sibling` → `parent.Sibling`.
+            let parent_name = parent_name.clone();
+            self.write(&parent_name);
+            self.write(".");
+            self.write_identifier(emit_text);
         } else if !self.suppress_ns_qualification
             && self
                 .commonjs_exported_var_names

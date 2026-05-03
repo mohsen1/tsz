@@ -396,6 +396,10 @@ pub struct Printer<'a> {
     /// Exported variable/function/class names in the current namespace IIFE.
     /// Used to qualify identifier references: `foo` → `ns.foo`.
     pub(crate) namespace_exported_names: FxHashSet<String>,
+    /// Exported namespace names on the parent namespace of the current IIFE.
+    /// Used for dotted namespaces like `namespace foo.Baz { Bar.f() }`, where
+    /// sibling namespace `Bar` must emit as `foo.Bar`.
+    pub(crate) namespace_parent_exported_names: FxHashSet<String>,
 
     /// Names of variables exported from the current CJS module.
     /// Used to qualify identifier reads: `x` → `exports.x` in expression positions.
@@ -826,6 +830,7 @@ impl<'a> Printer<'a> {
             namespace_iife_param_counter: FxHashMap::default(),
             namespace_prior_exports: FxHashMap::default(),
             namespace_exported_names: FxHashSet::default(),
+            namespace_parent_exported_names: FxHashSet::default(),
             commonjs_exported_var_names: FxHashSet::default(),
             deferred_local_export_bindings: None,
             suppress_ns_qualification: false,
