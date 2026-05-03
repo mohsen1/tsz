@@ -90,6 +90,9 @@ pub mod test_utils;
 
 // Tests that don't depend on root crate's test_fixtures
 #[cfg(test)]
+#[path = "tests/application_unknown_args_assignability_tests.rs"]
+mod application_unknown_args_assignability_tests;
+#[cfg(test)]
 #[path = "../tests/assertion_overlap_keyof_primitive_tests.rs"]
 mod assertion_overlap_keyof_primitive_tests;
 #[cfg(test)]
