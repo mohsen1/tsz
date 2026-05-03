@@ -700,15 +700,27 @@ impl<'a> Printer<'a> {
                 // because its backward scan doesn't skip inline comments.
                 // As a fallback, check if find_token_end_before_trivia landed
                 // right after a comma (it treats commas as non-trivia tokens).
-                let needs_comma = !is_last
-                    || has_trailing_comma
-                    || self.source_text.is_some_and(|text| {
-                        let bytes = text.as_bytes();
-                        let te = token_end as usize;
-                        te > 0 && te <= bytes.len() && bytes[te - 1] == b','
-                    });
+                let next_pos = if !is_last {
+                    emitted_properties
+                        .get(i + 1)
+                        .and_then(|&next_prop| self.arena.get(next_prop))
+                        .map_or(prop_node.end, |n| n.pos)
+                } else {
+                    node.end
+                };
+                let comma_already_past = self.comma_immediately_before_pos(token_end);
+                let comma_pos = if comma_already_past {
+                    None
+                } else {
+                    self.find_comma_pos_after(token_end, next_pos)
+                };
+                let needs_comma = if self.source_text.is_some() {
+                    has_trailing_comma || comma_already_past || comma_pos.is_some()
+                } else {
+                    !is_last || has_trailing_comma
+                };
                 if needs_comma {
-                    if let Some(comma_pos) = self.find_comma_pos_after(token_end, node.end) {
+                    if let Some(comma_pos) = comma_pos {
                         self.emit_trailing_comments_before(token_end, comma_pos);
                     }
                     self.write(",");
@@ -717,7 +729,6 @@ impl<'a> Printer<'a> {
                 // Check if next property is on the same line in source
                 if !is_last {
                     let next_prop = emitted_properties[i + 1];
-                    let next_pos = self.arena.get(next_prop).map_or(prop_node.end, |n| n.pos);
                     // Check if there's a trailing comment on the same line after the comma
                     // If so, add a space between the comma and the comment
                     let has_same_line_comment = self.source_text.is_some_and(|text| {

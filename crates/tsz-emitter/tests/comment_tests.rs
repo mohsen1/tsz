@@ -201,6 +201,27 @@ fn element_access_open_bracket_finder_skips_comments_and_strings() {
 }
 
 #[test]
+fn object_literal_comments_stay_after_source_commas() {
+    let source = r#"const a = {
+    p0: 0, // Comment 0
+    p1: 0, /* Comment 1
+    A multiline comment. */
+    p2: 0, // Comment 2
+};"#;
+
+    let output = parse_and_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("    p0: 0, // Comment 0\n"),
+        "Line comment after a member comma should stay after the comma.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("    p1: 0, /* Comment 1\n    A multiline comment. */\n    p2: 0,"),
+        "Multiline comment after a member comma should not force a later synthetic comma.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 
