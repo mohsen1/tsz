@@ -174,7 +174,7 @@ fn can_start_regex_at(bytes: &[u8], slash_pos: usize) -> bool {
         match bytes[pos] {
             b' ' | b'\t' | b'\r' | b'\n' => continue,
             b'(' | b'[' | b'{' | b':' | b',' | b';' | b'=' | b'!' | b'?' | b'&' | b'|' | b'+'
-            | b'-' | b'*' | b'~' | b'^' | b'<' | b'>' => return true,
+            | b'-' | b'*' | b'%' | b'~' | b'^' | b'<' | b'>' => return true,
             ch if ch.is_ascii_alphabetic() || ch == b'_' || ch == b'$' => {
                 let end = pos + 1;
                 while pos > 0
