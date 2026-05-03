@@ -114,6 +114,21 @@ fn test_jsx_missing_closing_tag_anchor_after_conflict_marker_uses_opening_end() 
 }
 
 #[test]
+fn test_jsx_unterminated_attribute_string_suppresses_missing_closing_tag() {
+    let errors = get_parser_errors("let x = <div attr=\"unterminated", "test.tsx");
+    assert!(
+        errors.iter().any(|(code, _)| *code == 1002),
+        "Expected TS1002 for unterminated string literal, got: {errors:?}"
+    );
+    assert!(
+        !errors
+            .iter()
+            .any(|(code, message)| *code == 1005 && message == "'</' expected."),
+        "Unterminated string literal should suppress cascading TS1005 `</`, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_jsx_nested_eof_unclosed() {
     // <div><span> at EOF → TS17008 on both 'div' and 'span'
     let errors = get_parser_errors("let x = <div><span>", "test.tsx");
