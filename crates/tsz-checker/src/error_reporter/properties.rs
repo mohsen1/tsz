@@ -171,8 +171,43 @@ impl<'a> CheckerState<'a> {
             {
                 return annotation_display;
             }
+            // When the annotation is a generic application (e.g. `Partial<Record<Keys, unknown>>`)
+            // and the inferred display is the same generic application but with one or more
+            // type arguments expanded past their alias name (e.g.
+            // `Partial<Record<"a" | "b" | "c" | "d", unknown>>`), prefer the annotation.
+            // tsc preserves the user-written alias in the type-argument position.
+            // Match by checking that both displays start with the same outer
+            // identifier (alphanumeric/underscore prefix) followed by `<`.
+            if let (Some(ann_prefix), Some(inf_prefix)) = (
+                Self::generic_application_outer_name(&annotation_display),
+                Self::generic_application_outer_name(&inferred_display),
+            ) && ann_prefix == inf_prefix
+                && !annotation_display.contains('|')
+            {
+                return annotation_display;
+            }
         }
         Self::collapse_pick_literal_union_display(&inferred_display).unwrap_or(inferred_display)
+    }
+
+    /// If `display` looks like a generic application of the form `Name<...>`
+    /// (with `Name` an identifier of letters/digits/underscores), return the
+    /// outer name. Otherwise return `None`.
+    fn generic_application_outer_name(display: &str) -> Option<&str> {
+        let lt_idx = display.find('<')?;
+        let prefix = &display[..lt_idx];
+        if prefix.is_empty() {
+            return None;
+        }
+        let mut chars = prefix.chars();
+        let first = chars.next()?;
+        if !(first.is_ascii_alphabetic() || first == '_') {
+            return None;
+        }
+        if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return None;
+        }
+        Some(prefix)
     }
 
     fn collapse_pick_literal_union_display(display: &str) -> Option<String> {
