@@ -607,3 +607,27 @@ interface Keyed<K, V> extends Collection<K, V> {
         "Should still emit TS2430 when a direct `this` return is narrowed to a named interface. Got: {diags:?}"
     );
 }
+
+#[test]
+fn test_ancestor_primitive_return_still_emits_ts2430() {
+    // Regression for PR #2571 review: the recursive-base suppression must NOT
+    // hide genuine TS2430 errors where an ancestor (grandparent) member's
+    // return type is an unrelated primitive like `string`. Only the worklist
+    // path inspects ancestor members, so without the target-side guard this
+    // false-suppression silently drops the error.
+    let source = r#"
+interface GrandBase {
+    method(): string;
+}
+interface Base extends GrandBase {}
+interface Derived extends Base {
+    method(): Derived;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        !ts2430.is_empty(),
+        "Should emit TS2430 when an ancestor member returns an unrelated primitive but the derived method narrows to the current interface. Got: {diags:?}"
+    );
+}

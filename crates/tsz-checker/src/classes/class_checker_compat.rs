@@ -1968,6 +1968,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Only suppress when the target (base) return type is itself a named
+        // type from some interface/class family. Without this guard the
+        // suppression also hides genuine TS2430 errors where the base ancestor
+        // returns an unrelated primitive (e.g. `string`) but the derived method
+        // returns the current interface — see PR #2571 review.
+        if self.type_base_def_id(target_return).is_none() {
+            return false;
+        }
+
         self.type_base_def_id(source_return) == Some(current_iface_def_id)
     }
 
