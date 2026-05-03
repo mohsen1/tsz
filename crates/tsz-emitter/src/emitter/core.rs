@@ -635,6 +635,11 @@ pub struct Printer<'a> {
     /// Temporary base-class alias for outer static `super` while emitting a static field
     /// initializer. This is cleared at the same nested scope boundaries as static `this`.
     pub(crate) scoped_static_super_base_alias: Option<Arc<str>>,
+
+    /// Temporary alias for named class expressions that are wrapped in a comma
+    /// expression, e.g. `(_a = class Foo { m() { return _a; } }, _a.x = 1, _a)`.
+    pub(crate) scoped_class_expression_self_alias: Option<(Arc<str>, Arc<str>)>,
+
     pub(crate) tagged_template_var_map: FxHashMap<NodeIndex, String>,
 }
 
@@ -895,6 +900,7 @@ impl<'a> Printer<'a> {
             scoped_static_this_alias: None,
             scoped_static_super_direct_access: false,
             scoped_static_super_base_alias: None,
+            scoped_class_expression_self_alias: None,
             tagged_template_var_map: FxHashMap::default(),
         }
     }

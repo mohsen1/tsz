@@ -1176,7 +1176,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 self.ctx.types,
                                 key_type,
                             );
-                        if !is_valid_index_type && let Some(pnode) = self.ctx.arena.get(param_idx) {
+                        // AST fallback: unions of valid types and non-generic
+                        // intersections (`string | number`, `string & Tag`)
+                        // resolve to composite TypeIds that don't match the
+                        // primitive checks above.
+                        let is_valid_via_ast = !is_valid_index_type
+                            && crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
+                                self.ctx.arena,
+                                self.ctx.binder,
+                                param_data.type_annotation,
+                            );
+                        if !is_valid_index_type
+                            && !is_valid_via_ast
+                            && let Some(pnode) = self.ctx.arena.get(param_idx)
+                        {
                             self.ctx.error(
                                     pnode.pos,
                                     pnode.end - pnode.pos,

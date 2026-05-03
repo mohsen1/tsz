@@ -465,6 +465,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return true;
         }
 
+        // Composite types: recurse into union/intersection members so that
+        // a generic type parameter or literal nested in a composite (e.g.
+        // `T & string`, `"a" | "b"`) is detected. Without this, the AST
+        // fallback would accept `T & string` as a valid intersection and
+        // suppress TS1268 entirely.
+        if type_node.kind == syntax_kind_ext::UNION_TYPE
+            || type_node.kind == syntax_kind_ext::INTERSECTION_TYPE
+        {
+            if let Some(composite) = self.ctx.arena.get_composite_type(type_node) {
+                return composite
+                    .types
+                    .nodes
+                    .iter()
+                    .any(|&m| self.is_type_param_or_literal_in_index_sig(m));
+            }
+            return false;
+        }
+
         // Type references: check if they resolve to type parameters
         if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)

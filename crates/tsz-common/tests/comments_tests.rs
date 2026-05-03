@@ -259,6 +259,68 @@ fn test_slash_not_followed_by_slash_or_star() {
 }
 
 #[test]
+fn test_comment_like_text_inside_strings_is_ignored() {
+    let source = r#"const a = "not // a comment"; const b = 'not /* a comment */'; // real"#;
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "// real");
+}
+
+#[test]
+fn test_comment_after_unterminated_string_is_found() {
+    // JS/TS single-line string literals cannot contain raw newlines. When the
+    // scanner encounters an unterminated string (e.g. mid-edit in the LSP),
+    // it must treat the newline as a string terminator so subsequent comments
+    // are still detected.
+    let source = "var x = \"hello\n/* keep */;";
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "/* keep */");
+}
+
+#[test]
+fn test_comment_after_unterminated_string_crlf_is_found() {
+    let source = "var x = \"hello\r\n// keep\n";
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "// keep");
+}
+
+#[test]
+fn test_comment_like_text_inside_regex_character_class_is_ignored() {
+    let source = r#"var foo2 = "a//".replace(/.[//]/g, ""); // real"#;
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "// real");
+}
+
+#[test]
+fn test_comment_after_return_regex_is_found() {
+    let source = r#"function f() { return /.[/*]/g; } /* real */"#;
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "/* real */");
+}
+
+#[test]
+fn test_comment_after_modulo_regex_is_found() {
+    // `%` is a single-character binary operator that can precede a regex
+    // literal just like `+`, `-`, `*`, etc. The leading `/` after `%` must
+    // be recognized as starting a regex literal so the trailing comment is
+    // identified correctly.
+    let source = r#"x % /[//]/g; /* real */"#;
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "/* real */");
+}
+
+#[test]
 fn test_adjacent_multi_line_comments() {
     let source = "/* a *//* b */";
     let comments = get_comment_ranges(source);

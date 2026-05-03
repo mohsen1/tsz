@@ -181,6 +181,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let iface_sym_id = self.ctx.binder.get_node_symbol(_iface_idx);
+        let current_iface_def_id = iface_sym_id.map(|sym_id| self.ctx.get_or_create_def_id(sym_id));
 
         // Get heritage clauses (extends) — must have at least one across all declarations
         if iface_data.heritage_clauses.is_none() {
@@ -229,8 +230,9 @@ impl<'a> CheckerState<'a> {
         // interface (for merged interfaces, each declaration can contribute members).
         let mut derived_member_names: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
-        // (name, type, node_idx, kind, is_optional) — used for TS2430 derived-vs-base checks.
-        let mut derived_members: Vec<(String, TypeId, NodeIndex, u16, bool)> = Vec::new();
+        // (name, type, node_idx, kind, is_optional, returns_direct_this) — used for
+        // TS2430 derived-vs-base checks.
+        let mut derived_members: Vec<(String, TypeId, NodeIndex, u16, bool, bool)> = Vec::new();
 
         // Collect all interface declaration indices for this symbol
         let all_iface_decls: Vec<NodeIndex> = self
@@ -319,6 +321,11 @@ impl<'a> CheckerState<'a> {
                             )
                     {
                         derived_member_names.insert(name.clone());
+                        let returns_direct_this = sig.type_annotation.is_some()
+                            && decl_arena.get(sig.type_annotation).is_some_and(|node| {
+                                node.kind == syntax_kind_ext::THIS_TYPE
+                                    || node.kind == SyntaxKind::ThisKeyword as u16
+                            });
                         let type_id = delegated_member_types
                             .as_ref()
                             .and_then(|types| types.get(&member_idx).copied())
@@ -329,6 +336,7 @@ impl<'a> CheckerState<'a> {
                             member_idx,
                             member_node.kind,
                             sig.question_token,
+                            returns_direct_this,
                         ));
                     }
                 }
@@ -344,7 +352,7 @@ impl<'a> CheckerState<'a> {
         // the comparison fails because the solver has no constraint info for `ThisType`.
         {
             // Check if any derived member contains ThisType (fast path: skip if none do)
-            let any_has_this = derived_members.iter().any(|(_, tid, _, _, _)| {
+            let any_has_this = derived_members.iter().any(|(_, tid, _, _, _, _)| {
                 crate::query_boundaries::common::contains_this_type(self.ctx.types, *tid)
             });
             if any_has_this {
@@ -404,7 +412,7 @@ impl<'a> CheckerState<'a> {
 
         let mut derived_method_counts: rustc_hash::FxHashMap<String, usize> =
             rustc_hash::FxHashMap::default();
-        for (name, _, _, kind, _) in &derived_members {
+        for (name, _, _, kind, _, _) in &derived_members {
             if *kind == METHOD_SIGNATURE {
                 *derived_method_counts.entry(name.clone()).or_insert(0) += 1;
             }
@@ -462,13 +470,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Maps member name -> (base_heritage_idx, base_name, type_id, is_optional)
+        // Maps member name -> (base_heritage_idx, base_name, type_id, is_optional, contains_this)
         // base_heritage_idx uniquely identifies each extends-clause entry, so
         // `extends A<string>, A<number>` correctly detects conflicts even though
         // both entries share the base name "A".
         let mut inherited_member_sources: rustc_hash::FxHashMap<
             String,
-            (NodeIndex, String, TypeId, bool),
+            (NodeIndex, String, TypeId, bool, bool),
         > = rustc_hash::FxHashMap::default();
         let mut inherited_non_public_class_member_sources: rustc_hash::FxHashMap<String, String> =
             rustc_hash::FxHashMap::default();
@@ -775,16 +783,64 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    let member_contains_this = crate::query_boundaries::common::contains_this_type(
+                        self.ctx.types,
+                        member_type,
+                    );
                     if let Some((
                         _derived_name,
                         derived_member_type,
                         derived_member_idx,
                         derived_kind,
                         _derived_optional,
+                        derived_returns_direct_this,
                     )) = derived_members
                         .iter()
-                        .find(|(derived_name, _, _, _, _)| derived_name == &member_key)
+                        .find(|(derived_name, _, _, _, _, _)| derived_name == &member_key)
                     {
+                        if member_contains_this {
+                            if let Some((
+                                prev_heritage_idx,
+                                prev_base_name,
+                                prev_member_type,
+                                prev_optional,
+                                prev_contains_this,
+                            )) = inherited_member_sources.get(&member_key)
+                            {
+                                if *prev_heritage_idx != type_idx
+                                    && (member_contains_this || *prev_contains_this)
+                                {
+                                    let optionality_differs = member_optional != *prev_optional;
+                                    let type_incompatible = !self.are_var_decl_types_compatible(
+                                        member_type,
+                                        *prev_member_type,
+                                    );
+                                    if type_incompatible || optionality_differs {
+                                        self.error_at_node(
+                                            iface_data.name,
+                                            &format!(
+                                                "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
+                                            ),
+                                            diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
+                                        );
+                                        self.pop_type_parameters(level_type_param_updates);
+                                        return;
+                                    }
+                                }
+                            } else {
+                                inherited_member_sources.insert(
+                                    member_key.clone(),
+                                    (
+                                        type_idx,
+                                        base_name.clone(),
+                                        member_type,
+                                        member_optional,
+                                        true,
+                                    ),
+                                );
+                            }
+                        }
+
                         let overloaded_method_compare = *derived_kind == METHOD_SIGNATURE
                             && member_node.kind == METHOD_SIGNATURE
                             && (derived_method_counts.get(&member_key).copied().unwrap_or(0) > 1
@@ -848,6 +904,29 @@ impl<'a> CheckerState<'a> {
                         };
 
                         if type_mismatch {
+                            let parameter_this_mismatch = self
+                                .function_type_uses_this_only_in_parameters(derived_prop_type)
+                                || self.function_type_uses_this_only_in_parameters(base_prop_type);
+                            let base_returns_direct_this = member_node.kind == METHOD_SIGNATURE
+                                && iface_arena.get_signature(member_node).is_some_and(|sig| {
+                                    sig.type_annotation.is_some()
+                                        && iface_arena.get(sig.type_annotation).is_some_and(
+                                            |node| {
+                                                node.kind == syntax_kind_ext::THIS_TYPE
+                                                    || node.kind == SyntaxKind::ThisKeyword as u16
+                                            },
+                                        )
+                                });
+                            if parameter_this_mismatch
+                                || (*derived_returns_direct_this && base_returns_direct_this)
+                                || self.function_type_returns_current_interface_family(
+                                    derived_prop_type,
+                                    base_prop_type,
+                                    current_iface_def_id,
+                                )
+                            {
+                                continue;
+                            }
                             let derived_type_str = self.format_type(derived_prop_type);
                             let base_type_str = self.format_type(base_prop_type);
                             self.error_at_node(
@@ -868,6 +947,7 @@ impl<'a> CheckerState<'a> {
                         prev_base_name,
                         prev_member_type,
                         prev_optional,
+                        _prev_contains_this,
                     )) = inherited_member_sources.get(&member_key)
                     {
                         if *prev_heritage_idx != type_idx {
@@ -893,7 +973,13 @@ impl<'a> CheckerState<'a> {
                     } else {
                         inherited_member_sources.insert(
                             member_key,
-                            (type_idx, base_name.clone(), member_type, member_optional),
+                            (
+                                type_idx,
+                                base_name.clone(),
+                                member_type,
+                                member_optional,
+                                member_contains_this,
+                            ),
                         );
                     }
                 }
@@ -1107,7 +1193,7 @@ impl<'a> CheckerState<'a> {
                     );
 
                     // Check if any interface member redeclares a private/protected class member
-                    for (member_name, _, _derived_member_idx, _, _) in &derived_members {
+                    for (member_name, _, _derived_member_idx, _, _, _) in &derived_members {
                         for &class_member_idx in &class_data.members.nodes {
                             let Some(class_member_node) = self.ctx.arena.get(class_member_idx)
                             else {
@@ -1227,7 +1313,7 @@ impl<'a> CheckerState<'a> {
 
                             // Also check visibility conflict: non-public here vs public from
                             // another base stored in inherited_member_sources
-                            if let Some((prev_heritage_idx, prev_base_name, _, _)) =
+                            if let Some((prev_heritage_idx, prev_base_name, _, _, _)) =
                                 inherited_member_sources.get(&member_info.name)
                                 && *prev_heritage_idx != type_idx
                             {
@@ -1249,6 +1335,7 @@ impl<'a> CheckerState<'a> {
                                 prev_base_name,
                                 prev_member_type,
                                 _prev_optional,
+                                _prev_contains_this,
                             )) = inherited_member_sources.get(&member_info.name)
                             {
                                 if *prev_heritage_idx != type_idx {
@@ -1286,7 +1373,7 @@ impl<'a> CheckerState<'a> {
                                 }
                                 inherited_member_sources.insert(
                                     member_info.name.clone(),
-                                    (type_idx, base_name.clone(), member_type, false),
+                                    (type_idx, base_name.clone(), member_type, false, false),
                                 );
                             }
                         }
@@ -1359,6 +1446,7 @@ impl<'a> CheckerState<'a> {
                                         _derived_member_idx,
                                         _derived_kind,
                                         _,
+                                        _,
                                     ) in &derived_members
                                     {
                                         // Extract the derived property's raw type
@@ -1390,7 +1478,7 @@ impl<'a> CheckerState<'a> {
                         }
 
                         // Check each derived member against the base type's properties
-                        for (member_name, member_type, derived_member_idx, _derived_kind, _) in
+                        for (member_name, member_type, derived_member_idx, _derived_kind, _, _) in
                             &derived_members
                         {
                             // Look up the property in the base type
@@ -1552,6 +1640,7 @@ impl<'a> CheckerState<'a> {
                 derived_member_idx,
                 derived_kind,
                 derived_is_optional,
+                _derived_returns_direct_this,
             ) in &derived_members
             {
                 let mut found = false;
@@ -1628,9 +1717,27 @@ impl<'a> CheckerState<'a> {
                         // For property signatures, use regular assignability
                         // (allows generic instantiation). For method signatures,
                         // use no_erase_generics mode (tsc's compareSignaturesRelated).
+                        let mut this_check_derived_type = *member_type;
+                        let mut this_check_base_type = base_type;
                         let type_mismatch = if *derived_kind == PROPERTY_SIGNATURE
                             && base_member_node.kind == PROPERTY_SIGNATURE
                         {
+                            this_check_derived_type =
+                                crate::query_boundaries::common::find_property_by_str(
+                                    self.ctx.types,
+                                    *member_type,
+                                    member_name,
+                                )
+                                .map(|p| p.type_id)
+                                .unwrap_or(*member_type);
+                            this_check_base_type =
+                                crate::query_boundaries::common::find_property_by_str(
+                                    self.ctx.types,
+                                    base_type,
+                                    member_name,
+                                )
+                                .map(|p| p.type_id)
+                                .unwrap_or(base_type);
                             should_report_property_type_mismatch(
                                 self,
                                 *member_type,
@@ -1656,6 +1763,8 @@ impl<'a> CheckerState<'a> {
                                 )
                                 .map(|p| p.type_id)
                                 .unwrap_or(base_type);
+                            this_check_derived_type = derived_method_type;
+                            this_check_base_type = base_method_type;
                             should_report_member_type_mismatch(
                                 self,
                                 derived_method_type,
@@ -1676,6 +1785,15 @@ impl<'a> CheckerState<'a> {
                         let optionality_widened = *derived_is_optional && !base_is_optional;
 
                         if param_count_incompatible || type_mismatch || optionality_widened {
+                            let parameter_this_mismatch =
+                                self.function_type_uses_this_only_in_parameters(
+                                    this_check_derived_type,
+                                ) || self.function_type_uses_this_only_in_parameters(
+                                    this_check_base_type,
+                                );
+                            if parameter_this_mismatch {
+                                break 'derived_loop;
+                            }
                             self.error_at_node(
                                     iface_data.name,
                                     &format!(
@@ -1802,5 +1920,71 @@ impl<'a> CheckerState<'a> {
 
             self.pop_type_parameters(base_type_param_updates);
         }
+    }
+
+    fn function_type_uses_this_only_in_parameters(&self, type_id: TypeId) -> bool {
+        let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+
+        if self.is_direct_this_type(shape.return_type) {
+            return false;
+        }
+
+        shape.params.iter().any(|param| {
+            crate::query_boundaries::common::contains_this_type(self.ctx.types, param.type_id)
+        })
+    }
+
+    fn is_direct_this_type(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::is_this_type(self.ctx.types, type_id)
+    }
+
+    fn function_type_returns_current_interface_family(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        current_iface_def_id: Option<tsz_solver::def::DefId>,
+    ) -> bool {
+        let Some(current_iface_def_id) = current_iface_def_id else {
+            return false;
+        };
+        let Some(source_shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
+        else {
+            return false;
+        };
+        let Some(target_shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, target)
+        else {
+            return false;
+        };
+
+        let source_return = source_shape.return_type;
+        let target_return = target_shape.return_type;
+        if self.is_direct_this_type(target_return) {
+            return false;
+        }
+
+        // Only suppress when the target (base) return type is itself a named
+        // type from some interface/class family. Without this guard the
+        // suppression also hides genuine TS2430 errors where the base ancestor
+        // returns an unrelated primitive (e.g. `string`) but the derived method
+        // returns the current interface — see PR #2571 review.
+        if self.type_base_def_id(target_return).is_none() {
+            return false;
+        }
+
+        self.type_base_def_id(source_return) == Some(current_iface_def_id)
+    }
+
+    fn type_base_def_id(&self, type_id: TypeId) -> Option<tsz_solver::def::DefId> {
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).or_else(|| {
+            let app_id = crate::query_boundaries::common::application_id(self.ctx.types, type_id)?;
+            let app = self.ctx.types.type_application(app_id);
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+        })
     }
 }

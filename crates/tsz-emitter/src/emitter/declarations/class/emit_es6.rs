@@ -7,6 +7,7 @@ use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo, collect_private_accessors,
     collect_private_fields, collect_private_methods, get_private_field_name, is_private_identifier,
 };
+use std::sync::Arc;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -573,7 +574,10 @@ impl<'a> Printer<'a> {
                 .arena
                 .get_extended(_idx)
                 .and_then(|ext| self.arena.get(ext.parent))
-                .is_none_or(|parent| parent.kind != syntax_kind_ext::RETURN_STATEMENT);
+                .is_none_or(|parent| {
+                    parent.kind != syntax_kind_ext::RETURN_STATEMENT
+                        && parent.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                });
         let class_expr_temp = if needs_any_comma_expr {
             let temp = if let Some(ref alias) = private_class_alias {
                 alias.clone()
@@ -1218,6 +1222,17 @@ impl<'a> Printer<'a> {
             .unwrap_or(node.end);
 
         let mut field_init_comment_idx = 0usize;
+        let prev_scoped_class_expression_self_alias =
+            self.scoped_class_expression_self_alias.take();
+        if let Some(temp) = class_expr_temp.as_ref()
+            && !class_name.is_empty()
+            && class_name != *temp
+        {
+            self.scoped_class_expression_self_alias = Some((
+                Arc::<str>::from(class_name.as_str()),
+                Arc::<str>::from(temp.as_str()),
+            ));
+        }
         for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
             // Skip private field declarations entirely when lowering to WeakMap pattern
             if !private_fields.is_empty()
@@ -1741,6 +1756,7 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.scoped_class_expression_self_alias = prev_scoped_class_expression_self_alias;
 
         if !emitted_any_member && let Some(text) = self.source_text {
             let start = std::cmp::min(node.pos as usize, text.len());

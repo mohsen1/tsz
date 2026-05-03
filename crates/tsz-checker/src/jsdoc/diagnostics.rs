@@ -20,6 +20,7 @@ struct JsdocNamedDecl {
     pos: u32,
     len: u32,
     file_idx: usize,
+    is_global_script_decl: bool,
 }
 
 // =============================================================================
@@ -51,7 +52,8 @@ impl<'a> CheckerState<'a> {
                 }
                 let content = get_jsdoc_content(comment, &source_file.text);
                 let comment_text = comment.get_text(&source_file.text);
-                for (name, _info) in Self::parse_jsdoc_typedefs(&content) {
+                let is_global_script_file = self.jsdoc_file_is_global_script(file_idx);
+                for (name, info) in Self::parse_jsdoc_typedefs(&content) {
                     let Some(offset) = Self::find_jsdoc_typedef_name_offset(comment_text, &name)
                     else {
                         continue;
@@ -64,6 +66,8 @@ impl<'a> CheckerState<'a> {
                             pos: comment.pos + offset as u32,
                             len: 0,
                             file_idx,
+                            is_global_script_decl: is_global_script_file
+                                && !Self::jsdoc_typedef_is_import_alias(&info),
                         });
                 }
             }
@@ -86,9 +90,10 @@ impl<'a> CheckerState<'a> {
                 .filter(|decl| decl.file_idx == current_file_idx)
             {
                 let has_conflict = type_values_by_name.get(&decl.name).is_some_and(|others| {
-                    others
-                        .iter()
-                        .any(|other| other.file_idx == current_file_idx)
+                    others.iter().any(|other| {
+                        other.file_idx == current_file_idx
+                            || (decl.is_global_script_decl && other.is_global_script_decl)
+                    })
                 });
                 if !has_conflict {
                     continue;
@@ -113,9 +118,10 @@ impl<'a> CheckerState<'a> {
                 .filter(|decl| decl.file_idx == current_file_idx)
             {
                 let has_conflict = typedefs_by_name.get(&decl.name).is_some_and(|others| {
-                    others
-                        .iter()
-                        .any(|other| other.file_idx == current_file_idx)
+                    others.iter().any(|other| {
+                        other.file_idx == current_file_idx
+                            || (decl.is_global_script_decl && other.is_global_script_decl)
+                    })
                 });
                 if !has_conflict {
                     continue;
@@ -162,6 +168,7 @@ impl<'a> CheckerState<'a> {
                     pos: name_node.pos,
                     len: name_node.end.saturating_sub(name_node.pos),
                     file_idx: target_file_idx,
+                    is_global_script_decl: self.jsdoc_file_is_global_script(target_file_idx),
                 });
             }
 
@@ -269,6 +276,7 @@ impl<'a> CheckerState<'a> {
                 pos,
                 len,
                 file_idx: target_file_idx,
+                is_global_script_decl: self.jsdoc_file_is_global_script(target_file_idx),
             });
         }
 
@@ -333,6 +341,7 @@ impl<'a> CheckerState<'a> {
                 pos: name_node.pos,
                 len: name_node.end.saturating_sub(name_node.pos),
                 file_idx: target_file_idx,
+                is_global_script_decl: self.jsdoc_file_is_global_script(target_file_idx),
             });
         }
     }
@@ -397,6 +406,37 @@ impl<'a> CheckerState<'a> {
         let rest = &comment_text[after_typedef..];
         let name_offset = rest.find(name)?;
         Some(after_typedef + name_offset)
+    }
+
+    fn jsdoc_typedef_is_import_alias(info: &crate::jsdoc::types::JsdocTypedefInfo) -> bool {
+        info.base_type
+            .as_deref()
+            .is_some_and(|base_type| base_type.trim().starts_with("import("))
+    }
+
+    fn jsdoc_file_is_global_script(&self, file_idx: usize) -> bool {
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return !self.ctx.binder.is_external_module();
+        };
+        let Some(arena) = all_arenas.get(file_idx) else {
+            return false;
+        };
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+
+        if let Some(is_external_module_by_file) = self.ctx.is_external_module_by_file.as_ref() {
+            return !is_external_module_by_file
+                .get(&source_file.file_name)
+                .copied()
+                .unwrap_or(false);
+        }
+
+        self.ctx
+            .all_binders
+            .as_ref()
+            .and_then(|binders| binders.get(file_idx))
+            .is_none_or(|binder| !binder.is_external_module())
     }
 
     /// TS8033: Check all JSDoc comments for `@typedef` with multiple `@type` tags.

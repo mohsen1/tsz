@@ -645,5 +645,13 @@ path = "tests/jsdoc_template_variance_function_tests.rs"
 name = "type_param_modifier_diagnostics_tests"
 path = "tests/type_param_modifier_diagnostics_tests.rs"
 
+[[test]]
+name = "strict_mode_reserved_word_in_qualified_type_tests"
+path = "tests/strict_mode_reserved_word_in_qualified_type_tests.rs"
+
+[[test]]
+name = "union_index_access_function_application_param_tests"
+path = "tests/union_index_access_function_application_param_tests.rs"
+
 [lints]
 workspace = true

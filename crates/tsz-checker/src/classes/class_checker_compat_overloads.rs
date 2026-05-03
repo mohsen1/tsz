@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
         base_name: &str,
         base_iface_indices: &[NodeIndex],
         derived_member_names: &rustc_hash::FxHashSet<String>,
-        derived_members: &[(String, TypeId, NodeIndex, u16, bool)],
+        derived_members: &[(String, TypeId, NodeIndex, u16, bool, bool)],
         substitution: &TypeSubstitution,
     ) {
         let base_method_overloads: Vec<(String, Vec<TypeId>)>;
@@ -68,7 +68,7 @@ impl<'a> CheckerState<'a> {
 
         let mut derived_method_overloads: rustc_hash::FxHashMap<String, Vec<(TypeId, NodeIndex)>> =
             rustc_hash::FxHashMap::default();
-        for (name, type_id, idx, kind, _) in derived_members {
+        for (name, type_id, idx, kind, _, _) in derived_members {
             if *kind == METHOD_SIGNATURE {
                 derived_method_overloads
                     .entry(name.clone())

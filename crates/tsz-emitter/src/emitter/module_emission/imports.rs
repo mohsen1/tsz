@@ -5,6 +5,21 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn import_clause_is_empty_named_import(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named_imports| {
+                    named_imports.name.is_none() && named_imports.elements.nodes.is_empty()
+                })
+    }
+
     pub(in crate::emitter) fn import_has_value_usage_after_node(
         &self,
         node: &Node,
@@ -45,7 +60,7 @@ impl<'a> Printer<'a> {
             }
         }
         if names.is_empty() {
-            return true;
+            return !self.import_clause_is_empty_named_import(clause);
         }
         let Some(source_text) = self.source_text else {
             return true;
@@ -471,43 +486,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Detect `import {} from "x"` early — it has no runtime bindings but
-        // preserves side effects in CJS mode (same as bare `import "x"`).
-        // Must check before the value-usage heuristic, which would elide it.
-        let empty_named_import_preserves_side_effects = clause.name.is_none()
-            && clause.named_bindings.is_some()
-            && self
-                .arena
-                .get(clause.named_bindings)
-                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
-                .is_some_and(|named_imports| {
-                    named_imports.name.is_none() && named_imports.elements.nodes.is_empty()
-                });
-
-        if empty_named_import_preserves_side_effects {
-            // AMD and System handle imports via wrapper parameters/setters.
-            // UMD uses require() in the body, so don't suppress.
-            if matches!(
-                self.ctx.original_module_kind,
-                Some(ModuleKind::AMD | ModuleKind::System)
-            ) {
-                return;
-            }
-            // `import {} from "x"` → `require("x");` for side effects
-            let module_spec = if let Some(spec_node) = self.arena.get(import.module_specifier) {
-                if let Some(lit) = self.arena.get_literal(spec_node) {
-                    lit.text.clone()
-                } else {
-                    return;
-                }
-            } else {
-                return;
-            };
-            let module_spec = self.rewrite_module_spec(&module_spec);
-            self.write("require(\"");
-            self.write(&module_spec);
-            self.write("\");");
-            self.write_line();
+        let empty_named_import = self.import_clause_is_empty_named_import(clause);
+        if empty_named_import
+            && !(self.ctx.options.verbatim_module_syntax || self.source_is_js_file)
+        {
             return;
         }
 
@@ -540,6 +522,14 @@ impl<'a> Printer<'a> {
             self.ctx.original_module_kind,
             Some(ModuleKind::AMD | ModuleKind::System)
         ) {
+            return;
+        }
+
+        if empty_named_import {
+            self.write("require(\"");
+            self.write(&module_spec);
+            self.write("\");");
+            self.write_line();
             return;
         }
 

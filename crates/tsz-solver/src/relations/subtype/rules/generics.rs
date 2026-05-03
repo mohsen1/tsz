@@ -408,6 +408,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 || crate::type_queries::is_promise_like(query_db, self.evaluate_type(source_type)))
             && (crate::type_queries::is_promise_like(query_db, target_type)
                 || crate::type_queries::is_promise_like(query_db, self.evaluate_type(target_type)))
+            && self.application_has_promise_like_then_contract(query_db, source_type, s_app.args[0])
+            && self.application_has_promise_like_then_contract(query_db, target_type, t_app.args[0])
         {
             return self.check_subtype(s_app.args[0], t_app.args[0]);
         }

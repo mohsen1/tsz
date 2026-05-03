@@ -1000,7 +1000,17 @@ impl<'a> CheckerState<'a> {
                             || key_type == TypeId::NUMBER
                             || key_type == TypeId::SYMBOL
                             || is_template_literal_type(self.ctx.types, key_type);
-                        if !is_valid_index_type {
+                        // AST fallback: unions of valid types and non-generic
+                        // intersections (`string | number`, `string & Tag`)
+                        // resolve to composite TypeIds that don't match the
+                        // primitive checks above.
+                        let is_valid_via_ast = !is_valid_index_type
+                            && crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
+                                self.ctx.arena,
+                                self.ctx.binder,
+                                param_data.type_annotation,
+                            );
+                        if !is_valid_index_type && !is_valid_via_ast {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             self.error_at_node(
                                 param_idx,
