@@ -2178,7 +2178,10 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1011 // '(' or '<' expected
         | 1012 // '{' expected
         | 1035 // Only ambient modules can use quoted names
-        | 1101 // 'with' statements are not allowed in strict mode
+        // Note: TS1101 ('with' statements are not allowed in strict mode) is intentionally
+        // excluded. It is a grammar check, not a structural parse failure. The parser
+        // accepts the with-statement and produces a valid AST; tsc still emits semantic
+        // errors like TS2410 alongside TS1101.
         | 1103 // A character literal must contain exactly one character
         | 1121 // Octal literals are not allowed in strict mode
         | 1124 // Digit expected
@@ -2347,6 +2350,34 @@ mod tests {
     #[test]
     fn plain_class_needs_no_helpers() {
         assert!(helper_names("class C { method() {} }").is_empty());
+    }
+
+    /// TS1101 ('with' statements not allowed in strict mode) is a grammar
+    /// check, not a structural parse failure. The parser produces a valid AST
+    /// for the with-statement; tsc still emits semantic errors like TS2410
+    /// alongside it. Including TS1101 in `is_real_syntax_error` would cause
+    /// the CLI's `program_has_real_syntax_errors` filter to drop every
+    /// semantic diagnostic in any module file containing a `with` statement.
+    #[test]
+    fn ts1101_is_not_treated_as_real_syntax_error() {
+        assert!(
+            !is_real_syntax_error(1101),
+            "TS1101 must NOT be classified as a real syntax error \
+             — it is a strict-mode grammar check that does not malform the AST"
+        );
+    }
+
+    /// Sanity-check that genuinely structural parse failures remain classified
+    /// as real syntax errors so the regression of TS1101's removal does not
+    /// accidentally weaken the broader filter.
+    #[test]
+    fn structural_parse_failures_remain_real_syntax_errors() {
+        for code in [1005u32, 1109, 1128] {
+            assert!(
+                is_real_syntax_error(code),
+                "TS{code} should still be classified as a real syntax error"
+            );
+        }
     }
 
     #[test]
