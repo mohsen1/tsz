@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-03
 - **Branch**: `fix/jsdoc-typedef-cross-module-05031713`
-- **PR**: TBD
+- **PR**: #2587
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
