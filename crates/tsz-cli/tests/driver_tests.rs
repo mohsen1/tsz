@@ -597,6 +597,57 @@ export const f = fn;
 }
 
 #[test]
+fn declaration_emit_duplicate_var_reuses_first_declaration_type() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("index.ts"),
+        r#"namespace M {
+    export namespace C {
+        export function f() {}
+    }
+    export namespace E {
+        export function f() {}
+    }
+}
+
+namespace M.P {
+    export var x = M.C.f;
+    export var x = M.E.f;
+}
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "declaration": true,
+    "module": "commonjs"
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    compile(&args, base).expect("compile should succeed");
+    let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
+    let first = dts
+        .find("var x: typeof M.C.f;")
+        .expect("first duplicate x should use M.C.f");
+    let second = dts[first + 1..]
+        .find("var x: typeof M.C.f;")
+        .expect("second duplicate x should reuse first declaration type");
+    assert!(
+        second > 0 && !dts.contains("var x: typeof M.E.f;"),
+        "expected duplicate var declarations to share first type: {dts}"
+    );
+}
+
+#[test]
 fn declaration_emit_imported_generic_call_preserves_function_type_argument() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();

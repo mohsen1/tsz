@@ -105,6 +105,12 @@ impl<'a> DeclarationEmitter<'a> {
                 // The solver otherwise resolves `globalThis` to `any` in the
                 // emit boundary, producing a less-informative annotation.
                 self.write(": typeof globalThis");
+            } else if has_initializer
+                && let Some(type_text) =
+                    self.previous_duplicate_variable_declaration_type_text(decl_idx, decl_name)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if is_const_null_or_undefined
                 || (has_initializer && self.invalid_const_enum_object_access(initializer))
                 || (has_initializer
@@ -416,6 +422,61 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": any");
             }
         }
+    }
+
+    pub(in crate::declaration_emitter) fn previous_duplicate_variable_declaration_type_text(
+        &self,
+        decl_idx: NodeIndex,
+        decl_name: NodeIndex,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let current_name = self.get_identifier_text(decl_name)?;
+        let sym_id = binder.get_node_symbol(decl_name)?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let current_node = self.arena.get(decl_idx)?;
+
+        for prior_decl_idx in symbol.declarations.iter().copied() {
+            if prior_decl_idx == decl_idx {
+                return None;
+            }
+            let Some(prior_node) = self.arena.get(prior_decl_idx) else {
+                continue;
+            };
+            if prior_node.pos >= current_node.pos {
+                continue;
+            }
+            let Some(prior_decl) = self.arena.get_variable_declaration(prior_node) else {
+                continue;
+            };
+            if self.get_identifier_text(prior_decl.name).as_deref() != Some(current_name.as_str()) {
+                continue;
+            }
+            if prior_decl.type_annotation.is_some() {
+                return self
+                    .preferred_annotation_name_text(prior_decl.type_annotation)
+                    .or_else(|| self.emit_type_node_text(prior_decl.type_annotation));
+            }
+            if prior_decl.initializer.is_some() {
+                if let Some(alias_text) =
+                    self.initializer_import_alias_typeof_text(prior_decl.initializer)
+                {
+                    return Some(format!("typeof {alias_text}"));
+                }
+                if let Some(typeof_text) =
+                    self.typeof_prefix_for_value_entity(prior_decl.initializer, true, None)
+                {
+                    return Some(typeof_text);
+                }
+                if let Some(resolved) = self.resolve_declaration_type_text(
+                    &[prior_decl_idx, prior_decl.name],
+                    Some(prior_decl.initializer),
+                ) {
+                    return Some(resolved.emitted_type_text);
+                }
+            }
+        }
+
+        None
     }
 
     pub(in crate::declaration_emitter) fn data_view_new_expression_type_text(
