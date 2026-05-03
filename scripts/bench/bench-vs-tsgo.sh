@@ -72,6 +72,7 @@ NEXTJS_REPO="${NEXTJS_REPO:-https://github.com/vercel/next.js.git}"
 # pinned canary commit for reproducible benchmarks
 NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
 NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
+NEXT_APP_BENCH_DIR="${NEXT_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/next-app-live}"
 # Real-world reactive library — Observable / Subject deep generics, ~150 source files.
 # REF empty by default: the fixture clones the default branch tip. Set
 # RXJS_REF=<sha> to pin a specific commit for reproducible benches.
@@ -272,7 +273,7 @@ hyperfine_exit_status_for() {
 
 sum_ts_lines() {
     local src_dir="$1"
-    find "$src_dir" \( -name '*.ts' -o -name '*.tsx' \) -type f -print0 2>/dev/null \
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' \) -type f -print0 2>/dev/null \
         | while IFS= read -r -d '' file; do
             wc -l < "$file" 2>/dev/null || true
         done \
@@ -281,7 +282,7 @@ sum_ts_lines() {
 
 sum_ts_bytes() {
     local src_dir="$1"
-    find "$src_dir" \( -name '*.ts' -o -name '*.tsx' \) -type f -print0 2>/dev/null \
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' \) -type f -print0 2>/dev/null \
         | xargs -0 cat 2>/dev/null | wc -c | tr -d ' '
 }
 
@@ -757,7 +758,10 @@ run_project_benchmark() {
     if [ "$name" = "large-ts-repo" ] && [ -n "$LARGE_TS_NODE_OPTIONS" ]; then
         project_node_prefix=(env "NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS")
     fi
-    local -a tsz_prefix=("${project_node_prefix[@]}")
+    local -a tsz_prefix=()
+    if [ "${#project_node_prefix[@]}" -gt 0 ]; then
+        tsz_prefix=("${project_node_prefix[@]}")
+    fi
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
         tsz_prefix+=(env "TSZ_LIB_DIR=$TSZ_LIB_DIR")
     fi
@@ -770,13 +774,21 @@ run_project_benchmark() {
         local project_tsc_timeout
         project_tsc_timeout=$((BENCH_TIMEOUT * 2))
         local tsc_check=0
-    run_with_timeout "$project_tsc_timeout" ${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
+        if [ "${#project_node_prefix[@]}" -gt 0 ]; then
+            run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
+        else
+            run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
+        fi
         if [ "$tsc_check" -ne 0 ]; then
             if [ "$tsc_check" -eq 124 ]; then
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${project_tsc_timeout}s)"
             else
                 local tsc_error
-                tsc_error="$(${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+                if [ "${#project_node_prefix[@]}" -gt 0 ]; then
+                    tsc_error="$(run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+                else
+                    tsc_error="$(run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+                fi
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
                 echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
             fi
@@ -793,8 +805,16 @@ run_project_benchmark() {
     local tsz_check=0
     local tsgo_check=0
     if [ "$name" != "large-ts-repo" ]; then
-        run_with_timeout "$project_timeout" ${tsz_prefix[@]+"${tsz_prefix[@]}"} "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
-        run_with_timeout "$project_timeout" ${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
+        if [ "${#tsz_prefix[@]}" -gt 0 ]; then
+            run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+        else
+            run_with_timeout "$project_timeout" "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+        fi
+        if [ "${#project_node_prefix[@]}" -gt 0 ]; then
+            run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
+        else
+            run_with_timeout "$project_timeout" "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
+        fi
     fi
 
     # `tsz_failed_expected` is reserved for fixtures where tsz is known to fail.
@@ -821,7 +841,11 @@ run_project_benchmark() {
             status="tsz error"
             tsz_ms="ERR"
             local tsz_error
-            tsz_error="$(run_with_timeout "$project_timeout" ${tsz_prefix[@]+"${tsz_prefix[@]}"} "$TSZ" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+            if [ "${#tsz_prefix[@]}" -gt 0 ]; then
+                tsz_error="$(run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+            else
+                tsz_error="$(run_with_timeout "$project_timeout" "$TSZ" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+            fi
             echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
@@ -833,7 +857,11 @@ run_project_benchmark() {
             status="${status:+${status}; }tsgo error"
             tsgo_ms="ERR"
             local tsgo_error
-            tsgo_error="$(${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSGO" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+            if [ "${#project_node_prefix[@]}" -gt 0 ]; then
+                tsgo_error="$(run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+            else
+                tsgo_error="$(run_with_timeout "$project_timeout" "$TSGO" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+            fi
             echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
         fi
 
@@ -893,15 +921,28 @@ run_project_benchmark() {
     # When tsz is expected to fail (e.g. large-ts-repo OOMs), run tsgo-only.
     if [ "$tsz_failed_expected" = true ]; then
         echo -e "${YELLOW}$name${NC} ($info) — tsz unavailable, benchmarking tsgo only"
-        if ! hyperfine \
-            --warmup "$proj_warmup" \
-            --min-runs "$proj_min" \
-            --max-runs "$proj_max" \
-            --style full \
-            --ignore-failure \
-            --export-json "$json_file" \
-            "${hyperfine_prepare_args[@]}" \
-            -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null"; then
+        local hyperfine_tsz_unavailable_status=0
+        if [ "${#hyperfine_prepare_args[@]}" -gt 0 ]; then
+            hyperfine \
+                --warmup "$proj_warmup" \
+                --min-runs "$proj_min" \
+                --max-runs "$proj_max" \
+                --style full \
+                --ignore-failure \
+                --export-json "$json_file" \
+                "${hyperfine_prepare_args[@]}" \
+                -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
+        else
+            hyperfine \
+                --warmup "$proj_warmup" \
+                --min-runs "$proj_min" \
+                --max-runs "$proj_max" \
+                --style full \
+                --ignore-failure \
+                --export-json "$json_file" \
+                -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
+        fi
+        if [ "$hyperfine_tsz_unavailable_status" -ne 0 ]; then
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,tsgo,0,tsz unavailable; tsgo error\n"
             rm -f "$json_file"
             return
@@ -928,16 +969,30 @@ run_project_benchmark() {
         return
     fi
 
-    if ! hyperfine \
-        --warmup "$proj_warmup" \
-        --min-runs "$proj_min" \
-        --max-runs "$proj_max" \
-        --style full \
-        --ignore-failure \
-        --export-json "$json_file" \
-        "${hyperfine_prepare_args[@]}" \
-        -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
-        -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null"; then
+    local hyperfine_status=0
+    if [ "${#hyperfine_prepare_args[@]}" -gt 0 ]; then
+        hyperfine \
+            --warmup "$proj_warmup" \
+            --min-runs "$proj_min" \
+            --max-runs "$proj_max" \
+            --style full \
+            --ignore-failure \
+            --export-json "$json_file" \
+            "${hyperfine_prepare_args[@]}" \
+            -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
+            -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+    else
+        hyperfine \
+            --warmup "$proj_warmup" \
+            --min-runs "$proj_min" \
+            --max-runs "$proj_max" \
+            --style full \
+            --ignore-failure \
+            --export-json "$json_file" \
+            -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
+            -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+    fi
+    if [ "$hyperfine_status" -ne 0 ]; then
         local status="hyperfine error"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
@@ -1106,6 +1161,18 @@ ensure_nextjs_fixture() {
         git -C "$NEXTJS_DIR" fetch --quiet --depth 1 origin "$NEXTJS_REF"
         git -C "$NEXTJS_DIR" checkout --quiet FETCH_HEAD
     fi
+}
+
+ensure_next_app_benchmark_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if ! command -v npm &>/dev/null; then
+        echo -e "${RED}✗ npm not found. Install npm to generate the fresh Next.js benchmark app.${NC}"
+        return 1
+    fi
+
+    echo -e "${CYAN}Generating fresh Next.js benchmark app...${NC}"
+    node "$SCRIPT_DIR/generate-next-app-fixture.mjs" "$NEXT_APP_BENCH_DIR"
 }
 
 ensure_utility_types_fixture() {
@@ -1792,6 +1859,26 @@ run_nextjs_benchmarks() {
     fi
 
     run_project_benchmark "nextjs" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_next_app_project_benchmarks() {
+    if ! is_benchmark_selected "nextjs-fresh-app"; then
+        return
+    fi
+
+    print_header "Generated Project - fresh Next.js app"
+    ensure_next_app_benchmark_fixture
+
+    local tsconfig="$NEXT_APP_BENCH_DIR/tsconfig.json"
+    local src_dir="$NEXT_APP_BENCH_DIR"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "nextjs-fresh-app" "$tsconfig" "$src_dir"
     echo
 }
 
@@ -3077,6 +3164,7 @@ main() {
     run_isolated "type-fest-project"      run_type_fest_project_benchmarks
     run_isolated "zod-project"            run_zod_project_benchmarks
     run_isolated "kysely-project"         run_kysely_project_benchmarks
+    run_isolated "nextjs-fresh-app"       run_next_app_project_benchmarks
     run_isolated "nextjs"                 run_nextjs_benchmarks
     run_isolated "large-ts-repo"          run_large_ts_repo_benchmarks
 

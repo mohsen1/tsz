@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { marked } from "marked";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
@@ -70,6 +71,38 @@ const PROJECT_FALLBACK_CONFIG = {
     fallbackName: "nextjs",
     libraryName: "nextjs",
   },
+  "Projects: fresh Next.js app": {
+    libraryCategory: null,
+    fallbackName: "nextjs-fresh-app",
+    libraryName: "nextjs-fresh-app",
+  },
+  "Projects: rxjs": {
+    libraryCategory: null,
+    fallbackName: "rxjs-project",
+    libraryName: "rxjs",
+  },
+  "Projects: type-fest": {
+    libraryCategory: null,
+    fallbackName: "type-fest-project",
+    libraryName: "type-fest",
+  },
+  "Projects: zod": {
+    libraryCategory: null,
+    fallbackName: "zod-project",
+    libraryName: "zod",
+  },
+};
+
+const PROJECT_README_PATHS = {
+  "large-ts-repo": [".target-bench/external/large-ts-repo/README.md"],
+  nextjs: [".target-bench/external/next.js/README.md"],
+  "nextjs-fresh-app": [".target-bench/external/next-app-live/README.md"],
+  "rxjs-project": [".target-bench/external/rxjs/README.md"],
+  "type-fest-project": [".target-bench/external/type-fest/readme.md", ".target-bench/external/type-fest/README.md"],
+  "zod-project": [".target-bench/external/zod/README.md"],
+  "utility-types-project": [".target-bench/external/utility-types/README.md"],
+  "ts-toolbelt-project": [".target-bench/external/ts-toolbelt/README.md"],
+  "ts-essentials-project": [".target-bench/external/ts-essentials/README.md"],
 };
 
 const LIBRARY_CATEGORY_TO_PROJECT_CATEGORY = Object.entries(PROJECT_FALLBACK_CONFIG).reduce((map, [projectCategory, conf]) => {
@@ -148,6 +181,10 @@ function isTinyBenchmark(lines) {
 function categoryFor(name, lines) {
   if (name === "large-ts-repo") return "Projects: large-ts-repo";
   if (name === "nextjs") return "Projects: next.js";
+  if (name === "nextjs-fresh-app") return "Projects: fresh Next.js app";
+  if (name === "rxjs-project") return "Projects: rxjs";
+  if (name === "type-fest-project") return "Projects: type-fest";
+  if (name === "zod-project") return "Projects: zod";
   if (name === "utility-types-project") return "Projects: utility-types";
   if (name === "ts-toolbelt-project") return "Projects: ts-toolbelt";
   if (name === "ts-essentials-project") return "Projects: ts-essentials";
@@ -236,6 +273,24 @@ function categoryMeta(category) {
       repo: "https://github.com/vercel/next.js",
       repoLabel: "vercel/next.js",
     },
+    "Projects: fresh Next.js app": {
+      title: "Fresh Next.js app",
+    },
+    "Projects: rxjs": {
+      title: "RxJS",
+      repo: "https://github.com/ReactiveX/rxjs",
+      repoLabel: "ReactiveX/rxjs",
+    },
+    "Projects: type-fest": {
+      title: "type-fest",
+      repo: "https://github.com/sindresorhus/type-fest",
+      repoLabel: "sindresorhus/type-fest",
+    },
+    "Projects: zod": {
+      title: "Zod",
+      repo: "https://github.com/colinhacks/zod",
+      repoLabel: "colinhacks/zod",
+    },
     "Projects: utility-types": {
       title: "utility-types",
       repo: "https://github.com/piotrwitek/utility-types",
@@ -252,30 +307,37 @@ function categoryMeta(category) {
       repoLabel: "ts-essentials/ts-essentials",
     },
     "Single file: utility-types": {
+      title: "utility-types files",
       description: "Real-world utility-types file-level benchmark set from pinned snapshot.",
       repo: "https://github.com/piotrwitek/utility-types",
       repoLabel: "piotrwitek/utility-types",
     },
     "Single file: ts-toolbelt": {
+      title: "ts-toolbelt files",
       description: "Real-world ts-toolbelt file-level benchmark set with type-heavy examples.",
       repo: "https://github.com/millsp/ts-toolbelt",
       repoLabel: "millsp/ts-toolbelt",
     },
     "Single file: ts-essentials": {
+      title: "ts-essentials files",
       description: "Real-world ts-essentials file-level benchmark set from pinned snapshot.",
       repo: "https://github.com/ts-essentials/ts-essentials",
       repoLabel: "ts-essentials/ts-essentials",
     },
     "Tiny File Benchmarks": {
+      title: "Tiny files",
       description: "Small fixture files moved below the fold.",
     },
     "General Benchmarks": {
-      description: "Core compiler behavior on representative mixed workloads.",
+      title: "Compiler scenarios",
+      description: "Focused compiler behavior on representative mixed workloads.",
     },
     "Synthetic Type Workloads": {
+      title: "Generated type workloads",
       description: "Generated stress tests that isolate specific type-system patterns.",
     },
     "Solver Stress Tests": {
+      title: "Solver stress",
       description: "Upper-bound tests for recursive, mapped, and conditional type complexity.",
     },
   }[category] || { description: "" };
@@ -324,6 +386,10 @@ function displayName(name) {
   if (name === "privacyFunctionParameterDeclFile.ts") {
     return "Privacy function parameter declaration file";
   }
+  if (name === "rxjs-project") return "RxJS project";
+  if (name === "type-fest-project") return "type-fest project";
+  if (name === "zod-project") return "Zod project";
+  if (name === "nextjs-fresh-app") return "Fresh Next.js app";
 
   const cleaned = String(name || "")
     .replace(/^utility-types\//, "")
@@ -944,6 +1010,23 @@ function benchmarkCommand(row, category, compiler) {
   return `${compiler} --noEmit ${name.endsWith(".ts") ? name : `${name}.ts`}`;
 }
 
+function readProjectReadme(row, category) {
+  if (!isProjectCategory(category)) return null;
+
+  const candidates = PROJECT_README_PATHS[row.name] || [];
+  for (const candidate of candidates) {
+    try {
+      const text = fs.readFileSync(path.join(ROOT, candidate), "utf8").trim();
+      if (!text) continue;
+      return text.length > 18000 ? `${text.slice(0, 18000).trimEnd()}\n\n...` : text;
+    } catch {
+      // README is optional for local benchmark fixtures that have not been prepared.
+    }
+  }
+
+  return null;
+}
+
 function comparison(row) {
   const tsz = Number(row.tsz_ms);
   const tsgo = Number(row.tsgo_ms);
@@ -971,6 +1054,7 @@ function decorateRow(row, category, options = {}) {
   const maxMs = Math.max(Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0);
   const sourceFiles = sourceFilesForBenchmark(row, category);
   const focus = benchmarkFocus(row, category);
+  const readme = readProjectReadme(row, category);
   const decorated = {
     ...row,
     category,
@@ -983,6 +1067,8 @@ function decorateRow(row, category, options = {}) {
     detail_focus: isExternalLibraryCategory(category) ? "" : focus,
     snippet: sourceFiles[0]?.source || snippetForBenchmark(row, category),
     source_files: sourceFiles,
+    readme,
+    readme_html: readme ? marked.parse(readme) : "",
     tsz_command: benchmarkCommand(row, category, "tsz"),
     tsgo_command: benchmarkCommand(row, category, "tsgo"),
     tsz_time: row.tsz_ms ? formatDurationMs(row.tsz_ms, 2) : "",
@@ -1002,7 +1088,6 @@ function decorateRow(row, category, options = {}) {
 function buildGroupedBenchmarks(data) {
   const allResults = data?.results || [];
   const results = allResults.filter(hasSuccessfulTiming);
-  const failedResults = allResults.filter(isFailedBenchmark);
   const grouped = new Map();
 
   for (const row of results) {
@@ -1013,6 +1098,11 @@ function buildGroupedBenchmarks(data) {
   }
 
   ensureProjectRows(grouped);
+  const successfulNames = new Set([
+    ...results.map((row) => row.name),
+    ...[...grouped.values()].flat().map((row) => row.name),
+  ]);
+  const failedResults = allResults.filter((row) => isFailedBenchmark(row) && !successfulNames.has(row.name));
 
   const order = [
     "Projects: large-ts-repo",
@@ -1020,6 +1110,10 @@ function buildGroupedBenchmarks(data) {
     "Projects: ts-toolbelt",
     "Projects: ts-essentials",
     "Projects: next.js",
+    "Projects: fresh Next.js app",
+    "Projects: rxjs",
+    "Projects: type-fest",
+    "Projects: zod",
     "Single file: utility-types",
     "Single file: ts-toolbelt",
     "Single file: ts-essentials",
@@ -1091,7 +1185,20 @@ function categoryTitle(category) {
   return categoryMeta(category).title || category;
 }
 
-function generateCharts(data) {
+function categoryBelongsToMode(category, mode) {
+  if (mode === "projects") return isProjectCategory(category);
+  if (mode === "micro") return !isProjectCategory(category) && category !== "Tiny File Benchmarks";
+  return category !== "Tiny File Benchmarks";
+}
+
+function failedBelongsToMode(row, mode) {
+  const category = categoryFor(row.name || "", row.lines);
+  if (mode === "projects") return isProjectCategory(category);
+  if (mode === "micro") return !isProjectCategory(category);
+  return true;
+}
+
+function generateCharts(data, mode = "projects") {
   if (!data?.results?.length) {
     return `<div class="bench-placeholder">No benchmark data is available for this local build.</div>`;
   }
@@ -1100,14 +1207,23 @@ function generateCharts(data) {
   if (!results.length && !failedResults.length) return "";
 
   const barMaxWidth = 420;
-  const visibleCategories = categories.filter((category) => category !== "Tiny File Benchmarks");
+  const visibleCategories = categories
+    .filter((category) => categoryBelongsToMode(category, mode))
+    .sort((a, b) => {
+      if (mode !== "projects") return 0;
+      const aFastest = Math.min(...(grouped.get(a) || []).map((row) => Number(row.tsz_ms) || Infinity));
+      const bFastest = Math.min(...(grouped.get(b) || []).map((row) => Number(row.tsz_ms) || Infinity));
+      if (aFastest !== bFastest) return aFastest - bFastest;
+      return categoryTitle(a).localeCompare(categoryTitle(b));
+    });
+  const visibleFailedResults = failedResults.filter((row) => failedBelongsToMode(row, mode));
 
   let html = "";
   for (const category of visibleCategories) {
-    const isTinyCategory = category === "Tiny File Benchmarks";
     const entries = (grouped.get(category) || []).slice();
     const slug = categorySlug(category);
     const meta = categoryMeta(category);
+    if (!entries.length) continue;
 
     if (isExternalLibraryCategory(category)) {
       const libraryName = libraryNameForCategory(category);
@@ -1131,18 +1247,10 @@ function generateCharts(data) {
       : "";
     const title = categoryTitle(category);
 
-    if (isTinyCategory) {
-      html += `<section class="bench-category bench-tiny-category">
-  <details id="${slug}" class="bench-category-details">
-    <summary class="bench-category-title">${escapeHtml(title)}${repoLink}</summary>
-    ${desc ? `<p class="bench-category-desc">${escapeHtml(desc)}</p>` : ""}
-    <div class="bench-chart">\n`;
-    } else {
-      html += `<section class="bench-category${isProject ? " bench-project-category" : ""}">
+    html += `<section class="bench-category${isProject ? " bench-project-category" : ""}">
   <h3 class="bench-category-title" id="${slug}">${escapeHtml(title)}${repoLink}</h3>
   ${desc ? `<p class="bench-category-desc">${escapeHtml(desc)}</p>` : ""}
   <div class="bench-chart">\n`;
-    }
 
     for (const r of entries) {
       const decorated = decorateRow(r, category, { isAggregate: r.is_aggregate });
@@ -1177,23 +1285,21 @@ function generateCharts(data) {
   </div>\n`;
     }
 
-    if (isTinyCategory) {
-      html += `  </div>
-  </details>
+    html += `  </div>
  </section>\n`;
-    } else {
-      html += `  </div>
- </section>\n`;
-    }
   }
 
-  if (failedResults.length > 0) {
+  if (visibleFailedResults.length > 0) {
+    const failedTitle = mode === "projects" ? "Projects without complete timing" : "Incomplete timings";
+    const failedDescription = mode === "projects"
+      ? "Project runs recorded by CI without a full tsz and tsgo timing pair."
+      : "Rows recorded by CI without a full tsz and tsgo timing pair.";
     html += `<section class="bench-category bench-failures">
-  <h3 class="bench-category-title" id="failures">Failed benchmarks</h3>
-  <p class="bench-category-desc">Rows recorded by the benchmark runner without complete timing data.</p>
+  <h3 class="bench-category-title" id="failures">${escapeHtml(failedTitle)}</h3>
+  <p class="bench-category-desc">${escapeHtml(failedDescription)}</p>
   <div class="bench-chart">\n`;
-    const maxFailMs = Math.max(1, ...failedResults.flatMap((r) => [Number(r.tsz_ms) || 0, Number(r.tsgo_ms) || 0]));
-    for (const r of failedResults) {
+    const maxFailMs = Math.max(1, ...visibleFailedResults.flatMap((r) => [Number(r.tsz_ms) || 0, Number(r.tsgo_ms) || 0]));
+    for (const r of visibleFailedResults) {
       const category = categoryFor(r.name || "", r.lines);
       const decorated = decorateRow(r, category);
       const tszWidth = hasTiming(r.tsz_ms) ? Math.max(2, (r.tsz_ms / maxFailMs) * barMaxWidth) : 0;
@@ -1228,5 +1334,9 @@ function generateCharts(data) {
 }
 
 export function getBenchmarkCharts() {
-  return generateCharts(loadBenchmarks());
+  return generateCharts(loadBenchmarks(), "projects");
+}
+
+export function getBenchmarkMicroCharts() {
+  return generateCharts(loadBenchmarks(), "micro");
 }
