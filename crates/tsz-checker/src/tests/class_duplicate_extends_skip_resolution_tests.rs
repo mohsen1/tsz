@@ -34,3 +34,22 @@ class C extends A extends B {}
         "Expected NO TS2304 for 'B' (duplicate-extends operand); got: {diags:?}"
     );
 }
+
+#[test]
+fn duplicate_extends_missing_operand_does_not_check_mixin_rest_on_duplicate() {
+    let diags = check_source_diagnostics(
+        r#"
+type BadConstructor = new (value: string) => {};
+
+function Mixin<TBase extends BadConstructor>(Base: TBase) {
+    return class extends extends Base {};
+}
+"#,
+    );
+
+    let ts2545: Vec<_> = diags.iter().filter(|d| d.code == 2545).collect();
+    assert!(
+        ts2545.is_empty(),
+        "Expected no TS2545 from duplicate-extends operand; got: {diags:?}"
+    );
+}
