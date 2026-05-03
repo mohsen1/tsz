@@ -1721,6 +1721,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn malformed_rest_parameter_modifier_recovers_following_parameter() {
+        let source = "class C { constructor(...public rest: string[]) {} }";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("constructor(...public, rest)"),
+            "Malformed rest parameter should preserve the recovered parameter.\nOutput:\n{output}"
+        );
+    }
+
     /// Parameters with empty/missing identifier names (from parser error recovery)
     /// should be dropped, matching tsc behavior.
     #[test]
