@@ -134,20 +134,20 @@ impl<'a> NarrowingContext<'a> {
                     return self.db.intersection2(source_type, narrowed_constraint);
                 }
             }
-            // Unconstrained type parameter (or one whose constraint reduces to
-            // itself): in the truthy branch of `prop in x` the operand is
-            // known to be an object — tsc narrows `T` to `T & object` so the
-            // RHS of any chained `in` check (and any subsequent property
-            // access) sees a type that is structurally an object. Without
-            // this, `"a" in x && "b" in x` re-emits TS2322 for every `in` in
-            // the && chain when `T` is unconstrained.
-            if present && type_param_info.constraint.is_none() {
-                let narrowed = self.db.intersection2(source_type, TypeId::OBJECT);
+            // Bare type parameter (no constraint or unchanged constraint).
+            // For positive narrowing, tsc adds `Record<prop, unknown>` so
+            // chained `in` checks like `"a" in x && "b" in x` see the second
+            // operand's `x` as a valid `in`-RHS. Without this, every `in x`
+            // re-emits TS2322 against the unnarrowed type parameter. This is
+            // strictly more informative than narrowing to `T & object`,
+            // because `Record<prop, unknown>` extends `object` and also
+            // records the known property.
+            if present {
                 trace!(
-                    "Unconstrained type parameter narrowed via `in` to T & object: {} -> {}",
-                    source_type.0, narrowed.0
+                    "Bare type parameter, intersecting with Record<prop, unknown> for present narrowing"
                 );
-                return narrowed;
+                let record_type = self.make_record_type(property_name);
+                return self.db.intersection2(source_type, record_type);
             }
             // Type parameter with no constraint (false branch) or unchanged constraint
             trace!("Type parameter unchanged, returning source");
