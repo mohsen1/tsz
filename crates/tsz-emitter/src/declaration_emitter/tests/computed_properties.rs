@@ -444,3 +444,94 @@ namespace M {
         "Expected exported interface body member to be preserved: {output}"
     );
 }
+
+#[test]
+fn test_non_ambient_empty_inner_namespace_conflict_is_elided() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace X.A.C {
+    export interface Z {
+    }
+}
+namespace X.A.B.C {
+    namespace A {
+    }
+    export class W implements X.A.C.Z {
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("class W implements X.A.C.Z"),
+        "Expected heritage reference to preserve the outer namespace path: {output}"
+    );
+    assert!(
+        !output.contains("namespace A { }"),
+        "Expected empty non-exported inner namespace to be elided: {output}"
+    );
+    assert!(
+        !output.contains("export {};"),
+        "Expected elided empty namespace not to trigger a scope marker: {output}"
+    );
+}
+
+#[test]
+fn test_non_ambient_later_empty_inner_namespace_conflict_is_elided() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace X.A.C {
+    export interface Z {
+    }
+}
+namespace X.A.B.C {
+    export class W implements A.C.Z {
+    }
+}
+
+namespace X.A.B.C {
+    namespace A {
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("class W implements A.C.Z"),
+        "Expected heritage reference to remain context-relative: {output}"
+    );
+    assert!(
+        !output.contains("namespace A { }"),
+        "Expected later empty non-exported inner namespace to be elided: {output}"
+    );
+    assert!(
+        !output.contains("export {};"),
+        "Expected elided empty namespace not to trigger a scope marker: {output}"
+    );
+}
+
+#[test]
+fn test_non_ambient_exported_empty_inner_namespace_is_preserved() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace X.A.C {
+    export interface Z {
+    }
+}
+namespace X.A.B.C {
+    export class W implements X.A.C.Z {
+    }
+}
+
+namespace X.A.B.C {
+    export namespace A {
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("namespace A { }"),
+        "Expected exported empty inner namespace to be preserved inside the declare namespace: {output}"
+    );
+}
