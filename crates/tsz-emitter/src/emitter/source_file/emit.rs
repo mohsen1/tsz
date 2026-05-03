@@ -784,6 +784,40 @@ impl<'a> Printer<'a> {
             .iter()
             .take(cjs_pre_preamble_prologue_count)
         {
+            // Consume and emit any leading comments tied to this prologue
+            // directive BEFORE emitting the directive itself. The main loop
+            // below skips these statements via `continue`, so its
+            // leading-comment handler (lines 1464-1496) never runs for them.
+            // Without this, inter-prologue comments (e.g. between two
+            // string-literal directives) would remain in `all_comments` and
+            // be picked up by the first non-skipped statement, ending up
+            // after the entire CJS preamble block instead of staying with
+            // the directive they belong to.
+            if let Some(stmt_node) = self.arena.get(stmt_idx)
+                && let Some(text) = self.source_text
+            {
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    if c_end <= actual_start {
+                        if let Ok(comment_text) =
+                            crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
+                        {
+                            self.write_comment_with_reindent(comment_text, Some(c_pos));
+                            if c_trailing {
+                                self.write_line();
+                            } else if comment_text.starts_with("/*") {
+                                self.pending_block_comment_space = true;
+                            }
+                        }
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
             let before_len = self.writer.len();
             self.emit(stmt_idx);
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
