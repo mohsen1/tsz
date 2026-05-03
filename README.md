@@ -57,8 +57,8 @@ to ensure correct code generation.
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [██████████████████░░] 92.1% (12,458 / 13,526 tests)
-Declaration: [████████████████░░░░] 81.6% (1,362 / 1,670 tests)
+JavaScript:  [██████████████████░░] 92.2% (12,470 / 13,526 tests)
+Declaration: [████████████████░░░░] 81.9% (1,367 / 1,670 tests)
 ```
 <!-- EMIT_END -->
 
