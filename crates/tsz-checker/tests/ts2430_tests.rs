@@ -553,3 +553,57 @@ class C implements ClassComponent<MyAttrs> {
         "Should NOT emit TS2430 for class implementing interface with `this` type references. Got: {ts2430:?}"
     );
 }
+
+#[test]
+fn test_this_in_callback_parameter_with_recursive_return_no_false_ts2430() {
+    // Reduced from immutable-style collection interfaces. A callback parameter
+    // using `this` must not make a derived method incompatible when the return
+    // type specializes the current interface family.
+    let source = r#"
+interface Boxed<T> {
+    value: T;
+}
+
+interface Collection<K, V> {
+    map<M>(mapper: (value: V, key: K, iter: this) => M): Collection<K, M>;
+    flatMap<M>(mapper: (value: V, key: K, iter: this) => Boxed<M>): Collection<K, M>;
+}
+
+interface Indexed<T> extends Collection<number, T> {
+    map<M>(mapper: (value: T, key: number, iter: this) => M): Indexed<M>;
+    flatMap<M>(mapper: (value: T, key: number, iter: this) => Boxed<M>): Indexed<M>;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 for callback-parameter `this` with recursive return specialization. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_direct_this_return_mismatch_still_emits_ts2430() {
+    // A base method returning direct `this` cannot be replaced by an arbitrary
+    // related interface return. This keeps the recursive-return suppression
+    // narrow enough to preserve tsc's real TS2430 cases.
+    let source = r#"
+interface Collection<K, V> {
+    toSeq(): this;
+}
+
+interface SeqKeyed<K, V> {
+    get(key: K): V;
+}
+
+interface Keyed<K, V> extends Collection<K, V> {
+    toSeq(): SeqKeyed<K, V>;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        !ts2430.is_empty(),
+        "Should still emit TS2430 when a direct `this` return is narrowed to a named interface. Got: {diags:?}"
+    );
+}
