@@ -1,4 +1,7 @@
 //! Tests for statement parsing in the parser.
+use crate::parser::NodeIndex;
+use crate::parser::node::NodeArena;
+use crate::parser::node_view::NodeAccess;
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
@@ -728,6 +731,45 @@ fn parse_true_keyword_as_parameter_name_emits_ts1359_and_ts1138() {
         codes.contains(&diagnostic_codes::PARAMETER_DECLARATION_EXPECTED),
         "Expected TS1138 at the colon following `true`, got codes: {codes:?}"
     );
+}
+
+#[test]
+fn parse_literal_reserved_parameter_after_suppressed_error_keeps_type_annotation() {
+    let source = "function f(a,,true: number) {}";
+    let true_pos = source.find("true").expect("expected true keyword") as u32;
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let param_idx = find_parameter_named_at(arena, root, true_pos)
+        .expect("expected recovered `true` parameter");
+    let param = arena
+        .get(param_idx)
+        .and_then(|node| arena.get_parameter(node))
+        .expect("expected parameter data");
+
+    assert!(
+        param.type_annotation.is_some(),
+        "suppressed TS1359 recovery should still consume `true` and attach `: number`; diagnostics: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+fn find_parameter_named_at(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+    name_pos: u32,
+) -> Option<NodeIndex> {
+    let node = arena.get(node_idx)?;
+    if let Some(param) = arena.get_parameter(node)
+        && let Some(name_node) = arena.get(param.name)
+        && name_node.pos == name_pos
+    {
+        return Some(node_idx);
+    }
+
+    arena
+        .get_children(node_idx)
+        .into_iter()
+        .find_map(|child_idx| find_parameter_named_at(arena, child_idx, name_pos))
 }
 
 #[test]
