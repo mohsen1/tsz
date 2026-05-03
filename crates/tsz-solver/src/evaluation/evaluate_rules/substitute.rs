@@ -37,13 +37,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if type_id.is_intrinsic() {
             return type_id;
         }
-        // Insert cycle guard. If the slot was already occupied (revisit), the
-        // previous value is the substitution result we should return: either
-        // the final substituted node (shared-node case) or the placeholder
-        // pointing back at `type_id` (true cycle).
-        if let Some(cached) = memo.insert(type_id, type_id) {
+        // Check the memo before installing the cycle guard. `HashMap::insert`
+        // would overwrite a completed substitution with the guard value on a
+        // repeated visit, corrupting later lookups of shared hash-consed nodes.
+        if let Some(&cached) = memo.get(&type_id) {
             return cached;
         }
+        memo.insert(type_id, type_id);
 
         let result = match self.interner().lookup(type_id) {
             Some(TypeData::Application(app_id)) => {
@@ -196,6 +196,46 @@ mod tests {
         assert_ne!(
             result, buggy_outer,
             "second occurrence of shared node was left unsubstituted (pre-fix bug)"
+        );
+    }
+
+    #[test]
+    fn test_substitute_exact_type_reuses_memo_without_corrupting_shared_node() {
+        let interner = TypeInterner::new();
+
+        let t_param = interner.type_param(TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+
+        let bar = interner.lazy(DefId(201));
+        let baz = interner.lazy(DefId(202));
+        let foo = interner.lazy(DefId(203));
+
+        let bar_of_t = interner.application(bar, vec![t_param]);
+        let baz_of_bar_t = interner.application(baz, vec![bar_of_t]);
+        let outer = interner.application(foo, vec![bar_of_t, bar_of_t, baz_of_bar_t]);
+
+        let mut evaluator =
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&interner);
+        let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+        let result = evaluator.substitute_exact_type(outer, t_param, TypeId::STRING, &mut memo);
+
+        let bar_of_string = interner.application(bar, vec![TypeId::STRING]);
+        let baz_of_bar_string = interner.application(baz, vec![bar_of_string]);
+        let expected =
+            interner.application(foo, vec![bar_of_string, bar_of_string, baz_of_bar_string]);
+        assert_eq!(
+            result, expected,
+            "third visit to a shared node must reuse the substituted memo value"
+        );
+
+        let corrupted = interner.application(foo, vec![bar_of_string, bar_of_string, baz_of_bar_t]);
+        assert_ne!(
+            result, corrupted,
+            "memo lookup was corrupted back to the original unsubstituted node"
         );
     }
 }
