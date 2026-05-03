@@ -759,11 +759,8 @@ impl<'a> Printer<'a> {
                 } else {
                     self.find_comma_pos_after(token_end, next_pos)
                 };
-                let needs_comma = if self.source_text.is_some() {
-                    has_trailing_comma || comma_already_past || comma_pos.is_some()
-                } else {
-                    !is_last || has_trailing_comma
-                };
+                let needs_comma =
+                    !is_last || has_trailing_comma || comma_already_past || comma_pos.is_some();
                 if needs_comma {
                     if let Some(comma_pos) = comma_pos {
                         self.emit_trailing_comments_before(token_end, comma_pos);

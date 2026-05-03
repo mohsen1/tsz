@@ -102,6 +102,21 @@ fn comma_terminated_object_method_without_body_is_recovered() {
 }
 
 #[test]
+fn missing_object_literal_separator_after_get_set_shorthand_is_emitted() {
+    let source = "const c = {\n    get\n    *x() {}\n};\nconst d = {\n    set\n    *x() {}\n};\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("const c = {\n    get,\n    *x() { }\n};"),
+        "get shorthand should be separated from the following generator method; output:\n{output}"
+    );
+    assert!(
+        output.contains("const d = {\n    set,\n    *x() { }\n};"),
+        "set shorthand should be separated from the following generator method; output:\n{output}"
+    );
+}
+
+#[test]
 fn object_binding_reserved_shorthand_emits_empty_property_assignment() {
     let source = "var { while } = { while: 1 };\n";
     let output = print_es2015(source);
