@@ -138,7 +138,6 @@ FAIL TypeScript/tests/cases/conformance/moduleResolution/bundler/bundlerNodeModu
 FAIL TypeScript/tests/cases/conformance/node/nodeModules1.ts | expected:[TS1471,TS1479,TS2307,TS2834,TS2835] actual:[TS1471,TS1479,TS2307,TS2834,TS2835]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesCJSEmit1.ts | expected:[TS1192,TS2304,TS2882] actual:[TS2882]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesJson.ts | expected:[TS1544,TS2339,TS2823] actual:[TS1463,TS2339,TS2614,TS2823]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration1.ts | expected:[TS1172,TS2304] actual:[TS1172,TS2304]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts | expected:[TS1005,TS1068,TS1137,TS1434] actual:[TS1005,TS1068,TS1137,TS1434]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource6.ts | expected:[TS2304,TS2322,TS2339,TS6053] actual:[TS2304,TS2339,TS6053]
 FAIL TypeScript/tests/cases/conformance/references/library-reference-5.ts | expected:[TS2403] actual:[TS2403]
@@ -10411,6 +10410,7 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/AutomaticSemicolonIns
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/CatchClauses/parserCatchClauseWithTypeAnnotation1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ClassDeclarations/parserClass1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ClassDeclarations/parserClass2.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration10.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration11.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration12.ts
