@@ -428,6 +428,8 @@ impl<'a> Printer<'a> {
             {
                 let last_arg_end = self.call_argument_comment_boundary(*last_arg);
                 self.emit_call_trailing_argument_comments(last_arg_end, close_paren_pos);
+            } else if valid_args.is_empty() {
+                self.emit_empty_call_argument_comments(node, Some(args));
             }
         }
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
@@ -466,6 +468,8 @@ impl<'a> Printer<'a> {
             {
                 let last_arg_end = self.call_argument_comment_boundary(*last_arg);
                 self.emit_call_trailing_argument_comments(last_arg_end, close_paren_pos);
+            } else if valid_args.is_empty() {
+                self.emit_empty_call_argument_comments(node, Some(args));
             }
         }
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
@@ -935,6 +939,79 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_unemitted_comments_between(from_pos, close_paren_pos);
+    }
+
+    fn emit_empty_call_argument_comments(
+        &mut self,
+        call_node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let Some(open_paren_pos) = self.find_call_open_paren_position(call_node, args) else {
+            return;
+        };
+        let Some(close_paren_pos) = self.find_call_closing_paren_position(call_node, args) else {
+            return;
+        };
+        if open_paren_pos + 1 >= close_paren_pos {
+            return;
+        }
+
+        let bytes = text.as_bytes();
+        let mut scan_idx = self.comment_emit_idx;
+        let mut previous_pos = open_paren_pos + 1;
+        let mut previous_comment_had_trailing_newline = false;
+        while scan_idx < self.all_comments.len() {
+            let comment_pos = self.all_comments[scan_idx].pos;
+            let comment_end = self.all_comments[scan_idx].end;
+            let has_trailing_new_line = self.all_comments[scan_idx].has_trailing_new_line;
+            if comment_end <= open_paren_pos {
+                scan_idx += 1;
+                continue;
+            }
+            if comment_pos >= close_paren_pos {
+                break;
+            }
+            if comment_pos < open_paren_pos || comment_end > close_paren_pos {
+                scan_idx += 1;
+                continue;
+            }
+
+            if previous_comment_had_trailing_newline {
+                // The previous comment already advanced to the next output line.
+            } else if self.range_contains_newline(previous_pos, comment_pos, bytes) {
+                self.write_line();
+            } else {
+                self.write_space();
+            }
+
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+                if has_trailing_new_line {
+                    self.write_line();
+                }
+            }
+
+            previous_pos = comment_end;
+            previous_comment_had_trailing_newline = has_trailing_new_line;
+            self.comment_emit_idx = scan_idx + 1;
+            scan_idx += 1;
+        }
+    }
+
+    fn range_contains_newline(&self, from_pos: u32, to_pos: u32, bytes: &[u8]) -> bool {
+        let start = std::cmp::min(from_pos as usize, bytes.len());
+        let end = std::cmp::min(to_pos as usize, bytes.len());
+        bytes[start..end].iter().any(|&b| b == b'\n' || b == b'\r')
     }
 
     fn emit_dynamic_import_template_specifier(&mut self, expr: NodeIndex) {

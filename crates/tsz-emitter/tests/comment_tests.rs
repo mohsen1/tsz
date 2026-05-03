@@ -23,6 +23,30 @@ fn test_comment_between_call_arguments() {
 }
 
 #[test]
+fn empty_call_argument_list_comments_stay_inside_parens() {
+    let source = r#"declare var a;
+a(/*1*/);
+a(
+    /*first*/
+    // foo
+    /*middle*/
+    // bar
+    /*last*/
+);"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("a( /*1*/);"),
+        "Inline empty argument-list comment should stay inside call parens.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("a(\n/*first*/\n// foo\n/*middle*/\n// bar\n/*last*/\n);"),
+        "Multiline empty argument-list comments should stay inside call parens.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 
