@@ -135,6 +135,7 @@ impl<'a> Printer<'a> {
             }
             self.write("(");
         }
+        let prev_namespace_exported_names = self.namespace_exported_names.clone();
         self.emit_function_parameters_js(&func.parameters.nodes);
         if needs_parens {
             // Map closing `)` — scan backward from body start since parser
@@ -176,6 +177,7 @@ impl<'a> Printer<'a> {
         // created by the enclosing scope can be spuriously injected into single-line
         // arrow bodies during block emission.
         self.push_temp_scope();
+        self.remove_namespace_exported_parameter_names(&func.parameters.nodes);
 
         // If we have pending object rest params and a concise body, convert to block body
         if !body_is_block && !self.pending_object_rest_params.is_empty() {
@@ -224,6 +226,7 @@ impl<'a> Printer<'a> {
             self.emitting_function_body_block = prev_emitting_function_body_block;
         }
 
+        self.namespace_exported_names = prev_namespace_exported_names;
         self.pop_temp_scope();
     }
 
@@ -247,6 +250,8 @@ impl<'a> Printer<'a> {
         self.write("=> ");
 
         self.push_temp_scope();
+        let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        self.remove_namespace_exported_parameter_names(&func.parameters.nodes);
         self.write("{");
         self.write_line();
         self.increase_indent();
@@ -275,6 +280,7 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+        self.namespace_exported_names = prev_namespace_exported_names;
         self.pop_temp_scope();
     }
 
@@ -312,6 +318,24 @@ impl<'a> Printer<'a> {
             let name =
                 crate::transforms::emit_utils::identifier_text_or_empty(self.arena, param.name);
             self.emit_param_default_assignment(&name, param.initializer);
+        }
+    }
+
+    fn remove_namespace_exported_parameter_name(&mut self, param_idx: NodeIndex) {
+        if let Some(param) = self.arena.get_parameter_at(param_idx) {
+            let name = self.get_identifier_text_idx(param.name);
+            if !name.is_empty() {
+                self.namespace_exported_names.remove(name.as_str());
+            }
+        }
+    }
+
+    pub(in crate::emitter) fn remove_namespace_exported_parameter_names(
+        &mut self,
+        params: &[NodeIndex],
+    ) {
+        for &param_idx in params {
+            self.remove_namespace_exported_parameter_name(param_idx);
         }
     }
 
@@ -961,7 +985,17 @@ impl<'a> Printer<'a> {
         // Regular functions have their own `arguments`, so turn off the rewrite flag
         let prev_rewrite_args = self.ctx.rewrite_arguments_to_arguments_1;
         self.ctx.rewrite_arguments_to_arguments_1 = false;
+        let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        for &param_idx in &func.parameters.nodes {
+            if let Some(param) = self.arena.get_parameter_at(param_idx) {
+                let name = self.get_identifier_text_idx(param.name);
+                if !name.is_empty() {
+                    self.namespace_exported_names.remove(name.as_str());
+                }
+            }
+        }
         self.emit(func.body);
+        self.namespace_exported_names = prev_namespace_exported_names;
         self.ctx.rewrite_arguments_to_arguments_1 = prev_rewrite_args;
         self.ctx.flags.in_generator = prev_in_generator;
         self.declared_namespace_names = prev_declared;
@@ -1123,6 +1157,7 @@ impl<'a> Printer<'a> {
         // Clear any previous pending rest params
         self.pending_object_rest_params.clear();
 
+        let prev_namespace_exported_names = self.namespace_exported_names.clone();
         let mut first = true;
         for &param_idx in params {
             if let Some(param_node) = self.arena.get(param_idx)
@@ -1208,6 +1243,7 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.emit_parameter_name_js(param.name);
+                self.remove_namespace_exported_parameter_name(param_idx);
                 // Skip type annotations — consume comments inside the erased range,
                 // but preserve trailing comments between the type and delimiter.
                 // e.g., `a: any/*2*/,` → `a /*2*/,`
@@ -1357,6 +1393,7 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.namespace_exported_names = prev_namespace_exported_names;
 
         // NOTE: Do NOT emit trailing comments here. Comments after the last
         // parameter (e.g., `p3:any // OK`) appear on the same source line but

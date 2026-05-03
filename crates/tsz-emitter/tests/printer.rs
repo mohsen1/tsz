@@ -545,6 +545,184 @@ export const msg = "Hello!";
 }
 
 #[test]
+fn namespace_function_expression_parameter_shadows_exported_name_es2015() {
+    let source = r#"namespace Foo {
+    export function a() {}
+    export const fn = function(a: number) {
+        return a;
+    };
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("return a;"),
+        "Function expression body should reference its parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return Foo.a;"),
+        "Function expression parameter should shadow namespace exported names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_arrow_parameter_shadows_exported_name_es2015() {
+    let source = r#"namespace Foo {
+    export function a() {}
+    export const arrow = (a: number) => a;
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("Foo.arrow = (a) => a;"),
+        "Arrow concise body should reference its parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("=> Foo.a"),
+        "Arrow parameter should shadow namespace exported names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_function_default_parameter_shadows_exported_name_es2015() {
+    let source = r#"namespace Foo {
+    export let a = 10;
+    export const fn = function(a: number, b = a) {
+        return b;
+    };
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("function (a, b = a)"),
+        "Function default parameter should reference the prior parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("b = Foo.a"),
+        "Function default parameter should not qualify a shadowed namespace export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_arrow_default_parameter_shadows_exported_name_es2015() {
+    let source = r#"namespace Foo {
+    export let a = 10;
+    export const arrow = (a: number, b = a) => b;
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("Foo.arrow = (a, b = a) => b;"),
+        "Arrow default parameter should reference the prior parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("b = Foo.a"),
+        "Arrow default parameter should not qualify a shadowed namespace export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_arrow_default_prologue_shadows_exported_name_es2016() {
+    let source = r#"namespace Foo {
+    export function a() {
+        return 10;
+    }
+    declare function complex(): number;
+    export const arrow = (a: () => number | undefined, b = a() ?? complex()) => a();
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2016,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("b = (_a = a()) !== null"),
+        "Default prologue should reference the parameter before the fallback.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return a();") && !output.contains("return Foo.a();"),
+        "Default prologue arrow body should reference the shadowing parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Foo.a()") && !output.contains("= Foo.a"),
+        "Default prologue should not qualify shadowed namespace parameter references.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_exported_object_binding_non_identifier_property_uses_destructuring_path() {
+    let source = r#"declare const obj: any;
+export let { "foo": bar } = obj;
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::System,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports_1(\"bar\", bar = obj[\"foo\"]);"),
+        "String-literal binding property names should access the source property, not the binding name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("obj.bar"),
+        "System binding shortcut must not use the binding name as the property name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_exported_object_binding_bracket_access_does_not_add_numeric_dot() {
+    let source = r#"export let { "foo": bar } = 42.5;
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::System,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports_1(\"bar\", bar = 42.5[\"foo\"]);"),
+        "Bracket access after numeric literal should not emit an extra dot.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("42.5.["),
+        "Extra numeric-literal dot before bracket access is invalid JS.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_export_import_namespace_alias_keeps_export_equals() {
     let source = "namespace x { interface c {} }\nexport import a = x.c;\nexport = x;\n";
     let output = parse_lower_print(

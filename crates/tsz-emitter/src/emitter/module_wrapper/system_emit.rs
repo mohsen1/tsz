@@ -1563,10 +1563,21 @@ impl<'a> Printer<'a> {
         if export_name.is_empty() {
             return false;
         }
+        let mut prop_element = NodeIndex::NONE;
         let prop_name = if elem.property_name.is_some() {
+            let Some(prop_node) = self.arena.get(elem.property_name) else {
+                return false;
+            };
             let prop = self.get_identifier_text_idx(elem.property_name);
             if prop.is_empty() {
-                export_name.clone()
+                if prop_node.kind == SyntaxKind::StringLiteral as u16
+                    || prop_node.kind == SyntaxKind::NumericLiteral as u16
+                {
+                    prop_element = elem.property_name;
+                    String::new()
+                } else {
+                    return false;
+                }
             } else {
                 prop
             }
@@ -1582,15 +1593,21 @@ impl<'a> Printer<'a> {
         self.write(&export_name);
         self.write(" = ");
         self.emit_expression(decl.initializer);
-        if self
-            .arena
-            .get(decl.initializer)
-            .is_some_and(|node| node.is_numeric_literal())
-        {
+        if prop_element.is_some() {
+            self.write("[");
+            self.emit_expression(prop_element);
+            self.write("]");
+        } else {
+            if self
+                .arena
+                .get(decl.initializer)
+                .is_some_and(|node| node.is_numeric_literal())
+            {
+                self.write(".");
+            }
             self.write(".");
+            self.write(&prop_name);
         }
-        self.write(".");
-        self.write(&prop_name);
         if is_exported {
             self.write(")");
         }
