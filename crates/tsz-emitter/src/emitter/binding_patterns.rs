@@ -390,12 +390,14 @@ impl<'a> Printer<'a> {
                     emitted_prefix = true;
                 } else {
                     source_name = self.get_temp_var_name();
-                    // Emit: { nonRest } = temp = initializer
-                    self.emit_object_pattern_without_rest(&non_rest_elements);
-                    self.write(" = ");
-                    self.write(&source_name.clone());
+                    // Emit: temp = initializer, { nonRest } = temp
+                    self.write(&source_name);
                     self.write(" = ");
                     self.emit_expression(initializer_idx);
+                    self.write(", ");
+                    self.emit_object_pattern_without_rest(&non_rest_elements);
+                    self.write(" = ");
+                    self.write(&source_name);
                     emitted_prefix = true;
                 }
             }
