@@ -304,7 +304,15 @@ impl<'a> CheckerState<'a> {
         // correct diagnostic — fall through. Detect this by checking whether
         // `target | undefined` equals the read target: that pattern is the
         // signature of NUIA-widening on a non-optional slot.
-        if self.ctx.compiler_options.no_unchecked_indexed_access {
+        //
+        // Restrict the bail-out to ELEMENT_ACCESS writes, since NUIA only
+        // widens index-signature lookups; named PROPERTY_ACCESS writes always
+        // see `| undefined` from the property's own `?` optionality marker
+        // (or not at all), so the `target | undefined == read_target`
+        // signature is the *normal* shape there and shouldn't disable TS2412.
+        if self.ctx.compiler_options.no_unchecked_indexed_access
+            && write_target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
             let target_with_undef = self
                 .ctx
                 .types
