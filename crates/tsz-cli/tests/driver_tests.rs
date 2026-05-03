@@ -648,6 +648,60 @@ namespace M.P {
 }
 
 #[test]
+fn declaration_emit_typeof_value_reference_uses_relative_namespace_path() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("index.ts"),
+        r#"namespace X.Y.base {
+    export function f() {}
+    export class C {}
+    export namespace M {
+        export var v;
+    }
+    export enum E {}
+}
+
+namespace X.Y.base.Z {
+    export var f = X.Y.base.f;
+    export var C = X.Y.base.C;
+    export var M = X.Y.base.M;
+    export var E = X.Y.base.E;
+}
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "strict": false,
+    "declaration": true
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    compile(&args, base).expect("compile should succeed");
+    let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
+    assert!(
+        dts.contains("var f: typeof base.f;")
+            && dts.contains("var C: typeof base.C;")
+            && dts.contains("var M: typeof base.M;")
+            && dts.contains("var E: typeof base.E;"),
+        "expected namespace-relative typeof references: {dts}"
+    );
+    assert!(
+        !dts.contains("typeof X.Y.base."),
+        "did not expect fully qualified references inside nested namespace: {dts}"
+    );
+}
+
+#[test]
 fn declaration_emit_imported_generic_call_preserves_function_type_argument() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();

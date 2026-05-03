@@ -190,6 +190,15 @@ impl<'a> AsyncES5Emitter<'a> {
         &mut self,
         body_idx: NodeIndex,
     ) -> (String, Vec<String>) {
+        let (body, groups) = self.emit_simple_generator_body_with_hoisted_var_groups(body_idx);
+        let hoisted = groups.into_iter().flatten().collect();
+        (body, hoisted)
+    }
+
+    pub fn emit_simple_generator_body_with_hoisted_var_groups(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> (String, Vec<Vec<String>>) {
         let (body, hoisted, _) = self.emit_generator_body_and_hoisted_vars(body_idx, false);
         (body, hoisted)
     }
@@ -199,6 +208,14 @@ impl<'a> AsyncES5Emitter<'a> {
         &mut self,
         body_idx: NodeIndex,
     ) -> (String, Vec<String>, Vec<String>) {
+        let (body, groups, directives) = self.emit_generator_body_and_hoisted_vars(body_idx, true);
+        (body, groups.into_iter().flatten().collect(), directives)
+    }
+
+    pub fn emit_generator_body_with_await_and_hoisted_var_groups(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> (String, Vec<Vec<String>>, Vec<String>) {
         self.emit_generator_body_and_hoisted_vars(body_idx, true)
     }
 
@@ -206,19 +223,24 @@ impl<'a> AsyncES5Emitter<'a> {
         &mut self,
         body_idx: NodeIndex,
         has_await: bool,
-    ) -> (String, Vec<String>, Vec<String>) {
+    ) -> (String, Vec<Vec<String>>, Vec<String>) {
         let mut ir = self
             .transformer
             .transform_generator_body(body_idx, has_await);
         let directives = Self::extract_and_remove_directive_prologue(&mut ir);
-        let hoisted = AsyncES5Transformer::extract_and_remove_var_decls(&mut ir);
+        let hoisted = AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut ir);
         let mut printer = IRPrinter::with_arena(self.arena);
         if let Some(text) = self.source_text {
             printer.set_source_text(text);
         }
         printer.set_indent_level(self.indent_level);
         printer.set_tslib_prefix(self.tslib_prefix);
-        printer.set_generator_state_name(IRPrinter::generator_state_name_for_hoisted(&hoisted));
+        let hoisted_names: Vec<&str> = hoisted
+            .iter()
+            .flat_map(|group| group.iter().map(String::as_str))
+            .collect();
+        printer
+            .set_generator_state_name(IRPrinter::generator_state_name_for_hoisted(&hoisted_names));
         printer.emit(&ir);
         (printer.take_output(), hoisted, directives)
     }

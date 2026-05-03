@@ -1185,7 +1185,54 @@ impl<'a> DeclarationEmitter<'a> {
         let reference_text = self
             .nameable_constructor_expression_text(expr_idx)
             .or_else(|| self.get_identifier_text(expr_idx))?;
+        let reference_text = self.relative_value_reference_text(&reference_text);
         Some(format!("typeof {reference_text}"))
+    }
+
+    pub(in crate::declaration_emitter) fn relative_value_reference_text(
+        &self,
+        reference_text: &str,
+    ) -> String {
+        let Some(enclosing_sym_id) = self.enclosing_namespace_symbol else {
+            return reference_text.to_string();
+        };
+        let Some(binder) = self.binder else {
+            return reference_text.to_string();
+        };
+
+        let mut enclosing_parts = Vec::new();
+        let mut current = enclosing_sym_id;
+        while current != SymbolId::NONE {
+            let Some(symbol) = binder.symbols.get(current) else {
+                break;
+            };
+            if !symbol.escaped_name.starts_with('"')
+                && !symbol.escaped_name.starts_with("__")
+                && symbol
+                    .escaped_name
+                    .chars()
+                    .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+            {
+                enclosing_parts.push(symbol.escaped_name.as_str());
+            }
+            current = symbol.parent;
+        }
+        enclosing_parts.reverse();
+        if enclosing_parts.len() < 2 {
+            return reference_text.to_string();
+        }
+
+        let reference_parts: Vec<&str> = reference_text.split('.').collect();
+        let common_len = reference_parts
+            .iter()
+            .zip(enclosing_parts.iter())
+            .take_while(|(left, right)| left == right)
+            .count();
+        if common_len < 2 || common_len >= reference_parts.len() {
+            return reference_text.to_string();
+        }
+
+        reference_parts[common_len - 1..].join(".")
     }
 
     pub(in crate::declaration_emitter) fn value_reference_symbol_needs_typeof(
