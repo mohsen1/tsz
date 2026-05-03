@@ -1357,15 +1357,14 @@ ensure_rxjs_fixture() {
 {
   "compilerOptions": {
     "target": "es2017",
-    "module": "commonjs",
+    "module": "esnext",
     "strict": true,
     "lib": ["es2018", "dom"],
     "types": [],
     "skipLibCheck": true,
     "noEmit": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "ignoreDeprecations": "6.0"
+    "moduleResolution": "bundler"
   },
   "include": ["${rxjs_src_root}/internal/**/*.ts"],
   "exclude": [
@@ -1414,8 +1413,7 @@ ensure_type_fest_fixture() {
     "skipLibCheck": true,
     "noEmit": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "ignoreDeprecations": "6.0"
+    "moduleResolution": "bundler"
   },
   "include": ["source/**/*.d.ts", "index.d.ts"],
   "exclude": ["test-d/**/*", "node_modules/**/*"]
