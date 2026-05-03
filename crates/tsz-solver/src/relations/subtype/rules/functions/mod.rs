@@ -458,6 +458,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.in_callback_param_check = saved_in_callback;
                 return true;
             }
+            // The first `check_subtype` consumed `in_callback_param_check`
+            // inside `check_function_subtype_impl` (it captures and resets the
+            // flag at function entry). Restore it so the covariant retry sees
+            // the same callback-mode state as the bivariant attempt; otherwise
+            // the inner method-bivariance loosening would silently re-enable
+            // and accept assignments that strict-callback should reject.
+            if entering_callback_check {
+                self.in_callback_param_check = true;
+            }
             // If contravariant fails, try covariant: Source <: Target
             self.check_subtype(source_type, target_type).is_true()
         };

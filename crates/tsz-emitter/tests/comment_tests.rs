@@ -112,6 +112,10 @@ fn object_literal_property_comments_stay_around_function_value() {
         output.contains("    } /* trailing comment 1*/,"),
         "Trailing block comment before a property comma should stay before the comma.\nOutput:\n{output}"
     );
+    assert!(
+        output.contains("    } /* trailing comment 1*/,\n"),
+        "Pre-comma trailing block comment should not leave a space after the comma.\nOutput:\n{output}"
+    );
 }
 
 #[test]
@@ -149,6 +153,66 @@ fn es5_object_literal_method_comments_stay_on_members() {
     assert!(
         output.contains("    } /*trailing 1*/,\n    //setter\n    set a(value) {"),
         "Accessor trailing and next-member leading comments should not drift into parameters.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_literal_line_comment_before_next_line_comma_keeps_comma_outside_comment() {
+    // Regression test for Devin 🔴: when a property value is followed by a
+    // line comment (`// …`) and the comma is on the next source line, the
+    // emitter must not place the comma inside the line comment.
+    let source = r#"var Person = makeClass(
+   {
+       initialize: function(name) {
+           this.name = name;
+       } // trailing
+       ,
+       second: 2,
+   }
+);"#;
+
+    let output = parse_and_print(source);
+
+    // The comma must NEVER end up after the `// trailing` text on the same
+    // output line — that would place it inside the line comment.
+    assert!(
+        !output.contains("// trailing,"),
+        "Comma must not end up inside the line comment.\nOutput:\n{output}"
+    );
+    // The line comment must still be preserved somewhere in the output.
+    assert!(
+        output.contains("// trailing"),
+        "Line comment should still be preserved in the output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_literal_non_last_property_pre_comma_block_comment_no_trailing_space() {
+    // Regression test for Devin 🟡: a non-last property with a pre-comma
+    // block comment should not produce a spurious trailing space before the
+    // newline (e.g. `} /* c */, \n`).
+    let source = r#"var Person = makeClass(
+   {
+       initialize: function(name) {
+           this.name = name;
+       } /* trailing */,
+       second: function() {
+           return 2;
+       },
+   }
+);"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("} /* trailing */,"),
+        "Pre-comma block comment should be preserved before the comma.\nOutput:\n{output}"
+    );
+    // The line containing `/* trailing */,` must not end with a spurious
+    // trailing space before the newline.
+    assert!(
+        !output.contains("/* trailing */, \n"),
+        "Pre-comma block comment must not leave a spurious space after the comma.\nOutput:\n{output}"
     );
 }
 
