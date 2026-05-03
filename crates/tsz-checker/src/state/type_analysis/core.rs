@@ -527,6 +527,22 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
                         if !self.is_unresolved_import_symbol(qn.left) && !left_name.is_empty() {
+                            // TS1212/TS1213/TS1214: when the lead identifier of a
+                            // qualified type name is a strict-mode reserved word
+                            // (`public.bar`, `private.x`, `interface.B`, ...) and we
+                            // are in strict mode, tsc emits the reserved-word error
+                            // alongside TS2503. The general TypeReference path covers
+                            // bare identifiers; qualified-name resolution lands here
+                            // and was missing the check.
+                            if crate::state_checking::is_strict_mode_reserved_name(
+                                left_name.as_str(),
+                            ) && self.is_strict_mode_for_node(qn.left)
+                            {
+                                self.emit_strict_mode_reserved_word_error_with_ast_walk(
+                                    qn.left,
+                                    left_name.as_str(),
+                                );
+                            }
                             // Route through boundary for TS2503/TS2552 with suggestions
                             let req = crate::query_boundaries::name_resolution::NameResolutionRequest::namespace(
                                 left_name.as_str(),
