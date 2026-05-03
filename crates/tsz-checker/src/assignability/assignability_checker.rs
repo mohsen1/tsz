@@ -686,6 +686,22 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn is_promise_like_application_pair(&self, source: TypeId, target: TypeId) -> bool {
+        fn generic_head(display: &str) -> Option<&str> {
+            display.split_once('<').map(|(head, _)| head.trim())
+        }
+
+        let source_display = self.format_type(source);
+        let target_display = self.format_type(target);
+        let Some(source_head) = generic_head(&source_display) else {
+            return false;
+        };
+        if !source_head.ends_with("Promise") && !source_head.ends_with("PromiseLike") {
+            return false;
+        }
+        generic_head(&target_display) == Some(source_head)
+    }
+
     pub(crate) fn is_nested_same_wrapper_application_assignment(
         &self,
         source: TypeId,
@@ -1857,8 +1873,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Inference-fallback fast path for same-base Application types:
-        // when the source is `Foo<unknown, ...>` (all args `unknown`) AND the
-        // target has at least one `never` arg, treat the source as assignable.
+        // when the source is `FooPromise<unknown, ...>` (all args `unknown`)
+        // and the target is the same promise-like generic with at least one
+        // `never` arg and no concrete non-`never` args, treat the source as
+        // assignable.
         //
         // This handles the common Thenable / Promise inference pattern where
         // a constructor call cannot infer type parameters used only in nested
@@ -1868,15 +1886,12 @@ impl<'a> CheckerState<'a> {
         // which must still be assignable to a declared return type like
         // `EPromise<never, A>`.
         //
-        // The `never` arg requirement keeps this fast path narrow: it doesn't
-        // match user-written `A<unknown>` against `A<string>`, where variance
-        // must be respected (unknown is NOT a subtype of string).
-        if crate::query_boundaries::common::application_info(self.ctx.types, source)
-            .or_else(|| {
-                self.ctx.types.get_display_alias(source).and_then(|alias| {
-                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
-                })
-            })
+        // The promise-like and target-arg requirements keep this fast path
+        // narrow: it doesn't match user-written `A<unknown>` against
+        // `A<string>`, `A<never>`, or `A<never, string>`, where variance must
+        // be respected.
+        if self
+            .application_info_or_display_alias(source)
             .zip(crate::query_boundaries::common::application_info(
                 self.ctx.types,
                 target,
@@ -1887,6 +1902,15 @@ impl<'a> CheckerState<'a> {
                     && !source_args.is_empty()
                     && source_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
                     && target_args.contains(&TypeId::NEVER)
+                    && target_args.iter().any(|&arg| arg != TypeId::NEVER)
+                    && target_args.iter().all(|&arg| {
+                        matches!(arg, TypeId::UNKNOWN | TypeId::NEVER)
+                            || crate::query_boundaries::common::is_type_parameter_like(
+                                self.ctx.types,
+                                arg,
+                            )
+                    })
+                    && self.is_promise_like_application_pair(source, target)
             })
         {
             return true;
