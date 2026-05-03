@@ -116,6 +116,8 @@ function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): v
   if (opts.removeComments) args.push('--removeComments');
   if (opts.stripInternal) args.push('--stripInternal');
   if (opts.outFile) args.push('--outFile', opts.outFile);
+  if (opts.outDir) args.push('--outDir', opts.outDir);
+  if (opts.rootDir) args.push('--rootDir', opts.rootDir);
 }
 
 function dedupeUseStrictPreamble(text: string): string {
@@ -447,6 +449,8 @@ export class CliTranspiler {
         removeComments,
         stripInternal,
         outFile,
+        outDir,
+        rootDir,
       });
       const trailingArgs = ['--target', targetArg, '--module', moduleArg, ...inputFiles];
       args.push(...trailingArgs);
@@ -537,6 +541,8 @@ export class CliTranspiler {
             removeComments,
             stripInternal,
             outFile,
+            outDir,
+            rootDir,
           });
           retryArgs.push(...trailingArgs);
           await runWithArgs(retryArgs);

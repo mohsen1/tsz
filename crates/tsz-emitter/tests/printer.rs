@@ -491,6 +491,60 @@ fn test_amd_export_import_namespace_alias_emits_export_assignment() {
 }
 
 #[test]
+fn amd_known_declaration_file_without_bang_module_is_stripped() {
+    let declarations = r#"declare module "regular" {
+    export const value: number;
+}
+"#;
+    let source = r#"/// <reference path="types.d.ts"/>
+
+import value from "loader!module";
+export const y = value;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut declaration_file = parser.arena.source_files[0].clone();
+    declaration_file.file_name = "types.d.ts".to_string();
+    declaration_file.text = std::sync::Arc::from(declarations);
+    declaration_file.is_declaration_file = true;
+    parser.arena.source_files.push(declaration_file);
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        !output.contains("/// <reference"),
+        "Known .d.ts files that do not declare the imported bang module should not be preserved by the source-text fallback.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn amd_missing_declaration_fallback_ignores_exported_string_with_bang() {
+    let source = r#"/// <reference path="missing.d.ts"/>
+export const msg = "Hello!";
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !output.contains("/// <reference"),
+        "Fallback bang-module detection should ignore non-module export declarations with string literals.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_export_import_namespace_alias_keeps_export_equals() {
     let source = "namespace x { interface c {} }\nexport import a = x.c;\nexport = x;\n";
     let output = parse_lower_print(

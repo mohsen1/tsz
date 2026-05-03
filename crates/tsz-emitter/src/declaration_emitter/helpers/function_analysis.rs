@@ -816,6 +816,10 @@ impl<'a> DeclarationEmitter<'a> {
             .iter()
             .any(|member| member.namespace_member_name.is_none());
         let mut export_aliases: Vec<(String, String)> = Vec::new();
+        let mut reserved_member_names: FxHashSet<String> = namespace_members
+            .iter()
+            .filter_map(|member| member.namespace_member_name.clone())
+            .collect();
         let mut synthetic_member_count = 0usize;
         for member in namespace_members {
             let namespace_member_name = if let Some(namespace_member_name) =
@@ -823,8 +827,13 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 namespace_member_name.to_string()
             } else {
-                let synthetic_name = Self::late_bound_synthetic_member_name(synthetic_member_count);
-                synthetic_member_count += 1;
+                let synthetic_name = loop {
+                    let candidate = Self::late_bound_synthetic_member_name(synthetic_member_count);
+                    synthetic_member_count += 1;
+                    if reserved_member_names.insert(candidate.clone()) {
+                        break candidate;
+                    }
+                };
                 export_aliases.push((synthetic_name.clone(), member.property_name_text.clone()));
                 synthetic_name
             };

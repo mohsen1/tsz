@@ -185,6 +185,36 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn legacy_decorated_es5_class_with_static_accessor_and_block_declares_alias_once() {
+        let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static get value() { return 1; }\n    static { Foo.value; }\n    static func(): Foo {\n        return new Foo();\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.matches("var Foo_1;").count(),
+            1,
+            "Decorated class self-reference alias should be declared once when deferred static blocks share the static initializer queue.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_1();"),
+            "Static method should still reference the decorator-stable alias.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn decorator_metadata_conditional_type_uses_common_branch_runtime_type() {
         let source = "declare function d(): PropertyDecorator;\nabstract class BaseEntity<T> {\n    @d()\n    public attributes: T extends { attributes: infer A } ? A : undefined;\n}\nclass C {\n    @d()\n    x: number extends string ? false : true;\n}\n";
 
