@@ -175,6 +175,14 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Class declarations may only have ONE `extends` clause. Subsequent
+        // extends clauses are parser errors (TS1172 'extends' clause already
+        // seen). tsc does not resolve type names within the duplicate clause,
+        // so we skip them here too — otherwise the names would surface as
+        // spurious TS2304 ("Cannot find name") cascades on top of the parser
+        // error.
+        let mut class_extends_seen = false;
+
         for &clause_idx in &clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
                 continue;
@@ -190,6 +198,13 @@ impl<'a> CheckerState<'a> {
 
             // Check if this is an extends clause (for TS2507 errors)
             let is_extends_clause = heritage.token == SyntaxKind::ExtendsKeyword as u16;
+
+            if is_class_declaration && is_extends_clause {
+                if class_extends_seen {
+                    continue;
+                }
+                class_extends_seen = true;
+            }
 
             // Check each type in the heritage clause.
             // For class `extends`, only check the first type -- additional types

@@ -346,6 +346,9 @@ mod array_isarray_mutual_subtype_narrowing_tests;
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
+#[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
+mod class_duplicate_extends_skip_resolution_tests;
+#[cfg(test)]
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
 #[cfg(test)]
