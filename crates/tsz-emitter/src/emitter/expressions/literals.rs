@@ -709,7 +709,20 @@ impl<'a> Printer<'a> {
                     });
                 if needs_comma {
                     if let Some(comma_pos) = self.find_comma_pos_after(token_end, node.end) {
-                        self.emit_trailing_comments_before(token_end, comma_pos);
+                        // Only emit pre-comma trailing comments when the comma is on
+                        // the same source line as the value. Otherwise, a line comment
+                        // (`// …`) between the value and a next-line comma would
+                        // swallow the comma when written to the same output line
+                        // (e.g. `a: 1 // comment,`), producing invalid JS.
+                        let comma_same_line = self.source_text.is_some_and(|text| {
+                            let bytes = text.as_bytes();
+                            let from = std::cmp::min(token_end as usize, bytes.len());
+                            let to = std::cmp::min(comma_pos as usize, bytes.len());
+                            !bytes[from..to].iter().any(|&b| b == b'\n' || b == b'\r')
+                        });
+                        if comma_same_line {
+                            self.emit_trailing_comments_before(token_end, comma_pos);
+                        }
                     }
                     self.write(",");
                 }
@@ -718,25 +731,13 @@ impl<'a> Printer<'a> {
                 if !is_last {
                     let next_prop = emitted_properties[i + 1];
                     let next_pos = self.arena.get(next_prop).map_or(prop_node.end, |n| n.pos);
-                    // Check if there's a trailing comment on the same line after the comma
-                    // If so, add a space between the comma and the comment
-                    let has_same_line_comment = self.source_text.is_some_and(|text| {
-                        let from = token_end as usize;
-                        let to = std::cmp::min(next_pos as usize, text.len());
-                        if from >= to {
-                            return false;
-                        }
-                        let gap = &text[from..to];
-                        // Check for comment on same line (no newline before comment start)
-                        // Handles both // line comments and /* block comments
-                        if let Some(slash_pos) = gap.find("//") {
-                            !gap[..slash_pos].contains('\n')
-                        } else if let Some(block_pos) = gap.find("/*") {
-                            !gap[..block_pos].contains('\n')
-                        } else {
-                            false
-                        }
-                    });
+                    // Check if there's an UNEMITTED trailing comment on the same line
+                    // after the comma. We can't rely on raw source text alone because
+                    // pre-comma comments may have already been emitted above; doing so
+                    // here would re-trigger a leading space before nothing (resulting
+                    // in a spurious trailing space before the newline).
+                    let has_same_line_comment =
+                        self.has_trailing_comment_on_same_line(token_end, next_pos);
                     let same_line = self.are_on_same_line_in_source(prop, next_prop);
                     if has_same_line_comment {
                         // Same-line trailing comment after comma: space before comment
