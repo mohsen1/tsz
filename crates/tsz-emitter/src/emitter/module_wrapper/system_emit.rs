@@ -1506,6 +1506,37 @@ impl<'a> Printer<'a> {
         let Some(name_node) = self.arena.get(decl.name) else {
             return false;
         };
+        if self.binding_pattern_is_empty(decl.name) {
+            let (source_temp, export_temp) = self
+                .arena
+                .get(decl.name)
+                .and_then(|name| self.system_empty_binding_temps.get(&name.pos).cloned())
+                .or_else(|| {
+                    let temp = self.make_unique_name();
+                    Some((temp, None))
+                })
+                .unwrap_or_default();
+            if is_exported
+                && self.ctx.target_es5
+                && let Some(export_temp) = export_temp
+            {
+                self.write("exports_1(\"");
+                self.write(&export_temp);
+                self.write("\", ");
+                self.write(&export_temp);
+                self.write(" = ");
+                self.write(&source_temp);
+                self.write(" = ");
+                self.emit_expression(decl.initializer);
+                self.write(");");
+            } else {
+                self.write(&source_temp);
+                self.write(" = ");
+                self.emit_expression(decl.initializer);
+                self.write_semicolon();
+            }
+            return true;
+        }
         if name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
             return false;
         }

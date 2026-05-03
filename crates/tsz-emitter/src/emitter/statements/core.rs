@@ -1,4 +1,4 @@
-use super::super::{Printer, get_trailing_comment_ranges};
+use super::super::{ModuleKind, Printer, get_trailing_comment_ranges};
 use crate::safe_slice;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::node_flags;
@@ -661,6 +661,19 @@ impl<'a> Printer<'a> {
         } else {
             Vec::new()
         };
+
+        let is_es_module_export = self.ctx.target_es5
+            && matches!(
+                self.ctx.options.module,
+                ModuleKind::ES2015 | ModuleKind::ESNext
+            )
+            && self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
+        if is_es_module_export && self.emit_es5_empty_binding_pattern_export(&var_stmt.declarations)
+        {
+            return;
+        }
 
         // Lower `using`/`await using` declarations below ES2025.
         // When block_using_env is set, the block-level try/catch is already active,
@@ -1519,6 +1532,52 @@ impl<'a> Printer<'a> {
             }
         }
         names
+    }
+
+    fn emit_es5_empty_binding_pattern_export(&mut self, declarations: &NodeList) -> bool {
+        let mut initializers = Vec::new();
+
+        for &decl_list_idx in &declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                return false;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                return false;
+            };
+
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    return false;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    return false;
+                };
+                if !self.binding_pattern_is_empty(decl.name) || decl.initializer.is_none() {
+                    return false;
+                }
+                initializers.push(decl.initializer);
+            }
+        }
+
+        if initializers.is_empty() {
+            return false;
+        }
+
+        for (index, initializer) in initializers.iter().copied().enumerate() {
+            if index > 0 {
+                self.write_line();
+            }
+            let source_temp = self.make_unique_name_hoisted();
+            let export_temp = self.make_unique_name();
+            self.write("var ");
+            self.write(&export_temp);
+            self.write(" = ");
+            self.write(&source_temp);
+            self.write(" = ");
+            self.emit(initializer);
+            self.write_semicolon();
+        }
+        true
     }
 
     pub(in crate::emitter) fn collect_binding_names(
