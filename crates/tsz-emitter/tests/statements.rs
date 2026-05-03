@@ -668,6 +668,22 @@ fn multiline_comment_top_level_preserved() {
     );
 }
 
+/// Standard JSDoc with `*` continuation lines must keep the closing `*/`
+/// space-prefixed so it visually aligns with the ` *` column above. This
+/// guards against an over-broad fix where every `*/` line was emitted
+/// flush, breaking alignment of the common JSDoc shape.
+/// Regression test for Devin review on PR #2554.
+#[test]
+fn jsdoc_closing_star_slash_aligns_with_continuation() {
+    let source = "/**\n * Gets the value.\n */\nfunction getValue() { return 1; }\n";
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("/**\n * Gets the value.\n */"),
+        "Closing */ must keep a leading space to align with the * continuation line.\nOutput:\n{output}"
+    );
+}
+
 /// Non-block else body should be on a new indented line,
 /// e.g., `else\n    return;` — matching tsc behavior.
 #[test]
