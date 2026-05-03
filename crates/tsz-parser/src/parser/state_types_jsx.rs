@@ -744,15 +744,15 @@ impl ParserState {
                         "'</' expected.",
                         tsz_common::diagnostics::diagnostic_codes::EXPECTED,
                     );
-                    // Synthesize a closing element that mirrors the opener
-                    // so the downstream tag-mismatch check stays quiet
-                    // (we already emitted the TS1005 above).
+                    // Synthesize an empty closing element. TSC emits `<div></>`
+                    // for this conflict-marker recovery, and we already emitted
+                    // the TS1005 above so the tag-mismatch check should stay quiet.
                     self.arena.add_jsx_closing(
                         syntax_kind_ext::JSX_CLOSING_ELEMENT,
                         anchor,
                         anchor,
                         crate::parser::node::JsxClosingData {
-                            tag_name: opening_tag_name.unwrap_or(NodeIndex::NONE),
+                            tag_name: NodeIndex::NONE,
                         },
                     )
                 } else {
@@ -764,7 +764,7 @@ impl ParserState {
                     && let Some(close_data) = self.arena.get_jsx_closing(close_node)
                 {
                     let close_tag = close_data.tag_name;
-                    if !self.jsx_tag_names_match(open_tag, close_tag) {
+                    if !close_tag.is_none() && !self.jsx_tag_names_match(open_tag, close_tag) {
                         // Check if closing matches parent's tag (tsc pattern)
                         let matches_parent = currently_opened_tag
                             .is_some_and(|pt| self.jsx_tag_names_match(pt, close_tag));
