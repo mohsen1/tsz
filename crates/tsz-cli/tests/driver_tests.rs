@@ -702,6 +702,74 @@ namespace X.Y.base.Z {
 }
 
 #[test]
+fn declaration_emit_local_annotation_alias_preserves_class_instance_references() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("index.ts"),
+        r#"namespace m {
+    class private1 {}
+    namespace m2 {
+        export class public1 {}
+    }
+
+    export var x: {
+        x: private1;
+        y: m2.public1;
+        (): m2.public1[];
+        method(): private1;
+        [n: number]: private1;
+        [s: string]: m2.public1;
+    };
+    export var x3 = x;
+
+    export var y: (a: private1) => m2.public1;
+    export var y2 = y;
+
+    export var z: new (a: private1) => m2.public1;
+    export var z2 = z;
+}
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "declaration": true,
+    "module": "commonjs"
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    compile(&args, base).expect("compile should succeed");
+    let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
+    assert!(
+        dts.contains("export var y2: (a: private1) => m2.public1;"),
+        "expected inferred function alias to reuse source annotation: {dts}"
+    );
+    assert!(
+        dts.contains("export var z2: new (a: private1) => m2.public1;"),
+        "expected inferred constructor alias to reuse source annotation: {dts}"
+    );
+    assert!(
+        dts.contains(
+            "export var x3: {\n        (): m2.public1[];\n        [n: number]: private1;\n        [s: string]: m2.public1;\n        x: private1;"
+        ),
+        "expected inferred callable object alias to keep instance type refs and index order: {dts}"
+    );
+    assert!(
+        !dts.contains("typeof private1") && !dts.contains("=> any"),
+        "reused annotation should not degrade class instance refs: {dts}"
+    );
+}
+
+#[test]
 fn declaration_emit_imported_generic_call_preserves_function_type_argument() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
