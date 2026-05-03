@@ -1,6 +1,8 @@
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::static_element_access_key_text_in_arena;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 /// Prototype-derived members collected from sibling statements surrounding a
@@ -239,7 +241,7 @@ impl<'a> CheckerState<'a> {
     fn collect_object_literal_prototype_bindings(
         &mut self,
         object_idx: NodeIndex,
-        parent_sym: tsz_binder::SymbolId,
+        parent_sym: Option<tsz_binder::SymbolId>,
         method_bindings: &mut Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
     ) {
         use tsz_parser::parser::syntax_kind_ext;
@@ -298,7 +300,7 @@ impl<'a> CheckerState<'a> {
                         is_method: true,
                         is_class_prototype: false,
                         visibility: tsz_solver::Visibility::Public,
-                        parent_id: Some(parent_sym),
+                        parent_id: parent_sym,
                         declaration_order: 0,
                         is_string_named: false,
                         single_quoted_name: false,
@@ -354,7 +356,7 @@ impl<'a> CheckerState<'a> {
                     is_method,
                     is_class_prototype: false,
                     visibility: tsz_solver::Visibility::Public,
-                    parent_id: Some(parent_sym),
+                    parent_id: parent_sym,
                     declaration_order: 0,
                     is_string_named: false,
                     single_quoted_name: false,
@@ -367,7 +369,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         expr_idx: NodeIndex,
         func_name: &str,
-        parent_sym: tsz_binder::SymbolId,
+        parent_sym: Option<tsz_binder::SymbolId>,
         method_bindings: &mut Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
         has_prototype_evidence: &mut bool,
     ) {
@@ -413,8 +415,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn access_matches_function_prototype(&self, access_idx: NodeIndex, func_name: &str) -> bool {
-        use tsz_scanner::SyntaxKind;
-
         let Some(access_node) = self.ctx.arena.get(access_idx) else {
             return false;
         };
@@ -424,16 +424,11 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(access_node) else {
             return false;
         };
-        let Some(base_node) = self.ctx.arena.get(access.expression) else {
-            return false;
-        };
-        if base_node.kind != SyntaxKind::Identifier as u16 {
-            return false;
-        }
-        let Some(base_ident) = self.ctx.arena.get_identifier(base_node) else {
-            return false;
-        };
-        if base_ident.escaped_text != func_name {
+        if self
+            .property_access_chain_text(access.expression)
+            .as_deref()
+            != Some(func_name)
+        {
             return false;
         }
         let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
@@ -443,6 +438,36 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         name_ident.escaped_text == "prototype"
+    }
+
+    pub(crate) fn property_access_chain_text(&self, idx: NodeIndex) -> Option<String> {
+        if let Some(text) = self.ctx.arena.identifier_text_owned(idx) {
+            return Some(text);
+        }
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                let left = self.property_access_chain_text(access.expression)?;
+                let right = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)?
+                    .escaped_text
+                    .clone();
+                Some(format!("{left}.{right}"))
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                let left = self.property_access_chain_text(access.expression)?;
+                let right = static_element_access_key_text_in_arena(
+                    self.ctx.arena,
+                    access.name_or_argument,
+                )?;
+                Some(format!("{left}.{right}"))
+            }
+            _ => None,
+        }
     }
 
     fn js_prototype_binding_literal_name(&self, name_idx: NodeIndex) -> Option<String> {
@@ -507,7 +532,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         func_decl_idx: NodeIndex,
         func_name: &str,
-        parent_sym: tsz_binder::SymbolId,
+        parent_sym: Option<tsz_binder::SymbolId>,
     ) -> PrototypeMembers {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
@@ -532,6 +557,23 @@ impl<'a> CheckerState<'a> {
             }
         };
 
+        while parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let Some(grandparent_idx) = self.ctx.arena.get_extended(parent_idx).map(|e| e.parent)
+            else {
+                break;
+            };
+            let Some(grandparent) = self.ctx.arena.get(grandparent_idx) else {
+                break;
+            };
+            parent_idx = grandparent_idx;
+            parent_node = grandparent;
+        }
+        if parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            && let Some(grandparent_idx) = self.ctx.arena.get_extended(parent_idx).map(|e| e.parent)
+            && let Some(grandparent) = self.ctx.arena.get(grandparent_idx)
+        {
+            parent_node = grandparent;
+        }
         if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
             && let Some(grandparent_idx) = self.ctx.arena.get_extended(parent_idx).map(|e| e.parent)
             && let Some(grandparent) = self.ctx.arena.get(grandparent_idx)
@@ -592,7 +634,7 @@ impl<'a> CheckerState<'a> {
                         method_bindings.len() as u32,
                     )
                 {
-                    prop.parent_id = Some(parent_sym);
+                    prop.parent_id = parent_sym;
                     let name_atom = prop.name;
                     method_bindings.push((name_atom, prop));
                 }
@@ -682,7 +724,7 @@ impl<'a> CheckerState<'a> {
                         is_method: is_method_like,
                         is_class_prototype: false,
                         visibility: tsz_solver::Visibility::Public,
-                        parent_id: Some(parent_sym),
+                        parent_id: parent_sym,
                         declaration_order: 0,
                         is_string_named: false,
                         single_quoted_name: false,
@@ -711,13 +753,13 @@ impl<'a> CheckerState<'a> {
             self.collect_js_constructor_this_properties(
                 method_body,
                 &mut method_this_props,
-                Some(parent_sym),
+                parent_sym,
                 false,
             );
             self.collect_nested_arrow_this_properties(
                 method_body,
                 &mut method_this_props,
-                Some(parent_sym),
+                parent_sym,
             );
 
             for (name, prop) in method_this_props {

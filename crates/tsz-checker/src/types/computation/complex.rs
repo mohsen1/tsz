@@ -1312,6 +1312,19 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             }
             CallResult::NotCallable { .. } => {
+                // Checked-JS constructor functions can be discovered from prototype
+                // evidence even when an expando/self-defaulting property access has
+                // lost its callable surface before reaching the solver.
+                if self.ctx.is_js_file()
+                    && let Some(instance_type) = self.synthesize_js_constructor_instance_type(
+                        new_expr.expression,
+                        constructor_type,
+                        &arg_types,
+                    )
+                {
+                    return instance_type;
+                }
+
                 // In circular class-resolution scenarios, class constructor targets can
                 // transiently lose construct signatures. TypeScript suppresses TS2351
                 // here and reports the underlying class/argument diagnostics instead.
