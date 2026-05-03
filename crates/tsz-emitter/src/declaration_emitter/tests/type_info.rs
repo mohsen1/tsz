@@ -1005,6 +1005,34 @@ var d = {
     );
 }
 
+#[test]
+fn test_nested_namespace_enum_value_typeof_uses_relative_reference() {
+    let output = emit_dts_with_binding(
+        r#"
+namespace A.B.C {
+    export enum e {
+        weekday,
+        weekend,
+    }
+}
+namespace A.B.D {
+    export var d = {
+        me: { en: A.B.C.e },
+    };
+}
+"#,
+    );
+
+    assert!(
+        output.contains("en: typeof B.C.e;"),
+        "Expected enum object value typeof reference to be relative inside nested namespace: {output}"
+    );
+    assert!(
+        !output.contains("en: typeof A.B.C.e;"),
+        "Did not expect nested namespace typeof reference to stay fully qualified: {output}"
+    );
+}
+
 /// Regression test for `declarationEmitShadowingInferNotRenamed`: a single
 /// non-abstract construct signature must render as `new (...) => T` (matching
 /// tsc), and an `Infer(T)` placeholder appearing inside the extends clause of
