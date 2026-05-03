@@ -488,9 +488,11 @@ impl<'a> Printer<'a> {
 
             let c_pos = comment.pos;
             let c_end = comment.end;
+            let mut emitted_is_line_comment = false;
             if let Ok(comment_text) = crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
                 && !comment_text.is_empty()
             {
+                emitted_is_line_comment = comment_text.starts_with("//");
                 self.write_comment_with_reindent(comment_text, Some(c_pos));
             }
             self.comment_emit_idx = scan_idx + 1;
@@ -509,7 +511,12 @@ impl<'a> Printer<'a> {
                 .is_some_and(|gap| gap.iter().any(|&b| b == b'\n' || b == b'\r'));
 
             if next_pos == target_pos {
-                if preserve_newline_before_comment
+                if emitted_is_line_comment && has_newline_after {
+                    // Line comments extend to end-of-line. We MUST emit a
+                    // newline before the operand or it gets swallowed into
+                    // the comment.
+                    self.write_line();
+                } else if preserve_newline_before_comment
                     && first_comment_started_on_later_line
                     && has_newline_after
                 {
@@ -517,6 +524,10 @@ impl<'a> Printer<'a> {
                 } else if preserve_newline_before_comment && first_comment_started_on_later_line {
                     self.write_space();
                 }
+            } else if emitted_is_line_comment && has_newline_after {
+                // Same reasoning as above: protect the next comment from
+                // being absorbed into a `//` comment.
+                self.write_line();
             } else if preserve_newline_before_comment && has_newline_after {
                 self.write_line();
             } else {
