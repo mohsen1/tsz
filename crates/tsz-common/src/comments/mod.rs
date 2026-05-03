@@ -161,6 +161,11 @@ fn skip_quoted_string(bytes: &[u8], start: usize, quote: u8) -> usize {
         match bytes[pos] {
             b'\\' => pos = (pos + 2).min(bytes.len()),
             ch if ch == quote => return pos + 1,
+            // JS/TS single-line string literals cannot contain raw newlines.
+            // If we hit one, treat the string as terminated and let the main
+            // scanner resume at the newline so subsequent comments are still
+            // detected.
+            b'\n' | b'\r' => return pos,
             _ => pos += 1,
         }
     }
