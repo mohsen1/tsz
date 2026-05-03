@@ -1049,6 +1049,9 @@ impl<'a> Printer<'a> {
                         &mut seen,
                     );
                 }
+                self.collect_system_nested_top_level_var_hoisted_names(
+                    stmt_idx, &mut names, &mut seen,
+                );
                 if has_top_level_using {
                     let needs_default_temp = (stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                         && self
@@ -1110,6 +1113,159 @@ impl<'a> Printer<'a> {
         }
 
         names
+    }
+
+    fn collect_system_nested_top_level_var_hoisted_names(
+        &mut self,
+        idx: NodeIndex,
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) {
+        if idx.is_none() {
+            return;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if self.top_level_hoisted_var_statement_is_var(node) {
+                    self.collect_system_variable_hoisted_names(node, false, names, seen);
+                }
+            }
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                if let Some(block) = self.arena.get_block(node) {
+                    let statements = block.statements.nodes.clone();
+                    for stmt in statements {
+                        self.collect_system_nested_top_level_var_hoisted_names(stmt, names, seen);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.arena.get_if_statement(node) {
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        if_stmt.then_statement,
+                        names,
+                        seen,
+                    );
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        if_stmt.else_statement,
+                        names,
+                        seen,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT =>
+            {
+                if let Some(loop_data) = self.arena.get_loop(node) {
+                    self.collect_var_names_from_initializer(loop_data.initializer, names, seen);
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        loop_data.statement,
+                        names,
+                        seen,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+            {
+                if let Some(for_data) = self.arena.get_for_in_of(node) {
+                    self.collect_var_names_from_initializer(for_data.initializer, names, seen);
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        for_data.statement,
+                        names,
+                        seen,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_stmt) = self.arena.get_switch(node) {
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        switch_stmt.case_block,
+                        names,
+                        seen,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                if let Some(clause) = self.arena.get_case_clause(node) {
+                    let statements = clause.statements.nodes.clone();
+                    for stmt in statements {
+                        self.collect_system_nested_top_level_var_hoisted_names(stmt, names, seen);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_stmt) = self.arena.get_try(node) {
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        try_stmt.try_block,
+                        names,
+                        seen,
+                    );
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        try_stmt.catch_clause,
+                        names,
+                        seen,
+                    );
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        try_stmt.finally_block,
+                        names,
+                        seen,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_clause) = self.arena.get_catch_clause(node) {
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        catch_clause.block,
+                        names,
+                        seen,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(node) {
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        labeled.statement,
+                        names,
+                        seen,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                if let Some(with_stmt) = self.arena.get_with_statement(node) {
+                    self.collect_system_nested_top_level_var_hoisted_names(
+                        with_stmt.then_statement,
+                        names,
+                        seen,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn top_level_hoisted_var_statement_is_var(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        if self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return false;
+        }
+        var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
+            self.arena.get(decl_list_idx).is_some_and(|decl_list_node| {
+                !tsz_parser::parser::node_flags::is_let_or_const(decl_list_node.flags as u32)
+            })
+        })
     }
 
     fn collect_system_variable_hoisted_names(

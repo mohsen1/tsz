@@ -206,6 +206,25 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let hoisted_initializer_exports =
+            self.deferred_exported_var_initializers(loop_stmt.initializer);
+        if hoisted_initializer_exports.len() == 1 {
+            let (local_name, export_name, init_idx) = &hoisted_initializer_exports[0];
+            self.write("var ");
+            self.write(local_name);
+            self.write(" = ");
+            self.emit(*init_idx);
+            self.write(";");
+            self.write_line();
+            self.write_export_binding_start(export_name);
+            self.write(local_name);
+            self.write_export_binding_end();
+            if self.in_system_execute_body {
+                self.system_folded_export_names.insert(local_name.clone());
+            }
+            self.write_line();
+        }
+
         // Pre-locate both `;` positions in the for-header by scanning from
         // the statement start to the body start.  The parser often includes the
         // `;` inside the preceding node's range, so per-child scans miss them.
@@ -237,7 +256,10 @@ impl<'a> Printer<'a> {
         };
 
         self.write("for (");
-        if self.in_system_execute_body {
+        if hoisted_initializer_exports.len() == 1 {
+            // The exported `var` initializer was emitted immediately before the loop
+            // so the export assignment observes the initialized value.
+        } else if self.in_system_execute_body {
             self.emit_for_initializer_strip_var(loop_stmt.initializer);
         } else {
             self.emit(loop_stmt.initializer);
@@ -271,6 +293,8 @@ impl<'a> Printer<'a> {
         let Some(for_in_of) = self.arena.get_for_in_of(node) else {
             return;
         };
+        let initializer_exports = self
+            .deferred_exported_var_iteration_bindings(for_in_of.initializer, for_in_of.statement);
 
         self.write("for (");
         // In System modules, `var` declarations are hoisted to the module scope,
@@ -287,13 +311,19 @@ impl<'a> Printer<'a> {
             self.map_closing_paren_backward(node.pos, body_node.pos);
         }
         self.write(")");
-        self.emit_loop_body(for_in_of.statement);
+        if initializer_exports.is_empty() {
+            self.emit_loop_body(for_in_of.statement);
+        } else {
+            self.emit_loop_body_with_deferred_exports(for_in_of.statement, &initializer_exports);
+        }
     }
 
     pub(in crate::emitter) fn emit_for_of_statement(&mut self, node: &Node) {
         let Some(for_in_of) = self.arena.get_for_in_of(node) else {
             return;
         };
+        let initializer_exports = self
+            .deferred_exported_var_iteration_bindings(for_in_of.initializer, for_in_of.statement);
 
         // Check if the for-of initializer has `using` that needs lowering.
         if !self.ctx.target_es5
@@ -330,7 +360,11 @@ impl<'a> Printer<'a> {
             self.map_closing_paren_backward(node.pos, body_node.pos);
         }
         self.write(")");
-        self.emit_loop_body(for_in_of.statement);
+        if initializer_exports.is_empty() {
+            self.emit_loop_body(for_in_of.statement);
+        } else {
+            self.emit_loop_body_with_deferred_exports(for_in_of.statement, &initializer_exports);
+        }
     }
 
     /// Check if a for-of initializer has an object rest pattern.
@@ -449,6 +483,131 @@ impl<'a> Printer<'a> {
             };
             self.emit(decl.name);
         }
+    }
+
+    fn deferred_exported_var_initializers(
+        &self,
+        initializer: NodeIndex,
+    ) -> Vec<(String, String, NodeIndex)> {
+        if self.function_scope_depth != 0 || self.in_namespace_iife {
+            return Vec::new();
+        }
+        let Some(bindings) = self.deferred_local_export_bindings.as_ref() else {
+            return Vec::new();
+        };
+        let Some(init_node) = self.arena.get(initializer) else {
+            return Vec::new();
+        };
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            || node_flags::is_let_or_const(init_node.flags as u32)
+        {
+            return Vec::new();
+        }
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            return Vec::new();
+        };
+        let mut exports = Vec::new();
+        for &decl_idx in &decl_list.declarations.nodes {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return Vec::new();
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                return Vec::new();
+            };
+            if decl.initializer.is_none() {
+                return Vec::new();
+            }
+            let init_idx = decl.initializer;
+            let Some(name_node) = self.arena.get(decl.name) else {
+                return Vec::new();
+            };
+            let Some(ident) = self.arena.get_identifier(name_node) else {
+                return Vec::new();
+            };
+            let local_name = ident.escaped_text.clone();
+            let Some(export_name) = bindings.get(&local_name).cloned() else {
+                return Vec::new();
+            };
+            exports.push((local_name, export_name, init_idx));
+        }
+        exports
+    }
+
+    fn deferred_exported_var_iteration_bindings(
+        &self,
+        initializer: NodeIndex,
+        body: NodeIndex,
+    ) -> Vec<(String, String)> {
+        if self.function_scope_depth != 0 || self.in_namespace_iife {
+            return Vec::new();
+        }
+        let Some(body_node) = self.arena.get(body) else {
+            return Vec::new();
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return Vec::new();
+        }
+        let Some(bindings) = self.deferred_local_export_bindings.as_ref() else {
+            return Vec::new();
+        };
+        let Some(init_node) = self.arena.get(initializer) else {
+            return Vec::new();
+        };
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            || node_flags::is_let_or_const(init_node.flags as u32)
+        {
+            return Vec::new();
+        }
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            return Vec::new();
+        };
+        let mut exports = Vec::new();
+        for &decl_idx in &decl_list.declarations.nodes {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return Vec::new();
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                return Vec::new();
+            };
+            if decl.initializer.is_some() {
+                return Vec::new();
+            }
+            let Some(name_node) = self.arena.get(decl.name) else {
+                return Vec::new();
+            };
+            let Some(ident) = self.arena.get_identifier(name_node) else {
+                return Vec::new();
+            };
+            let local_name = ident.escaped_text.clone();
+            let Some(export_name) = bindings.get(&local_name).cloned() else {
+                return Vec::new();
+            };
+            exports.push((local_name, export_name));
+        }
+        exports
+    }
+
+    fn emit_loop_body_with_deferred_exports(
+        &mut self,
+        body: NodeIndex,
+        exports: &[(String, String)],
+    ) {
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+        for (local_name, export_name) in exports {
+            self.write_export_binding_start(export_name);
+            self.write(local_name);
+            self.write_export_binding_end();
+            if self.in_system_execute_body {
+                self.system_folded_export_names.insert(local_name.clone());
+            }
+            self.write_line();
+        }
+        self.emit(body);
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
     }
 
     fn emit_loop_body(&mut self, body: NodeIndex) {
