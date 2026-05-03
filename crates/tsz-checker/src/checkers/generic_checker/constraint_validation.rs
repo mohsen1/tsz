@@ -28,6 +28,11 @@ impl<'a> CheckerState<'a> {
                 self.get_type_from_type_node(arg_idx)
             })
             .collect();
+        let type_arg_substitutions = type_params
+            .iter()
+            .zip(type_args.iter())
+            .map(|(param, &arg)| (param.name, arg))
+            .collect::<Vec<_>>();
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
@@ -46,6 +51,27 @@ impl<'a> CheckerState<'a> {
                 // because `this` in `Bar` is bounded by `Bar` which extends `Foo`.
                 if query::is_this_type(self.ctx.types.as_type_database(), type_arg) {
                     continue;
+                }
+
+                if let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    if self.required_mapped_constraint_source_is_required_and_arg_satisfies(
+                        type_arg,
+                        constraint_resolved,
+                        &type_arg_substitutions,
+                    ) {
+                        continue;
+                    }
+                    if self.type_node_is_generic_ref_with_scoped_type_param_arg(arg_idx)
+                        && !query::is_callable_type(
+                            self.ctx.types.as_type_database(),
+                            constraint_resolved,
+                        )
+                        && !self.is_function_constraint(constraint_resolved)
+                        && !query::contains_type_parameters(self.ctx.types, constraint_resolved)
+                    {
+                        continue;
+                    }
                 }
 
                 // Skip constraint checking for `infer` type arguments in conditional
@@ -656,7 +682,18 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types.as_type_database(),
                                     type_arg,
                                 )
-                                .is_some();
+                                .is_some()
+                                    || type_args_list.nodes.get(i).copied().is_some_and(
+                                        |arg_idx| {
+                                            self.ctx
+                                                .arena
+                                                .get(arg_idx)
+                                                .and_then(|node| self.ctx.arena.get_type_ref(node))
+                                                .is_some_and(|type_ref| {
+                                                    type_ref.type_arguments.is_some()
+                                                })
+                                        },
+                                    );
                                 if type_arg_is_application {
                                     continue;
                                 }
@@ -1468,7 +1505,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Checks via Lazy(DefId) against the interner's registered boxed `DefIds`,
     /// or by direct TypeId match against the interner's registered boxed type.
-    fn is_function_constraint(&self, type_id: TypeId) -> bool {
+    pub(super) fn is_function_constraint(&self, type_id: TypeId) -> bool {
         let db = self.ctx.types.as_type_database();
         // Direct match against interner's boxed Function TypeId
         if query::is_boxed_function_type(db, type_id) {
@@ -1518,15 +1555,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a type is a generic indexed access (`T[M]`) where the object
-    /// Check if a type is a "generic indexed access" — an `IndexAccess(A, B)` where
-    /// the object part `A` contains free type parameters.
-    ///
-    /// tsc treats such types as not provably callable at definition time, even if
-    /// substituting the type parameter's constraint would produce a callable union.
-    /// For example, `DataFetchFns[T][F]` is a generic indexed access (T is a free
-    /// type param in the object), while `DataFetchFns['Boat'][F]` is not (the object
-    /// `DataFetchFns['Boat']` is concrete).
+    /// Check if an indexed access still depends on a free type parameter.
     fn is_generic_indexed_access(&self, type_id: TypeId) -> bool {
         let db = self.ctx.types.as_type_database();
         if let Some((object, _)) = query::index_access_components(db, type_id) {

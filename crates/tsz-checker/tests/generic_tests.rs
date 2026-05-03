@@ -73,6 +73,137 @@ const result4 = foo<number>([]); // TS2345: never[] not assignable to number
 }
 
 #[test]
+fn test_empty_default_satisfies_optional_mapped_constraint() {
+    let source = r#"
+type Optional<T> = { [K in keyof T]?: T[K] };
+type Options = {
+    depth: number;
+    anyArrayIndexAccessor: string;
+};
+
+type Paths<OverridePathOptions extends Optional<Options> = {}> = OverridePathOptions;
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+
+    assert!(
+        !codes.contains(&2344),
+        "Expected no TS2344 for {{}} default against optional mapped object constraint, got {codes:?}"
+    );
+}
+
+#[test]
+fn test_empty_default_still_rejected_for_optional_mapped_primitive() {
+    let source = r#"
+type Optional<T> = { [K in keyof T]?: T[K] };
+type Bad<T extends Optional<number> = {}> = T;
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+
+    assert!(
+        codes.contains(&2344),
+        "Expected TS2344 for {{}} default against optional mapped primitive constraint, got {codes:?}"
+    );
+}
+
+#[test]
+fn test_required_mapped_constraint_accepts_required_source_and_defaults() {
+    let source = r#"
+type Required<T> = { [K in keyof T]-?: T[K] };
+
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: DefaultOptions[Key];
+};
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: "0";
+};
+
+type Paths = CreateTypeOptions<PathsOptions, DefaultPathsOptions>;
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+
+    assert!(
+        !codes.contains(&2344),
+        "Expected no TS2344 for required object types against Required<Options>, got {codes:?}"
+    );
+}
+
+#[test]
+fn test_required_mapped_constraint_still_rejects_missing_default_property() {
+    let source = r#"
+type Required<T> = { [K in keyof T]-?: T[K] };
+
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: DefaultOptions[Key];
+};
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type BadDefaultPathsOptions = {
+  depth: 7;
+};
+
+type Paths = CreateTypeOptions<PathsOptions, BadDefaultPathsOptions>;
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+
+    assert!(
+        codes.contains(&2344),
+        "Expected TS2344 for defaults missing required property, got {codes:?}"
+    );
+}
+
+#[test]
+fn test_type_alias_type_parameter_constraint_used_for_nested_type_arguments() {
+    let source = r#"
+type Partial<T> = { [K in keyof T]?: T[K] };
+type Required<T> = { [K in keyof T]-?: T[K] };
+
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: "0";
+};
+
+type Paths<OverridePathOptions extends Partial<PathsOptions> = {}> =
+  CreateTypeOptions<PathsOptions, OverridePathOptions, DefaultPathsOptions>;
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+
+    assert!(
+        !codes.contains(&2344),
+        "Expected no TS2344 when a type alias type parameter carries the matching Partial constraint, got {codes:?}"
+    );
+}
+
+#[test]
 fn test_generic_class_type_parameter_constraint() {
     let source = r#"
 class Container<T extends number> {

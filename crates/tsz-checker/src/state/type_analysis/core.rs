@@ -1799,6 +1799,11 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             }
+            if self
+                .empty_type_literal_satisfies_optional_mapped_constraint(param_idx, constraint_type)
+            {
+                continue;
+            }
             if !self.is_assignable_to(default_type, constraint_type) {
                 let Some(node) = self.ctx.arena.get(param_idx) else {
                     continue;
@@ -1818,6 +1823,118 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.leave_recursion();
         (params, updates)
+    }
+
+    fn empty_type_literal_satisfies_optional_mapped_constraint(
+        &mut self,
+        param_idx: NodeIndex,
+        constraint_type: TypeId,
+    ) -> bool {
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param_data) = self.ctx.arena.get_type_parameter(param_node) else {
+            return false;
+        };
+        let default_node = param_data.default;
+        if !self.is_empty_type_literal_node(default_node) {
+            return false;
+        }
+
+        if self.constraint_node_is_partial_object(param_data.constraint) {
+            return true;
+        }
+
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, constraint_type)
+        else {
+            return false;
+        };
+        if args.len() != 1 {
+            return false;
+        }
+        let Some(&arg) = args.first() else {
+            return false;
+        };
+
+        let base = self.resolve_lazy_type(base);
+        let Some(mapped) = crate::query_boundaries::common::mapped_type_info(
+            self.ctx.types.as_type_database(),
+            base,
+        ) else {
+            return false;
+        };
+        if !matches!(
+            mapped.optional_modifier,
+            Some(tsz_solver::MappedModifier::Add)
+        ) {
+            return false;
+        }
+
+        self.is_object_like_for_optional_mapped_type(arg)
+    }
+
+    fn constraint_node_is_partial_object(&mut self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.constraint_node_is_partial_object(paren.type_node);
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        let Some(identifier) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if identifier.escaped_text != "Partial" {
+            return false;
+        }
+        let Some(type_args) = &type_ref.type_arguments else {
+            return false;
+        };
+        if type_args.nodes.len() != 1 {
+            return false;
+        }
+        let Some(&arg_node) = type_args.nodes.first() else {
+            return false;
+        };
+        let arg_type = self.get_type_from_type_node(arg_node);
+        self.is_object_like_for_optional_mapped_type(arg_type)
+    }
+
+    fn is_empty_type_literal_node(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.is_empty_type_literal_node(paren.type_node);
+        }
+        node.kind == syntax_kind_ext::TYPE_LITERAL
+            && self
+                .ctx
+                .arena
+                .get_type_literal(node)
+                .is_some_and(|type_lit| type_lit.members.nodes.is_empty())
+    }
+
+    fn is_object_like_for_optional_mapped_type(&mut self, type_id: TypeId) -> bool {
+        let resolved = self.resolve_lazy_type(type_id);
+        if resolved == TypeId::OBJECT {
+            return true;
+        }
+
+        crate::query_boundaries::common::is_object_like_type(
+            self.ctx.types.as_type_database(),
+            resolved,
+        )
     }
 
     /// Detect indirect circular constraints among type parameters.

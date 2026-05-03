@@ -159,6 +159,25 @@ impl<'a> CheckerState<'a> {
                     if extends_type != TypeId::ERROR {
                         // Check if this single extends type satisfies the constraint
                         // (bidirectional assignability for exact match)
+                        let db = self.ctx.types.as_type_database();
+                        let constraint_is_callable = query::is_callable_type(db, constraint)
+                            || self.is_function_constraint(constraint);
+                        let extends_resolved = self.resolve_lazy_type(extends_type);
+                        let extends_evaluated =
+                            self.evaluate_type_for_assignability(extends_resolved);
+                        let extends_is_callable = query::is_callable_type(db, extends_type)
+                            || query::is_callable_type(db, extends_resolved)
+                            || query::is_callable_type(db, extends_evaluated)
+                            || self.is_function_constraint(extends_type)
+                            || self.is_function_constraint(extends_resolved);
+                        if constraint_is_callable
+                            && (extends_is_callable
+                                || self.type_node_ref_name_contains(cond.extends_type, "Function")
+                                || self.is_assignable_to(extends_resolved, constraint)
+                                || self.is_assignable_to(extends_evaluated, constraint))
+                        {
+                            return true;
+                        }
                         if extends_type == constraint
                             || (self.is_assignable_to(extends_type, constraint)
                                 && self.is_assignable_to(constraint, extends_type))
@@ -223,6 +242,19 @@ impl<'a> CheckerState<'a> {
             if self.type_node_contains_reference(child_idx, target_type_node) {
                 return true;
             }
+        }
+        false
+    }
+
+    fn type_node_ref_name_contains(&self, node_idx: NodeIndex, needle: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+            && let Some(identifier) = self.ctx.arena.get_identifier(name_node)
+        {
+            return identifier.escaped_text.contains(needle);
         }
         false
     }
@@ -1062,3 +1094,4 @@ impl<'a> CheckerState<'a> {
 }
 
 mod constraint_validation;
+mod mapped_constraint_helpers;

@@ -376,3 +376,34 @@ type TrimLeft<T extends string> = T extends ` ${infer R}` ? TrimLeft<R> : T;
         "Should NOT emit TS2589 for bounded recursive conditional type. Got: {diags:?}"
     );
 }
+
+#[test]
+fn bounded_recursive_alias_with_indexed_type_parameter_arg_no_ts2589() {
+    let source = r#"
+type Append<Arr extends any[]> = [...Arr, 0];
+
+interface PathsOptions {
+    depth: any[];
+}
+
+type RecursivePaths<Value, CallOptions extends PathsOptions> =
+    CallOptions["depth"]["length"] extends 3
+        ? never
+        : Value extends object
+            ? {
+                [Key in keyof Value]: RecursivePaths<
+                    Value[Key],
+                    { depth: Append<CallOptions["depth"]> }
+                >
+            }[keyof Value]
+            : never;
+
+type Paths<Type> = RecursivePaths<Type, { depth: [] }>;
+type Example = Paths<{ a: { b: string } }>;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2589),
+        "Should NOT emit TS2589 while resolving recursive alias args that still reference scoped type parameters. Got: {diags:?}"
+    );
+}
