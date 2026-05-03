@@ -1526,16 +1526,20 @@ impl<'a> CheckerState<'a> {
         if declared_is_generic_callable
             && let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx)
         {
-            // Check if this is a single-call-signature callable that tsc displays in
-            // arrow syntax (e.g., `<S>() => S[]`). For these, skip annotation text
-            // and use the TypeFormatter which correctly produces arrow syntax.
+            // Check if this is a single-call-signature OR single-construct-signature
+            // callable that tsc displays in arrow syntax (e.g., `<S>() => S[]` or
+            // `new <T>(x: T) => T`). For these, skip annotation text and use the
+            // TypeFormatter which correctly produces arrow syntax.
             let should_use_arrow_syntax = crate::query_boundaries::common::callable_shape_for_type(
                 self.ctx.types,
                 declared_display_type,
             )
             .is_some_and(|shape| {
-                shape.call_signatures.len() == 1
-                    && shape.construct_signatures.is_empty()
+                let single_call =
+                    shape.call_signatures.len() == 1 && shape.construct_signatures.is_empty();
+                let single_construct =
+                    shape.construct_signatures.len() == 1 && shape.call_signatures.is_empty();
+                (single_call || single_construct)
                     && shape.properties.is_empty()
                     && shape.string_index.is_none()
                     && shape.number_index.is_none()

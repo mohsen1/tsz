@@ -528,6 +528,45 @@ const env: EnvFunction = () => simple;
     );
 }
 
+/// Regression: TS2345 source display for an identifier whose declared
+/// type is an object with a single construct signature (e.g. `{ new
+/// <T>(x: T, y: T): string }`) must use tsc's arrow form (`new <T>(x:
+/// T, y: T) => string`), not the verbose object form.
+///
+/// The previous `should_use_arrow_syntax` gate only considered single
+/// *call* signatures, so single *construct* signatures fell through to
+/// the annotation-text path which preserves the user-written object
+/// form. Extending the gate matches tsc.
+#[test]
+fn ts2345_single_construct_signature_object_uses_arrow_syntax() {
+    let source = r#"
+function foo<T>(cb: { new(x: T): string; new(x: T, y?: T): string }) {
+    return cb;
+}
+declare var b: { new <T>(x: T, y: T): string };
+foo(b);
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .unwrap_or_else(|| panic!("Expected TS2345, got: {diagnostics:?}"));
+    assert!(
+        ts2345
+            .message_text
+            .contains("new <T>(x: T, y: T) => string"),
+        "TS2345 should render single-construct-sig source as arrow form, got: {}",
+        ts2345.message_text
+    );
+    assert!(
+        !ts2345
+            .message_text
+            .contains("'{ new <T>(x: T, y: T): string; }'"),
+        "TS2345 should not use verbose object form for single-construct-sig source, got: {}",
+        ts2345.message_text
+    );
+}
+
 /// Verify deterministic type formatting — same source always produces
 /// the same message text.
 #[test]
