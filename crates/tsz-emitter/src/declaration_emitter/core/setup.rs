@@ -405,8 +405,9 @@ impl<'a> DeclarationEmitter<'a> {
         diagnostics: Vec<Diagnostic>,
     ) -> Vec<Diagnostic> {
         let mut original_canonical_sites = FxHashSet::default();
-        let mut exact_seen = FxHashSet::default();
-        let mut unique = Vec::new();
+        let mut exact_seen: FxHashMap<(u32, String, u32, u32, String), usize> =
+            FxHashMap::default();
+        let mut unique: Vec<(Diagnostic, bool)> = Vec::new();
 
         for diagnostic in diagnostics {
             let mut diagnostic = diagnostic;
@@ -436,10 +437,14 @@ impl<'a> DeclarationEmitter<'a> {
                 diagnostic.length,
                 diagnostic.message_text.clone(),
             );
-            if !exact_seen.insert(exact_key) {
+            if let Some(&existing_idx) = exact_seen.get(&exact_key) {
+                if !was_canonicalized && unique[existing_idx].1 {
+                    unique[existing_idx] = (diagnostic, was_canonicalized);
+                }
                 continue;
             }
 
+            exact_seen.insert(exact_key, unique.len());
             unique.push((diagnostic, was_canonicalized));
         }
 

@@ -341,6 +341,88 @@ export default Object.assign(A, {
 }
 
 #[test]
+fn declaration_emit_commonjs_call_tuple_reports_nested_reference_ts2883() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("r/node_modules/foo/node_modules/nested/index.d.ts"),
+        "export interface NestedProps {}\n",
+    );
+    write_file(
+        &base.join("r/node_modules/foo/other/index.d.ts"),
+        "export interface OtherIndexProps {}\n",
+    );
+    write_file(
+        &base.join("r/node_modules/foo/other.d.ts"),
+        "export interface OtherProps {}\n",
+    );
+    write_file(
+        &base.join("r/node_modules/foo/index.d.ts"),
+        r#"import { OtherProps } from "./other";
+import { OtherIndexProps } from "./other/index";
+import { NestedProps } from "nested";
+export interface SomeProps {}
+
+export function foo(): [SomeProps, OtherProps, OtherIndexProps, NestedProps];
+"#,
+    );
+    write_file(
+        &base.join("node_modules/root/index.d.ts"),
+        r#"export interface RootProps {}
+
+export function bar(): RootProps;
+"#,
+    );
+    write_file(
+        &base.join("r/entry.ts"),
+        r#"import { foo } from "foo";
+import { bar } from "root";
+export const x = foo();
+export const y = bar();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "declaration": true
+  },
+  "files": ["r/entry.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2883_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2883)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert_eq!(
+        ts2883_messages.len(),
+        1,
+        "expected one TS2883 diagnostic for nested tuple return reference, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages[0].contains("NestedProps"),
+        "expected TS2883 to name NestedProps, got: {}",
+        ts2883_messages[0]
+    );
+    assert!(
+        ts2883_messages[0].contains("foo/node_modules/nested"),
+        "expected TS2883 to reference foo/node_modules/nested, got: {}",
+        ts2883_messages[0]
+    );
+}
+
+#[test]
 fn declaration_emit_reports_non_serializable_foreign_unique_symbol_property() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();

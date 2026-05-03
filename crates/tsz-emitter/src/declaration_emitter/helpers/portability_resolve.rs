@@ -368,11 +368,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.stmt_has_export_modifier(decl_node)
     }
 
-    const fn is_type_text_identifier_start(ch: char) -> bool {
+    pub(in crate::declaration_emitter) const fn is_type_text_identifier_start(ch: char) -> bool {
         ch.is_ascii_alphabetic() || ch == '_' || ch == '$'
     }
 
-    const fn is_type_text_identifier_continue(ch: char) -> bool {
+    pub(in crate::declaration_emitter) const fn is_type_text_identifier_continue(ch: char) -> bool {
         ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
     }
 
@@ -676,8 +676,13 @@ impl<'a> DeclarationEmitter<'a> {
             if symbol.escaped_name != name {
                 return None;
             }
-            let sym_arena = binder.symbol_arenas.get(&symbol.id)?;
-            ((Arc::as_ptr(sym_arena) as usize) == arena_addr).then_some(symbol.id)
+            binder
+                .symbol_arenas
+                .get(&symbol.id)
+                .or_else(|| self.global_symbol_arenas.get(&symbol.id))
+                .and_then(|sym_arena| {
+                    ((Arc::as_ptr(sym_arena) as usize) == arena_addr).then_some(symbol.id)
+                })
         })
     }
 
@@ -778,6 +783,41 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 let module = rhs.trim().trim_end_matches(");").trim_end_matches(')');
                 return Self::quoted_string_text(module);
+            }
+        }
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn named_import_module_from_text(
+        &self,
+        source_text: &str,
+        local_name: &str,
+    ) -> Option<String> {
+        for line in source_text.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix("import ") else {
+                continue;
+            };
+            let Some(named_start) = rest.find('{') else {
+                continue;
+            };
+            let Some(named_end) = rest[named_start + 1..].find('}') else {
+                continue;
+            };
+            let named = &rest[named_start + 1..named_start + 1 + named_end];
+            let after_named = &rest[named_start + 1 + named_end + 1..];
+            let Some((_, module_part)) = after_named.split_once(" from ") else {
+                continue;
+            };
+            let module = module_part.trim().trim_end_matches(';');
+            for specifier in named.split(',') {
+                let specifier = specifier.trim();
+                let local = specifier
+                    .split_once(" as ")
+                    .map_or(specifier, |(_, alias)| alias.trim());
+                if local == local_name {
+                    return Self::quoted_string_text(module);
+                }
             }
         }
         None
