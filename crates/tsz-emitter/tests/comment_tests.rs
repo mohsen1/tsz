@@ -115,6 +115,44 @@ fn object_literal_property_comments_stay_around_function_value() {
 }
 
 #[test]
+fn es5_object_literal_method_comments_stay_on_members() {
+    let source = r#"var v = {
+ //property
+ prop: 1 /* multiple trailing comments */ /*trailing comments*/,
+ //property
+ func: function () {
+ },
+ //PropertyName + CallSignature
+ func1() { },
+ //getter
+ get a() {
+  return this.prop;
+ } /*trailing 1*/,
+ //setter
+ set a(value) {
+  this.prop = value;
+ } // trailing 2
+};"#;
+
+    let output = parse_and_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains(
+            "    //property\n    prop: 1 /* multiple trailing comments */ /*trailing comments*/,"
+        ),
+        "ES5 object literal property comments should stay on the property.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("    //PropertyName + CallSignature\n    func1: function () { },"),
+        "ES5 method-lowering should preserve method-leading comments.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("    } /*trailing 1*/,\n    //setter\n    set a(value) {"),
+        "Accessor trailing and next-member leading comments should not drift into parameters.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 

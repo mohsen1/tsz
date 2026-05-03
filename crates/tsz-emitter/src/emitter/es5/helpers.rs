@@ -207,29 +207,117 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_object_literal_entries_es5(&mut self, elements: &[NodeIndex]) {
-        self.emit_object_literal_entries_es5_with_trailing_comma(elements, false);
+        self.emit_object_literal_entries_es5_with_comments(elements, false, None);
     }
 
-    pub(in crate::emitter) fn emit_object_literal_entries_es5_with_trailing_comma(
+    fn emit_object_literal_entries_es5_with_comments(
         &mut self,
         elements: &[NodeIndex],
         has_trailing_comma: bool,
+        source_range: Option<(u32, u32)>,
     ) {
         if elements.is_empty() {
             self.write("{}");
             return;
         }
 
+        let open_brace_end = source_range.and_then(|(start_pos, end_pos)| {
+            self.source_text.and_then(|text| {
+                let bytes = text.as_bytes();
+                let start = start_pos as usize;
+                let end = std::cmp::min(end_pos as usize, bytes.len());
+                if start >= end {
+                    return None;
+                }
+                bytes[start..end]
+                    .iter()
+                    .position(|&b| b == b'{')
+                    .map(|off| (start + off + 1) as u32)
+            })
+        });
+        let source_end = source_range.map(|(_, end)| end);
+
         if elements.len() > 1 {
             self.write("{");
             self.write_line();
             self.increase_indent();
             for (i, &prop) in elements.iter().enumerate() {
+                let Some(prop_node) = self.arena.get(prop) else {
+                    continue;
+                };
+                if i == 0
+                    && let Some(open_brace_end) = open_brace_end
+                {
+                    let wrote_leading_newline =
+                        self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
+                    if !wrote_leading_newline
+                        && self.object_literal_comment_range_ends_with_newline(
+                            open_brace_end,
+                            prop_node.pos,
+                        )
+                    {
+                        self.write_line();
+                    }
+                }
+
                 self.emit_object_literal_member_es5(prop);
-                if i < elements.len() - 1 || has_trailing_comma {
+
+                let token_end = self.object_literal_member_comment_start_es5(prop, prop_node);
+                let source_bound = source_end.unwrap_or(prop_node.end);
+                let needs_comma = i < elements.len() - 1
+                    || has_trailing_comma
+                    || self.source_text.is_some_and(|text| {
+                        let bytes = text.as_bytes();
+                        let te = token_end as usize;
+                        te > 0 && te <= bytes.len() && bytes[te - 1] == b','
+                    });
+                if needs_comma {
+                    if let Some(comma_pos) = self.find_comma_pos_after(token_end, source_bound) {
+                        self.emit_trailing_comments_before(token_end, comma_pos);
+                    }
                     self.write(",");
                 }
-                self.write_line();
+
+                if i < elements.len() - 1 {
+                    let next_prop = elements[i + 1];
+                    let next_pos = self.arena.get(next_prop).map_or(prop_node.end, |n| n.pos);
+                    let has_same_line_comment = self.source_text.is_some_and(|text| {
+                        let from = token_end as usize;
+                        let to = std::cmp::min(next_pos as usize, text.len());
+                        if from >= to {
+                            return false;
+                        }
+                        let gap = &text[from..to];
+                        if let Some(slash_pos) = gap.find("//") {
+                            !gap[..slash_pos].contains('\n')
+                        } else if let Some(block_pos) = gap.find("/*") {
+                            !gap[..block_pos].contains('\n')
+                        } else {
+                            false
+                        }
+                    });
+                    let same_line = self.are_on_same_line_in_source(prop, next_prop);
+                    if has_same_line_comment {
+                        self.write(" ");
+                    } else if !same_line {
+                        self.write_line();
+                    }
+                    let wrote_newline = self.emit_unemitted_comments_between(token_end, next_pos);
+                    if !wrote_newline {
+                        if same_line {
+                            self.write(" ");
+                        } else if has_same_line_comment {
+                            self.write_line();
+                        }
+                    }
+                } else {
+                    self.emit_trailing_comments(token_end);
+                    let wrote_newline =
+                        self.emit_unemitted_comments_between(token_end, source_bound);
+                    if !wrote_newline {
+                        self.write_line();
+                    }
+                }
             }
             self.decrease_indent();
             self.write("}");
@@ -242,11 +330,40 @@ impl<'a> Printer<'a> {
                 self.write("{");
                 self.write_line();
                 self.increase_indent();
-                self.emit_object_literal_member_es5(elements[0]);
-                if has_trailing_comma {
+                let prop = elements[0];
+                if let Some(prop_node) = self.arena.get(prop) {
+                    if let Some(open_brace_end) = open_brace_end {
+                        let wrote_leading_newline =
+                            self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
+                        if !wrote_leading_newline
+                            && self.object_literal_comment_range_ends_with_newline(
+                                open_brace_end,
+                                prop_node.pos,
+                            )
+                        {
+                            self.write_line();
+                        }
+                    }
+                    self.emit_object_literal_member_es5(prop);
+                    let token_end = self.object_literal_member_comment_start_es5(prop, prop_node);
+                    let source_bound = source_end.unwrap_or(prop_node.end);
+                    if has_trailing_comma {
+                        if let Some(comma_pos) = self.find_comma_pos_after(token_end, source_bound)
+                        {
+                            self.emit_trailing_comments_before(token_end, comma_pos);
+                        }
+                        self.write(",");
+                    }
+                    self.emit_trailing_comments(token_end);
+                    let wrote_newline =
+                        self.emit_unemitted_comments_between(token_end, source_bound);
+                    if !wrote_newline {
+                        self.write_line();
+                    }
+                } else if has_trailing_comma {
                     self.write(",");
+                    self.write_line();
                 }
-                self.write_line();
                 self.decrease_indent();
                 self.write("}");
             } else {
@@ -257,6 +374,51 @@ impl<'a> Printer<'a> {
                 }
                 self.write(" }");
             }
+        }
+    }
+
+    fn object_literal_member_comment_start_es5(&self, prop_idx: NodeIndex, node: &Node) -> u32 {
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                self.arena.get_property_assignment(node).map_or_else(
+                    || self.find_token_end_before_trivia(node.pos, node.end),
+                    |prop| {
+                        self.arena.get(prop.initializer).map_or_else(
+                            || self.find_token_end_before_trivia(node.pos, node.end),
+                            |init_node| {
+                                self.find_token_end_before_trivia(init_node.pos, init_node.end)
+                            },
+                        )
+                    },
+                )
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_shorthand_property(node)
+                .and_then(|shorthand| self.arena.get(shorthand.name))
+                .map_or_else(
+                    || self.find_token_end_before_trivia(node.pos, node.end),
+                    |name_node| self.find_token_end_before_trivia(name_node.pos, name_node.end),
+                ),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(node)
+                .and_then(|method| self.arena.get(method.body))
+                .map_or_else(
+                    || self.find_token_end_before_trivia(node.pos, node.end),
+                    |body_node| self.find_token_end_before_trivia(body_node.pos, body_node.end),
+                ),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .arena
+                .get_accessor(node)
+                .and_then(|accessor| self.arena.get(accessor.body))
+                .map_or_else(
+                    || self.find_token_end_before_trivia(node.pos, node.end),
+                    |body_node| self.find_token_end_before_trivia(body_node.pos, body_node.end),
+                ),
+            _ => self.arena.get(prop_idx).map_or(node.end, |member| {
+                self.find_token_end_before_trivia(member.pos, member.end)
+            }),
         }
     }
 
@@ -399,7 +561,11 @@ impl<'a> Printer<'a> {
             .unwrap_or(elements.len());
 
         if first_computed_idx == elements.len() {
-            self.emit_object_literal_entries_es5_with_trailing_comma(elements, has_trailing_comma);
+            self.emit_object_literal_entries_es5_with_comments(
+                elements,
+                has_trailing_comma,
+                source_range,
+            );
             return;
         }
 

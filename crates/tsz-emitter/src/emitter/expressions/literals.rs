@@ -925,7 +925,11 @@ impl<'a> Printer<'a> {
         self.node_text_contains_newline(node.pos as usize, node.end as usize)
     }
 
-    fn object_literal_comment_range_ends_with_newline(&self, from_pos: u32, to_pos: u32) -> bool {
+    pub(in crate::emitter) fn object_literal_comment_range_ends_with_newline(
+        &self,
+        from_pos: u32,
+        to_pos: u32,
+    ) -> bool {
         let Some(text) = self.source_text else {
             return false;
         };
