@@ -2246,6 +2246,12 @@ impl<'a> CheckerState<'a> {
                             .get(body)
                             .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
                         let is_rhs_assignment = is_closure && self.is_rhs_of_assignment(idx);
+                        // For diagnostic anchoring, drill through outer
+                        // parenthesized/satisfies/assertion wrappers so the
+                        // reported position lands on the innermost expression
+                        // (e.g. `{}` in `(({}) satisfies unknown)`), matching
+                        // tsc's behavior.
+                        let inner_body = self.ctx.arena.skip_parenthesized_and_assertions(body);
                         let assignability_ok = if body_is_conditional || is_rhs_assignment {
                             self.check_assignable_or_report_at(
                                 actual_return,
@@ -2257,8 +2263,8 @@ impl<'a> CheckerState<'a> {
                             self.check_assignable_or_report_at_exact_anchor(
                                 actual_return,
                                 expected_return_type,
-                                body,
-                                body,
+                                inner_body,
+                                inner_body,
                             )
                         };
                         if !assignability_ok {

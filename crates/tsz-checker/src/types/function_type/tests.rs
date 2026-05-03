@@ -20,6 +20,40 @@ fn expression_body_arrow_with_return_annotation_reports_type_mismatch() {
 }
 
 #[test]
+fn ts2741_anchor_skips_paren_and_satisfies_wrappers_in_arrow_concise_body() {
+    // `((): { a: true } => ({}) satisfies unknown)();`
+    // tsc anchors TS2741 at `{` of `{}` (the innermost expression),
+    // not at `(` of `({})` or the outer satisfies wrapper.
+    let src = "((): { a: true } => ({}) satisfies unknown)();";
+    let diags = diagnostics_with_spans(src);
+    let diag = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE)
+        .expect("expected TS2741");
+    let expected_start = src.find("{}").expect("expected `{}` literal in source") as u32;
+    assert_eq!(
+        diag.start, expected_start,
+        "TS2741 should anchor at the inner `{{}}` literal, not the paren/satisfies wrapper: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2741_anchor_skips_nested_paren_satisfies_in_arrow_concise_body() {
+    // Nested wrappers: `(({}) satisfies unknown) satisfies unknown`.
+    let src = "((): { a: true } => (({}) satisfies unknown) satisfies unknown)();";
+    let diags = diagnostics_with_spans(src);
+    let diag = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE)
+        .expect("expected TS2741");
+    let expected_start = src.find("{}").expect("expected `{}` literal in source") as u32;
+    assert_eq!(
+        diag.start, expected_start,
+        "TS2741 should anchor at the inner `{{}}` literal through nested wrappers: {diag:?}"
+    );
+}
+
+#[test]
 fn block_body_arrow_return_type_mismatch_anchors_return_statement() {
     let source = "const f = <T>(x: T): T => { return null; };";
     let diagnostics = diagnostics_with_spans(source);
