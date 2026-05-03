@@ -482,6 +482,41 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
+    fn emit_empty_block_comments(
+        &self,
+        body: &mut Vec<IRNode>,
+        block_node: &tsz_parser::parser::node::Node,
+    ) {
+        let Some(source_text) = self.source_text else {
+            return;
+        };
+        let bytes = source_text.as_bytes();
+        let start = block_node.pos as usize;
+        let end = std::cmp::min(block_node.end as usize, bytes.len());
+        if start >= end {
+            return;
+        }
+        let Some(open_offset) = bytes[start..end].iter().position(|&b| b == b'{') else {
+            return;
+        };
+        let comment_start = start + open_offset + 1;
+        for comment in crate::emitter::get_leading_comment_ranges(source_text, comment_start) {
+            if comment.end as usize > end {
+                break;
+            }
+            if !source_text[comment_start..comment.pos as usize].contains('\n') {
+                continue;
+            }
+            let text = &source_text[comment.pos as usize..comment.end as usize];
+            let normalized = text
+                .lines()
+                .map(str::trim_end)
+                .collect::<Vec<_>>()
+                .join("\n");
+            body.push(IRNode::Raw(normalized.into()));
+        }
+    }
+
     fn source_has_semicolon_between(&self, start: u32, end: u32) -> bool {
         let Some(source_text) = self.source_text else {
             return false;
@@ -2161,12 +2196,16 @@ impl<'a> ES5ClassTransformer<'a> {
             && let Some(block) = self.arena.get_block(block_node)
         {
             let mut prev_stmt_end = block_node.pos;
-            for &stmt_idx in &block.statements.nodes {
-                if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    self.emit_leading_statement_comments(body, prev_stmt_end, stmt_node.pos);
-                    prev_stmt_end = stmt_node.end;
+            if block.statements.nodes.is_empty() {
+                self.emit_empty_block_comments(body, block_node);
+            } else {
+                for &stmt_idx in &block.statements.nodes {
+                    if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                        self.emit_leading_statement_comments(body, prev_stmt_end, stmt_node.pos);
+                        prev_stmt_end = stmt_node.end;
+                    }
+                    body.push(self.convert_statement(stmt_idx));
                 }
-                body.push(self.convert_statement(stmt_idx));
             }
         }
     }

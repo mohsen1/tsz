@@ -400,16 +400,39 @@ impl<'a> IRPrinter<'a> {
     /// Normalizes indentation to match TypeScript's output format:
     /// - First line: current indentation + comment start (`/**`)
     /// - Subsequent lines: current indentation + ` *` or ` */`
+    ///
+    /// For comments without `*` continuation lines (e.g. `/** foo\n*/`),
+    /// the closing `*/` is emitted flush with no leading space. For
+    /// standard JSDoc comments containing `*` continuation lines, the
+    /// closing `*/` keeps a leading space so it visually aligns with the
+    /// ` *` column above.
     pub(super) fn emit_multiline_comment(&mut self, comment: &str) {
+        // Detect whether this comment uses the standard JSDoc continuation
+        // pattern (any non-first/non-last line begins with `*`). If so, the
+        // closing `*/` should be space-prefixed to align with those lines.
+        let lines: Vec<&str> = comment.split('\n').collect();
+        let has_continuation = lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != 0 && *i + 1 != lines.len())
+            .any(|(_, line)| {
+                let trimmed = line.trim_start();
+                trimmed.starts_with('*') && !trimmed.starts_with("*/")
+            });
+
         let mut first = true;
-        for line in comment.split('\n') {
+        for line in lines {
             if !first {
                 self.write_line();
                 self.write_indent();
             }
             // Strip leading whitespace, then add one space before * or */
             let trimmed = line.trim_start();
-            if !first && (trimmed.starts_with('*') || trimmed.starts_with('/')) {
+            let needs_space = !first
+                && (trimmed.starts_with('/')
+                    || (trimmed.starts_with('*')
+                        && (!trimmed.starts_with("*/") || has_continuation)));
+            if needs_space {
                 self.write(" ");
             }
             self.write(trimmed.trim_end());

@@ -222,6 +222,58 @@ fn object_literal_comments_stay_after_source_commas() {
 }
 
 #[test]
+fn comments_after_spread_tokens_stay_after_ellipsis() {
+    let source = r#"const a = { .../*#__PURE__*/identity({ b: 1 }) };
+const b = {
+  ...
+  /*#__PURE__*/identity({ b: 1 })
+};
+const c = {
+  ...
+  /*#__PURE__*/
+  identity({ b: 1 })
+};
+function f(first, .../* comment f */rest) {
+  const [fa, fb] = [.../* comment fab */
+    rest
+  ];
+  const { x, .../* comment rest */remaining } = rest;
+  return { .../* comment return */ remaining };
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("... /*#__PURE__*/identity({"),
+        "Object spread block comment should stay after `...` without a post-comment gap.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("...\n    /*#__PURE__*/ identity({"),
+        "Object spread comment after a source newline should stay on the following line.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("...\n    /*#__PURE__*/\n    identity({"),
+        "Object spread comment followed by a source newline should keep the operand on the next line.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function f(first, ... /* comment f */rest)"),
+        "Rest parameter comments should stay between `...` and the name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("[... /* comment fab */rest\n    ]"),
+        "Array spread comments should stay between `...` and the operand.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("{ x, ... /* comment rest */remaining }"),
+        "Object binding rest comments should stay between `...` and the name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return { ... /* comment return */remaining };"),
+        "Return object spread comments should stay after `...`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 
