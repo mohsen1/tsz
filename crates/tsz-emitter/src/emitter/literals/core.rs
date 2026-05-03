@@ -281,7 +281,7 @@ impl<'a> Printer<'a> {
         }
         // Fallback: use the literal text from the node
         if let Some(lit) = self.arena.get_literal(node) {
-            self.write(&lit.text);
+            self.write(trim_unterminated_regex_recovery_suffix(&lit.text));
         }
     }
 
@@ -679,6 +679,14 @@ fn format_js_number(value: f64) -> String {
     s
 }
 
+fn trim_unterminated_regex_recovery_suffix(text: &str) -> &str {
+    if !text.starts_with('/') || text[1..].contains('/') {
+        return text;
+    }
+
+    text.trim_end_matches(';').trim_end_matches(')')
+}
+
 #[cfg(test)]
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
@@ -753,6 +761,25 @@ mod tests {
                 "Non-octal {source} should be preserved unchanged.\nGot: {output}"
             );
         }
+    }
+
+    #[test]
+    fn unterminated_regex_in_call_does_not_duplicate_recovery_paren() {
+        let source = "foo(/notregexp);";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+        assert!(
+            output.contains("foo(/notregexp);"),
+            "Unterminated regex recovery should leave the call paren to the call emitter.\nGot: {output}"
+        );
+        assert!(
+            !output.contains("foo(/notregexp););"),
+            "Unterminated regex recovery should not duplicate the call paren.\nGot: {output}"
+        );
     }
 
     /// Unicode escape sequences in identifiers must be preserved in emitted JS,
