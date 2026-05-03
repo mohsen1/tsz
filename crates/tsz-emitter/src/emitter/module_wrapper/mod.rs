@@ -1,3 +1,4 @@
+mod bang_module_reference;
 mod system_emit;
 mod wrapper_entry;
 

@@ -1366,6 +1366,27 @@ export declare namespace foo {
 }
 
 #[test]
+fn test_ts_late_bound_function_reserved_alias_avoids_existing_member_name() {
+    let source = r#"
+export function foo() {}
+foo._a = 1;
+foo.class = "hello";
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+    let expected = r#"export declare function foo(): void;
+export declare namespace foo {
+    export var _a: number;
+    var _b: string;
+    export { _b as class };
+}"#;
+    assert!(
+        output.contains(expected),
+        "Synthetic alias for reserved namespace members should skip real member names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_arrow_assignments_preserve_key_text_and_types() {
     let source = r#"
 const c = "C";

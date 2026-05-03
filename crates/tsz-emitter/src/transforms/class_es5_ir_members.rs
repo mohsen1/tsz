@@ -1431,6 +1431,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if !deferred_static_prop_inits.is_empty() {
             if let Some(alias) = self.class_self_reference_alias.as_ref()
                 && !self.class_decorators.is_empty()
+                && self.has_static_property_initializer(&class_data.members)
             {
                 body.push(IRNode::VarDecl {
                     name: alias.clone().into(),
