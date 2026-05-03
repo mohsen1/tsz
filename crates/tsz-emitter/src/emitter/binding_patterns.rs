@@ -366,6 +366,10 @@ impl<'a> Printer<'a> {
                     // Only rest: no temp is needed because the initializer can be
                     // passed directly into __rest().
                     source_name = String::new();
+                } else if non_rest_elements.is_empty() {
+                    // Only rest but no initializer: keep recovery output
+                    // syntactically valid by avoiding an empty assignment RHS.
+                    source_name = self.get_temp_var_name();
                 } else if !nested_rest_indices.is_empty() {
                     source_name = self.get_temp_var_name();
                     self.write(&source_name.clone());

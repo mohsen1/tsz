@@ -2726,6 +2726,47 @@ fn destructuring_array() {
 }
 
 #[test]
+fn array_rest_initializer_preserves_in_expression_in_for_header_recovery() {
+    let source = "for (var [...x = a in b] ;;) {}";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).expect("source file");
+    let for_node = arena
+        .get(sf.statements.nodes[0])
+        .expect("for statement node");
+    let for_stmt = arena.get_loop(for_node).expect("for statement");
+    let var_node = arena
+        .get(for_stmt.initializer)
+        .expect("for initializer node");
+    let var_decl_list = arena
+        .get_variable(var_node)
+        .expect("for initializer declaration list");
+    let decl_node = arena
+        .get(var_decl_list.declarations.nodes[0])
+        .expect("declaration");
+    let decl = arena
+        .get_variable_declaration(decl_node)
+        .expect("declaration data");
+    let binding_node = arena.get(decl.name).expect("binding pattern");
+    let binding = arena
+        .get_binding_pattern(binding_node)
+        .expect("array binding pattern");
+    let rest_node = arena.get(binding.elements.nodes[0]).expect("rest element");
+    let rest = arena
+        .get_binding_element(rest_node)
+        .expect("rest binding element");
+    let initializer_node = arena.get(rest.initializer).expect("initializer");
+
+    assert_eq!(
+        initializer_node.kind,
+        syntax_kind_ext::BINARY_EXPRESSION,
+        "rest initializer should preserve `a in b` as a binary expression"
+    );
+    let (_, op, _) = get_binary(arena, rest.initializer);
+    assert_eq!(op, SyntaxKind::InKeyword as u16);
+}
+
+#[test]
 fn destructuring_nested() {
     // `const { a: { b } } = obj;`
     let (parser, _) = parse_source("const { a: { b } } = obj;");

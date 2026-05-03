@@ -350,7 +350,11 @@ impl ParserState {
                 );
                 // Consume the = token and value to continue parsing
                 self.next_token();
-                self.parse_assignment_expression()
+                let saved = self.context_flags;
+                self.context_flags &= !CONTEXT_FLAG_DISALLOW_IN;
+                let init = self.parse_assignment_expression();
+                self.context_flags = saved;
+                init
             } else {
                 NodeIndex::NONE
             };

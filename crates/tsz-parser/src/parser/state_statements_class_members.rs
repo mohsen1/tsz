@@ -1582,17 +1582,6 @@ impl ParserState {
             self.parse_optional(SyntaxKind::ExclamationToken)
         };
 
-        // TS1276: An 'accessor' property cannot be declared optional.
-        // tsc anchors at the `?` token via grammarErrorOnNode(node.questionToken).
-        if question_token && has_accessor_modifier {
-            self.parse_error_at(
-                question_token_pos,
-                question_token_end - question_token_pos,
-                "An 'accessor' property cannot be declared optional.",
-                diagnostic_codes::AN_ACCESSOR_PROPERTY_CANNOT_BE_DECLARED_OPTIONAL,
-            );
-        }
-
         // TS1436: Decorator after property name (e.g., `private prop @decorator`).
         // Detect `@` after the member name where `:`, `=`, `;`, `(`, or `<` is expected.
         // Only when `@` is on the SAME line — if on a new line, ASI applies and the
@@ -1624,6 +1613,18 @@ impl ParserState {
             && (asterisk_token
                 || self.is_token(SyntaxKind::OpenParenToken)
                 || self.is_token(SyntaxKind::LessThanToken));
+
+        // TS1276: An 'accessor' property cannot be declared optional.
+        // tsc anchors at the `?` token for properties only; accessor methods
+        // report TS1275 instead.
+        if !is_method_like && question_token && has_accessor_modifier {
+            self.parse_error_at(
+                question_token_pos,
+                question_token_end - question_token_pos,
+                "An 'accessor' property cannot be declared optional.",
+                diagnostic_codes::AN_ACCESSOR_PROPERTY_CANNOT_BE_DECLARED_OPTIONAL,
+            );
+        }
 
         if is_method_like {
             // TS1031: 'declare' modifier cannot appear on class elements of this kind
