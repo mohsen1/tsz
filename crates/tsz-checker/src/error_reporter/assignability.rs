@@ -1132,6 +1132,15 @@ impl<'a> CheckerState<'a> {
     }
 
     fn format_exact_optional_target_type_for_message(&mut self, target: TypeId) -> String {
+        // Honor any display-alias attached during type construction (e.g.
+        // JSDoc `@typedef {object} A` stores `body_type → lazy(def_for_A)`).
+        // tsc reports the alias name `A` in TS2375 messages instead of
+        // expanding to the body's structural form `{ value?: number; }`.
+        if let Some(alias_id) = self.ctx.types.get_display_alias(target)
+            && let Some(name) = self.authoritative_assignability_def_name(alias_id)
+        {
+            return name;
+        }
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()

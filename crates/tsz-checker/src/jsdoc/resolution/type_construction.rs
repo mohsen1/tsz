@@ -490,27 +490,42 @@ impl<'a> CheckerState<'a> {
     ) -> tsz_solver::def::DefId {
         use tsz_solver::def::{DefKind, DefinitionInfo};
 
-        if type_params.is_empty()
+        let def_id = if type_params.is_empty()
             && let Some(def_id) = self.ctx.definition_store.find_type_alias_by_body(body_type)
         {
-            return def_id;
-        }
-
-        let atom_name = self.ctx.types.intern_string(name);
-        if let Some(candidates) = self.ctx.definition_store.find_defs_by_name(atom_name) {
-            for def_id in candidates {
-                if let Some(def) = self.ctx.definition_store.get(def_id)
-                    && matches!(def.kind, DefKind::TypeAlias)
-                    && def.body == Some(body_type)
-                    && def.type_params.as_slice() == type_params
-                {
-                    return def_id;
+            def_id
+        } else {
+            let atom_name = self.ctx.types.intern_string(name);
+            let mut found = None;
+            if let Some(candidates) = self.ctx.definition_store.find_defs_by_name(atom_name) {
+                for def_id in candidates {
+                    if let Some(def) = self.ctx.definition_store.get(def_id)
+                        && matches!(def.kind, DefKind::TypeAlias)
+                        && def.body == Some(body_type)
+                        && def.type_params.as_slice() == type_params
+                    {
+                        found = Some(def_id);
+                        break;
+                    }
                 }
             }
-        }
+            found.unwrap_or_else(|| {
+                let info = DefinitionInfo::type_alias(atom_name, type_params.to_vec(), body_type);
+                self.ctx.definition_store.register(info)
+            })
+        };
 
-        let info = DefinitionInfo::type_alias(atom_name, type_params.to_vec(), body_type);
-        self.ctx.definition_store.register(info)
+        // Attach a display-alias so diagnostic messages can recover the
+        // typedef name `Foo` instead of expanding to the body's structural
+        // form (e.g. `{ value?: number; }`). Mirrors tsc's preserve-alias
+        // policy for `@typedef`-named types in TS2375 / TS2322 messages.
+        // No-op when `body_type == lazy(def_id)` (e.g. recursive typedefs)
+        // or when storing would alias an intrinsic — `store_display_alias`
+        // applies its own safety guards.
+        let alias_lazy = self.ctx.types.factory().lazy(def_id);
+        self.ctx.types.store_display_alias(body_type, alias_lazy);
+
+        def_id
     }
 
     /// Register a DefId for a JSDoc `@typedef` so the type formatter can find the alias name.
