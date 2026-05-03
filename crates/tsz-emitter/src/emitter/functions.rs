@@ -1722,6 +1722,48 @@ mod tests {
     }
 
     #[test]
+    fn async_function_es2015_destructured_param_preserves_outer_arity() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "async function foo({ foo = await bar }) {}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains("function foo(_a) {"),
+            "Outer async function should keep a placeholder parameter.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("function* ({ foo = yield bar })"),
+            "Moved generator parameter should preserve the destructuring pattern.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn async_function_es2015_moved_params_avoid_inner_name_collisions() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "async function h(a, { x }) {}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains("function h(a_1, _a) {"),
+            "Outer async function placeholders should avoid colliding with inner generator parameters.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("function* (a, { x })"),
+            "Moved generator parameters should preserve original names and patterns.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn malformed_rest_parameter_modifier_recovers_following_parameter() {
         let source = "class C { constructor(...public rest: string[]) {} }";
 

@@ -199,6 +199,8 @@ impl<'a> Printer<'a> {
             // by moving parameters to the inner generator and forwarding `arguments`.
             if !move_params_to_generator {
                 self.emit_function_parameters_js(params);
+            } else {
+                self.emit_async_outer_parameter_placeholders(params);
             }
         } else {
             if es5_await_param_recovery {
@@ -730,6 +732,51 @@ impl<'a> Printer<'a> {
                 self.write("...");
             }
             self.emit(param.name);
+        }
+    }
+
+    fn emit_async_outer_parameter_placeholders(&mut self, params: &[NodeIndex]) {
+        let mut first = true;
+        for &param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.dot_dot_dot_token || param.initializer.is_some() {
+                break;
+            }
+            let Some(name_node) = self.arena.get(param.name) else {
+                continue;
+            };
+            if name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+                continue;
+            }
+            if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(text) = self.source_text
+                && let Ok(name_text) =
+                    crate::safe_slice::slice(text, name_node.pos as usize, name_node.end as usize)
+                && name_text.trim() == "this"
+            {
+                continue;
+            }
+
+            let placeholder = if self.is_binding_pattern(param.name) {
+                self.get_temp_var_name()
+            } else {
+                let name = emit_utils::identifier_text_or_empty(self.arena, param.name);
+                if name.is_empty() {
+                    continue;
+                }
+                self.make_unique_name_from_base(&name)
+            };
+
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+            self.write(&placeholder);
         }
     }
 
