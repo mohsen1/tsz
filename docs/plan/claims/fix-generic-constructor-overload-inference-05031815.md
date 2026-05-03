@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-03
 - **Branch**: `fix/generic-constructor-overload-inference-05031815`
-- **PR**: TBD
+- **PR**: #2597
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
