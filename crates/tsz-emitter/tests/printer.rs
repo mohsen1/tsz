@@ -227,7 +227,7 @@ fn test_optional_call_spread_downlevel_es5() {
 }
 
 #[test]
-fn test_commonjs_empty_named_import_emits_bare_require() {
+fn test_commonjs_empty_named_import_is_elided() {
     let source = "import {} from \"./side\";\n";
     let output = parse_lower_print(
         source,
@@ -238,7 +238,7 @@ fn test_commonjs_empty_named_import_emits_bare_require() {
         },
     );
 
-    assert!(output.contains("require(\"./side\");"));
+    assert!(!output.contains("require(\"./side\");"));
     assert!(!output.contains("var side_1 = require(\"./side\");"));
 }
 
@@ -255,6 +255,40 @@ fn test_commonjs_type_only_named_import_is_elided() {
     );
 
     assert!(!output.contains("require(\"./types\")"));
+}
+
+#[test]
+fn commonjs_preamble_stays_after_source_prologue_strings() {
+    let source = "\"hey!\";\n\" use strict \";\nexport function f() {}\n";
+    let output = parse_lower_print(source, PrintOptions::es5_commonjs());
+
+    let strict_pos = output
+        .find("\"use strict\";")
+        .expect("CJS output should include synthetic use strict");
+    let first_prologue_pos = output
+        .find("\"hey!\";")
+        .expect("First source prologue should be emitted");
+    let second_prologue_pos = output
+        .find("\" use strict \";")
+        .expect("Second source prologue should be emitted");
+    let marker_pos = output
+        .find("Object.defineProperty(exports, \"__esModule\"")
+        .expect("CJS output should include __esModule marker");
+    let export_pos = output
+        .find("exports.f = f;")
+        .expect("Function export should be hoisted");
+    let function_pos = output
+        .find("function f()")
+        .expect("Function declaration should be emitted");
+
+    assert!(strict_pos < first_prologue_pos, "Output:\n{output}");
+    assert!(
+        first_prologue_pos < second_prologue_pos,
+        "Output:\n{output}"
+    );
+    assert!(second_prologue_pos < marker_pos, "Output:\n{output}");
+    assert!(marker_pos < export_pos, "Output:\n{output}");
+    assert!(export_pos < function_pos, "Output:\n{output}");
 }
 
 #[test]
