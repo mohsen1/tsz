@@ -1445,33 +1445,13 @@ impl<'a> Printer<'a> {
             return false;
         };
 
-        let scan_start = param
-            .type_annotation
-            .into_option()
-            .and_then(|idx| self.arena.get(idx))
-            .map_or_else(
-                || {
-                    self.arena.get(param.name).map_or(node.pos, |name_node| {
-                        if param.question_token {
-                            name_node.end.saturating_add(1)
-                        } else {
-                            name_node.end
-                        }
-                    })
-                },
-                |type_node| type_node.end,
-            ) as usize;
-        let scan_end = node.end as usize;
-        let bytes = source_text.as_bytes();
-        if scan_start >= scan_end || scan_end > bytes.len() {
-            return false;
-        }
+        fn skip_trivia(bytes: &[u8], mut index: usize, scan_end: usize) -> usize {
+            loop {
+                while index < scan_end && matches!(bytes[index], b' ' | b'\t' | b'\r' | b'\n') {
+                    index += 1;
+                }
 
-        let mut index = scan_start;
-        while index < scan_end {
-            match bytes[index] {
-                b' ' | b'\t' | b'\r' | b'\n' => index += 1,
-                b'/' if index + 1 < scan_end && bytes[index + 1] == b'*' => {
+                if index + 1 < scan_end && bytes[index] == b'/' && bytes[index + 1] == b'*' {
                     index += 2;
                     while index + 1 < scan_end
                         && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
@@ -1481,19 +1461,60 @@ impl<'a> Printer<'a> {
                     if index + 1 < scan_end {
                         index += 2;
                     }
+                    continue;
                 }
-                b'/' if index + 1 < scan_end && bytes[index + 1] == b'/' => {
+
+                if index + 1 < scan_end && bytes[index] == b'/' && bytes[index + 1] == b'/' {
                     while index < scan_end && bytes[index] != b'\n' {
                         index += 1;
                     }
+                    continue;
                 }
-                b'=' if bytes.get(index + 1) == Some(&b'>') => return false,
-                b'=' => return true,
-                _ => return false,
+
+                return index;
             }
         }
 
-        false
+        let scan_end = node.end as usize;
+        let bytes = source_text.as_bytes();
+        if scan_end > bytes.len() {
+            return false;
+        }
+
+        let scan_start = param
+            .type_annotation
+            .into_option()
+            .and_then(|idx| self.arena.get(idx))
+            .map_or_else(
+                || {
+                    let name_end = self
+                        .arena
+                        .get(param.name)
+                        .map_or(node.pos, |name_node| name_node.end)
+                        as usize;
+                    if !param.question_token {
+                        return name_end;
+                    }
+
+                    let optional_token_start = skip_trivia(bytes, name_end, scan_end);
+                    if bytes.get(optional_token_start) == Some(&b'?') {
+                        optional_token_start + 1
+                    } else {
+                        name_end
+                    }
+                },
+                |type_node| type_node.end as usize,
+            );
+        if scan_start >= scan_end {
+            return false;
+        }
+
+        let index = skip_trivia(bytes, scan_start, scan_end);
+        match bytes.get(index) {
+            Some(b'=') if bytes.get(index + 1) == Some(&b'>') => false,
+            Some(b'=') => true,
+            _ => false,
+        }
     }
 
     pub(super) fn emit_function_parameters_with_trailing_comments(
