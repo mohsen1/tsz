@@ -151,8 +151,19 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // Run the full portability check on the return type
-        self.emit_non_portable_type_diagnostic(return_type_id, decl_name, file, pos, length);
+        // Run the full portability check on the return type, then also inspect
+        // the callee's declared return annotation. The solver representation can
+        // lose declaration-site import aliases inside structured returns (for
+        // example tuple elements imported from a nested dependency).
+        let _ =
+            self.emit_non_portable_type_diagnostic(return_type_id, decl_name, file, pos, length);
+        self.check_callee_declaration_return_type_portability(
+            call.expression,
+            decl_name,
+            file,
+            pos,
+            length,
+        );
     }
 
     /// When the callee's return type can't be resolved through the solver,
@@ -202,7 +213,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .filter(|arena| std::sync::Arc::as_ptr(arena) as usize != current_arena_ptr);
 
             if let Some(arena) = use_resolved {
-                (resolved, symbol, arena)
+                (resolved, symbol, Arc::clone(arena))
             } else {
                 // Alias wasn't resolved to its target. Walk module_exports to find the
                 // same-named symbol in the specific module this alias imports from.
@@ -227,7 +238,7 @@ impl<'a> DeclarationEmitter<'a> {
                             let ptr = std::sync::Arc::as_ptr(arena) as usize;
                             if ptr != current_arena_ptr {
                                 if let Some(sym) = binder.symbols.get(export_sym_id) {
-                                    found = Some((export_sym_id, sym, arena));
+                                    found = Some((export_sym_id, sym, Arc::clone(arena)));
                                     break;
                                 }
                             }
@@ -249,6 +260,20 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
+            if let Some(signature) = source_arena.get_signature(decl_node) {
+                if self.emit_non_portable_type_node_diagnostic_from_arena(
+                    source_arena,
+                    signature.type_annotation,
+                    decl_name,
+                    file,
+                    pos,
+                    length,
+                ) {
+                    return;
+                }
+                continue;
+            }
+
             let Some(func) = source_arena.get_function(decl_node) else {
                 continue;
             };
@@ -260,6 +285,58 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(type_node) = source_arena.get(func.type_annotation) else {
                 continue;
             };
+
+            if let Some(return_type_text) =
+                self.source_slice_from_arena(source_arena, func.type_annotation)
+            {
+                let mut i = 0usize;
+                let bytes = return_type_text.as_bytes();
+                while i < bytes.len() {
+                    let ch = bytes[i] as char;
+                    if !Self::is_type_text_identifier_start(ch) {
+                        i += 1;
+                        continue;
+                    }
+                    let start = i;
+                    i += 1;
+                    while i < bytes.len()
+                        && Self::is_type_text_identifier_continue(bytes[i] as char)
+                    {
+                        i += 1;
+                    }
+                    let ident = &return_type_text[start..i];
+                    if Self::is_non_type_text_identifier_candidate(ident)
+                        || Self::type_text_identifier_is_member_name(&return_type_text, i)
+                    {
+                        continue;
+                    }
+                    if let Some(type_sym_id) =
+                        self.find_symbol_in_arena_by_name(source_arena, ident)
+                        && let Some(from_path) =
+                            self.check_nested_transitive_import(type_sym_id, binder)
+                    {
+                        self.emit_non_portable_named_reference_diagnostic(
+                            decl_name, file, pos, length, &from_path, ident,
+                        );
+                        return;
+                    }
+                    let arena_addr = source_arena as *const NodeArena as usize;
+                    if let Some(source_path) = self.arena_to_path.get(&arena_addr)
+                        && let Some(source_file) = self.arena_source_file(source_arena)
+                        && let Some(import_module) =
+                            self.named_import_module_from_text(source_file.text.as_ref(), ident)
+                        && !import_module.starts_with('.')
+                        && !import_module.starts_with('/')
+                        && let Some(from_path) =
+                            self.transitive_dependency_from_import(source_path, &import_module)
+                    {
+                        self.emit_non_portable_named_reference_diagnostic(
+                            decl_name, file, pos, length, &from_path, ident,
+                        );
+                        return;
+                    }
+                }
+            }
 
             if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
                 let Some(type_ref) = source_arena.get_type_ref(type_node) else {
@@ -277,7 +354,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // Look up the return-type symbol via cross_file_node_symbols (keyed by
                 // arena pointer). The `binder.get_node_symbol` path only covers the
                 // local file's nodes; cross_file_node_symbols covers all arenas.
-                let arena_ptr = std::sync::Arc::as_ptr(func_arena_arc) as usize;
+                let arena_ptr = std::sync::Arc::as_ptr(&func_arena_arc) as usize;
                 let type_sym_id = binder
                     .cross_file_node_symbols
                     .get(&arena_ptr)
@@ -379,6 +456,17 @@ impl<'a> DeclarationEmitter<'a> {
                         return;
                     }
                 }
+            }
+
+            if self.emit_non_portable_type_node_diagnostic_from_arena(
+                source_arena,
+                func.type_annotation,
+                decl_name,
+                file,
+                pos,
+                length,
+            ) {
+                return;
             }
         }
     }
@@ -1090,11 +1178,15 @@ impl<'a> DeclarationEmitter<'a> {
             let skip_direct_identifier_portability =
                 self.is_indexed_access_object_subtree_node(arena, node_idx);
             let sym_id = self
-                .find_symbol_in_arena_by_name(arena, &identifier.escaped_text)
-                .or_else(|| {
-                    self.binder
-                        .and_then(|binder| binder.get_node_symbol(node_idx))
-                });
+                .binder
+                .and_then(|binder| {
+                    binder
+                        .cross_file_node_symbols
+                        .get(&arena_addr)
+                        .and_then(|symbols| symbols.get(&node_idx.0).copied())
+                        .or_else(|| binder.get_node_symbol(node_idx))
+                })
+                .or_else(|| self.find_symbol_in_arena_by_name(arena, &identifier.escaped_text));
             if let Some(sym_id) = sym_id {
                 if let Some(binder) = self.binder
                     && let Some(current_file_path) = self.current_file_path.as_deref()
@@ -1113,6 +1205,12 @@ impl<'a> DeclarationEmitter<'a> {
                         && seen.insert(result.clone())
                     {
                         results.push(result);
+                    }
+                    if let Some(from_path) = self.check_nested_transitive_import(sym_id, binder) {
+                        let result = (from_path, identifier.escaped_text.clone());
+                        if seen.insert(result.clone()) {
+                            results.push(result);
+                        }
                     }
                 }
 

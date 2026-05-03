@@ -160,6 +160,18 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
             {
+                if let Some(name_text) = self.get_identifier_text(decl_name)
+                    && let Some(name_node) = self.arena.get(decl_name)
+                    && let Some(file_path) = self.current_file_path.clone()
+                {
+                    self.check_call_expression_return_type_portability(
+                        initializer,
+                        &name_text,
+                        &file_path,
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                    );
+                }
                 self.write(": ");
                 self.write(&Self::strip_synthetic_anonymous_object_members(&type_text));
             } else if has_initializer
@@ -277,16 +289,14 @@ impl<'a> DeclarationEmitter<'a> {
                             );
                         }
                     }
-                    // When the inferred type is `any` or `error` and the
-                    // initializer is a call expression, the type cache may not
-                    // have the correct type for the variable. Trace through the
-                    // callee's declared return type to check for non-portable
-                    // references.
-                    if self.diagnostics.len() == diagnostics_before
-                        && has_initializer
-                        && (type_id == tsz_solver::types::TypeId::ANY
-                            || type_id == tsz_solver::types::TypeId::ERROR)
-                    {
+                    // For call initializers, the inferred type may be printable
+                    // while losing the declaration-site aliases that determine
+                    // portability. Trace through the callee's declared return
+                    // annotation. TS2883 normalization already drops duplicate
+                    // named-reference diagnostics, while this preserves nested
+                    // declaration-site imports that the inferred type graph can
+                    // lose.
+                    if has_initializer {
                         self.check_call_expression_return_type_portability(
                             initializer,
                             &name_text,

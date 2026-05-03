@@ -1792,8 +1792,9 @@ fn normalize_ts2883_diagnostics_in_place(
     use rustc_hash::FxHashSet;
 
     let mut original_canonical_sites = FxHashSet::default();
-    let mut exact_seen = FxHashSet::default();
-    let mut unique = Vec::with_capacity(diagnostics.len());
+    let mut exact_seen: FxHashMap<(u32, String, u32, u32, String), usize> = FxHashMap::default();
+    let mut unique: Vec<(tsz_common::diagnostics::Diagnostic, bool)> =
+        Vec::with_capacity(diagnostics.len());
 
     for diagnostic in diagnostics.drain(..) {
         let mut diagnostic = diagnostic;
@@ -1821,10 +1822,14 @@ fn normalize_ts2883_diagnostics_in_place(
             diagnostic.length,
             diagnostic.message_text.clone(),
         );
-        if !exact_seen.insert(exact_key) {
+        if let Some(&existing_idx) = exact_seen.get(&exact_key) {
+            if !was_canonicalized && unique[existing_idx].1 {
+                unique[existing_idx] = (diagnostic, was_canonicalized);
+            }
             continue;
         }
 
+        exact_seen.insert(exact_key, unique.len());
         unique.push((diagnostic, was_canonicalized));
     }
 
