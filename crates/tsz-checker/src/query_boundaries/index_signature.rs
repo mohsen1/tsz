@@ -43,11 +43,22 @@ pub(crate) fn is_valid_index_sig_param_type_ast(
         k if k == syntax_kind_ext::INTERSECTION_TYPE => arena
             .get_composite_type(type_node)
             .is_some_and(|composite| {
-                composite
+                // Accept the intersection only when at least one member is
+                // a structurally valid index-sig type AND no member contains
+                // a generic type parameter or literal. This prevents
+                // `T & string` from being treated as valid (which would
+                // suppress the more specific TS1337 diagnostic).
+                let any_valid = composite
                     .types
                     .nodes
                     .iter()
-                    .any(|&m| is_valid_index_sig_param_type_ast(arena, binder, m))
+                    .any(|&m| is_valid_index_sig_param_type_ast(arena, binder, m));
+                let any_generic_or_literal = composite
+                    .types
+                    .nodes
+                    .iter()
+                    .any(|&m| contains_type_param_or_literal_ast(arena, binder, m));
+                any_valid && !any_generic_or_literal
             }),
         k if k == syntax_kind_ext::TYPE_REFERENCE => {
             let Some(type_ref) = arena.get_type_ref(type_node) else {
@@ -74,4 +85,61 @@ pub(crate) fn is_valid_index_sig_param_type_ast(
         }
         _ => false,
     }
+}
+
+/// AST-level check: does `type_annotation_idx` contain (recursively) a
+/// generic type parameter reference or a literal type? Used to gate the
+/// intersection arm of `is_valid_index_sig_param_type_ast` so that
+/// `T & string` is rejected (and the more specific TS1337 diagnostic
+/// can fire instead of being suppressed).
+pub(crate) fn contains_type_param_or_literal_ast(
+    arena: &NodeArena,
+    binder: &tsz_binder::BinderState,
+    type_annotation_idx: NodeIndex,
+) -> bool {
+    let Some(type_node) = arena.get(type_annotation_idx) else {
+        return false;
+    };
+
+    if type_node.kind == syntax_kind_ext::LITERAL_TYPE
+        || type_node.kind == SyntaxKind::StringLiteral as u16
+        || type_node.kind == SyntaxKind::NumericLiteral as u16
+        || type_node.kind == SyntaxKind::TrueKeyword as u16
+        || type_node.kind == SyntaxKind::FalseKeyword as u16
+    {
+        return true;
+    }
+
+    if type_node.kind == syntax_kind_ext::UNION_TYPE
+        || type_node.kind == syntax_kind_ext::INTERSECTION_TYPE
+    {
+        if let Some(composite) = arena.get_composite_type(type_node) {
+            return composite
+                .types
+                .nodes
+                .iter()
+                .any(|&m| contains_type_param_or_literal_ast(arena, binder, m));
+        }
+        return false;
+    }
+
+    if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+        && let Some(type_ref) = arena.get_type_ref(type_node)
+        && let Some(sym_id) = binder.resolve_identifier(arena, type_ref.type_name)
+        && let Some(symbol) = binder.get_symbol(sym_id)
+    {
+        if (symbol.flags & tsz_binder::symbol_flags::TYPE_PARAMETER) != 0 {
+            return true;
+        }
+        // Recurse into a type alias body so `type S = T & string` is also caught.
+        if (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
+            && let Some(&decl_idx) = symbol.declarations.first()
+            && let Some(decl_node) = arena.get(decl_idx)
+            && let Some(type_alias) = arena.get_type_alias(decl_node)
+        {
+            return contains_type_param_or_literal_ast(arena, binder, type_alias.type_node);
+        }
+    }
+
+    false
 }

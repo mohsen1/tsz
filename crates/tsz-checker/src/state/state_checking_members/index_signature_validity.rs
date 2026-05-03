@@ -46,12 +46,23 @@ impl<'a> CheckerState<'a> {
                 .get(type_annotation_idx)
                 .and_then(|n| self.ctx.arena.get_composite_type(n))
                 .is_some_and(|composite| {
-                    composite.types.nodes.iter().any(|&m| {
+                    // Accept the intersection only when at least one member is
+                    // a structurally valid index-sig type AND no member contains
+                    // a generic type parameter or literal type. The latter
+                    // guard prevents `T & string` from sneaking past the
+                    // TS1337 check at call sites that gate on validity.
+                    let any_valid = composite.types.nodes.iter().any(|&m| {
                         self.ctx
                             .arena
                             .get(m)
                             .is_some_and(|mn| self.is_valid_index_sig_param_type(mn.kind, m))
-                    })
+                    });
+                    let any_generic_or_literal = composite.types.nodes.iter().any(|&m| {
+                        self.ctx.arena.get(m).is_some_and(|mn| {
+                            self.is_type_param_or_literal_in_index_sig(mn.kind, m)
+                        })
+                    });
+                    any_valid && !any_generic_or_literal
                 }),
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 let Some(type_node) = self.ctx.arena.get(type_annotation_idx) else {
