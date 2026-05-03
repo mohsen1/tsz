@@ -76,7 +76,13 @@ impl<'a> Printer<'a> {
                     {
                         continue;
                     }
-                    self.emit(mod_idx);
+                    if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
+                        self.write("export");
+                    } else if mod_node.kind == SyntaxKind::DefaultKeyword as u16 {
+                        self.write("default");
+                    } else {
+                        self.emit(mod_idx);
+                    }
                     // Add space or newline after decorator
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
                         self.write_line();
