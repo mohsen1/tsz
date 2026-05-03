@@ -4291,6 +4291,47 @@ const x: { foo?: number } = { foo: undefined };
     );
 }
 
+#[test]
+fn jsdoc_typedef_body_display_alias_does_not_expand_ts2322_target() {
+    let source = r#"
+/**
+ * @typedef {{ value: number }} MyAlias
+ */
+
+/** @type {MyAlias} */
+const a = 1;
+"#;
+    let diagnostics = with_lib_contexts(
+        source,
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one TS2322 for the typedef target, got: {diagnostics:#?}"
+    );
+    let message = &ts2322[0].1;
+    assert!(
+        message.contains("type 'MyAlias'"),
+        "TS2322 target display should preserve the JSDoc typedef name, got: {message:?}"
+    );
+    assert!(
+        !message.contains("type '{ value: number; }'"),
+        "TS2322 target display should not expand the JSDoc typedef body, got: {message:?}"
+    );
+}
+
 /// Regression test for `widen_fresh_object_literal_properties_for_display`:
 /// the helper must only widen literal property types when the outer object
 /// is itself a *fresh* object literal. Annotated types like `{ a: "x" }`
