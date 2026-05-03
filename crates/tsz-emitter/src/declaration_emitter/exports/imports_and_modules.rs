@@ -254,10 +254,13 @@ impl<'a> DeclarationEmitter<'a> {
         //   - the source carried `declare`
         //   - we're inside an ambient/`declare` namespace (ambient contexts
         //     preserve structure — e.g. declarationEmitLocalClassHasRequiredDeclare)
+        //   - it's referenced by an exported import alias (e.g.
+        //     aliasInaccessibleModule: `export import X = N` keeps `namespace N`)
         if !is_exported
             && !self.arena.is_declare(&module.modifiers)
             && self.inside_non_ambient_namespace
             && self.is_module_body_effectively_empty(module.body)
+            && !self.is_empty_namespace_referenced_by_export_import_alias(module_idx)
         {
             return;
         }
@@ -493,6 +496,132 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena
             .get_module_block(body_node)
             .is_none_or(|block| block.statements.as_ref().is_none_or(|s| s.nodes.is_empty()))
+    }
+
+    fn is_empty_namespace_referenced_by_export_import_alias(&self, module_idx: NodeIndex) -> bool {
+        let Some(module_node) = self.arena.get(module_idx) else {
+            return false;
+        };
+        let Some(module) = self.arena.get_module(module_node) else {
+            return false;
+        };
+        let module_name = self.get_identifier_text(module.name);
+        let module_symbol = self.binder.and_then(|binder| {
+            binder
+                .get_node_symbol(module_idx)
+                .or_else(|| binder.get_node_symbol(module.name))
+        });
+        let Some(source_file) = self
+            .current_source_file_idx
+            .and_then(|source_idx| self.arena.get(source_idx))
+            .and_then(|source_node| self.arena.get_source_file(source_node))
+        else {
+            return false;
+        };
+
+        self.statements_contain_export_import_alias_to_namespace(
+            &source_file.statements,
+            module_symbol,
+            module_name.as_deref(),
+        )
+    }
+
+    fn statements_contain_export_import_alias_to_namespace(
+        &self,
+        statements: &NodeList,
+        module_symbol: Option<tsz_binder::SymbolId>,
+        module_name: Option<&str>,
+    ) -> bool {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export) = self.arena.get_export_decl(stmt_node)
+                && let Some(clause_node) = self.arena.get(export.export_clause)
+                && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && self.import_equals_references_namespace(
+                    export.export_clause,
+                    module_symbol,
+                    module_name,
+                )
+            {
+                return true;
+            }
+
+            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.arena.get_module(stmt_node)
+                && self.module_body_contains_export_import_alias_to_namespace(
+                    module.body,
+                    module_symbol,
+                    module_name,
+                )
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn module_body_contains_export_import_alias_to_namespace(
+        &self,
+        body_idx: NodeIndex,
+        module_symbol: Option<tsz_binder::SymbolId>,
+        module_name: Option<&str>,
+    ) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        if let Some(nested) = self.arena.get_module(body_node) {
+            return self.module_body_contains_export_import_alias_to_namespace(
+                nested.body,
+                module_symbol,
+                module_name,
+            );
+        }
+        self.arena
+            .get_module_block(body_node)
+            .and_then(|block| block.statements.as_ref())
+            .is_some_and(|statements| {
+                self.statements_contain_export_import_alias_to_namespace(
+                    statements,
+                    module_symbol,
+                    module_name,
+                )
+            })
+    }
+
+    fn import_equals_references_namespace(
+        &self,
+        import_idx: NodeIndex,
+        module_symbol: Option<tsz_binder::SymbolId>,
+        module_name: Option<&str>,
+    ) -> bool {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return false;
+        };
+        let Some(import) = self.arena.get_import_decl(import_node) else {
+            return false;
+        };
+        if !import.module_specifier.is_some() {
+            return false;
+        }
+
+        if let Some(module_symbol) = module_symbol
+            && let Some(binder) = self.binder
+        {
+            let rightmost = self.get_rightmost_name(import.module_specifier);
+            if binder.get_node_symbol(import.module_specifier) == Some(module_symbol)
+                || binder.get_node_symbol(rightmost) == Some(module_symbol)
+            {
+                return true;
+            }
+        }
+
+        module_name.is_some_and(|name| {
+            self.get_identifier_text(self.get_rightmost_name(import.module_specifier))
+                .is_some_and(|reference_name| reference_name == name)
+        })
     }
 
     fn js_named_export_names_for_module_body(&self, stmts: &NodeList) -> Vec<String> {

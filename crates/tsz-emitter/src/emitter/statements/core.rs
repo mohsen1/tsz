@@ -1401,11 +1401,19 @@ impl<'a> Printer<'a> {
     ) -> Option<u32> {
         let mut last_end = None;
         for &decl_list_idx in &declarations.nodes {
-            let decl_list_node = self.arena.get(decl_list_idx)?;
-            let decl_list = self.arena.get_variable(decl_list_node)?;
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
             for &decl_idx in &decl_list.declarations.nodes {
-                let decl_node = self.arena.get(decl_idx)?;
-                let decl = self.arena.get_variable_declaration(decl_node)?;
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
                 if let Some(init_node) = self.arena.get(decl.initializer) {
                     last_end = Some(init_node.end);
                 } else if let Some(name_node) = self.arena.get(decl.name) {
@@ -1569,7 +1577,7 @@ impl<'a> Printer<'a> {
             }
             let source_temp = self.make_unique_name_hoisted();
             let export_temp = self.make_unique_name();
-            self.write("var ");
+            self.write("export var ");
             self.write(&export_temp);
             self.write(" = ");
             self.write(&source_temp);

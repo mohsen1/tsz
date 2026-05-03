@@ -50,6 +50,28 @@ export class OverloadedCtor {
 }
 
 #[test]
+fn empty_namespace_referenced_by_export_import_is_preserved() {
+    let result = emit_dts_with_usage_analysis(
+        r#"
+namespace Outer {
+    namespace N {
+    }
+    export import X = N;
+}
+"#,
+    );
+
+    assert!(
+        result.contains("namespace N"),
+        "empty namespace referenced by export import should be preserved: {result}"
+    );
+    assert!(
+        result.contains("export import X = N;"),
+        "export import alias should remain valid: {result}"
+    );
+}
+
+#[test]
 fn test_complex_generic_constraints_with_defaults() {
     let result = emit_dts(
         r#"
