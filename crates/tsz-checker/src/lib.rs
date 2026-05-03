@@ -475,6 +475,9 @@ mod strict_null_manual;
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
 #[cfg(test)]
+#[path = "tests/ts1170_computed_property_syntactic_form_tests.rs"]
+mod ts1170_computed_property_syntactic_form_tests;
+#[cfg(test)]
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
 #[cfg(test)]
