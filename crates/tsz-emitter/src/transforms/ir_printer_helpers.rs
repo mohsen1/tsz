@@ -232,6 +232,12 @@ impl<'a> IRPrinter<'a> {
             if param.rest {
                 self.write("...");
             }
+            if let Some(comment) = &param.leading_comment
+                && !self.remove_comments
+            {
+                self.write(comment);
+                self.write(" ");
+            }
             self.write(&param.name);
         }
     }

@@ -1355,6 +1355,7 @@ impl<'a> AstToIr<'a> {
                     name: name.into(),
                     default_value: None,
                     rest: false,
+                    leading_comment: None,
                 })
             })
             .collect();
@@ -1387,6 +1388,7 @@ impl<'a> AstToIr<'a> {
                     name: name.into(),
                     default_value: None,
                     rest: false,
+                    leading_comment: None,
                 })
             })
             .collect();
@@ -1617,6 +1619,7 @@ impl<'a> AstToIr<'a> {
                     name: name.into(),
                     rest,
                     default_value,
+                    leading_comment: None,
                 })
             })
             .collect()

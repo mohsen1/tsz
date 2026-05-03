@@ -576,6 +576,7 @@ pub struct IRParam {
     pub name: Cow<'static, str>,
     pub rest: bool,
     pub default_value: Option<Box<IRNode>>,
+    pub leading_comment: Option<Cow<'static, str>>,
 }
 
 /// Switch case
@@ -598,6 +599,8 @@ pub struct IRPropertyDescriptor {
     pub get: Option<Box<IRNode>>,
     pub set: Option<Box<IRNode>>,
     pub value: Option<Box<IRNode>>,
+    pub get_leading_comment: Option<String>,
+    pub set_leading_comment: Option<String>,
     pub enumerable: bool,
     pub configurable: bool,
     pub writable: bool,
@@ -802,6 +805,7 @@ impl IRParam {
             name: name.into(),
             rest: false,
             default_value: None,
+            leading_comment: None,
         }
     }
 
@@ -810,6 +814,7 @@ impl IRParam {
             name: name.into(),
             rest: true,
             default_value: None,
+            leading_comment: None,
         }
     }
 
