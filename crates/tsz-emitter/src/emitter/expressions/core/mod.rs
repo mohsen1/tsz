@@ -6,6 +6,31 @@ mod tests {
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
+    #[test]
+    fn multiline_parenthesized_erased_assertion_keeps_comment_layout() {
+        let source = r#"class Foo {
+    foo() {
+        return (
+            /* keep */ this.client
+                .getThing() as Promise<void>
+        );
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("return (\n        /* keep */ this.client\n            .getThing());"),
+            "Multiline parenthesized erased assertion should preserve its comment layout.\nOutput:\n{output}"
+        );
+    }
+
     /// Dynamic `import('path')` expressions must emit the `import` keyword.
     /// Previously the emitter's `emit_node_by_kind` dispatch had no handler for
     /// `SyntaxKind::ImportKeyword`, so the keyword was silently dropped and the
