@@ -1538,7 +1538,9 @@ impl<'a> DeclarationEmitter<'a> {
                     Some(raw)
                 }
             }
-            _ => self.simple_enum_access_member_text(expr_idx),
+            _ => self
+                .enum_member_access_initializer_text(expr_idx)
+                .or_else(|| self.simple_enum_access_member_text(expr_idx)),
         }
     }
 

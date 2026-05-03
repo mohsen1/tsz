@@ -1530,6 +1530,9 @@ impl<'a> UsageAnalyzer<'a> {
                     || self
                         .value_reference_symbol(expr_idx)
                         .is_some_and(|sym_id| self.symbol_needs_typeof(sym_id))
+                    || self
+                        .entity_access_root_symbol(expr_idx)
+                        .is_some_and(|sym_id| self.is_namespace_import_alias_symbol(sym_id))
             }
             _ => false,
         }
@@ -1558,6 +1561,23 @@ impl<'a> UsageAnalyzer<'a> {
         symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
             && symbol.import_module.is_some()
             && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"))
+    }
+
+    fn entity_access_root_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let mut current = expr_idx;
+        for _ in 0..32 {
+            let node = self.arena.get(current)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return self.value_reference_symbol(current);
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = self.arena.get_access_expr(node)?;
+                current = access.expression;
+                continue;
+            }
+            return None;
+        }
+        None
     }
 
     fn value_reference_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
