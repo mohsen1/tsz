@@ -703,6 +703,8 @@ impl<'a> Printer<'a> {
         }
 
         if self.in_system_execute_body
+            && self.function_scope_depth == 0
+            && !self.in_namespace_iife
             && let Some(bindings) = deferred_export_bindings.as_ref()
             && !bindings.is_empty()
             && !self
@@ -765,6 +767,7 @@ impl<'a> Printer<'a> {
                     self.write_export_binding_start(&export_name);
                     self.write(&local_name);
                     self.write_export_binding_end();
+                    self.system_folded_export_names.insert(local_name);
                     first = false;
                 }
                 return;
@@ -824,6 +827,8 @@ impl<'a> Printer<'a> {
         }
 
         if !is_exported
+            && self.function_scope_depth == 0
+            && !self.in_namespace_iife
             && let Some(bindings) = deferred_export_bindings.as_ref()
             && !bindings.is_empty()
         {
@@ -863,6 +868,9 @@ impl<'a> Printer<'a> {
                 self.write_export_binding_start(export_name);
                 self.write(&local_name);
                 self.write_export_binding_end();
+                if self.in_system_execute_body {
+                    self.system_folded_export_names.insert(local_name);
+                }
             }
         }
     }
