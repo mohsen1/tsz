@@ -816,23 +816,13 @@ impl<'a> TypePrinter<'a> {
     pub(crate) fn print_callable(&self, callable_id: tsz_solver::types::CallableShapeId) -> String {
         let callable = self.interner.callable_shape(callable_id);
 
-        // For visible value-side callables, use `typeof Name`. Class symbols
-        // are ambiguous in the solver today: syntactic instance references like
-        // `C` can also arrive as callable class shapes, so keep the type-side
-        // class name here and let explicit value-reference/type-query paths add
-        // `typeof` when they know the value side is required.
+        // For class constructor types with a visible symbol, use `typeof ClassName` form.
+        // This matches tsc's behavior for declaration emit.
         if !callable.construct_signatures.is_empty()
             && let Some(sym_id) = callable.symbol
             && (self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id))
             && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
         {
-            if self
-                .symbol_arena
-                .and_then(|arena| arena.get(sym_id))
-                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS))
-            {
-                return name;
-            }
             return format!("typeof {name}");
         }
 

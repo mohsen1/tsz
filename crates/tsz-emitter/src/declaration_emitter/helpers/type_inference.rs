@@ -47,6 +47,14 @@ impl<'a> DeclarationEmitter<'a> {
             match printed {
                 Some(printed)
                     if printed != "any"
+                        && (!printed.contains("any") || type_text.contains("any"))
+                        && printed.contains("typeof ")
+                        && !type_text.contains("typeof ") =>
+                {
+                    printed.replace("typeof ", "")
+                }
+                Some(printed)
+                    if printed != "any"
                         && (!printed.contains("any") || type_text.contains("any")) =>
                 {
                     printed
