@@ -2019,6 +2019,33 @@ impl ParserState {
                     break;
                 }
 
+                // `var v: void.x;` parses `void` as the type, then tsc reports
+                // a missing comma at `.` and recovers `x` as a second declarator.
+                let decl_has_type_annotation = self
+                    .arena
+                    .get(decl)
+                    .and_then(|node| self.arena.get_variable_declaration(node))
+                    .is_some_and(|decl| decl.type_annotation.is_some());
+                if decl_has_type_annotation && self.is_token(SyntaxKind::DotToken) {
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token();
+                    let dot_followed_by_declaration =
+                        self.is_identifier_or_keyword() && !self.is_reserved_word();
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+
+                    if dot_followed_by_declaration {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        self.next_token();
+                        continue;
+                    }
+                }
+
                 // `var x = 2.toString();` leaves `toString` in the token stream after the
                 // scanner reports TS1351 on the identifier. tsc recovers by treating that
                 // identifier as the malformed start of a second declaration, which shifts

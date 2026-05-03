@@ -22,3 +22,14 @@ fn recovered_empty_variable_initializer_preserves_equals() {
         "unexpected output: {output}"
     );
 }
+
+#[test]
+fn malformed_void_qualified_type_recovers_following_declaration() {
+    let source = "\"use strict\";\nvar v : void.x;";
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("\"use strict\";\nvar v, x;"),
+        "unexpected output: {output}"
+    );
+}

@@ -357,6 +357,44 @@ fn variable_declaration_recovery_private_identifier_indexed_access_tail() {
 }
 
 #[test]
+fn variable_declaration_recovers_void_qualified_type_tail_as_next_declaration() {
+    let source = "var v : void.x;";
+    let (parser, root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![diagnostic_codes::EXPECTED],
+        "expected one TS1005 at the malformed qualified type tail, got {codes:?}"
+    );
+
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).expect("source file");
+    let var_stmt = arena
+        .get(sf.statements.nodes[0])
+        .and_then(|node| arena.get_variable(node))
+        .expect("variable statement");
+    let decl_list = arena
+        .get(var_stmt.declarations.nodes[0])
+        .and_then(|node| arena.get_variable(node))
+        .expect("variable declaration list");
+    assert_eq!(
+        decl_list.declarations.nodes.len(),
+        2,
+        "expected `x` to recover as a second variable declarator"
+    );
+
+    let second_decl = arena
+        .get(decl_list.declarations.nodes[1])
+        .and_then(|node| arena.get_variable_declaration(node))
+        .expect("second variable declaration");
+    let name_node = arena
+        .get(second_decl.name)
+        .expect("second declaration name");
+    assert_eq!(&source[name_node.pos as usize..name_node.end as usize], "x");
+}
+
+#[test]
 fn parse_invalid_import_non_clause_start_reports_ts1128() {
     // `import 10;` — `10` is not a valid import clause start (not an identifier,
     // not `*`, `{`, `type`, or `defer`). tsc emits TS1128 "Declaration or statement
