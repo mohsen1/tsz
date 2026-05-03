@@ -627,7 +627,15 @@ impl<'a> CheckerState<'a> {
                         (is_direct_function_arg || is_array_literal_arg)
                             && diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
                             && is_callback_body_diag;
-                    let keep = if is_provisional_callback_body_overload {
+                    let is_provisional_callback_body_property_error = is_callback_body_diag
+                        && diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                        && (unresolved_refresh_context
+                            || (!is_direct_function_arg
+                                && (raw_context_requires_generic_epc_skip
+                                    || callable_context_requires_generic_epc_skip)));
+                    let keep = if is_provisional_callback_body_overload
+                        || is_provisional_callback_body_property_error
+                    {
                         false
                     } else if !is_provisional_assignability && !is_provisional_implicit_any {
                         true

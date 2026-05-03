@@ -596,12 +596,22 @@ impl<'a> CheckerState<'a> {
         match type_node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 let type_ref = self.ctx.arena.get_type_ref(type_node)?;
-                let TypeSymbolResolution::Type(target_sym_id) =
-                    self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
-                else {
-                    return None;
-                };
-                self.get_jsx_component_props_display_text_for_symbol(target_sym_id, props_name)
+                let type_name = type_ref.type_name;
+                let first_type_arg = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .and_then(|type_args| type_args.nodes.first().copied());
+
+                if let TypeSymbolResolution::Type(target_sym_id) =
+                    self.resolve_qualified_symbol_in_type_position(type_name)
+                    && let Some(display) = self
+                        .get_jsx_component_props_display_text_for_symbol(target_sym_id, props_name)
+                {
+                    return Some(display);
+                }
+
+                let first_arg = first_type_arg?;
+                self.format_jsx_props_display_text_from_type_node(first_arg)
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 let type_lit = self.ctx.arena.get_type_literal(type_node)?;

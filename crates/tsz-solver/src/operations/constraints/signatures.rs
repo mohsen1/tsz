@@ -101,7 +101,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // property would incorrectly fix `T = undefined` during partial
                     // Round 1 inference (where context-sensitive properties are
                     // intentionally omitted from the source).
-                    if target.optional && !var_map.contains_key(&target.type_id) {
+                    let mut placeholder_visited = FxHashSet::default();
+                    if target.optional
+                        && !var_map.contains_key(&target.type_id)
+                        && !self.type_contains_placeholder(
+                            target.type_id,
+                            var_map,
+                            &mut placeholder_visited,
+                        )
+                    {
                         self.constrain_types(
                             ctx,
                             var_map,
@@ -118,7 +126,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Handle remaining target properties that are missing from source
         while target_idx < target_props.len() {
             let target = &target_props[target_idx];
-            if target.optional && !var_map.contains_key(&target.type_id) {
+            let mut placeholder_visited = FxHashSet::default();
+            if target.optional
+                && !var_map.contains_key(&target.type_id)
+                && !self.type_contains_placeholder(
+                    target.type_id,
+                    var_map,
+                    &mut placeholder_visited,
+                )
+            {
                 self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id, priority);
             }
             target_idx += 1;

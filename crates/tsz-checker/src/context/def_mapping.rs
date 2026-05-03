@@ -273,6 +273,171 @@ impl<'a> CheckerContext<'a> {
         def_id
     }
 
+    /// Get or create a `DefId` for a symbol when the syntactic reference name is known.
+    ///
+    /// Raw `SymbolId` values are only unique within a binder. Type lowering can see a
+    /// lib/cross-file symbol through a raw id that collides with another binder's
+    /// symbol. Use the source name to select the matching binder symbol before falling
+    /// back to the general raw-id path.
+    pub fn get_or_create_def_id_for_symbol_name(
+        &self,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> DefId {
+        use tsz_solver::def::DefinitionInfo;
+
+        let cached_def_id = self.symbol_to_def.borrow().get(&sym_id).copied();
+        if let Some(def_id) = cached_def_id {
+            if self
+                .definition_store
+                .get(def_id)
+                .is_some_and(|info| self.types.resolve_atom(info.name) == expected_name)
+            {
+                return def_id;
+            }
+
+            if let Some(lib_sym_id) = self.lib_contexts.iter().find_map(|lib_ctx| {
+                lib_ctx
+                    .binder
+                    .file_locals
+                    .get(expected_name)
+                    .filter(|&candidate| candidate != sym_id)
+                    .filter(|&candidate| {
+                        lib_ctx
+                            .binder
+                            .get_symbol(candidate)
+                            .is_some_and(|symbol| symbol.escaped_name == expected_name)
+                    })
+            }) {
+                return self.get_canonical_lib_def_id(expected_name, lib_sym_id);
+            }
+        }
+
+        let matching_symbol = self
+            .binder
+            .symbols
+            .get(sym_id)
+            .filter(|symbol| symbol.escaped_name == expected_name)
+            .or_else(|| {
+                self.lib_contexts.iter().find_map(|lib_ctx| {
+                    lib_ctx
+                        .binder
+                        .symbols
+                        .get(sym_id)
+                        .filter(|symbol| symbol.escaped_name == expected_name)
+                })
+            })
+            .or_else(|| {
+                self.all_binders.as_ref().and_then(|binders| {
+                    binders.iter().find_map(|binder| {
+                        binder
+                            .symbols
+                            .get(sym_id)
+                            .filter(|symbol| symbol.escaped_name == expected_name)
+                    })
+                })
+            });
+
+        let Some(symbol) = matching_symbol else {
+            return self.get_or_create_def_id(sym_id);
+        };
+        let symbol_index_matches_name = self
+            .definition_store
+            .find_def_by_symbol(sym_id.0)
+            .and_then(|def_id| self.definition_store.get(def_id))
+            .is_some_and(|info| self.types.resolve_atom(info.name) == expected_name);
+        if symbol.decl_file_idx == u32::MAX
+            && !symbol_index_matches_name
+            && let Some(lib_sym_id) = self.lib_contexts.iter().find_map(|lib_ctx| {
+                lib_ctx
+                    .binder
+                    .file_locals
+                    .get(expected_name)
+                    .filter(|&candidate| candidate != sym_id)
+                    .filter(|&candidate| {
+                        lib_ctx
+                            .binder
+                            .get_symbol(candidate)
+                            .is_some_and(|symbol| symbol.escaped_name == expected_name)
+                    })
+            })
+        {
+            return self.get_canonical_lib_def_id(expected_name, lib_sym_id);
+        }
+        let file_idx = symbol.decl_file_idx;
+        if let Some(def_id) = self.definition_store.lookup_by_symbol(sym_id.0, file_idx)
+            && self
+                .definition_store
+                .get(def_id)
+                .is_some_and(|info| self.types.resolve_atom(info.name) == expected_name)
+        {
+            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            return def_id;
+        }
+
+        let name = self.types.intern_string(&symbol.escaped_name);
+        let kind = if symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+            tsz_solver::def::DefKind::TypeAlias
+        } else if symbol.has_any_flags(tsz_binder::symbol_flags::CLASS) {
+            tsz_solver::def::DefKind::Class
+        } else if symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
+            tsz_solver::def::DefKind::Interface
+        } else if symbol.has_any_flags(tsz_binder::symbol_flags::ENUM) {
+            tsz_solver::def::DefKind::Enum
+        } else if symbol.has_any_flags(
+            tsz_binder::symbol_flags::NAMESPACE_MODULE | tsz_binder::symbol_flags::VALUE_MODULE,
+        ) {
+            tsz_solver::def::DefKind::Namespace
+        } else if symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION) {
+            tsz_solver::def::DefKind::Function
+        } else if symbol.has_any_flags(
+            tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE
+                | tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE,
+        ) {
+            tsz_solver::def::DefKind::Variable
+        } else {
+            tsz_solver::def::DefKind::TypeAlias
+        };
+        let span = symbol.first_declaration_span.or_else(|| {
+            if symbol.value_declaration.is_some() {
+                symbol.value_declaration_span
+            } else {
+                None
+            }
+        });
+
+        let info = DefinitionInfo {
+            kind,
+            name,
+            type_params: Vec::new(),
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            file_id: Some(file_idx),
+            span,
+            symbol_id: Some(sym_id.0),
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
+            is_global_augmentation: false,
+            is_declare: false,
+        };
+
+        let def_id = self.definition_store.register(info);
+        self.definition_store
+            .register_symbol_mapping(sym_id.0, file_idx, def_id);
+        self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+        self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+        self.register_def_kind_in_envs(def_id, kind);
+        def_id
+    }
+
     /// Get or create a `DefId` for a lib symbol.
     ///
     /// Lib symbols *should* already have `DefIds` from pre-population
@@ -391,7 +556,6 @@ impl<'a> CheckerContext<'a> {
                                         | tsz_solver::def::DefKind::Class
                                         | tsz_solver::def::DefKind::Enum
                                         | tsz_solver::def::DefKind::Namespace
-                                        | tsz_solver::def::DefKind::ClassConstructor
                                 )
                             })
                         })
@@ -664,6 +828,116 @@ impl<'a> CheckerContext<'a> {
         self.definition_store
             .get(def_id)
             .and_then(|info| info.file_id)
+    }
+
+    /// Resolve the binder symbol identity for a `DefId` without losing file/name identity.
+    ///
+    /// Raw `SymbolId`s are binder-local. A `DefId` carries the name and declaring
+    /// file that disambiguate those raw ids, so DefId-based lazy resolution should
+    /// consult that metadata before calling `get_type_of_symbol(SymbolId(...))`.
+    pub fn def_symbol_identity(&self, def_id: DefId) -> Option<(SymbolId, Option<usize>)> {
+        let info = self.definition_store.get(def_id)?;
+        let expected_name = self.types.resolve_atom(info.name);
+        let raw_sym_id = info.symbol_id.map(SymbolId);
+
+        let valid_file_idx = |file_id: u32| (file_id != u32::MAX).then_some(file_id as usize);
+
+        if let (Some(sym_id), Some(file_idx)) = (raw_sym_id, info.file_id.and_then(valid_file_idx))
+            && self
+                .get_binder_for_file(file_idx)
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.escaped_name == expected_name)
+        {
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            return Some((sym_id, Some(file_idx)));
+        }
+
+        if let Some(sym_id) = raw_sym_id {
+            if self
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name == expected_name)
+            {
+                self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+                return Some((
+                    sym_id,
+                    (self.current_file_idx != usize::MAX).then_some(self.current_file_idx),
+                ));
+            }
+
+            for lib_ctx in self.lib_contexts.iter() {
+                if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
+                    && symbol.escaped_name == expected_name
+                {
+                    self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+                    return Some((sym_id, valid_file_idx(symbol.decl_file_idx)));
+                }
+            }
+
+            if let Some(binders) = self.all_binders.as_ref() {
+                for (file_idx, binder) in binders.iter().enumerate() {
+                    if let Some(symbol) = binder.get_symbol(sym_id)
+                        && symbol.escaped_name == expected_name
+                    {
+                        self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+                        return Some((sym_id, Some(file_idx)));
+                    }
+                }
+            }
+        }
+
+        if let Some(sym_id) = self.binder.file_locals.get(expected_name.as_str())
+            && self
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name == expected_name)
+        {
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            return Some((
+                sym_id,
+                (self.current_file_idx != usize::MAX).then_some(self.current_file_idx),
+            ));
+        }
+
+        if let Some((file_idx, sym_id)) = self
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(expected_name.as_str()))
+            .and_then(|entries| entries.iter().max_by_key(|(_, sym_id)| sym_id.0))
+            .copied()
+            && self
+                .get_binder_for_file(file_idx)
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.escaped_name == expected_name)
+        {
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            return Some((sym_id, Some(file_idx)));
+        }
+
+        if let Some(binders) = self.all_binders.as_ref() {
+            for (file_idx, binder) in binders.iter().enumerate() {
+                if let Some(sym_id) = binder.file_locals.get(expected_name.as_str())
+                    && binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|symbol| symbol.escaped_name == expected_name)
+                {
+                    self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+                    return Some((sym_id, Some(file_idx)));
+                }
+            }
+        }
+
+        for lib_ctx in self.lib_contexts.iter() {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(expected_name.as_str())
+                && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
+                && symbol.escaped_name == expected_name
+            {
+                self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+                return Some((sym_id, valid_file_idx(symbol.decl_file_idx)));
+            }
+        }
+
+        raw_sym_id.map(|sym_id| (sym_id, info.file_id.and_then(valid_file_idx)))
     }
 
     /// Get or create a `DefId` for a symbol and register its type parameters in one step.

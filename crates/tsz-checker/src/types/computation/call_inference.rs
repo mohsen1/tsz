@@ -2337,6 +2337,12 @@ impl<'a> CheckerState<'a> {
                 // will be refined in the instantiated retry.
                 let is_concrete_callback_body_property_error = has_concrete_expected_type
                     && diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                    && !matches!(
+                        request.contextual_type,
+                        Some(ctx_type)
+                            if common::contains_type_parameters(self.ctx.types, ctx_type)
+                                || common::contains_infer_types(self.ctx.types, ctx_type)
+                    )
                     && callback_body_spans
                         .iter()
                         .any(|(start, end)| diag.start >= *start && diag.start < *end);

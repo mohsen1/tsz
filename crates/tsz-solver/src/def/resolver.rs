@@ -123,6 +123,11 @@ pub trait TypeResolver {
         None
     }
 
+    /// Get the source/display name for a `DefId` when available.
+    fn get_def_name(&self, _def_id: DefId) -> Option<tsz_common::interner::Atom> {
+        None
+    }
+
     /// Get the boxed interface type for a primitive intrinsic (Rule #33).
     /// For example, `IntrinsicKind::Number` -> `TypeId` of the Number interface.
     /// This enables primitives to be subtypes of their boxed interfaces.
@@ -285,6 +290,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
         (**self).get_def_kind(def_id)
+    }
+
+    fn get_def_name(&self, def_id: DefId) -> Option<tsz_common::interner::Atom> {
+        (**self).get_def_name(def_id)
     }
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
@@ -580,11 +589,14 @@ impl TypeEnvironment {
     ) {
         self.def_types.insert(def_id.0, type_id);
         if !params.is_empty() {
-            self.def_type_params.insert(def_id.0, params);
+            self.def_type_params.insert(def_id.0, params.clone());
         }
         // Write through to shared store for cross-checker visibility.
         if let Some(ref store) = self.definition_store {
             store.set_body(def_id, type_id);
+            if !params.is_empty() {
+                store.set_type_params(def_id, params);
+            }
         }
     }
 
@@ -853,7 +865,13 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
-        self.def_to_symbol.get(&def_id.0).copied()
+        self.def_to_symbol.get(&def_id.0).copied().or_else(|| {
+            self.definition_store
+                .as_ref()
+                .and_then(|store| store.get(def_id))
+                .and_then(|info| info.symbol_id)
+                .map(SymbolId)
+        })
     }
 
     fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
@@ -871,6 +889,12 @@ impl TypeResolver for TypeEnvironment {
 
     fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
         Self::get_def_kind(self, def_id)
+    }
+
+    fn get_def_name(&self, def_id: DefId) -> Option<tsz_common::interner::Atom> {
+        self.definition_store
+            .as_ref()
+            .and_then(|store| store.get_name(def_id))
     }
 
     fn is_numeric_enum(&self, def_id: DefId) -> bool {

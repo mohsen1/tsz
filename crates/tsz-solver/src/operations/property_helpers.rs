@@ -649,12 +649,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.resolver()
                         .resolve_symbol_ref(symbol_ref, self.interner())
                 };
-                let params = match self.resolver().get_type_params(symbol_ref) {
-                    Some(p) if !p.is_empty() => Some(p),
-                    _ => self
-                        .resolver()
-                        .get_lazy_type_params(def_id)
-                        .filter(|p| !p.is_empty()),
+                let symbol_params = self.resolver().get_type_params(symbol_ref);
+                let lazy_params = self.resolver().get_lazy_type_params(def_id);
+                let params = match (symbol_params, lazy_params) {
+                    (Some(symbol), Some(lazy))
+                        if !symbol.is_empty() && lazy.len() > symbol.len() =>
+                    {
+                        Some(lazy)
+                    }
+                    (Some(symbol), _) if !symbol.is_empty() => Some(symbol),
+                    (_, Some(lazy)) if !lazy.is_empty() => Some(lazy),
+                    _ => None,
                 };
                 (body, params)
             }

@@ -25,6 +25,8 @@ use super::super::evaluate::{
 use super::apparent::make_apparent_method_type;
 use crate::objects::apparent::is_member;
 
+const MAX_UNION_INDEX_SIZE: usize = 500;
+
 /// Lazily compute and cache array member types (length + apparent methods).
 /// Shared between `ArrayKeyVisitor` and `TupleKeyVisitor`.
 fn get_or_init_array_member_types(
@@ -485,7 +487,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         let members = self.evaluator.interner().type_list(TypeListId(list_id));
-        const MAX_UNION_INDEX_SIZE: usize = 100;
         if members.len() > MAX_UNION_INDEX_SIZE {
             if let Some(result) = self.try_fast_index_large_union(&members) {
                 return Some(result);
@@ -1544,7 +1545,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(members_id) = union_list_id(self.interner(), index_type) {
             let members = self.interner().type_list(members_id);
             // Limit to prevent OOM with large unions
-            const MAX_UNION_INDEX_SIZE: usize = 100;
             if members.len() > MAX_UNION_INDEX_SIZE {
                 self.mark_depth_exceeded();
                 return TypeId::ERROR;

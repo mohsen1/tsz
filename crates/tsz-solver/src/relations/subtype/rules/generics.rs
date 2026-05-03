@@ -400,6 +400,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_type = self.interner.application(s_app.base, s_app.args.clone());
         let target_type = self.interner.application(t_app.base, t_app.args.clone());
 
+        if !same_application_family
+            && s_app.args.len() == 1
+            && t_app.args.len() == 1
+            && let Some(query_db) = self.query_db
+            && (crate::type_queries::is_promise_like(query_db, source_type)
+                || crate::type_queries::is_promise_like(query_db, self.evaluate_type(source_type)))
+            && (crate::type_queries::is_promise_like(query_db, target_type)
+                || crate::type_queries::is_promise_like(query_db, self.evaluate_type(target_type)))
+        {
+            return self.check_subtype(s_app.args[0], t_app.args[0]);
+        }
+
         if same_application_family
             && self.iterator_protocol_mismatch_for_same_application_family(source_type, target_type)
         {

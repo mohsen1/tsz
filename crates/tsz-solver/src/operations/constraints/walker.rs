@@ -986,6 +986,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         }
                     }
                 }
+                if placeholder_count >= 1 {
+                    let placeholder_members: Vec<TypeId> = {
+                        let mut result = Vec::new();
+                        for &member in t_members.iter() {
+                            member_visited.clear();
+                            if self.type_contains_placeholder(member, var_map, &mut member_visited)
+                            {
+                                result.push(member);
+                            }
+                        }
+                        result
+                    };
+                    let structural_matches: Vec<TypeId> = placeholder_members
+                        .iter()
+                        .filter(|&&member| {
+                            self.types_share_outer_structure_for_constraint(source, member)
+                        })
+                        .copied()
+                        .collect();
+                    if !structural_matches.is_empty() {
+                        let infer_targets = if structural_matches.len() > 1 {
+                            self.filter_by_discriminant(source, &structural_matches)
+                        } else {
+                            structural_matches
+                        };
+                        for member in infer_targets {
+                            self.constrain_types(ctx, var_map, source, member, priority);
+                        }
+                        return;
+                    }
+                }
+
                 if placeholder_count == 1
                     && let Some(member) = placeholder_member
                 {

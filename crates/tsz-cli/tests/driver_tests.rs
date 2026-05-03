@@ -13591,3 +13591,235 @@ var r5a = _.map<number, string, Date>(c2, (x, y) => { return x.toFixed() });
         result.diagnostics
     );
 }
+
+#[test]
+fn compile_vue_query_style_promise_chain_and_const_key_has_no_checker_errors() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("node_modules/@tanstack/vue-query/build/modern/useQuery-CPqkvEsh.d.ts"),
+        r#"
+type QueryKey = ReadonlyArray<unknown>;
+
+interface Register {}
+
+type DefaultError = Register extends {
+  defaultError: infer TError;
+}
+  ? TError
+  : Error;
+
+type QueryFunctionContext<
+  TQueryKey extends QueryKey = QueryKey,
+  TPageParam = never,
+> = [TPageParam] extends [never]
+  ? {
+      queryKey: TQueryKey;
+    }
+  : {
+      queryKey: TQueryKey;
+      pageParam: TPageParam;
+    };
+
+type QueryFunction<
+  T = unknown,
+  TQueryKey extends QueryKey = QueryKey,
+  TPageParam = never,
+> = (context: QueryFunctionContext<TQueryKey, TPageParam>) => T | Promise<T>;
+
+interface QueryOptions<
+  TQueryFnData = unknown,
+  TError = DefaultError,
+  TData = TQueryFnData,
+  TQueryKey extends QueryKey = QueryKey,
+  TPageParam = never,
+> {
+  queryKey?: TQueryKey;
+  queryFn?: QueryFunction<TQueryFnData, TQueryKey, TPageParam>;
+  initialData?: TData;
+}
+
+interface QueryObserverOptions<
+  TQueryFnData = unknown,
+  TError = DefaultError,
+  TData = TQueryFnData,
+  TQueryData = TQueryFnData,
+  TQueryKey extends QueryKey = QueryKey,
+  TPageParam = never,
+> extends QueryOptions<
+    TQueryFnData,
+    TError,
+    TQueryData,
+    TQueryKey,
+    TPageParam
+  > {
+  select?: (data: TQueryData) => TData;
+}
+
+type UseQueryOptions<
+  TQueryFnData = unknown,
+  TError = DefaultError,
+  TData = TQueryFnData,
+  TQueryData = TQueryFnData,
+  TQueryKey extends QueryKey = QueryKey,
+> = {
+  [Property in keyof QueryObserverOptions<
+    TQueryFnData,
+    TError,
+    TData,
+    TQueryData,
+    TQueryKey
+  >]: QueryObserverOptions<
+    TQueryFnData,
+    TError,
+    TData,
+    TQueryData,
+    TQueryKey
+  >[Property];
+};
+
+type UndefinedInitialQueryOptions<
+  TQueryFnData = unknown,
+  TError = DefaultError,
+  TData = TQueryFnData,
+  TQueryKey extends QueryKey = QueryKey,
+> = UseQueryOptions<TQueryFnData, TError, TData, TQueryFnData, TQueryKey> & {
+  initialData?: undefined;
+};
+
+interface UseQueryReturnType<TData, TError> {
+  data: TData | undefined;
+  error: TError | null;
+}
+
+declare function useQuery<
+  TQueryFnData = unknown,
+  TError = DefaultError,
+  TData = TQueryFnData,
+  TQueryKey extends QueryKey = QueryKey,
+>(
+  options: UndefinedInitialQueryOptions<TQueryFnData, TError, TData, TQueryKey>,
+): UseQueryReturnType<TData, TError>;
+
+export { type UseQueryReturnType, useQuery };
+"#,
+    );
+
+    write_file(
+        &base.join("node_modules/@tanstack/vue-query/build/modern/index.d.ts"),
+        r#"export { UseQueryReturnType, useQuery } from './useQuery-CPqkvEsh.js';
+"#,
+    );
+
+    write_file(
+        &base.join("node_modules/@tanstack/vue-query/package.json"),
+        r#"{
+  "name": "@tanstack/vue-query",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./build/modern/index.d.ts",
+        "default": "./build/modern/index.js"
+      },
+      "require": {
+        "types": "./build/modern/index.d.cts",
+        "default": "./build/modern/index.cjs"
+      }
+    }
+  }
+}
+"#,
+    );
+
+    write_file(
+        &base.join("src/index.mts"),
+        r#"
+import { useQuery } from '@tanstack/vue-query';
+
+const baseUrl = 'https://api.publicapis.org/';
+
+interface IEntry {
+    API: string;
+    Description: string;
+    Auth: string;
+    HTTPS: boolean;
+    Cors: string;
+    Link: string;
+    Category: string;
+}
+
+const testApi = {
+    getEntries: (): Promise<IEntry[]> => {
+        return fetch(baseUrl + 'entries')
+            .then((res) => res.json())
+            .then((data) => data.entries)
+            .catch((err) => console.log(err));
+    },
+};
+
+const entryKeys = {
+    all: ['entries'] as const,
+    list: () => [...entryKeys.all, 'list'] as const,
+};
+
+export const useEntries = () => {
+    return useQuery({
+        queryKey: entryKeys.list(),
+        queryFn: testApi.getEntries,
+        select: (data) => data.slice(0, 10),
+    });
+};
+"#,
+    );
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "alwaysStrict": true,
+    "declaration": true,
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noEmit": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "strict": true,
+    "strictBindCallApply": true,
+    "strictFunctionTypes": true,
+    "strictNullChecks": true,
+    "strictPropertyInitialization": true,
+    "target": "esnext",
+    "useUnknownInCatchVariables": true
+  },
+  "include": [
+    "*.ts",
+    "*.tsx",
+    "*.js",
+    "*.jsx",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.js",
+    "**/*.jsx"
+  ],
+  "files": [
+    "node_modules/@tanstack/vue-query/build/modern/useQuery-CPqkvEsh.d.ts",
+    "node_modules/@tanstack/vue-query/build/modern/index.d.ts",
+    "src/index.mts"
+  ]
+}
+"#,
+    );
+
+    let args = default_args();
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected vue-query-style fixture to avoid checker diagnostics, got: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}

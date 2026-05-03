@@ -128,3 +128,51 @@ function f<T>(k: keyof T) {
         "TS2352 expected — `keyof T` does not overlap with `boolean`. Got: {codes:?}"
     );
 }
+
+/// Generic function signatures use comparable-relation erasure for type
+/// assertion overlap. The target return type `T` is erased to `any`, so this
+/// assertion should not emit TS2352; later call-site checks still report the
+/// real incompatibility.
+#[test]
+fn generic_function_assertion_erases_bound_signature_params_no_ts2352() {
+    let source = r#"
+const f = < <T>(x: T) => T > ((x: any) => 1);
+"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        ts2352.is_empty(),
+        "no TS2352 expected - generic assertion signatures overlap after erasure. Got: {codes:?}"
+    );
+}
+
+/// Non-generic function assertions still compare their concrete return types;
+/// raising generic erasure into the assertion path must not make unrelated
+/// function return types overlap.
+#[test]
+fn non_generic_function_assertion_incompatible_return_still_emits_ts2352() {
+    let source = r#"
+const f = < () => number > (() => "err");
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&2352),
+        "TS2352 expected - `string` return does not overlap with `number`. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn thenable_assertion_incompatible_callback_payload_emits_ts2352() {
+    let source = r#"
+interface Thenable<T> {
+    then<TResult>(onfulfilled?: ((value: T) => TResult) | undefined | null): Thenable<TResult>;
+}
+declare const value: Thenable<{ c: string }>;
+const cast = value as Thenable<{ d: string }>;
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&2352),
+        "TS2352 expected - nullable callback branches must compare payloads, not just nullish members. Got: {codes:?}"
+    );
+}

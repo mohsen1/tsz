@@ -1393,21 +1393,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // file-level aliases/types with the same name.
         if let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, node_idx) {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
-            if let Some(scoped_sym_id) = scoped_sym_id
-                && scoped_sym_id != sym_id
-                && let Some(scoped_symbol) = self.get_symbol_from_any_context(scoped_sym_id)
-                && scoped_symbol.has_any_flags(
+            if symbol.escaped_name != name {
+                // NodeIndex values are arena-local. During cross-file type-node
+                // lowering, a raw node id can accidentally find an unrelated
+                // symbol in the current binder; ignore that collision and fall
+                // through to name-based file/lib lookup.
+            } else {
+                if let Some(scoped_sym_id) = scoped_sym_id
+                    && scoped_sym_id != sym_id
+                    && let Some(scoped_symbol) = self.get_symbol_from_any_context(scoped_sym_id)
+                    && scoped_symbol.has_any_flags(
+                        symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM,
+                    )
+                    && scoped_symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+                    && !symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+                {
+                    return Some(scoped_sym_id.0);
+                }
+                if symbol.has_any_flags(
                     symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM,
-                )
-                && scoped_symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
-                && !symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
-            {
-                return Some(scoped_sym_id.0);
-            }
-            if symbol.has_any_flags(
-                symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM,
-            ) {
-                return Some(sym_id.0);
+                ) {
+                    return Some(sym_id.0);
+                }
             }
         }
 
@@ -1424,9 +1431,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
-            if (symbol.flags
-                & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
-                != 0
+            if symbol.escaped_name == name
+                && (symbol.flags
+                    & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
+                    != 0
             {
                 return Some(sym_id.0);
             }
@@ -1517,7 +1525,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     fn resolve_def_id(&self, node_idx: NodeIndex) -> Option<tsz_solver::def::DefId> {
         let sym_id_raw = self.resolve_type_symbol(node_idx)?;
         let sym_id = tsz_binder::SymbolId(sym_id_raw);
-        Some(self.ensure_def_id_with_alias(sym_id))
+        let def_id = if let Some(ident) = self.ctx.arena.get_identifier_at(node_idx) {
+            self.ctx
+                .get_or_create_def_id_for_symbol_name(sym_id, ident.escaped_text.as_str())
+        } else {
+            self.ensure_def_id_with_alias(sym_id)
+        };
+        self.ensure_type_alias_resolved(sym_id, def_id);
+        Some(def_id)
     }
 
     /// Collect type parameter bindings from the current scope.
@@ -1566,6 +1581,40 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         let lazy_type_params_resolver =
             |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+        let name_def_id_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+            let expected_name = type_name.rsplit('.').next().unwrap_or(type_name);
+
+            if !type_name.contains('.')
+                && let Some(sym_id) = self.ctx.binder.file_locals.get(type_name)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && symbol.escaped_name == type_name
+                && symbol.decl_file_idx != u32::MAX
+            {
+                let def_id = self
+                    .ctx
+                    .get_or_create_def_id_for_symbol_name(sym_id, expected_name);
+                self.ensure_type_alias_resolved(sym_id, def_id);
+                return Some(def_id);
+            }
+
+            if !type_name.contains('.') {
+                for lib_ctx in self.ctx.lib_contexts.iter() {
+                    if let Some(sym_id) = lib_ctx.binder.file_locals.get(type_name)
+                        && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
+                        && symbol.escaped_name == type_name
+                    {
+                        return Some(self.ctx.get_canonical_lib_def_id(type_name, sym_id));
+                    }
+                }
+            }
+
+            let sym_id = self.resolve_entity_name_text_symbol(type_name)?;
+            let def_id = self
+                .ctx
+                .get_or_create_def_id_for_symbol_name(sym_id, expected_name);
+            self.ensure_type_alias_resolved(sym_id, def_id);
+            Some(def_id)
+        };
         let mut lowering = TypeLowering::with_hybrid_resolver(
             self.ctx.arena,
             self.ctx.types,
@@ -1574,7 +1623,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             &value_resolver,
         )
         .with_strict_null_checks(self.ctx.strict_null_checks())
+        .with_name_def_id_resolver(&name_def_id_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver);
+        if use_qualified_names {
+            lowering = lowering.prefer_name_def_id_resolution();
+        }
         if !type_param_bindings.is_empty() {
             lowering = lowering.with_type_param_bindings(type_param_bindings);
         }

@@ -197,7 +197,13 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // Fallback: if the DefId was created by `interner.reference(SymbolRef(N))`,
         // the raw DefId value equals the SymbolId. In that case, use the SymbolId
         // directly and redirect through the proper DefId mapping.
-        let sym_id = self.def_to_symbol_id_with_fallback(def_id).or_else(|| {
+        let def_identity = self.def_symbol_identity(def_id);
+        if let Some((sym_id, Some(file_idx))) = def_identity
+            && file_idx != self.current_file_idx
+        {
+            self.register_symbol_file_target(sym_id, file_idx);
+        }
+        let sym_id = def_identity.map(|(sym_id, _)| sym_id).or_else(|| {
             // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
             // where N is the raw SymbolId value. The DefId(N) doesn't exist in the
             // definition store. Try using N as a SymbolId and redirect.
@@ -228,11 +234,14 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                         .get(*sym_id)
                         .is_some_and(|sym| sym.escaped_name == "Atomics")
             });
-        let definition_file_idx = self
-            .definition_store
-            .get(def_id)
-            .and_then(|info| info.file_id)
-            .map(|idx| idx as usize)
+        let definition_file_idx = def_identity
+            .and_then(|(_, file_idx)| file_idx)
+            .or_else(|| {
+                self.definition_store
+                    .get(def_id)
+                    .and_then(|info| info.file_id)
+                    .map(|idx| idx as usize)
+            })
             .or_else(|| {
                 sym_id.and_then(|sym_id| {
                     self.get_existing_def_id(sym_id)

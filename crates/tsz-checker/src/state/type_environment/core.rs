@@ -1372,7 +1372,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn extract_simple_type_params_from_decl_in_arena(
-        &mut self,
+        &self,
         arena: &tsz_parser::parser::node::NodeArena,
         flags: u32,
         decl_idx: NodeIndex,
@@ -1494,7 +1494,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut sym_id = sym_id;
-        if let Some(symbol) = self.get_symbol_globally(sym_id)
+        if let Some(symbol) = self.get_cross_file_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
@@ -1505,10 +1505,11 @@ impl<'a> CheckerState<'a> {
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);
 
-        // Use get_symbol_globally to find symbols in lib files and other files.
+        // Prefer the registered cross-file target before falling back to global
+        // symbol lookup, because raw SymbolId values can collide across binders.
         // Extract needed data to avoid holding a borrow during deeper operations.
         let (flags, value_decl, declarations, sym_escaped_name) =
-            match self.get_symbol_globally(sym_id) {
+            match self.get_cross_file_symbol(sym_id) {
                 Some(symbol) => (
                     symbol.flags,
                     symbol.value_declaration,
@@ -1538,8 +1539,7 @@ impl<'a> CheckerState<'a> {
             .then(|| self.ctx.def_type_params.borrow().get(&def_id).cloned())
             .flatten();
         if let Some(cached) = cached_params {
-            let cached_is_placeholder = self.ctx.symbol_is_from_lib(sym_id)
-                && !cached.is_empty()
+            let cached_is_placeholder = !cached.is_empty()
                 && cached
                     .iter()
                     .all(|param| param.constraint.is_none() && param.default.is_none());
@@ -1665,6 +1665,94 @@ impl<'a> CheckerState<'a> {
                         if let Some(file_idx) = self.ctx.get_file_idx_for_arena(arena.as_ref()) {
                             checker.ctx.current_file_idx = file_idx;
                         }
+                        if let Some(params) = Self::extract_type_params_from_decl(
+                            &mut checker,
+                            flags,
+                            decl_idx,
+                            &sym_escaped_name,
+                        ) {
+                            if !params.is_empty() {
+                                if let Some(ref mut merged) = merged_params {
+                                    for (i, p) in params.into_iter().enumerate() {
+                                        if i < merged.len()
+                                            && merged[i].default.is_none()
+                                            && p.default.is_some()
+                                        {
+                                            merged[i].default = p.default;
+                                        }
+                                        if i < merged.len()
+                                            && merged[i].constraint.is_none()
+                                            && p.constraint.is_some()
+                                        {
+                                            merged[i].constraint = p.constraint;
+                                        }
+                                    }
+                                } else {
+                                    merged_params = Some(params);
+                                }
+                            } else if fallback_params.is_none() {
+                                fallback_params = Some(params);
+                            }
+                        }
+                        Self::leave_cross_arena_delegation();
+                    }
+                }
+            }
+
+            if !checked_local && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) {
+                let arena = self.ctx.get_arena_for_file(file_idx as u32);
+                if !std::ptr::eq(arena, self.ctx.arena) {
+                    checked_local = true;
+                    if let Some(params) = self.extract_simple_type_params_from_decl_in_arena(
+                        arena,
+                        flags,
+                        decl_idx,
+                        &sym_escaped_name,
+                    ) {
+                        if !params.is_empty() {
+                            if let Some(ref mut merged) = merged_params {
+                                for (i, p) in params.into_iter().enumerate() {
+                                    if i < merged.len()
+                                        && merged[i].default.is_none()
+                                        && p.default.is_some()
+                                    {
+                                        merged[i].default = p.default;
+                                    }
+                                    if i < merged.len()
+                                        && merged[i].constraint.is_none()
+                                        && p.constraint.is_some()
+                                    {
+                                        merged[i].constraint = p.constraint;
+                                    }
+                                }
+                            } else {
+                                merged_params = Some(params);
+                            }
+                        } else if fallback_params.is_none() {
+                            fallback_params = Some(params);
+                        }
+                        continue;
+                    }
+                    if Self::enter_cross_arena_delegation() {
+                        let decl_binder = self
+                            .ctx
+                            .get_binder_for_file(file_idx)
+                            .unwrap_or(self.ctx.binder);
+                        let decl_file_name = arena
+                            .source_files
+                            .first()
+                            .map(|sf| sf.file_name.clone())
+                            .unwrap_or_else(|| self.ctx.file_name.clone());
+                        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+                            arena,
+                            decl_binder,
+                            self.ctx.types,
+                            decl_file_name,
+                            self.ctx.compiler_options.clone(),
+                            self,
+                            tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
+                        ));
+                        checker.ctx.current_file_idx = file_idx;
                         if let Some(params) = Self::extract_type_params_from_decl(
                             &mut checker,
                             flags,

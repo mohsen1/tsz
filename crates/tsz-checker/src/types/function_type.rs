@@ -1549,8 +1549,13 @@ impl<'a> CheckerState<'a> {
                 //   var g: () => Iterable<Foo> = function* () { yield new Baz; }
                 // where Baz is not assignable to Foo. Using the contextual type would
                 // hide the incompatibility by making the generator appear to yield Foo.
-                early_gen_return_type = gen_types.1;
-                early_gen_next_type = gen_types.2;
+                // `Iterable<T>`/`Iterator<T>` defaults their return/next slots to
+                // `any`, but tsc does not let those defaults override an
+                // unannotated generator's own `void`/`unknown` defaults. Keep
+                // concrete contextual slots (for `Generator<Y, R, N>`), and treat
+                // `any` as absent here.
+                early_gen_return_type = gen_types.1.filter(|t| *t != TypeId::ANY);
+                early_gen_next_type = gen_types.2.filter(|t| *t != TypeId::ANY);
             }
             if early_yield_type.is_some() {
                 self.ctx.push_yield_type(early_yield_type);
@@ -1593,29 +1598,25 @@ impl<'a> CheckerState<'a> {
                     // When the contextual return type is a Generator application, unwrap
                     // to TReturn so that `return expr` in the body is contextually typed
                     // against the correct type (matching tsc behavior).
-                    early_gen_return_type
-                        .or(return_context.and_then(|ctx_ty| {
-                            let ret_ctx = tsz_solver::ContextualTypeContext::with_expected(
-                                self.ctx.types,
-                                ctx_ty,
-                            );
-                            ret_ctx.get_generator_return_type()
-                        }))
-                        .or(return_context)
+                    early_gen_return_type.or(return_context.and_then(|ctx_ty| {
+                        let ret_ctx = tsz_solver::ContextualTypeContext::with_expected(
+                            self.ctx.types,
+                            ctx_ty,
+                        );
+                        ret_ctx.get_generator_return_type()
+                    }))
                 } else if is_generator {
                     // Async generator function bodies return TReturn, not AsyncGenerator<Y, TReturn, N>.
                     // Unwrap TReturn from the contextual AsyncGenerator application so that
                     // `return expr` in the body is contextually typed against TReturn
                     // (matching tsc behavior, same as sync generators).
-                    early_gen_return_type
-                        .or(return_context.and_then(|ctx_ty| {
-                            let ret_ctx = tsz_solver::ContextualTypeContext::with_expected(
-                                self.ctx.types,
-                                ctx_ty,
-                            );
-                            ret_ctx.get_generator_return_type()
-                        }))
-                        .or(return_context)
+                    early_gen_return_type.or(return_context.and_then(|ctx_ty| {
+                        let ret_ctx = tsz_solver::ContextualTypeContext::with_expected(
+                            self.ctx.types,
+                            ctx_ty,
+                        );
+                        ret_ctx.get_generator_return_type()
+                    }))
                 } else {
                     return_context
                 };

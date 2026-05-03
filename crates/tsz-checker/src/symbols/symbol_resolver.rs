@@ -1361,7 +1361,8 @@ impl<'a> CheckerState<'a> {
                 lib_binders
                     .iter()
                     .find_map(|binder| binder.file_locals.get(root_name))
-            })?;
+            })
+            .or_else(|| self.resolve_global_augmentation_root_symbol(root_name, &lib_binders))?;
 
         for segment in segments {
             let mut visited_aliases = AliasCycleTracker::new();
@@ -1430,14 +1431,66 @@ impl<'a> CheckerState<'a> {
             .resolve_alias_symbol(current_sym, &mut visited_aliases)
             .unwrap_or(current_sym);
         let canonical_name = name.rsplit('.').next().unwrap_or(name);
+        let expected_name = self
+            .get_cross_file_symbol(resolved_sym)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbol_with_libs(resolved_sym, &lib_binders)
+            })
+            .map_or(canonical_name, |symbol| symbol.escaped_name.as_str());
         let def_id = self
             .ctx
-            .get_canonical_lib_def_id(canonical_name, resolved_sym);
+            .get_or_create_def_id_for_symbol_name(resolved_sym, expected_name);
         self.ctx
             .lowering_entity_name_resolution_cache
             .borrow_mut()
             .insert(name.to_string(), Some(def_id));
         Some(def_id)
+    }
+
+    fn resolve_global_augmentation_root_symbol(
+        &self,
+        name: &str,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> Option<tsz_binder::SymbolId> {
+        let from_binder = |binder: &tsz_binder::BinderState,
+                           file_idx: Option<usize>|
+         -> Option<tsz_binder::SymbolId> {
+            let augmentations = binder.global_augmentations.get(name)?;
+            for augmentation in augmentations {
+                if let Some(sym_id) = binder.node_symbols.get(&augmentation.node.0).copied() {
+                    if let Some(file_idx) = file_idx {
+                        self.ctx.register_symbol_file_target(sym_id, file_idx);
+                    }
+                    return Some(sym_id);
+                }
+            }
+            None
+        };
+
+        if let Some(sym_id) = from_binder(
+            self.ctx.binder,
+            (self.ctx.current_file_idx != usize::MAX).then_some(self.ctx.current_file_idx),
+        ) {
+            return Some(sym_id);
+        }
+
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                if let Some(sym_id) = from_binder(binder, Some(file_idx)) {
+                    return Some(sym_id);
+                }
+            }
+        }
+
+        for binder in lib_binders {
+            if let Some(sym_id) = from_binder(binder, None) {
+                return Some(sym_id);
+            }
+        }
+
+        None
     }
 
     // =========================================================================
@@ -1463,6 +1516,17 @@ impl<'a> CheckerState<'a> {
             {
                 let lib_binders = self.get_lib_binders();
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    if symbol.escaped_name != ident.escaped_text {
+                        return self
+                            .resolve_entity_name_text_to_def_id_for_lowering(
+                                ident.escaped_text.as_str(),
+                            )
+                            .and_then(|def_id| {
+                                self.ctx
+                                    .def_symbol_identity(def_id)
+                                    .map(|(sym_id, _)| sym_id.0)
+                            });
+                    }
                     if symbol.has_any_flags(symbol_flags::ALIAS) {
                         let mut visited_aliases = AliasCycleTracker::new();
                         if let Some(target_sym_id) =
@@ -1605,6 +1669,28 @@ impl<'a> CheckerState<'a> {
         node_idx: NodeIndex,
     ) -> Option<tsz_solver::def::DefId> {
         self.resolve_type_symbol_for_lowering(node_idx)
-            .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
+            .map(|sym_id| {
+                let sym_id = tsz_binder::SymbolId(sym_id);
+                if let Some(node) = self.ctx.arena.get(node_idx)
+                    && let Some(ident) = self.ctx.arena.get_identifier(node)
+                {
+                    let expected_name = if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
+                        symbol.escaped_name.clone()
+                    } else {
+                        let lib_binders = self.get_lib_binders();
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(sym_id, &lib_binders)
+                            .map_or_else(
+                                || ident.escaped_text.clone(),
+                                |symbol| symbol.escaped_name.clone(),
+                            )
+                    };
+                    return self
+                        .ctx
+                        .get_or_create_def_id_for_symbol_name(sym_id, expected_name.as_str());
+                }
+                self.ctx.get_or_create_def_id(sym_id)
+            })
     }
 }

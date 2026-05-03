@@ -203,12 +203,51 @@ impl<'a> InferenceContext<'a> {
                 self.infer_intersections(source_members, target_members, priority)?;
             }
 
-            // Target is a union/intersection but source is not: decompose the target
+            // Target is a union but source is not: decompose the target, preferring
+            // structured inference targets over naked type parameters. This matches
+            // the union-to-union path below for cases like Promise.then, where the
+            // callback return target is `T | PromiseLike<T>` and a source
+            // `Promise<any>` must infer `T = any` from the structured thenable arm
+            // instead of `T = Promise<any>` from the naked arm.
+            (_, Some(TypeData::Union(target_members))) => {
+                let target_list = self.interner.type_list(target_members);
+                let resolved_targets = self.resolve_and_flatten_union_members(&target_list);
+                let parameterized: Vec<TypeId> = resolved_targets
+                    .iter()
+                    .copied()
+                    .filter(|&target_member| self.target_contains_inference_param(target_member))
+                    .collect();
+
+                let (naked_params, structured_params): (Vec<TypeId>, Vec<TypeId>) =
+                    parameterized.iter().partition(|&&target_member| {
+                        !target_member.is_intrinsic()
+                            && matches!(
+                                self.interner.lookup(target_member),
+                                Some(TypeData::TypeParameter(_))
+                            )
+                    });
+
+                let mut matched_structured = false;
+                for &target_member in &structured_params {
+                    if self.types_share_outer_structure(source, target_member) {
+                        matched_structured = true;
+                        self.infer_from_types(source, target_member, priority)?;
+                    }
+                }
+
+                if !matched_structured {
+                    for &target_member in &naked_params {
+                        self.infer_from_types(source, target_member, priority)?;
+                    }
+                }
+            }
+
+            // Target is an intersection but source is not: decompose the target
             // and infer against each member. This handles cases like:
             //   source: {store: string}  target: {dispatch: number} & OwnProps
             // We try each intersection member so that type parameters within the
             // target (like OwnProps, or union branches) can be inferred from the source.
-            (_, Some(TypeData::Union(target_members) | TypeData::Intersection(target_members))) => {
+            (_, Some(TypeData::Intersection(target_members))) => {
                 let target_list = self.interner.type_list(target_members);
                 for &target_member in target_list.iter() {
                     let _ = self.infer_from_types(source, target_member, priority);
@@ -829,9 +868,35 @@ impl<'a> InferenceContext<'a> {
         let resolver = self.resolver?;
         let def_id = match self.interner.lookup(base)? {
             TypeData::Lazy(def_id) => def_id,
+            TypeData::TypeQuery(sym_ref) => resolver.symbol_to_def_id(sym_ref)?,
             _ => return None,
         };
         compute_type_param_variances_with_resolver(self.interner, resolver, def_id)
+    }
+
+    fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
+        if base.is_intrinsic() {
+            return None;
+        }
+        let resolver = self.resolver?;
+        match self.interner.lookup(base)? {
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => resolver.symbol_to_def_id(sym_ref),
+            _ => None,
+        }
+    }
+
+    fn shared_application_base_def_id(
+        &self,
+        source_base: TypeId,
+        target_base: TypeId,
+    ) -> Option<DefId> {
+        let resolver = self.resolver?;
+        let source_def = self.application_base_def_id(source_base)?;
+        let target_def = self.application_base_def_id(target_base)?;
+        resolver
+            .defs_are_equivalent(source_def, target_def)
+            .then_some(source_def)
     }
 
     /// Infer from function types, handling variance correctly
@@ -1267,6 +1332,9 @@ impl<'a> InferenceContext<'a> {
         if source.is_intrinsic() || target.is_intrinsic() {
             return false;
         }
+        if self.type_has_own_then_property(source) && self.type_has_own_then_property(target) {
+            return true;
+        }
         let application_outer = |type_id| {
             let app_id = match self.interner.lookup(type_id) {
                 Some(TypeData::Application(app_id)) => Some(app_id),
@@ -1313,6 +1381,25 @@ impl<'a> InferenceContext<'a> {
             | (TypeData::Function(_), TypeData::Function(_))
             | (TypeData::Tuple(_), TypeData::Tuple(_))
             | (TypeData::Array(_), TypeData::Array(_)) => true,
+            _ => false,
+        }
+    }
+
+    fn type_has_own_then_property(&self, type_id: TypeId) -> bool {
+        if self.object_type_has_own_then_property(type_id) {
+            return true;
+        }
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, type_id);
+        evaluated != type_id && self.object_type_has_own_then_property(evaluated)
+    }
+
+    fn object_type_has_own_then_property(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => matches!(
+                self.interner
+                    .object_property_index(shape_id, self.interner.intern_string("then")),
+                crate::types::PropertyLookup::Found(_)
+            ),
             _ => false,
         }
     }
@@ -1400,10 +1487,20 @@ impl<'a> InferenceContext<'a> {
         // This matches tsc's inferFromTypeArguments: contravariant type parameters
         // (e.g., T in `type Func<T> = (x: T) => void`) swap source/target direction
         // so that inference candidates are correctly categorized.
-        if source_info.base == target_info.base {
+        let shared_base_def = if source_info.base == target_info.base {
+            self.application_base_def_id(source_info.base)
+        } else {
+            self.shared_application_base_def_id(source_info.base, target_info.base)
+        };
+        if source_info.base == target_info.base || shared_base_def.is_some() {
             // Try to compute variances for the base type's type parameters.
             // This requires a resolver and a Lazy(DefId) base type.
-            let variances = self.compute_application_variances(source_info.base);
+            let variances = shared_base_def
+                .and_then(|def_id| {
+                    let resolver = self.resolver?;
+                    compute_type_param_variances_with_resolver(self.interner, resolver, def_id)
+                })
+                .or_else(|| self.compute_application_variances(source_info.base));
             for (i, (source_arg, target_arg)) in source_info
                 .args
                 .iter()

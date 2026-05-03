@@ -29,12 +29,26 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .iter()
             .map(|ctx| std::sync::Arc::clone(&ctx.binder))
             .collect();
-        let mut current_sym = self.ctx.binder.file_locals.get(root_name).or_else(|| {
-            self.ctx
-                .lib_contexts
-                .iter()
-                .find_map(|ctx| ctx.binder.file_locals.get(root_name))
-        })?;
+        let mut current_sym = self
+            .ctx
+            .binder
+            .file_locals
+            .get(root_name)
+            .filter(|sym_id| {
+                self.ctx
+                    .binder
+                    .get_symbol(*sym_id)
+                    .is_some_and(|symbol| symbol.escaped_name == root_name)
+            })
+            .or_else(|| {
+                self.ctx.lib_contexts.iter().find_map(|ctx| {
+                    ctx.binder.file_locals.get(root_name).filter(|sym_id| {
+                        ctx.binder
+                            .get_symbol(*sym_id)
+                            .is_some_and(|symbol| symbol.escaped_name == root_name)
+                    })
+                })
+            })?;
 
         for segment in segments {
             let symbol = self
@@ -872,12 +886,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if let Some(name) = self.entity_name_text(node_idx)
             && let Some(sym_id) = self.resolve_entity_name_text_symbol(&name)
         {
-            return Some(self.ensure_def_id_with_alias(sym_id));
+            let expected_name = name.rsplit('.').next().unwrap_or(name.as_str());
+            let def_id = self
+                .ctx
+                .get_or_create_def_id_for_symbol_name(sym_id, expected_name);
+            self.ensure_type_alias_resolved(sym_id, def_id);
+            return Some(def_id);
         }
 
         if let Some(sym_id) = self.resolve_type_symbol(node_idx) {
             let sym_id = tsz_binder::SymbolId(sym_id);
-            return Some(self.ensure_def_id_with_alias(sym_id));
+            let def_id = if let Some(name) = self.entity_name_text(node_idx) {
+                let expected_name = name.rsplit('.').next().unwrap_or(name.as_str());
+                self.ctx
+                    .get_or_create_def_id_for_symbol_name(sym_id, expected_name)
+            } else {
+                self.ensure_def_id_with_alias(sym_id)
+            };
+            self.ensure_type_alias_resolved(sym_id, def_id);
+            return Some(def_id);
         }
 
         let node = self.ctx.arena.get(node_idx)?;
