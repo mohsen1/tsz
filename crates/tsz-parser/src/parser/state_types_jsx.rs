@@ -1277,6 +1277,8 @@ impl ParserState {
             // Check for namespaced name (a:b)
             if self.is_token(SyntaxKind::ColonToken) {
                 self.next_token(); // consume :
+                self.scanner.scan_jsx_identifier();
+                self.check_no_unicode_escape_in_jsx_identifier();
                 let local_name = self.parse_identifier_name();
                 // The namespaced-name node ends at the local name, not at the
                 // next token. Using `token_end()` here would extend the span
@@ -1524,6 +1526,8 @@ impl ParserState {
         // Check for namespaced name (a:b)
         if self.is_token(SyntaxKind::ColonToken) {
             self.next_token(); // consume :
+            self.scanner.scan_jsx_identifier();
+            self.check_no_unicode_escape_in_jsx_identifier();
             // Also allow keywords for the local part of namespaced names
             let local_name = self.parse_identifier_name();
             // End at the local name, not the next token.
