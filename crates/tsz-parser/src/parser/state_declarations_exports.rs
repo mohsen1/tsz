@@ -797,6 +797,7 @@ impl ParserState {
             // or `export export = x` (export assignment with modifiers)
             SyntaxKind::ExportKeyword => {
                 let second_export_pos = self.token_pos();
+                let second_export_end = self.token_end();
                 self.next_token();
                 if self.is_token(SyntaxKind::EqualsToken) {
                     // `export export = x` — this is an export assignment with modifiers.
@@ -817,7 +818,17 @@ impl ParserState {
                         &format!("'{}' modifier already seen.", "export"),
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
-                    self.parse_exported_declaration(start_pos)
+                    if self.is_token(SyntaxKind::ClassKeyword) {
+                        let export_modifier = self.arena.add_token(
+                            SyntaxKind::ExportKeyword as u16,
+                            second_export_pos,
+                            second_export_end,
+                        );
+                        let modifiers = Some(self.make_node_list(vec![export_modifier]));
+                        self.parse_class_declaration_with_modifiers(second_export_pos, modifiers)
+                    } else {
+                        self.parse_exported_declaration(start_pos)
+                    }
                 }
             }
             _ => {
