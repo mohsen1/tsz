@@ -1347,15 +1347,19 @@ impl ParserState {
                     // tsc uses TS1137 ("Expression or comma expected") when a closing
                     // delimiter from an outer context terminates the array (e.g. `[)` or
                     // `[...}\n}`), and TS1109 ("Expression expected") otherwise.
-                    if matches!(
+                    let terminated_by_outer_closer = matches!(
                         self.token(),
                         SyntaxKind::CloseParenToken | SyntaxKind::CloseBraceToken
-                    ) {
+                    );
+                    if terminated_by_outer_closer {
                         self.error_expression_or_comma_expected();
                     } else {
                         self.error_expression_expected();
                     }
                     // Continue parsing with empty element for error recovery
+                    if terminated_by_outer_closer {
+                        break;
+                    }
                 }
                 elements.push(elem);
             }

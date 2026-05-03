@@ -2963,6 +2963,23 @@ fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
 
 /// Collect accessor pairs (getter/setter) from class members.
 /// When `collect_static` is true, collects static accessors; otherwise collects instance accessors.
+pub(super) fn has_effective_static_modifier(
+    arena: &NodeArena,
+    modifiers: &Option<NodeList>,
+) -> bool {
+    modifiers.as_ref().is_some_and(|mods| {
+        mods.nodes
+            .iter()
+            .filter(|&&idx| {
+                arena
+                    .get(idx)
+                    .is_some_and(|node| node.kind == SyntaxKind::StaticKeyword as u16)
+            })
+            .count()
+            == 1
+    })
+}
+
 fn collect_accessor_pairs(
     arena: &NodeArena,
     members: &NodeList,
@@ -2981,7 +2998,7 @@ fn collect_accessor_pairs(
             && let Some(accessor_data) = arena.get_accessor(member_node)
         {
             // Check static modifier matches what we're collecting
-            let is_static = arena.is_static(&accessor_data.modifiers);
+            let is_static = has_effective_static_modifier(arena, &accessor_data.modifiers);
             if is_static != collect_static {
                 continue;
             }
