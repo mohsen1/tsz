@@ -921,6 +921,20 @@ impl<'a> CheckerState<'a> {
             let supports_number_index =
                 self.is_element_indexable(object_type_for_check, false, true);
             if !supports_string_index && !supports_number_index {
+                // tsc keeps the index syntactically generic when the AST node
+                // is a bare type-parameter reference, even when our resolution
+                // evaluated the parameter to `any` (typically via a constraint
+                // that itself resolved through a property with `any` type).
+                // Defer rejection to instantiation time — mirroring tsc's
+                // `getActualTypeOfIndexedAccess` deferral.
+                if crate::query_boundaries::type_checking_utilities::ast_index_node_is_in_scope_type_parameter(
+                    self.ctx.arena,
+                    self.ctx.binder,
+                    &self.ctx.type_parameter_scope,
+                    data.index_type,
+                ) {
+                    return;
+                }
                 let message_2538 = format_message(
                     diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                     &["any"],

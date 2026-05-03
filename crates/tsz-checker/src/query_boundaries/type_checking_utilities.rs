@@ -74,3 +74,54 @@ pub(crate) fn get_intersection_members(
 pub(crate) use super::common::{
     EvaluationNeeded, classify_for_evaluation, lazy_def_id, type_application,
 };
+
+/// Whether the AST node at `idx` is a bare type-parameter reference whose
+/// name resolves to a TypeParameter symbol in the current lexical scope.
+/// Used to suppress the "any cannot be used as an index type" check when
+/// our type resolution collapsed the parameter to `any` — tsc keeps the
+/// index syntactically generic and defers rejection to instantiation time.
+pub(crate) fn ast_index_node_is_in_scope_type_parameter(
+    arena: &tsz_parser::parser::node::NodeArena,
+    binder: &tsz_binder::BinderState,
+    type_parameter_scope: &rustc_hash::FxHashMap<String, TypeId>,
+    idx: tsz_parser::parser::NodeIndex,
+) -> bool {
+    use tsz_binder::symbol_flags;
+    use tsz_parser::parser::syntax_kind_ext;
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+    if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+        return false;
+    }
+    let Some(type_ref) = arena.get_type_ref(node) else {
+        return false;
+    };
+    if type_ref
+        .type_arguments
+        .as_ref()
+        .is_some_and(|args| !args.nodes.is_empty())
+    {
+        return false;
+    }
+    let name_idx = type_ref.type_name;
+    let Some(name_node) = arena.get(name_idx) else {
+        return false;
+    };
+    if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+        return false;
+    }
+    let Some(ident) = arena.get_identifier(name_node) else {
+        return false;
+    };
+    if type_parameter_scope.contains_key(ident.escaped_text.as_str()) {
+        return true;
+    }
+    if let Some(sym_id) = binder.resolve_identifier(arena, name_idx)
+        && let Some(symbol) = binder.get_symbol(sym_id)
+        && symbol.has_any_flags(symbol_flags::TYPE_PARAMETER)
+    {
+        return true;
+    }
+    false
+}

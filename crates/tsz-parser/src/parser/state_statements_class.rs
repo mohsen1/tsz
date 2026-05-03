@@ -238,6 +238,12 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     self.error_comma_expected();
+                    if is_rest_param && self.is_parameter_start() {
+                        // `...public rest: T` is invalid, but tsc recovers as if
+                        // a comma separated the malformed rest parameter from
+                        // `rest`. Keep parsing so JS emit preserves both names.
+                        continue;
+                    }
                     if self.is_token(SyntaxKind::OpenBraceToken)
                         && (self.context_flags & CONTEXT_FLAG_ARROW_PARAMETERS) == 0
                     {
