@@ -9,8 +9,7 @@ use crate::instantiation::instantiate::{
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    ConditionalType, FunctionShape, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId,
-    TypeParamInfo,
+    ConditionalType, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -947,15 +946,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Substitute the specific member if true_type or false_type references the original check_type
             // This handles cases like: NonNullable<T> = T extends null ? never : T
             // When T = A | B, we need (A extends null ? never : A) | (B extends null ? never : B)
-            let mut seen = FxHashSet::default();
+            let mut memo = FxHashMap::default();
             let substituted_extends_type =
-                self.substitute_exact_type(extends_type, original_check_type, member, &mut seen);
-            seen.clear();
+                self.substitute_exact_type(extends_type, original_check_type, member, &mut memo);
+            memo.clear();
             let substituted_true_type =
-                self.substitute_exact_type(true_type, original_check_type, member, &mut seen);
-            seen.clear();
+                self.substitute_exact_type(true_type, original_check_type, member, &mut memo);
+            memo.clear();
             let substituted_false_type =
-                self.substitute_exact_type(false_type, original_check_type, member, &mut seen);
+                self.substitute_exact_type(false_type, original_check_type, member, &mut memo);
 
             // Create conditional for this union member
             let member_cond = ConditionalType {
@@ -991,108 +990,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Combine results into a union
         self.interner().union_from_slice(&results)
-    }
-
-    fn substitute_exact_type(
-        &mut self,
-        type_id: TypeId,
-        from: TypeId,
-        to: TypeId,
-        seen: &mut FxHashSet<TypeId>,
-    ) -> TypeId {
-        if type_id == from {
-            return to;
-        }
-        if type_id.is_intrinsic() || !seen.insert(type_id) {
-            return type_id;
-        }
-
-        match self.interner().lookup(type_id) {
-            Some(TypeData::Application(app_id)) => {
-                let app = self.interner().type_application(app_id);
-                let base = self.substitute_exact_type(app.base, from, to, seen);
-                let mut changed = base != app.base;
-                let args: Vec<_> = app
-                    .args
-                    .iter()
-                    .map(|&arg| {
-                        let substituted = self.substitute_exact_type(arg, from, to, seen);
-                        changed |= substituted != arg;
-                        substituted
-                    })
-                    .collect();
-                if changed {
-                    self.interner().application(base, args)
-                } else {
-                    type_id
-                }
-            }
-            Some(TypeData::Function(shape_id)) => {
-                let shape = self.interner().function_shape(shape_id);
-                let mut changed = false;
-                let params = shape
-                    .params
-                    .iter()
-                    .map(|param| {
-                        let type_id = self.substitute_exact_type(param.type_id, from, to, seen);
-                        changed |= type_id != param.type_id;
-                        crate::types::ParamInfo { type_id, ..*param }
-                    })
-                    .collect();
-                let this_type = shape.this_type.map(|this_type| {
-                    let substituted = self.substitute_exact_type(this_type, from, to, seen);
-                    changed |= substituted != this_type;
-                    substituted
-                });
-                let return_type = self.substitute_exact_type(shape.return_type, from, to, seen);
-                changed |= return_type != shape.return_type;
-                let type_predicate = shape.type_predicate.map(|mut predicate| {
-                    if let Some(predicate_type) = predicate.type_id {
-                        let substituted =
-                            self.substitute_exact_type(predicate_type, from, to, seen);
-                        changed |= substituted != predicate_type;
-                        predicate.type_id = Some(substituted);
-                    }
-                    predicate
-                });
-                if changed {
-                    self.interner().function(FunctionShape {
-                        type_params: shape.type_params.clone(),
-                        params,
-                        this_type,
-                        return_type,
-                        type_predicate,
-                        is_constructor: shape.is_constructor,
-                        is_method: shape.is_method,
-                    })
-                } else {
-                    type_id
-                }
-            }
-            Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner().get_conditional(cond_id);
-                let check_type = self.substitute_exact_type(cond.check_type, from, to, seen);
-                let extends_type = self.substitute_exact_type(cond.extends_type, from, to, seen);
-                let true_type = self.substitute_exact_type(cond.true_type, from, to, seen);
-                let false_type = self.substitute_exact_type(cond.false_type, from, to, seen);
-                if check_type != cond.check_type
-                    || extends_type != cond.extends_type
-                    || true_type != cond.true_type
-                    || false_type != cond.false_type
-                {
-                    self.interner().conditional(ConditionalType {
-                        check_type,
-                        extends_type,
-                        true_type,
-                        false_type,
-                        is_distributive: cond.is_distributive,
-                    })
-                } else {
-                    type_id
-                }
-            }
-            _ => type_id,
-        }
     }
 
     /// Handle array extends pattern: T extends (infer U)[] ? ...
