@@ -158,7 +158,7 @@ impl<'a> CheckerState<'a> {
             has_json_default_export && self.current_file_uses_esm_import_syntax();
         let has_module_exports_binding =
             self.module_uses_module_exports_interop(module_name, resolution_mode);
-        let has_default_binding = json_default_only
+        let has_default_binding = has_json_default_export
             || has_module_exports_binding
             || self.module_has_default_binding_fast_path(module_name, resolution_mode)
             || exports_table.as_ref().is_some_and(|table| {

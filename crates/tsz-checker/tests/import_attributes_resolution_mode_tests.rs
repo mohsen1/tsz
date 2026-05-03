@@ -527,3 +527,50 @@ export interface Local extends Req {}
         "Expected exactly one TS2305 for the missing `RequireInterface` from the inline-type specifier (the canonical syntactic anchor); duplicates from the alias type-resolver indicate a regression. Got: {ts2305:?}"
     );
 }
+
+/// Regression for Devin 🔴 on PR #2644: when `has_default_binding` was
+/// computed from `json_default_only` (which is gated on
+/// `current_file_uses_esm_import_syntax()`), CommonJS files importing a JSON
+/// module by default emitted a spurious TS1192 "no default export" error.
+/// `has_default_binding` must remain anchored on `has_json_default_export`
+/// regardless of whether the importing file uses ESM syntax.
+#[test]
+fn cjs_json_default_import_does_not_emit_ts1192() {
+    let diagnostics = check_json_module_import(
+        "main.cts",
+        r#"import config from "./config.json";"#,
+        ModuleKind::Node18,
+        Some(false),
+    );
+
+    assert!(
+        diagnostics.iter().all(|d| d.code != 1192),
+        "Did not expect TS1192 for CJS JSON default import, got: {diagnostics:?}"
+    );
+}
+
+/// Regression for Devin 🟡 on PR #2644: type-only imports in CJS files
+/// must emit TS2857 ("Import attributes cannot be used with type-only
+/// imports or exports") rather than TS2856 ("Import attributes are not
+/// allowed on statements that compile to CommonJS 'require' calls"),
+/// because type-only imports are erased at compile time and never produce
+/// `require()` calls. The type-only check must run before the CJS check.
+#[test]
+fn cjs_type_only_import_with_attributes_reports_ts2857_not_ts2856() {
+    let diagnostics = check_resolution_mode(
+        "main.cts",
+        r#"import type value from "pkg" with { type: "json" };"#,
+        1,
+        ModuleKind::Node18,
+        Some(false),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2857),
+        "Expected TS2857 for type-only import attributes in a CJS file, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2856),
+        "Did not expect TS2856 for type-only import attributes in a CJS file (type-only imports never compile to require), got: {diagnostics:?}"
+    );
+}

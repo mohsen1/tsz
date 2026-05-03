@@ -489,22 +489,22 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if self.import_declaration_emits_commonjs() {
-            self.error_at_position(
-                attr_node.pos,
-                attr_node.end.saturating_sub(attr_node.pos),
-                diagnostic_messages::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
-                diagnostic_codes::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
-            );
-            return;
-        }
-
         if declaration_is_type_only {
             self.error_at_position(
                 attr_node.pos,
                 attr_node.end.saturating_sub(attr_node.pos),
                 diagnostic_messages::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
                 diagnostic_codes::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+            );
+            return;
+        }
+
+        if self.import_declaration_emits_commonjs() {
+            self.error_at_position(
+                attr_node.pos,
+                attr_node.end.saturating_sub(attr_node.pos),
+                diagnostic_messages::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+                diagnostic_codes::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
             );
         }
     }
