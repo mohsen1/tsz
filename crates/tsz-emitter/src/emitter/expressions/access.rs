@@ -491,11 +491,47 @@ impl<'a> Printer<'a> {
     ) -> Option<u32> {
         let text = self.source_text?;
         let bytes = text.as_bytes();
-        let start = std::cmp::min(expr_node.end as usize, bytes.len());
+        let mut pos = std::cmp::min(expr_node.end as usize, bytes.len());
         let end = std::cmp::min(arg_node.pos as usize, bytes.len());
-        (start..end)
-            .position(|i| bytes[i] == b'[')
-            .map(|offset| (start + offset) as u32)
+
+        while pos < end {
+            match bytes[pos] {
+                b'[' => return Some(pos as u32),
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < end {
+                        if bytes[pos] == b'\\' {
+                            pos += 2;
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < end && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < end {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+
+        None
     }
 
     fn find_element_access_close_bracket_position(

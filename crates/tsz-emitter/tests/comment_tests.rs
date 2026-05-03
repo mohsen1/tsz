@@ -178,6 +178,29 @@ fn element_access_internal_comments_stay_with_brackets() {
 }
 
 #[test]
+fn element_access_open_bracket_finder_skips_comments_and_strings() {
+    // A '[' inside a block comment between the base expression and the
+    // argument should not be mistaken for the actual element-access bracket.
+    let source = r#"var x = Array /* [ */ ["toString"];
+"#;
+    let output = parse_and_print(source);
+    assert!(
+        output.contains(r#"Array /* [ */["toString"]"#),
+        "Block comment containing '[' before element-access bracket should be preserved without mis-positioning.\nOutput:\n{output}"
+    );
+
+    // A '[' inside a string literal in a preceding sibling context should
+    // also not perturb the open-bracket finder.
+    let source2 = r#"var y = obj["[hello"][0];
+"#;
+    let output2 = parse_and_print(source2);
+    assert!(
+        output2.contains(r#"obj["[hello"][0]"#),
+        "String literal containing '[' should not confuse element-access open-bracket finder.\nOutput:\n{output2}"
+    );
+}
+
+#[test]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 
