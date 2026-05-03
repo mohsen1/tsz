@@ -820,7 +820,9 @@ impl<'a> Printer<'a> {
         // around call expressions: `new (x() as T)` → `new (x())` not `new x()`.
         let prev_new = self.paren_in_new_callee;
         self.paren_in_new_callee = true;
-        self.emit(call.expression);
+        if !self.emit_invalid_new_type_assertion_callee(call.expression) {
+            self.emit(call.expression);
+        }
         self.paren_in_new_callee = prev_new;
         if needs_private_parens {
             self.write(")");
@@ -852,5 +854,23 @@ impl<'a> Printer<'a> {
         if self.new_expression_has_explicit_parens(node, call.expression) {
             self.write("()");
         }
+    }
+
+    fn emit_invalid_new_type_assertion_callee(&mut self, expression: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::TYPE_ASSERTION {
+            return false;
+        }
+        let Some(assertion) = self.arena.get_type_assertion(expr_node) else {
+            return false;
+        };
+
+        self.write(" < ");
+        self.emit(assertion.type_node);
+        self.write(" > ");
+        self.emit(assertion.expression);
+        true
     }
 }
