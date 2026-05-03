@@ -1337,9 +1337,96 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         static_members.extend(constructors);
-        static_members.extend(instance_members);
+        static_members.extend(self.js_class_instance_member_emit_order(instance_members));
         static_members
     }
+
+    fn js_class_instance_member_emit_order(&self, members: Vec<NodeIndex>) -> Vec<NodeIndex> {
+        let mut backing_field_keys = FxHashSet::default();
+        for &member_idx in &members {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if (member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR)
+                && let Some(key_text) = self.accessor_this_element_key_text(member_idx)
+            {
+                backing_field_keys.insert(key_text);
+            }
+        }
+
+        let mut deferred_backing_fields = Vec::new();
+        let mut emitted = FxHashSet::default();
+        let mut ordered = Vec::new();
+
+        for &member_idx in &members {
+            if !emitted.insert(member_idx) {
+                continue;
+            }
+
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && self
+                    .class_computed_property_key_text(member_idx)
+                    .is_some_and(|key| backing_field_keys.contains(&key))
+            {
+                deferred_backing_fields.push(member_idx);
+                continue;
+            }
+
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                && let Some(name) = self.member_name_source_text(member_idx)
+                && self.class_members_have_setter_named(&members, &name)
+            {
+                continue;
+            }
+
+            ordered.push(member_idx);
+
+            if member_node.kind == syntax_kind_ext::SET_ACCESSOR
+                && let Some(name) = self.member_name_source_text(member_idx)
+                && let Some(getter_idx) = self.class_members_getter_named(&members, &name)
+                && emitted.insert(getter_idx)
+            {
+                ordered.push(getter_idx);
+            }
+        }
+
+        ordered.extend(deferred_backing_fields);
+        ordered
+    }
+
+    fn member_name_source_text(&self, member_idx: NodeIndex) -> Option<String> {
+        let name_idx = self.get_member_name_idx(member_idx)?;
+        let name_node = self.arena.get(name_idx)?;
+        self.get_source_slice(name_node.pos, name_node.end)
+    }
+
+    fn class_members_have_setter_named(&self, members: &[NodeIndex], name: &str) -> bool {
+        self.class_members_getter_or_setter_named(members, name, syntax_kind_ext::SET_ACCESSOR)
+            .is_some()
+    }
+
+    fn class_members_getter_named(&self, members: &[NodeIndex], name: &str) -> Option<NodeIndex> {
+        self.class_members_getter_or_setter_named(members, name, syntax_kind_ext::GET_ACCESSOR)
+    }
+
+    fn class_members_getter_or_setter_named(
+        &self,
+        members: &[NodeIndex],
+        name: &str,
+        kind: u16,
+    ) -> Option<NodeIndex> {
+        members.iter().copied().find(|&member_idx| {
+            self.arena
+                .get(member_idx)
+                .is_some_and(|node| node.kind == kind)
+                && self.member_name_source_text(member_idx).as_deref() == Some(name)
+        })
+    }
+
     /// Pre-scan class members: when a computed property name appears on both
     /// a method implementation and a get/set accessor, tsc suppresses the
     /// method in the .d.ts output (the accessor wins). This returns the set
