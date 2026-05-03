@@ -792,73 +792,95 @@ impl<'a> CheckerState<'a> {
                     }
                     other => other,
                 };
-                let (expected_type, expected_type_is_boolean_literal) = match attr_prop_access {
-                    PropertyAccessResult::Success {
-                        type_id,
-                        from_index_signature,
-                        ..
-                    } => {
-                        // data-*/aria-* via index signature: skip (HTML convention).
-                        if is_data_or_aria && from_index_signature {
-                            if let Some(entry) = provided_attrs.last_mut() {
-                                entry.1 = self.compute_jsx_attr_value_type_without_context(
-                                    attr_data.initializer,
-                                );
+                let attr_prop_is_optional_in_anonymous_source = self
+                    .jsx_attr_prop_is_optional_in_anonymous_source(
+                        &direct_prop_access,
+                        as_intrinsic_props,
+                        props_type,
+                        &attr_name,
+                    );
+                let (expected_type, expected_type_is_boolean_literal, original_property_type) =
+                    match attr_prop_access {
+                        PropertyAccessResult::Success {
+                            type_id,
+                            from_index_signature,
+                            ..
+                        } => {
+                            // data-*/aria-* via index signature: skip (HTML convention).
+                            if is_data_or_aria && from_index_signature {
+                                if let Some(entry) = provided_attrs.last_mut() {
+                                    entry.1 = self.compute_jsx_attr_value_type_without_context(
+                                        attr_data.initializer,
+                                    );
+                                }
+                                continue;
                             }
-                            continue;
-                        }
-                        let write_check_type = crate::query_boundaries::common::remove_undefined(
-                            self.ctx.types,
-                            type_id,
-                        );
-                        // Strip undefined from optional props (write-position checking).
-                        (
-                            write_check_type,
-                            matches!(type_id, TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE),
-                        )
-                    }
-                    PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                        let Some(type_id) = property_type else {
-                            continue;
-                        };
-                        let write_check_type = crate::query_boundaries::common::remove_undefined(
-                            self.ctx.types,
-                            type_id,
-                        );
-                        (
-                            write_check_type,
-                            matches!(type_id, TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE),
-                        )
-                    }
-                    PropertyAccessResult::PropertyNotFound { .. } => {
-                        // Compute actual value type (replacing ANY placeholder) for error messages.
-                        let attr_value_type =
-                            self.compute_jsx_attr_value_type_without_context(attr_data.initializer);
-                        if let Some(entry) = provided_attrs.last_mut() {
-                            entry.1 = attr_value_type;
-                        }
-
-                        if component_has_managed_props_metadata {
-                            needs_special_attr_object_assignability = true;
-                            continue;
-                        }
-
-                        let props_target_has_object_shape =
-                            crate::query_boundaries::common::object_shape_for_type(
-                                self.ctx.types,
-                                props_type,
+                            let write_check_type =
+                                crate::query_boundaries::common::remove_undefined(
+                                    self.ctx.types,
+                                    type_id,
+                                );
+                            // Strip undefined from optional props (write-position checking).
+                            let display_type = self.jsx_attr_display_target_type(
+                                write_check_type,
+                                type_id,
+                                attr_prop_is_optional_in_anonymous_source,
+                            );
+                            (
+                                write_check_type,
+                                matches!(type_id, TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE),
+                                display_type,
                             )
-                            .is_some();
-                        if !props_target_has_object_shape {
-                            needs_special_attr_object_assignability = true;
-                            continue;
                         }
+                        PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                            let Some(type_id) = property_type else {
+                                continue;
+                            };
+                            let write_check_type =
+                                crate::query_boundaries::common::remove_undefined(
+                                    self.ctx.types,
+                                    type_id,
+                                );
+                            let display_type = self.jsx_attr_display_target_type(
+                                write_check_type,
+                                type_id,
+                                attr_prop_is_optional_in_anonymous_source,
+                            );
+                            (
+                                write_check_type,
+                                matches!(type_id, TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE),
+                                display_type,
+                            )
+                        }
+                        PropertyAccessResult::PropertyNotFound { .. } => {
+                            // Compute actual value type (replacing ANY placeholder) for error messages.
+                            let attr_value_type = self
+                                .compute_jsx_attr_value_type_without_context(attr_data.initializer);
+                            if let Some(entry) = provided_attrs.last_mut() {
+                                entry.1 = attr_value_type;
+                            }
 
-                        // Check if the component has type parameters. This handles cases like
-                        // class components with generic props where the display target is
-                        // `IntrinsicAttributes & IntrinsicClassAttributes<ElemClass<T>> & { x: number; }`
-                        // but the props_type has been instantiated to a concrete type.
-                        let component_has_type_params = component_type.is_some_and(|comp| {
+                            if component_has_managed_props_metadata {
+                                needs_special_attr_object_assignability = true;
+                                continue;
+                            }
+
+                            let props_target_has_object_shape =
+                                crate::query_boundaries::common::object_shape_for_type(
+                                    self.ctx.types,
+                                    props_type,
+                                )
+                                .is_some();
+                            if !props_target_has_object_shape {
+                                needs_special_attr_object_assignability = true;
+                                continue;
+                            }
+
+                            // Check if the component has type parameters. This handles cases like
+                            // class components with generic props where the display target is
+                            // `IntrinsicAttributes & IntrinsicClassAttributes<ElemClass<T>> & { x: number; }`
+                            // but the props_type has been instantiated to a concrete type.
+                            let component_has_type_params = component_type.is_some_and(|comp| {
                             self.is_generic_jsx_component(comp)
                                 || crate::query_boundaries::common::contains_type_parameters(
                                     self.ctx.types,
@@ -873,67 +895,70 @@ impl<'a> CheckerState<'a> {
                                     )
                             });
 
-                        if !has_string_index // excess property check
+                            if !has_string_index // excess property check
                             && !props_has_type_params
                             && !component_has_type_params
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
-                        {
-                            // Build the synthesized JSX-attributes source-type display:
-                            // when the element has spread attributes, tsc prints the merged
-                            // object (`{ extra: true; onClick: ... }`) rather than just the
-                            // single failing attribute. The helper falls back to `None` when
-                            // it can't materialize the attrs, in which case we use the
-                            // original single-attr fallback.
-                            let synthesized = self.format_jsx_attrs_synthesized_source_for_excess(
-                                attributes_idx,
-                                props_type,
-                                request,
-                            );
-                            let source_display = synthesized.unwrap_or_else(|| {
-                                let attr_type_name = if attr_data.initializer.is_none() {
-                                    "true".to_string()
-                                } else {
-                                    self.format_type(attr_value_type)
-                                };
-                                let display_name = {
-                                    let mut chars = attr_name.chars();
-                                    let is_ident = chars.next().is_some_and(|first| {
-                                        (first == '_'
-                                            || first == '$'
-                                            || first.is_ascii_alphabetic())
-                                            && chars.all(|ch| {
-                                                ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
-                                            })
-                                    });
-                                    if is_ident {
-                                        attr_name.clone()
+                            {
+                                // Build the synthesized JSX-attributes source-type display:
+                                // when the element has spread attributes, tsc prints the merged
+                                // object (`{ extra: true; onClick: ... }`) rather than just the
+                                // single failing attribute. The helper falls back to `None` when
+                                // it can't materialize the attrs, in which case we use the
+                                // original single-attr fallback.
+                                let synthesized = self
+                                    .format_jsx_attrs_synthesized_source_for_excess(
+                                        attributes_idx,
+                                        props_type,
+                                        request,
+                                    );
+                                let source_display = synthesized.unwrap_or_else(|| {
+                                    let attr_type_name = if attr_data.initializer.is_none() {
+                                        "true".to_string()
                                     } else {
-                                        format!("\"{attr_name}\"")
-                                    }
-                                };
-                                format!("{{ {display_name}: {attr_type_name}; }}")
-                            });
-                            let base = format_message(
-                                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                &[&source_display, &display_target],
-                            );
-                            let message = format!(
-                                "{base}\n  Object literal may only specify known properties, \
+                                        self.format_type(attr_value_type)
+                                    };
+                                    let display_name = {
+                                        let mut chars = attr_name.chars();
+                                        let is_ident = chars.next().is_some_and(|first| {
+                                            (first == '_'
+                                                || first == '$'
+                                                || first.is_ascii_alphabetic())
+                                                && chars.all(|ch| {
+                                                    ch == '_'
+                                                        || ch == '$'
+                                                        || ch.is_ascii_alphanumeric()
+                                                })
+                                        });
+                                        if is_ident {
+                                            attr_name.clone()
+                                        } else {
+                                            format!("\"{attr_name}\"")
+                                        }
+                                    };
+                                    format!("{{ {display_name}: {attr_type_name}; }}")
+                                });
+                                let base = format_message(
+                                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                    &[&source_display, &display_target],
+                                );
+                                let message = format!(
+                                    "{base}\n  Object literal may only specify known properties, \
                                      and '{attr_name}' does not exist in type '{display_target}'."
-                            );
-                            use crate::diagnostics::diagnostic_codes;
-                            self.error_at_node(
-                                attr_idx,
-                                &message,
-                                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            );
-                            has_excess_property_error = true;
+                                );
+                                use crate::diagnostics::diagnostic_codes;
+                                self.error_at_node(
+                                    attr_idx,
+                                    &message,
+                                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                );
+                                has_excess_property_error = true;
+                            }
+                            continue;
                         }
-                        continue;
-                    }
-                    _ => continue,
-                };
+                        _ => continue,
+                    };
 
                 // Check attribute value assignability
                 if attr_data.initializer.is_none() {
@@ -974,6 +999,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // The initializer might be a JSX expression wrapper or a string literal
+                let mut initializer_is_bare_string_literal = false;
                 let value_node_idx =
                     if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
                         if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
@@ -984,7 +1010,10 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
                         } else {
-                            // String literal or other expression
+                            // String literal or other expression (no `{...}` wrapper).
+                            // tsc preserves `| undefined` in TS2322 target display only
+                            // for bare string-literal JSX attribute initializers.
+                            initializer_is_bare_string_literal = true;
                             attr_data.initializer
                         }
                     } else {
@@ -1121,6 +1150,16 @@ impl<'a> CheckerState<'a> {
                                 value_node_idx,
                                 attr_data.name,
                             )
+                        } else if let Some(result) = self
+                            .try_emit_jsx_bare_string_attr_undefined_target(
+                                actual_type,
+                                expected_type,
+                                original_property_type,
+                                attr_data.name,
+                                initializer_is_bare_string_literal,
+                            )
+                        {
+                            result
                         } else {
                             self.check_assignable_or_report_at(
                                 actual_type,
