@@ -387,14 +387,18 @@ function parseSourceTest(content: string): ParsedSourceTest {
 
   flushCurrentFile();
 
-  const entrySourceFile = sourceFiles.find(file => {
+  const isEntryCandidate = (file: { name: string; content: string }) => {
     return (
       file.content.length > 0 &&
       !file.name.endsWith('.d.ts') &&
       !file.name.endsWith('package.json') &&
       !file.name.endsWith('tsconfig.json')
     );
-  });
+  };
+  const preferTsEntry = options.noimplicitreferences === true;
+  const entrySourceFile =
+    (preferTsEntry ? sourceFiles.find(file => isEntryCandidate(file) && /\.(ts|tsx|mts|cts)$/.test(file.name)) : undefined) ??
+    sourceFiles.find(isEntryCandidate);
 
   return {
     options,
@@ -646,6 +650,19 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     if (outDtsFile && outDtsFile !== 'out.d.ts' && baseline.files.has(outDtsFile)) {
       baseline.dts = baseline.files.get(outDtsFile) ?? baseline.dts;
       baseline.dtsFileName = outDtsFile;
+    }
+    if (!outFile && directives.noimplicitreferences === true && sourceFileName) {
+      const sourceBase = path.basename(sourceFileName).replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+      const sourceExt = sourceFileName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/)?.[1] ?? 'ts';
+      const expectedJsExt =
+        sourceExt === 'tsx' || sourceExt === 'jsx' ? 'jsx' :
+        sourceExt === 'mts' || sourceExt === 'mjs' ? 'mjs' :
+        sourceExt === 'cts' || sourceExt === 'cjs' ? 'cjs' : 'js';
+      const expectedJsName = `${sourceBase}.${expectedJsExt}`;
+      if (baseline.files.has(expectedJsName)) {
+        baseline.js = baseline.files.get(expectedJsName) ?? baseline.js;
+        baseline.jsFileName = expectedJsName;
+      }
     }
 
     return {
