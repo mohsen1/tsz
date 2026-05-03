@@ -382,19 +382,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             self.ctx.arena,
                             wrapped.type_node,
                         ) {
-                            // TS2574: A rest element type must be an array type.
-                            // Conservatively emit only when the inner type-node
-                            // is syntactically a primitive keyword; anything else
-                            // (type param, conditional, mapped, application, index
-                            // access, alias, infer, …) requires solver-level check
-                            // we don't have here, so we keep the permissive
-                            // behavior to avoid regressing variadic-tuple usage.
-                            self.ctx.error(
-                                elem_node.pos,
-                                elem_node.end - elem_node.pos,
-                                crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_TYPE_MUST_BE_AN_ARRAY_TYPE.to_string(),
-                                crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_TYPE_MUST_BE_AN_ARRAY_TYPE,
-                            );
+                            self.emit_rest_element_type_must_be_array(elem_node.pos, elem_node.end);
                         }
                         elements.push(TupleElement {
                             type_id: elem_type,
@@ -431,14 +419,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 self.ctx.arena,
                                 data.type_node,
                             ) {
-                                // TS2574: named-rest mirror of the unnamed-rest
-                                // branch above (e.g. `[...rest: string]`). See
-                                // that branch for the conservative-emit rationale.
-                                self.ctx.error(
+                                self.emit_rest_element_type_must_be_array(
                                     elem_node.pos,
-                                    elem_node.end - elem_node.pos,
-                                    crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_TYPE_MUST_BE_AN_ARRAY_TYPE.to_string(),
-                                    crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_TYPE_MUST_BE_AN_ARRAY_TYPE,
+                                    elem_node.end,
                                 );
                             }
                         } else if data.question_token {

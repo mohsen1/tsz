@@ -138,6 +138,16 @@ fn collect_names_in_type(
 }
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    pub(super) fn emit_rest_element_type_must_be_array(&mut self, pos: u32, end: u32) {
+        self.ctx.error(
+            pos,
+            end.saturating_sub(pos),
+            crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_TYPE_MUST_BE_AN_ARRAY_TYPE
+                .to_string(),
+            crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_TYPE_MUST_BE_AN_ARRAY_TYPE,
+        );
+    }
+
     /// Check if a type node is enclosed in parentheses by examining the source text.
     ///
     /// Our parser strips `ParenthesizedType` wrappers and returns the inner type
