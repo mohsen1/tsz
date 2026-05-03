@@ -2777,7 +2777,10 @@ impl ParserState {
                     }
 
                     let recover_start = self.token_pos();
-                    let _ = self.parse_type();
+                    let recovered_type = self.parse_type();
+                    if recovered_type.is_some() {
+                        args.push(recovered_type);
+                    }
                     if self.token_pos() == recover_start
                         && !matches!(
                             self.token(),
