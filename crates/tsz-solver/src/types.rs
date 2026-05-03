@@ -324,6 +324,12 @@ bitflags::bitflags! {
         /// property compatibility; ordinary assignment keeps inference failure
         /// definitive so invalid generic assignments still report TS2322.
         const ALLOW_ERASED_GENERIC_SIGNATURE_RETRY = 1 << 13;
+        /// We are entering a callback parameter check: the next function
+        /// signature comparison is reached from a callable parameter and
+        /// must use strict variance (no method-bivariance loosening),
+        /// matching tsc's `SignatureCheckMode.Callback` bit. Cache results
+        /// computed under this mode separately from non-callback results.
+        const IN_CALLBACK_PARAM_CHECK       = 1 << 14;
     }
 }
 

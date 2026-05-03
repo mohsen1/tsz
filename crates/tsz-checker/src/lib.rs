@@ -484,6 +484,9 @@ mod repro_parserreal;
 #[path = "../tests/reverse_mapped_inference_tests.rs"]
 mod reverse_mapped_inference_tests;
 #[cfg(test)]
+#[path = "tests/strict_callback_param_method_tests.rs"]
+mod strict_callback_param_method_tests;
+#[cfg(test)]
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
 #[cfg(test)]
