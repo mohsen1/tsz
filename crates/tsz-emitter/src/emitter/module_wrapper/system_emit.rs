@@ -305,6 +305,19 @@ impl<'a> Printer<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
+            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_stmt) = self.arena.get_variable(stmt_node)
+                && self
+                    .arena
+                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                for name in self.collect_variable_names(&var_stmt.declarations) {
+                    if !name.is_empty() {
+                        reexported_names.entry(name.clone()).or_insert(name);
+                    }
+                }
+                continue;
+            }
             if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
                 continue;
             }
@@ -317,6 +330,16 @@ impl<'a> Printer<'a> {
             let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
                 continue;
             };
+            if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_stmt) = self.arena.get_variable(clause_node)
+            {
+                for name in self.collect_variable_names(&var_stmt.declarations) {
+                    if !name.is_empty() {
+                        reexported_names.entry(name.clone()).or_insert(name);
+                    }
+                }
+                continue;
+            }
             if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
                 continue;
             }
@@ -358,6 +381,10 @@ impl<'a> Printer<'a> {
             self.in_system_execute_body = false;
             return;
         }
+
+        let prev_deferred_local_export_bindings = self
+            .deferred_local_export_bindings
+            .replace(self.system_reexported_names.clone());
 
         for &stmt_idx in &source.statements.nodes {
             // Skip function declarations that were already hoisted to the outer scope
@@ -508,6 +535,7 @@ impl<'a> Printer<'a> {
             }
         }
 
+        self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
         self.ctx.options.module = prev_module;
         self.ctx.auto_detect_module = prev_auto_detect;
         self.ctx.original_module_kind = prev_original;

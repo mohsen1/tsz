@@ -966,7 +966,14 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::environment::CapabilityDiagnostic;
         if let Some(cap_diag) = self.ctx.capabilities.diagnose_missing_name(name) {
             match cap_diag {
-                CapabilityDiagnostic::MissingEs2015Type { .. } => {
+                // tsc only emits TS2583 ("change your target library") in value
+                // position for a narrow set of well-known ES2015+ globals (Map,
+                // Set, Promise, …). Other names that live in es2015+ libs (e.g.
+                // `Proxy`, `Generator`, `WeakRef`) fall through to plain TS2304.
+                // Mirrors `getCannotFindNameDiagnosticForName` in checker.ts.
+                CapabilityDiagnostic::MissingEs2015Type { .. }
+                    if tsz_binder::lib_loader::is_es2015_plus_value_lib_suggestion(name) =>
+                {
                     self.error_cannot_find_name_change_lib(name, idx);
                     return;
                 }

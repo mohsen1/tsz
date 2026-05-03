@@ -316,6 +316,38 @@ pub fn is_es2015_plus_type(name: &str) -> bool {
     ES2015_PLUS_TYPES.contains(&name)
 }
 
+/// Check if a value-position name should emit TS2583 ("change your target
+/// library") instead of plain TS2304 when not found.
+///
+/// Mirrors tsc's `getCannotFindNameDiagnosticForName` switch (checker.ts):
+/// only this narrow set of well-known ES2015+ globals get the lib-upgrade
+/// suggestion in value position. Other ES2015+ types (e.g. `Proxy`,
+/// `Generator`, `IterableIterator`, `WeakRef`) fall through to TS2304.
+#[must_use]
+pub fn is_es2015_plus_value_lib_suggestion(name: &str) -> bool {
+    matches!(
+        name,
+        "Map"
+            | "Set"
+            | "Promise"
+            | "Symbol"
+            | "WeakMap"
+            | "WeakSet"
+            | "Iterator"
+            | "AsyncIterator"
+            | "SharedArrayBuffer"
+            | "Atomics"
+            | "AsyncIterable"
+            | "AsyncIterableIterator"
+            | "AsyncGenerator"
+            | "AsyncGeneratorFunction"
+            | "BigInt"
+            | "Reflect"
+            | "BigInt64Array"
+            | "BigUint64Array"
+    )
+}
+
 /// Get the minimum lib version required for an ES2015+ type name.
 ///
 /// Returns the lib version string (e.g., "es2015", "es2017") that first defines

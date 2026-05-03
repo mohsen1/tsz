@@ -348,12 +348,12 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            let (generator_body, hoisted_vars, directive_prologue) = if body_has_await {
-                async_emitter.emit_generator_body_with_await_and_hoisted_vars(body)
+            let (generator_body, hoisted_var_groups, directive_prologue) = if body_has_await {
+                async_emitter.emit_generator_body_with_await_and_hoisted_var_groups(body)
             } else {
-                let (generator_body, hoisted_vars) =
-                    async_emitter.emit_simple_generator_body_with_hoisted_vars(body);
-                (generator_body, hoisted_vars, Vec::new())
+                let (generator_body, hoisted_var_groups) =
+                    async_emitter.emit_simple_generator_body_with_hoisted_var_groups(body);
+                (generator_body, hoisted_var_groups, Vec::new())
             };
             let generator_mappings = async_emitter.take_mappings();
 
@@ -362,7 +362,7 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            if hoisted_vars.is_empty() {
+            if hoisted_var_groups.is_empty() {
                 let can_inline_wrapper = body_is_single_line
                     && directive_prologue.is_empty()
                     && !(this_expr != "this" && generator_body.contains("return _this"))
@@ -432,15 +432,17 @@ impl<'a> Printer<'a> {
                     self.write("\";");
                     self.write_line();
                 }
-                self.write("var ");
-                for (i, var_name) in hoisted_vars.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
+                for group in &hoisted_var_groups {
+                    self.write("var ");
+                    for (i, var_name) in group.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.write(var_name);
                     }
-                    self.write(var_name);
+                    self.write(";");
+                    self.write_line();
                 }
-                self.write(";");
-                self.write_line();
                 if this_expr != "this" && generator_body.contains("return _this") {
                     self.write("var _this = this;");
                     self.write_line();
