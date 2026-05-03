@@ -297,6 +297,14 @@ impl<'a> Printer<'a> {
         parent_name: Option<&str>,
     ) {
         let name = self.get_identifier_text_idx(module.name);
+        if let Some(parent) = parent_name
+            && !name.is_empty()
+        {
+            self.namespace_prior_exports
+                .entry(parent.to_string())
+                .or_default()
+                .insert(name.clone());
+        }
 
         // Capture and consume the CJS export fold flag at the TOP of the IIFE,
         // not in the tail. Without this, nested namespace IIFEs inside the body
@@ -841,12 +849,25 @@ impl<'a> Printer<'a> {
             let body_close_pos = self.find_token_end_before_trivia(body_node.pos, body_node.end);
             // Collect exported names for identifier qualification in emit_identifier
             let prev_exported = std::mem::take(&mut self.namespace_exported_names);
+            let prev_parent_exported = std::mem::take(&mut self.namespace_parent_exported_names);
             let mut local_exports = self.collect_namespace_exported_names(module);
+            let leaf_name = self.get_identifier_text_idx(module.name);
+            let mut parent_exports = self
+                .parent_namespace_name
+                .as_ref()
+                .and_then(|parent| self.namespace_prior_exports.get(parent))
+                .map(|exports| {
+                    exports
+                        .iter()
+                        .cloned()
+                        .collect::<rustc_hash::FxHashSet<_>>()
+                })
+                .unwrap_or_default();
+            parent_exports.remove(&leaf_name);
             // Collect class/function/enum names for future reopenings (before mutable borrow)
             let class_fn_enum_names = self.collect_namespace_class_fn_enum_names(module);
             // Merge in exports from prior blocks of the same namespace (cross-block sharing)
             {
-                let leaf_name = self.get_identifier_text_idx(module.name);
                 // Use scope-qualified key to distinguish same-named namespaces
                 // at different scopes (e.g., m1.m2 vs m4.m2). Reopenings at the
                 // same scope share the same parent, so they get the same key.
@@ -874,8 +895,10 @@ impl<'a> Printer<'a> {
             let local_names = self.collect_namespace_local_var_names(body_node);
             for name in &local_names {
                 local_exports.remove(name);
+                parent_exports.remove(name);
             }
             self.namespace_exported_names = local_exports;
+            self.namespace_parent_exported_names = parent_exports;
 
             // Skip comments on the same line as the opening `{` of the module block.
             // When the namespace is transformed to an IIFE, tsc drops trailing
@@ -1110,6 +1133,7 @@ impl<'a> Printer<'a> {
             }
             // Restore previous exported names
             self.namespace_exported_names = prev_exported;
+            self.namespace_parent_exported_names = prev_parent_exported;
         }
     }
 
@@ -1881,6 +1905,28 @@ mod tests {
         assert!(
             output.contains("(function (M_1)"),
             "Namespace IIFE parameter should be renamed to M_1 when body has 'import M = ...'.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
+        let source = "function foo(title: string) {}\nnamespace foo.Bar {\n  export function f() {}\n}\nnamespace foo.Baz {\n  export function g() {\n    Bar.f();\n  }\n}";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("foo.Bar.f();"),
+            "Sibling namespace reference should be qualified through the parent namespace.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("    Bar.f();"),
+            "Sibling namespace reference should not be emitted as a bare identifier.\nOutput:\n{output}"
         );
     }
 }
