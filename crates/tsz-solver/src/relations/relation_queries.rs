@@ -449,7 +449,14 @@ pub fn check_application_variance<R: TypeResolver>(
     // here prevents structural expansion of recursive aliases like
     // `FlatArray<Arr, any>` from spuriously rejecting valid assignments.
     if variances.iter().all(|v| v.is_empty()) {
-        if !policy.strict_any_propagation && t_app.args.iter().any(|a| a.is_any()) {
+        if !policy.strict_any_propagation
+            && t_app.args.iter().any(|a| a.is_any())
+            && s_app
+                .args
+                .iter()
+                .zip(t_app.args.iter())
+                .all(|(s_arg, t_arg)| t_arg.is_any() || *s_arg == *t_arg)
+        {
             return Some(true);
         }
         return None;

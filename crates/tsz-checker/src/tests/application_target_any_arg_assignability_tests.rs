@@ -41,3 +41,23 @@ function f<Arr, D extends number>(x: Recur<Arr, any>, y: Recur<Arr, D>) {
         "Expected no TS2322 for `x = y;` where target has `any` arg; got: {diags:?}"
     );
 }
+
+#[test]
+fn recur_any_target_arg_still_checks_non_any_args() {
+    let diags = diags_strict(
+        r#"
+type Recur<Arr, Depth extends number> = {
+    value: Arr;
+    nested: Recur<Arr, Depth>;
+};
+
+function f<D extends number>(x: Recur<string, any>, y: Recur<number, D>) {
+    x = y;
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for incompatible non-any type argument; got: {diags:?}"
+    );
+}
