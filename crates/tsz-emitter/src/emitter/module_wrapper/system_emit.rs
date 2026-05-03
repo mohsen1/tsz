@@ -305,6 +305,19 @@ impl<'a> Printer<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
+            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_stmt) = self.arena.get_variable(stmt_node)
+                && self
+                    .arena
+                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                for name in self.collect_variable_names(&var_stmt.declarations) {
+                    if !name.is_empty() {
+                        reexported_names.entry(name.clone()).or_insert(name);
+                    }
+                }
+                continue;
+            }
             if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
                 continue;
             }
@@ -317,6 +330,16 @@ impl<'a> Printer<'a> {
             let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
                 continue;
             };
+            if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_stmt) = self.arena.get_variable(clause_node)
+            {
+                for name in self.collect_variable_names(&var_stmt.declarations) {
+                    if !name.is_empty() {
+                        reexported_names.entry(name.clone()).or_insert(name);
+                    }
+                }
+                continue;
+            }
             if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
                 continue;
             }
