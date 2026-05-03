@@ -1002,6 +1002,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(enclosing_class) = self.ctx.enclosing_class.as_ref()
                     && self.is_in_static_class_member_context(type_name_idx)
                     && enclosing_class.type_param_names.iter().any(|n| n == name)
+                    && !self
+                        .type_parameter_name_is_shadowed_before_static_member(name, type_name_idx)
                 {
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node(
