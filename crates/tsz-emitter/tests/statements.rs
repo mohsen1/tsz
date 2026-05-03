@@ -124,6 +124,41 @@ fn ts_nocheck_comment_preserved_in_output() {
 }
 
 #[test]
+fn variable_comment_equals_does_not_emit_empty_initializer() {
+    let output = parse_and_print("var x /* = 5 */;");
+
+    assert!(
+        output.contains("var x /* = 5 */;"),
+        "commented equals should be preserved without an empty initializer:\n{output}"
+    );
+    assert!(
+        !output.contains("var x = ;"),
+        "commented equals should not produce invalid JS:\n{output}"
+    );
+}
+
+#[test]
+fn es_module_empty_binding_pattern_export_keeps_export_keyword() {
+    let output = parse_and_lower_print(
+        "export const [] = source;",
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("export var "),
+        "ES module empty binding pattern export must preserve `export`: {output}"
+    );
+    assert!(
+        !output.contains("\nvar _"),
+        "ES module empty binding pattern export should not fall back to a local var: {output}"
+    );
+}
+
+#[test]
 fn system_for_initializer_export_assignment_does_not_shadow_hoisted_var() {
     let output = parse_and_lower_print(
         "export var x;\nfor (var x = 1; x < 2; x++) { }",

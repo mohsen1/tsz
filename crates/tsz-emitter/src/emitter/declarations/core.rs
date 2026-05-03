@@ -296,7 +296,34 @@ impl<'a> Printer<'a> {
         let start = anchor_end.min(node.end) as usize;
         let end = node.end.min(text.len() as u32) as usize;
         text.get(start..end)
-            .is_some_and(|tail| tail.as_bytes().contains(&b'='))
+            .is_some_and(Self::source_tail_contains_equals_outside_comments)
+    }
+
+    fn source_tail_contains_equals_outside_comments(tail: &str) -> bool {
+        let bytes = tail.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'=' => return true,
+                b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                    i += 2;
+                    while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                }
+                b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                    i += 2;
+                    while i + 1 < bytes.len()
+                        && !(bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/'))
+                    {
+                        i += 1;
+                    }
+                    i = (i + 2).min(bytes.len());
+                }
+                _ => i += 1,
+            }
+        }
+        false
     }
 
     // =========================================================================
