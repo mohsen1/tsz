@@ -599,3 +599,85 @@ fn test_skip_block_opening_line_comments_uses_forward_search_for_param_lowered_b
         "Inner function body must be present in output.\nOutput:\n{output}"
     );
 }
+
+/// Regression test for Devin 🟡 review on PR #2563:
+/// Comments between pre-emitted CJS prologue directives must remain
+/// between the directives, not be displaced after the entire CJS
+/// preamble (`"use strict"`, `Object.defineProperty(exports, ...)`, etc.).
+///
+/// The early prologue emission loop in `source_file/emit.rs` was calling
+/// `self.emit(stmt_idx)` for each pre-preamble prologue directive but
+/// not consuming inter-statement leading comments. The main loop then
+/// skipped these statements with `continue`, also skipping its
+/// leading-comment handler. The orphaned comments survived in
+/// `all_comments` and ended up attached to the first non-skipped
+/// statement — i.e., dumped after the CJS preamble.
+///
+/// Devin review:
+/// <https://github.com/mohsen1/tsz/pull/2563#discussion>
+#[test]
+fn cjs_inter_prologue_comment_preserved_between_directives() {
+    let source = r#""hey!";
+// comment between prologues
+"yo!";
+export function f() {}
+"#;
+
+    let output = parse_and_print_with_opts(source, PrintOptions::commonjs());
+
+    let between_pos = output
+        .find("// comment between prologues")
+        .unwrap_or_else(|| panic!("Inter-prologue comment must be preserved.\nOutput:\n{output}"));
+    let yo_pos = output
+        .find("\"yo!\"")
+        .unwrap_or_else(|| panic!("Second prologue directive must be present.\nOutput:\n{output}"));
+    let preamble_pos = output
+        .find("Object.defineProperty(exports")
+        .unwrap_or_else(|| panic!("CJS __esModule preamble must be emitted.\nOutput:\n{output}"));
+
+    assert!(
+        between_pos < yo_pos,
+        "Inter-prologue comment must precede the second directive.\nOutput:\n{output}"
+    );
+    assert!(
+        between_pos < preamble_pos,
+        "Inter-prologue comment must NOT appear after the CJS preamble.\nOutput:\n{output}"
+    );
+}
+
+/// Multiple inter-prologue comments (line + block) between
+/// pre-preamble CJS prologue directives must all stay between the
+/// directives, not be displaced after the CJS preamble.
+#[test]
+fn cjs_multiple_inter_prologue_comments_preserved_between_directives() {
+    let source = r#""hey!";
+// line comment between
+/* block comment between */
+"yo!";
+export function g() {}
+"#;
+
+    let output = parse_and_print_with_opts(source, PrintOptions::commonjs());
+
+    let line_pos = output
+        .find("// line comment between")
+        .unwrap_or_else(|| panic!("Line comment must be preserved.\nOutput:\n{output}"));
+    let block_pos = output
+        .find("/* block comment between */")
+        .unwrap_or_else(|| panic!("Block comment must be preserved.\nOutput:\n{output}"));
+    let yo_pos = output
+        .find("\"yo!\"")
+        .unwrap_or_else(|| panic!("Second prologue directive must be present.\nOutput:\n{output}"));
+    let preamble_pos = output
+        .find("Object.defineProperty(exports")
+        .unwrap_or_else(|| panic!("CJS __esModule preamble must be emitted.\nOutput:\n{output}"));
+
+    assert!(
+        line_pos < yo_pos && block_pos < yo_pos,
+        "Inter-prologue comments must precede the second directive.\nOutput:\n{output}"
+    );
+    assert!(
+        line_pos < preamble_pos && block_pos < preamble_pos,
+        "Inter-prologue comments must NOT appear after the CJS preamble.\nOutput:\n{output}"
+    );
+}
