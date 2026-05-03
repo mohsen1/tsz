@@ -268,6 +268,28 @@ fn test_comment_like_text_inside_strings_is_ignored() {
 }
 
 #[test]
+fn test_comment_after_unterminated_string_is_found() {
+    // JS/TS single-line string literals cannot contain raw newlines. When the
+    // scanner encounters an unterminated string (e.g. mid-edit in the LSP),
+    // it must treat the newline as a string terminator so subsequent comments
+    // are still detected.
+    let source = "var x = \"hello\n/* keep */;";
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "/* keep */");
+}
+
+#[test]
+fn test_comment_after_unterminated_string_crlf_is_found() {
+    let source = "var x = \"hello\r\n// keep\n";
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].get_text(source), "// keep");
+}
+
+#[test]
 fn test_comment_like_text_inside_regex_character_class_is_ignored() {
     let source = r#"var foo2 = "a//".replace(/.[//]/g, ""); // real"#;
     let comments = get_comment_ranges(source);
