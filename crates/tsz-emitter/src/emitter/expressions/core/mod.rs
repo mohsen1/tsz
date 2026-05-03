@@ -446,6 +446,25 @@ mod tests {
         );
     }
 
+    /// Invalid `new <T>Expr()` preserves the recovered type assertion text.
+    #[test]
+    fn invalid_new_type_assertion_callee_preserves_recovery_text() {
+        let source = "var b = new <any>Test2();\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var b = new  < any > Test2();"),
+            "Recovered type assertion in new callee should be preserved.\nOutput:\n{output}"
+        );
+    }
+
     /// Type assertion around `new a` keeps parens when in property access position:
     /// `(<any>new a).b` → `(new a).b` (removing parens would change semantics).
     #[test]
