@@ -1,4 +1,5 @@
-use crate::output::printer::{PrintOptions, Printer};
+use crate::output::printer::{PrintOptions, Printer, lower_and_print};
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::ParserState;
 
 fn parse_and_print(source: &str) -> String {
@@ -8,6 +9,12 @@ fn parse_and_print(source: &str) -> String {
     printer.set_source_text(source);
     printer.print(root);
     printer.finish().code
+}
+
+fn parse_and_lower_print(source: &str, opts: PrintOptions) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    lower_and_print(&parser.arena, root, opts).code
 }
 
 /// Case clause with a single non-block statement on the same source line
@@ -113,6 +120,51 @@ fn ts_nocheck_comment_preserved_in_output() {
     assert!(
         output.contains("// @ts-nocheck"),
         "// @ts-nocheck directive should be preserved in output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_for_initializer_export_assignment_does_not_shadow_hoisted_var() {
+    let output = parse_and_lower_print(
+        "export var x;\nfor (var x = 1; x < 2; x++) { }",
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::System,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("x = 1;\n            exports_1(\"x\", x);\n            for (;"),
+        "System execute body should assign the hoisted export binding before the for loop: {output}"
+    );
+    assert!(
+        !output.contains("var x = 1;"),
+        "System execute body must not redeclare and shadow the hoisted export binding: {output}"
+    );
+}
+
+#[test]
+fn for_of_capture_hoists_var_declarations_before_loop() {
+    let output = parse_and_lower_print(
+        "for (const item of arr) { var x = item; setTimeout(() => item); }",
+        PrintOptions::es5(),
+    );
+
+    let hoisted_var = output
+        .find("var x;")
+        .expect("expected hoisted `var x;` before captured for-of loop");
+    let loop_header = output
+        .find("for (var ")
+        .expect("expected lowered for-of loop header");
+
+    assert!(
+        hoisted_var < loop_header,
+        "for-of capture should hoist body var declarations before the loop: {output}"
+    );
+    assert!(
+        output.contains("x = item;"),
+        "body var initializer should remain as an assignment inside the capture function: {output}"
     );
 }
 

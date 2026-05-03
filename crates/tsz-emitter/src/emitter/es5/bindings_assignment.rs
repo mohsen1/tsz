@@ -242,6 +242,17 @@ impl<'a> Printer<'a> {
                     &init_vars,
                 );
                 self.write_line();
+                if !body_info.var_decl_names.is_empty() {
+                    self.write("var ");
+                    for (i, name) in body_info.var_decl_names.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.write(name);
+                    }
+                    self.write(";");
+                    self.write_line();
+                }
                 Some((loop_fn_name, param_vars, body_info))
             } else {
                 None
