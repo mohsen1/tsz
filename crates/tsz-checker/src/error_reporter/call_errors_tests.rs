@@ -394,6 +394,59 @@ takes(2);
 }
 
 #[test]
+fn ts2345_call_argument_display_widens_literal_for_object_with_null_target() {
+    // When the target union mixes a non-primitive (`object`) with `null`/`undefined`,
+    // tsc widens the literal call argument (`1` → `number`). The literal-preservation
+    // path is reserved for unions whose members are all primitives — `object | null`
+    // is not "literal sensitive" so the source should display as the widened form.
+    let source = r#"
+declare function takes(value: object | null): void;
+takes(1);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("Argument of type 'number'"),
+        "TS2345 should widen direct numeric literals when the union target mixes a non-primitive with null, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Argument of type '1'"),
+        "TS2345 should not preserve literal numeric text against a non-literal-sensitive union, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_call_argument_display_widens_literal_for_object_target_param_name_independent() {
+    // Same rule, with a different name choice for the parameter — locks that
+    // the rule is purely structural (target union has a non-primitive member),
+    // not tied to any user-chosen identifier.
+    let source = r#"
+declare function f(o: object | null): void;
+f("hello");
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("Argument of type 'string'"),
+        "TS2345 should widen string literals against object | null target, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Argument of type '\"hello\"'"),
+        "TS2345 should not preserve literal string text against object | null, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2345_call_argument_display_widens_literal_for_optional_parameter_target() {
     let source = r#"
 interface Item {

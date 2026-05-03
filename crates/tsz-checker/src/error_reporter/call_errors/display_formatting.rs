@@ -1294,8 +1294,17 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let evaluated = self.evaluate_type_for_assignability(param_type);
-        query_common::union_members(self.ctx.types, param_type).is_some()
-            || query_common::union_members(self.ctx.types, evaluated).is_some()
+        Self::union_has_primitive_members_only(self.ctx.types, param_type)
+            || Self::union_has_primitive_members_only(self.ctx.types, evaluated)
+    }
+
+    fn union_has_primitive_members_only(types: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+        let Some(members) = query_common::union_members(types, ty) else {
+            return false;
+        };
+        members
+            .iter()
+            .all(|&m| query_common::is_primitive_type(types, m))
     }
 
     /// Returns `true` when `param_type` is a union whose literal-sensitive
