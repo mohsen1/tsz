@@ -108,3 +108,46 @@ fn ts2355_anchors_on_owner_jsdoc_after_unrelated_function_decl_above() {
         diag.length,
     );
 }
+
+#[test]
+fn ts2322_expression_arrow_jsdoc_cast_return_anchors_on_outer_cast() {
+    // Mirrors TypeScript/tests/cases/compiler/arrowExpressionBodyJSDoc.ts.
+    // For concise JS arrows with `@returns {T}`, tsc reports the return
+    // mismatch at the outer JSDoc cast expression, not the inner object literal
+    // or nested cast.
+    let source = r#"
+/**
+ * @template T
+ * @param {T|undefined} value value or not
+ * @returns {T} result value
+ */
+const foo1 = value => /** @type {string} */({ ...value });
+
+/**
+ * @template T
+ * @param {T|undefined} value value or not
+ * @returns {T} result value
+ */
+const foo2 = value => /** @type {string} */(/** @type {T} */({ ...value }));
+"#;
+
+    let diagnostics = check_source(source, "a.js", options_js_strict());
+    let ts2322_starts: Vec<u32> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.start)
+        .collect();
+
+    let foo1_cast = source.find("*/({").expect("foo1 cast") + "*/".len();
+    let foo2_line = source.find("const foo2").expect("foo2 line");
+    let foo2_cast = foo2_line + source[foo2_line..].find("*/(").expect("foo2 cast") + "*/".len();
+
+    assert!(
+        ts2322_starts.contains(&(foo1_cast as u32)),
+        "foo1 TS2322 should anchor at outer JSDoc cast paren offset {foo1_cast}, got: {ts2322_starts:?}"
+    );
+    assert!(
+        ts2322_starts.contains(&(foo2_cast as u32)),
+        "foo2 TS2322 should anchor at outer JSDoc cast paren offset {foo2_cast}, got: {ts2322_starts:?}"
+    );
+}

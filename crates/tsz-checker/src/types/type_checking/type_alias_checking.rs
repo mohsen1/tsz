@@ -214,7 +214,10 @@ impl<'a> CheckerState<'a> {
             } else {
                 Vec::new()
             };
-            if body_refs.contains(&def_id) {
+            if body_refs.contains(&def_id)
+                && self
+                    .conditional_body_has_definite_recursive_alias_ref(alias.type_node, alias_sid)
+            {
                 // Collect type params that were pushed into scope above
                 let type_params: Vec<tsz_solver::TypeParamInfo> = alias
                     .type_parameters
@@ -427,6 +430,132 @@ impl<'a> CheckerState<'a> {
         for child_idx in self.ctx.arena.get_children(node_idx) {
             self.collect_recursive_alias_refs(child_idx, alias_sid, best);
         }
+    }
+
+    fn conditional_body_has_definite_recursive_alias_ref(
+        &mut self,
+        node_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            let resolved = self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .map(tsz_binder::SymbolId);
+            if resolved == Some(alias_sid) {
+                let Some(type_args) = &type_ref.type_arguments else {
+                    return true;
+                };
+                if self.type_args_match_alias_params(alias_sid, type_args) {
+                    return true;
+                }
+                return !self
+                    .type_arg_nodes_all_contain_deferred_type_parameter_for_depth_check(type_args);
+            }
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.conditional_body_has_definite_recursive_alias_ref(child_idx, alias_sid)
+            })
+    }
+
+    fn type_arg_nodes_all_contain_deferred_type_parameter_for_depth_check(
+        &mut self,
+        type_args: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        !type_args.nodes.is_empty()
+            && type_args.nodes.iter().copied().all(|node_idx| {
+                self.type_node_contains_deferred_type_parameter_for_depth_check(node_idx)
+            })
+    }
+
+    fn type_node_contains_deferred_type_parameter_for_depth_check(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if let Some(identifier) = self.ctx.arena.get_identifier(node)
+            && self
+                .ctx
+                .type_parameter_scope
+                .contains_key(&identifier.escaped_text)
+        {
+            return true;
+        }
+        if let Some(identifier) = self.ctx.arena.get_identifier(node)
+            && self
+                .identifier_references_enclosing_infer_binding(node_idx, &identifier.escaped_text)
+        {
+            return true;
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.type_node_contains_deferred_type_parameter_for_depth_check(child_idx)
+            })
+    }
+
+    fn identifier_references_enclosing_infer_binding(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let mut current = node_idx;
+        for _ in 0..50 {
+            let parent = self
+                .ctx
+                .arena
+                .get_extended(current)
+                .map_or(NodeIndex::NONE, |ext| ext.parent);
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if let Some(conditional) = self.ctx.arena.get_conditional_type(parent_node)
+                && self.type_node_contains_infer_binding_named(conditional.extends_type, name)
+            {
+                return true;
+            }
+            current = parent;
+        }
+        false
+    }
+
+    fn type_node_contains_infer_binding_named(&self, node_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::INFER_TYPE
+            && let Some(infer_data) = self.ctx.arena.get_infer_type(node)
+            && let Some(type_param_node) = self.ctx.arena.get(infer_data.type_parameter)
+            && let Some(type_param) = self.ctx.arena.get_type_parameter(type_param_node)
+            && let Some(name_node) = self.ctx.arena.get(type_param.name)
+            && let Some(identifier) = self.ctx.arena.get_identifier(name_node)
+        {
+            return identifier.escaped_text == name;
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| self.type_node_contains_infer_binding_named(child_idx, name))
     }
 
     /// Walk a type argument AST node and return true if it contains a reference

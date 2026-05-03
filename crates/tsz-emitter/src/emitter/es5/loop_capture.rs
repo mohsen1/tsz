@@ -500,7 +500,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit the _`loop_N` function definition
-    fn emit_loop_function(
+    pub(in crate::emitter) fn emit_loop_function(
         &mut self,
         fn_name: &str,
         captured_vars: &[String],

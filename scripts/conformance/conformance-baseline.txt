@@ -1,3 +1,4 @@
+FAIL TypeScript/tests/cases/compiler/arrowExpressionBodyJSDoc.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/circularInlineMappedGenericTupleTypeNoCrash.ts | expected:[TS2589] actual:[]
 FAIL TypeScript/tests/cases/compiler/circularReferenceInReturnType2.ts | expected:[TS7022,TS7023] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/complexRecursiveCollections.ts | expected:[TS2320,TS2344,TS2430] actual:[TS2344,TS2430]
@@ -54,7 +55,6 @@ FAIL TypeScript/tests/cases/compiler/maxConstraints.ts | expected:[TS2345] actua
 FAIL TypeScript/tests/cases/compiler/mergeSymbolReexportInterface.ts | expected:[TS2300,TS2741] actual:[TS2300,TS2741]
 FAIL TypeScript/tests/cases/compiler/mergeSymbolRexportFunction.ts | expected:[TS2451] actual:[TS1362,TS2300,TS2349]
 FAIL TypeScript/tests/cases/compiler/mergedDeclarations7.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/modularizeLibrary_ErrorFromUsingES6FeaturesWithOnlyES5Lib.ts | expected:[TS2304,TS2339,TS2550,TS2583,TS2585] actual:[TS2339,TS2550,TS2583,TS2585]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts | expected:[TS2564,TS2567] actual:[TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258,TS2305,TS2307] actual:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258]
 FAIL TypeScript/tests/cases/compiler/moduleNodeDefaultImports.ts | expected:[TS2349] actual:[TS2339,TS2349,TS2367]
@@ -465,7 +465,6 @@ PASS TypeScript/tests/cases/compiler/arrayToLocaleStringES2020.ts
 PASS TypeScript/tests/cases/compiler/arrayToLocaleStringES5.ts
 PASS TypeScript/tests/cases/compiler/arrayTypeInSignatureOfInterfaceAndClass.ts
 PASS TypeScript/tests/cases/compiler/arrayconcat.ts
-PASS TypeScript/tests/cases/compiler/arrowExpressionBodyJSDoc.ts
 PASS TypeScript/tests/cases/compiler/arrowExpressionJs.ts
 PASS TypeScript/tests/cases/compiler/arrowFunctionErrorSpan.ts
 PASS TypeScript/tests/cases/compiler/arrowFunctionInConstructorArgument1.ts
@@ -4286,6 +4285,7 @@ PASS TypeScript/tests/cases/compiler/modifiersOnInterfaceIndexSignature1.ts
 PASS TypeScript/tests/cases/compiler/modularizeLibrary_Dom.asynciterable.ts
 PASS TypeScript/tests/cases/compiler/modularizeLibrary_Dom.iterable.ts
 PASS TypeScript/tests/cases/compiler/modularizeLibrary_ErrorFromUsingES6ArrayWithOnlyES6ArrayLib.ts
+PASS TypeScript/tests/cases/compiler/modularizeLibrary_ErrorFromUsingES6FeaturesWithOnlyES5Lib.ts
 PASS TypeScript/tests/cases/compiler/modularizeLibrary_ErrorFromUsingWellknownSymbolWithOutES6WellknownSymbolLib.ts
 PASS TypeScript/tests/cases/compiler/modularizeLibrary_NoErrorDuplicateLibOptions1.ts
 PASS TypeScript/tests/cases/compiler/modularizeLibrary_NoErrorDuplicateLibOptions2.ts

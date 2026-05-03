@@ -206,6 +206,50 @@ impl<'a> Printer<'a> {
             name
         };
 
+        // Check if the for-of initializer is a `using` declaration that needs dispose lowering.
+        let using_info = if !self.ctx.options.target.supports_es2025() {
+            self.for_of_initializer_using_info(for_in_of.initializer)
+        } else {
+            None
+        };
+
+        let capture_context = if using_info.is_none() {
+            let init_vars = self.collect_for_of_iteration_var_names(for_in_of.initializer);
+            let body_info =
+                super::loop_capture::collect_loop_body_vars(self.arena, for_in_of.statement);
+            if (!init_vars.is_empty() || !body_info.block_scoped_vars.is_empty())
+                && let Some(capture_info) = super::loop_capture::check_loop_needs_capture(
+                    self.arena,
+                    for_in_of.statement,
+                    &init_vars,
+                    &body_info.block_scoped_vars,
+                )
+            {
+                let init_var_set: std::collections::HashSet<&str> =
+                    init_vars.iter().map(String::as_str).collect();
+                let param_vars: Vec<String> = capture_info
+                    .captured_vars
+                    .iter()
+                    .filter(|v| init_var_set.contains(v.as_str()))
+                    .cloned()
+                    .collect();
+                let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
+                self.emit_loop_function(
+                    &loop_fn_name,
+                    &param_vars,
+                    for_in_of.statement,
+                    &body_info,
+                    &init_vars,
+                );
+                self.write_line();
+                Some((loop_fn_name, param_vars, body_info))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         self.write("for (var ");
         self.write(&index_name);
         self.write(" = 0, ");
@@ -225,13 +269,6 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         // Scope was already entered above (before emitting the initialization expression)
-
-        // Check if the for-of initializer is a `using` declaration that needs dispose lowering.
-        let using_info = if !self.ctx.options.target.supports_es2025() {
-            self.for_of_initializer_using_info(for_in_of.initializer)
-        } else {
-            None
-        };
 
         if let Some((var_name, using_async)) = using_info {
             // ES5 for-of with `using`: emit temp binding + dispose wrapper
@@ -333,7 +370,12 @@ impl<'a> Printer<'a> {
             self.write_line();
 
             // Emit the loop body
-            self.emit_for_of_body(for_in_of.statement);
+            if let Some((loop_fn_name, param_vars, body_info)) = &capture_context {
+                self.emit_loop_call(loop_fn_name, param_vars, body_info);
+                self.write_line();
+            } else {
+                self.emit_for_of_body(for_in_of.statement);
+            }
         }
 
         // Exit the loop body scope

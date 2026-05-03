@@ -213,14 +213,16 @@ impl<'a> CheckerState<'a> {
                 let is_class = symbol_info.is_some_and(|s| s.has_any_flags(symbol_flags::CLASS));
 
                 if is_type_alias || is_class {
-                    let args_have_type_params = query::get_application_info(
-                        self.ctx.types,
-                        type_id,
-                    )
-                    .is_some_and(|(_, args)| {
-                        args.iter()
-                            .any(|&arg| query::contains_type_parameters(self.ctx.types, arg))
-                    });
+                    let args_have_type_params =
+                        type_ref.type_arguments.as_ref().is_some_and(|args| {
+                            self.type_arg_nodes_contain_scoped_type_parameter_for_depth_check(args)
+                        }) || query::get_application_info(self.ctx.types, type_id).is_some_and(
+                            |(_, args)| {
+                                args.iter().any(|&arg| {
+                                    query::contains_type_parameters(self.ctx.types, arg)
+                                })
+                            },
+                        );
                     // For type aliases: skip TS2589 detection if args contain type params
                     // to avoid false positives with recursive conditional types.
                     // For classes: always check because recursive tuple spreads (e.g.,
@@ -757,14 +759,18 @@ impl<'a> CheckerState<'a> {
                         .get_symbol_with_libs(sym_id, &lib_binders)
                         .is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS));
                     if is_type_alias {
-                        let args_have_type_params = query::get_application_info(
-                            self.ctx.types,
-                            result,
-                        )
-                        .is_some_and(|(_, args)| {
-                            args.iter()
-                                .any(|&arg| query::contains_type_parameters(self.ctx.types, arg))
-                        });
+                        let args_have_type_params =
+                            type_ref.type_arguments.as_ref().is_some_and(|args| {
+                                self.type_arg_nodes_contain_scoped_type_parameter_for_depth_check(
+                                    args,
+                                )
+                            }) || query::get_application_info(self.ctx.types, result).is_some_and(
+                                |(_, args)| {
+                                    args.iter().any(|&arg| {
+                                        query::contains_type_parameters(self.ctx.types, arg)
+                                    })
+                                },
+                            );
                         if !args_have_type_params {
                             // Reset depth_exceeded before evaluation so we detect fresh depth exceedance
                             self.ctx.depth_exceeded.set(false);
