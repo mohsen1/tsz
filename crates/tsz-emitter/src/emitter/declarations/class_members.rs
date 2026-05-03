@@ -531,6 +531,17 @@ impl<'a> Printer<'a> {
         modifiers: &Option<NodeList>,
     ) {
         if let Some(mods) = modifiers {
+            let static_count = mods
+                .nodes
+                .iter()
+                .filter(|&&idx| {
+                    self.arena
+                        .get(idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16)
+                })
+                .count();
+            let suppress_static = static_count > 1;
+
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
@@ -539,7 +550,9 @@ impl<'a> Printer<'a> {
                             self.write_line();
                         }
                     } else if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
-                        self.write("static ");
+                        if !suppress_static {
+                            self.write("static ");
+                        }
                     } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16 {
                         self.write("accessor ");
                     } else if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
