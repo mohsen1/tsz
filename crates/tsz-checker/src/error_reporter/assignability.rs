@@ -927,8 +927,15 @@ impl<'a> CheckerState<'a> {
 
         // TS2412: exactOptionalPropertyTypes write target mismatch (property/element write).
         if self.has_exact_optional_write_target_mismatch(source, target, anchor_idx) {
+            // tsc reports the offending portion of the source — when the source
+            // is `T | undefined` and the target is `T`, the diagnostic narrows
+            // the source to `undefined` because `T` is assignable but
+            // `undefined` is not under `exactOptionalPropertyTypes`. Surface
+            // that narrowed display when the union strip leaves the target's
+            // shape intact.
+            let narrowed_source = self.exact_optional_source_for_message(source, target);
             let src_str = self.format_type_for_diagnostic_role(
-                source,
+                narrowed_source,
                 DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
             );
             let tgt_str = self.format_exact_optional_target_type_for_message(target);
@@ -1128,6 +1135,29 @@ impl<'a> CheckerState<'a> {
                 // Fallback to generic message
                 self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
             }
+        }
+    }
+
+    /// Narrow the TS2412 source display to the offending member when the
+    /// source is a union that contains the target type's shape. In that case
+    /// only the `null` / `undefined` (or other non-overlapping) members are
+    /// the actual mismatch, and tsc reports just those rather than the full
+    /// source union.
+    fn exact_optional_source_for_message(&mut self, source: TypeId, target: TypeId) -> TypeId {
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, source)
+        else {
+            return source;
+        };
+        let target_eval = self.evaluate_type_for_assignability(target);
+        let mismatched: Vec<TypeId> = members
+            .iter()
+            .copied()
+            .filter(|&m| !self.is_assignable_to(m, target_eval))
+            .collect();
+        match mismatched.len() {
+            0 => source,
+            1 => mismatched[0],
+            _ => self.ctx.types.factory().union_preserve_members(mismatched),
         }
     }
 
