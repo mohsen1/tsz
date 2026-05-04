@@ -122,6 +122,17 @@ fn program_has_real_syntax_errors(program: &MergedProgram) -> bool {
         .any(|diag| is_real_syntax_error(diag.code))
 }
 
+fn program_has_unsupported_js_root(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+) -> bool {
+    !options.allow_js
+        && program
+            .files
+            .iter()
+            .any(|file| is_js_file(Path::new(&file.file_name)))
+}
+
 const fn is_reserved_type_name_declaration_diagnostic(code: u32) -> bool {
     matches!(code, 2427 | 2457)
 }
@@ -155,6 +166,7 @@ fn post_process_checker_diagnostics(
     file: &BoundFile,
     options: &ResolvedCompilerOptions,
     program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
     has_deprecation_diagnostics: bool,
 ) {
     let is_js = is_js_file(Path::new(&file.file_name));
@@ -203,6 +215,13 @@ fn post_process_checker_diagnostics(
     }
 
     if program_has_real_syntax_errors {
+        checker_diagnostics
+            .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
+    }
+
+    if program_has_unsupported_js_root && !program_has_real_syntax_errors {
+        // tsc reports program-level TS6504 for explicit JS/CJS roots when
+        // allowJs is disabled, then skips downstream semantic checks.
         checker_diagnostics
             .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
     }
@@ -342,6 +361,7 @@ pub(super) fn collect_diagnostics(
     let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> =
         FxHashMap::with_capacity_and_hasher(file_count, Default::default());
     let program_has_real_syntax_errors = program_has_real_syntax_errors(program);
+    let program_has_unsupported_js_root = program_has_unsupported_js_root(program, options);
 
     {
         let _span = tracing::info_span!("build_program_path_maps", files = file_count).entered();
@@ -1110,6 +1130,7 @@ pub(super) fn collect_diagnostics(
         merged_augmentations: &merged_augmentations,
         project_env: &project_env,
         program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
     };
 
     if cache.is_none() {
@@ -1217,6 +1238,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             program_has_real_syntax_errors,
+                            program_has_unsupported_js_root,
                             extract_type_cache,
                         };
                         check_file_for_parallel(context)
@@ -1255,6 +1277,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             program_has_real_syntax_errors,
+                            program_has_unsupported_js_root,
                             extract_type_cache,
                         };
                         check_file_for_parallel(context)
@@ -1282,6 +1305,7 @@ pub(super) fn collect_diagnostics(
                     explicit_check_js_false,
                     skip_lib_check,
                     program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
                     extract_type_cache,
                 };
                 check_file_for_parallel(context)
@@ -1564,6 +1588,7 @@ pub(super) fn collect_diagnostics(
                     file,
                     options,
                     program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
                     has_deprecation_diagnostics,
                 );
 
@@ -2005,6 +2030,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     explicit_check_js_false: bool,
     skip_lib_check: bool,
     program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
     /// When `false`, per-file `TypeCache` extraction is skipped entirely.
     /// `TypeCache` is used by the emit pipeline (JS / declaration files) and
     /// by incremental cache reuse. For a `--noEmit` run that does not also
@@ -2064,6 +2090,7 @@ pub(super) fn check_file_for_parallel<'a>(
         explicit_check_js_false,
         skip_lib_check,
         program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
         extract_type_cache,
     } = context;
     let file = &program.files[file_idx];
@@ -2216,6 +2243,7 @@ pub(super) fn check_file_for_parallel<'a>(
             file,
             &effective_options,
             program_has_real_syntax_errors,
+            program_has_unsupported_js_root,
             project_env.has_deprecation_diagnostics,
         );
 
@@ -2269,6 +2297,7 @@ struct CheckerLibFileCheckEnv<'a> {
     merged_augmentations: &'a MergedAugmentations,
     project_env: &'a tsz::checker::context::ProjectEnv,
     program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
 }
 
 fn check_checker_lib_file(
@@ -2342,6 +2371,10 @@ fn check_checker_lib_file(
 
     let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
     if env.program_has_real_syntax_errors {
+        diagnostics
+            .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
+    }
+    if env.program_has_unsupported_js_root && !env.program_has_real_syntax_errors {
         diagnostics
             .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
     }
@@ -4556,6 +4589,16 @@ let x2: string = f;
 
         let diagnostics = collect_test_diagnostics_with_options(
             &[
+                (index_js_path.to_str().unwrap(), "export const esm = 0;\n"),
+                (
+                    index_d_ts_path.to_str().unwrap(),
+                    "export const esm: number;\n",
+                ),
+                (index_cjs_path.to_str().unwrap(), "exports.cjs = 0;\n"),
+                (
+                    index_d_cts_path.to_str().unwrap(),
+                    "export const cjs: number;\n",
+                ),
                 (
                     main_ts_path.to_str().unwrap(),
                     "import { esm, cjs } from \"dual\";\n",
