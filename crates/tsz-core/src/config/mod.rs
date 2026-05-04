@@ -6251,4 +6251,22 @@ mod tests {
             "expected es2018.asynciterable in resolved set, got {names:?}"
         );
     }
+
+    #[test]
+    fn embedded_esnext_collection_follows_es2025_collection() {
+        let paths = resolve_lib_files_from_embedded(&["esnext.collection".to_string()], true)
+            .expect("embedded esnext.collection should resolve");
+        let names: Vec<String> = paths
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|s| s.to_str()).map(String::from))
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "es2025.collection.d.ts"),
+            "expected es2025.collection in resolved set, got {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "esnext.collection.d.ts"),
+            "expected esnext.collection in resolved set, got {names:?}"
+        );
+    }
 }
