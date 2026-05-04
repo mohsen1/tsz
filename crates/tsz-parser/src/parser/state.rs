@@ -209,6 +209,21 @@ pub struct ParserState {
     /// Current lower bound for scanning parse diagnostics when JSX recovery
     /// absorbs statement terminators into `JsxText`.
     pub(crate) jsx_missing_brace_semicolon_window_start: Option<u32>,
+    /// An empty JSX attribute expression (`attr={}`) should not synthesize a
+    /// semicolon-position missing `}` while recovering the surrounding element.
+    pub(crate) suppress_next_jsx_missing_brace_at_semicolon: bool,
+    /// We are parsing a nested JSX element as an attribute initializer
+    /// (`attr=<...>`). Invalid nested heads use JSX-attribute diagnostics.
+    pub(crate) in_jsx_attribute_initializer_element: bool,
+    /// A JSX attribute list consumed a string literal without `=`, as in
+    /// `<div className"app">`; report expression recovery at semicolon.
+    pub(crate) recover_jsx_missing_attr_initializer_head: bool,
+    /// A malformed JSX attribute list used bracket syntax in a tag head, as in
+    /// `<a[foo]>`; the closing tag should be recovered by outer expression code.
+    pub(crate) suppress_next_jsx_head_missing_semicolon: bool,
+    /// A JSX closing tag had trailing attributes (`</div {...props}>`). The
+    /// tail is recovered as source-level syntax after the JSX expression.
+    pub(crate) recover_jsx_closing_tag_trailing_tail: bool,
     /// Set when `parse_namespace_import` encountered a reserved word that also
     /// starts a statement (e.g. `while` in `import * as while from "foo"`).
     /// Signals `parse_import_declaration_with_modifiers` to bail out of import
@@ -272,6 +287,11 @@ impl ParserState {
             in_tagged_template: false,
             pending_jsx_missing_close_brace_in_expression_statement: 0,
             jsx_missing_brace_semicolon_window_start: None,
+            suppress_next_jsx_missing_brace_at_semicolon: false,
+            in_jsx_attribute_initializer_element: false,
+            recover_jsx_missing_attr_initializer_head: false,
+            suppress_next_jsx_head_missing_semicolon: false,
+            recover_jsx_closing_tag_trailing_tail: false,
             namespace_import_yielded_to_statement: false,
         }
     }
@@ -307,6 +327,11 @@ impl ParserState {
         self.in_tagged_template = false;
         self.pending_jsx_missing_close_brace_in_expression_statement = 0;
         self.jsx_missing_brace_semicolon_window_start = None;
+        self.suppress_next_jsx_missing_brace_at_semicolon = false;
+        self.in_jsx_attribute_initializer_element = false;
+        self.recover_jsx_missing_attr_initializer_head = false;
+        self.suppress_next_jsx_head_missing_semicolon = false;
+        self.recover_jsx_closing_tag_trailing_tail = false;
         self.namespace_import_yielded_to_statement = false;
         // The high-water mark tracks the count of scanner diagnostics that
         // have been considered by the parser-side dedup at `parse_error_at`.
