@@ -17,6 +17,7 @@ use crate::types::{
     TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData,
     TypeId, TypeListId, Variance,
 };
+use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::infer::{InferenceContext, InferenceError, InferenceVar};
@@ -663,13 +664,32 @@ impl<'a> InferenceContext<'a> {
             // candidate for the homomorphic type parameter. This handles cases
             // like `{ [K in keyof T]: Reducer<T[K], A> }` matched against
             // `{ counter1: Reducer<number> }` → T = { counter1: number }.
+            //
+            // Carry the source property's `declaration_order` onto each
+            // candidate property so the diagnostic printer renders the
+            // inferred T in the source's declared member order (matching
+            // tsc's `getTypeFromInference`). Without this, candidate
+            // properties default to `declaration_order = 0`, which the
+            // interner overwrites using the atom-id-sorted insertion
+            // index — producing a name-hash order that doesn't match tsc.
             if let Some(var) = homomorphic_var
                 && let Some(props) = self.reverse_mapped_properties.remove(&var)
                 && !props.is_empty()
             {
+                let source_decl_order: FxHashMap<Atom, u32> = source
+                    .properties
+                    .iter()
+                    .map(|p| (p.name, p.declaration_order))
+                    .collect();
                 let obj_props: Vec<PropertyInfo> = props
                     .into_iter()
-                    .map(|(name, type_id)| PropertyInfo::new(name, type_id))
+                    .map(|(name, type_id)| {
+                        let mut prop = PropertyInfo::new(name, type_id);
+                        if let Some(&order) = source_decl_order.get(&name) {
+                            prop.declaration_order = order;
+                        }
+                        prop
+                    })
                     .collect();
                 let obj_type = self.interner.object(obj_props);
                 self.add_candidate(var, obj_type, InferencePriority::HomomorphicMappedType);
