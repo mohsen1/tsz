@@ -5,6 +5,36 @@
 use tsz_checker::test_utils::check_source_diagnostics;
 
 #[test]
+fn readonly_variadic_tuple_to_mutable_variadic_tuple_emits_ts4104() {
+    let diagnostics = check_source_diagnostics(
+        r"
+function f<T extends unknown[]>(m: [...T], r: readonly [...T]) {
+    m = r;
+}
+declare let concrete: [string];
+declare let readonlyConcrete: readonly [string];
+concrete = readonlyConcrete;
+",
+    );
+    let ts4104_messages = diagnostics
+        .iter()
+        .filter(|d| d.code == 4104)
+        .map(|d| d.message_text.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        ts4104_messages.len() >= 2
+            && ts4104_messages
+                .iter()
+                .any(|message| message.contains("readonly [...T]")),
+        "Expected TS4104 for both readonly variadic and concrete tuple assignments, got {ts4104_messages:?}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_type_level_tuple_out_of_bounds_ts2493() {
     let diagnostics = check_source_diagnostics(
         r"

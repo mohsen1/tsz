@@ -535,6 +535,12 @@ impl<'a> CheckerState<'a> {
         let force_nested_error_nullish_report =
             self.should_report_nullish_assignment_through_nested_target_error(source, target);
         let exact_optional_mismatch = self.has_exact_optional_property_mismatch(source, target);
+        if let Some(reason) = self.readonly_to_mutable_array_or_tuple_reason(source, target) {
+            self.error_type_not_assignable_with_reason_and_display(
+                source, target, &reason, diag_idx,
+            );
+            return false;
+        }
         if !force_nested_error_nullish_report
             && !exact_optional_mismatch
             && self.should_suppress_assignability_diagnostic(source, target)

@@ -17,6 +17,27 @@ use super::assignability::{
 };
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
+    fn format_tuple_shape_for_readonly_to_mutable(&mut self, type_id: TypeId) -> Option<String> {
+        let elements = crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)?;
+        let mut formatted = Vec::with_capacity(elements.len());
+        for element in elements {
+            let rest = if element.rest { "..." } else { "" };
+            let optional = if element.optional && !element.rest {
+                "?"
+            } else {
+                ""
+            };
+            let type_str = self.format_type_diagnostic(element.type_id);
+            if let Some(name_atom) = element.name {
+                let name = self.ctx.types.resolve_atom_ref(name_atom);
+                formatted.push(format!("{rest}{name}{optional}: {type_str}"));
+            } else {
+                formatted.push(format!("{rest}{type_str}{optional}"));
+            }
+        }
+        Some(format!("[{}]", formatted.join(", ")))
+    }
+
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
     pub(crate) fn render_failure_reason(
         &mut self,
@@ -522,8 +543,20 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
-                let source_str = self.format_type_diagnostic(*source_type);
-                let target_str = self.format_type_diagnostic(*target_type);
+                let source_str =
+                    if let Some(inner) = crate::query_boundaries::common::readonly_inner_type(
+                        self.ctx.types,
+                        *source_type,
+                    ) && let Some(tuple_display) =
+                        self.format_tuple_shape_for_readonly_to_mutable(inner)
+                    {
+                        format!("readonly {tuple_display}")
+                    } else {
+                        self.format_type_diagnostic(*source_type)
+                    };
+                let target_str = self
+                    .format_tuple_shape_for_readonly_to_mutable(*target_type)
+                    .unwrap_or_else(|| self.format_type_diagnostic(*target_type));
                 let message = format_message(
                     diagnostic_messages::THE_TYPE_IS_READONLY_AND_CANNOT_BE_ASSIGNED_TO_THE_MUTABLE_TYPE,
                     &[&source_str, &target_str],
