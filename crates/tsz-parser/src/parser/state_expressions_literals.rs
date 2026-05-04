@@ -1232,13 +1232,46 @@ impl ParserState {
     }
 
     fn report_unterminated_template_recovery_delimiters(&mut self, start: u32, end: u32) {
-        let Some(source_tail) = self.get_source_text().get(start as usize..end as usize) else {
+        let source = self.get_source_text();
+        let Some(source_tail) = source.get(start as usize..end as usize) else {
             return;
         };
 
         let Some(backtick_before_comma) = source_tail.rfind("`,") else {
             return;
         };
+
+        // Suppress synthetic recovery markers when the recovered tail
+        // template's content (between its opening backtick and
+        // `backtick_before_comma`) contains a `${` interpolation. tsc
+        // treats interpolated tail templates as continuation of the outer
+        // unterminated template's text and does NOT surface synthetic
+        // markers — only plain tail templates yield TS1005 markers.
+        // Difference between
+        // `labeledStatementDeclarationListInLoopNoCrash3.ts`
+        // (interpolated — no markers) and `...NoCrash4.ts`
+        // (plain — markers).
+        // The `\`,` pattern's backtick is the CLOSING backtick of a tail
+        // template literal `\`<text>\`,`. Find that template's OPENING
+        // backtick and check whether its content contains `${`. The
+        // opening may be inside the tail (e.g., `...\`a\`,...\`b\`,`) OR
+        // before `start` (when the closing backtick at position 0 of the
+        // tail belongs to a template that started before `start`). For
+        // the latter, walk the source backwards from `start` to locate
+        // the opening.
+        //
+        // tsc emits the synthetic recovery markers only for plain
+        // (non-interpolated) tail templates. If the recovered template
+        // segment contains `${`, suppress the markers — matching
+        // `labeledStatementDeclarationListInLoopNoCrash3.ts` (interpolated
+        // tail) vs `...NoCrash4.ts` (plain tail).
+        let abs_close_backtick = start as usize + backtick_before_comma;
+        let opening_backtick = source[..abs_close_backtick].rfind('`');
+        let opening_backtick_segment_has_interp = opening_backtick
+            .is_some_and(|open| source[open + 1..abs_close_backtick].contains("${"));
+        if opening_backtick_segment_has_interp {
+            return;
+        }
 
         use tsz_common::diagnostics::diagnostic_codes;
         self.parse_error_at(
