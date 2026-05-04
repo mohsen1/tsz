@@ -1,6 +1,7 @@
 //! JS prototype owner expression helpers and constructor body instance type resolution.
 use crate::state::CheckerState;
 use crate::types_domain::computation::complex_constructors::PrototypeMembers;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -215,46 +216,7 @@ impl<'a> CheckerState<'a> {
             })?;
         let mut properties = rustc_hash::FxHashMap::default();
         self.collect_js_constructor_this_properties(body_idx, &mut properties, None, false);
-        // For prototype member discovery, we need a "function name" — either
-        // the function's own identifier (`function Foo() {}`) or the binding
-        // identifier when the function is a variable initializer
-        // (`var Foo = function() {}`). The latter is the idiomatic salsa
-        // pattern, so fall back to the parent variable declaration's name
-        // and symbol when the function expression itself is anonymous.
-        let func_name_from_owner = self.ctx.arena.get(func_idx).and_then(|func_node| {
-            self.ctx.arena.get_function(func_node).and_then(|func| {
-                func.name.into_option().and_then(|name_idx| {
-                    self.ctx
-                        .arena
-                        .get(name_idx)
-                        .and_then(|n| self.ctx.arena.get_identifier(n))
-                        .map(|ident| ident.escaped_text.clone())
-                })
-            })
-        });
-        let var_decl_name_idx: Option<NodeIndex> = self
-            .ctx
-            .arena
-            .get_extended(func_idx)
-            .and_then(|ext| self.ctx.arena.get(ext.parent))
-            .and_then(|parent_node| self.ctx.arena.get_variable_declaration(parent_node))
-            .filter(|var_decl| var_decl.initializer == func_idx)
-            .map(|var_decl| var_decl.name);
-        let func_name_from_var_decl: Option<String> = var_decl_name_idx
-            .and_then(|name_idx| self.ctx.arena.get(name_idx))
-            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-            .map(|ident| ident.escaped_text.clone());
-        let resolved_name = func_name_from_owner.or(func_name_from_var_decl);
-        let resolved_sym = self
-            .ctx
-            .binder
-            .get_node_symbol(func_idx)
-            .or_else(|| var_decl_name_idx.and_then(|n| self.ctx.binder.get_node_symbol(n)));
-        if let Some(func_node) = self.ctx.arena.get(func_idx)
-            && self.ctx.arena.get_function(func_node).is_some()
-            && let Some(func_name) = resolved_name
-            && let Some(sym_id) = resolved_sym
-        {
+        if let Some((func_name, sym_id)) = self.js_constructor_function_name_and_symbol(func_idx) {
             let PrototypeMembers {
                 method_bindings,
                 this_props,
@@ -292,5 +254,39 @@ impl<'a> CheckerState<'a> {
                     .object(properties.into_values().collect()),
             )
         }
+    }
+
+    fn js_constructor_function_name_and_symbol(
+        &self,
+        func_idx: NodeIndex,
+    ) -> Option<(String, SymbolId)> {
+        if let Some(func_node) = self.ctx.arena.get(func_idx)
+            && let Some(func) = self.ctx.arena.get_function(func_node)
+            && let Some(func_name) = func.name.into_option().and_then(|name_idx| {
+                self.ctx
+                    .arena
+                    .get(name_idx)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|ident| ident.escaped_text.clone())
+            })
+            && let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx)
+        {
+            return Some((func_name, sym_id));
+        }
+
+        let parent = self.ctx.arena.get_extended(func_idx)?.parent;
+        let parent_node = self.ctx.arena.get(parent)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+        if var_decl.initializer != func_idx {
+            return None;
+        }
+        let name = self
+            .ctx
+            .arena
+            .get(var_decl.name)
+            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.clone())?;
+        let sym_id = self.ctx.binder.get_node_symbol(parent)?;
+        Some((name, sym_id))
     }
 }

@@ -600,6 +600,63 @@ fn discriminant_exclude_any_member_preserved() {
     assert_eq!(narrowed, expected);
 }
 
+#[test]
+fn discriminant_exclude_any_property_fast_single_exclusion_preserved() {
+    let interner = TypeInterner::new();
+    let kind = interner.intern_string("kind");
+    let value = interner.intern_string("value");
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let member_any = interner.object(vec![
+        PropertyInfo::new(kind, TypeId::ANY),
+        PropertyInfo::new(value, TypeId::NUMBER),
+    ]);
+    let member_a = interner.object(vec![PropertyInfo::new(kind, kind_a)]);
+    let member_b = interner.object(vec![PropertyInfo::new(kind, kind_b)]);
+    let union = interner.union(vec![member_any, member_a, member_b]);
+
+    let ctx = NarrowingContext::new(&interner);
+
+    // The fast single-exclusion path must not treat `any` as proving the
+    // property is always the excluded literal.
+    let narrowed = ctx.narrow_by_excluding_discriminant(union, &[kind], kind_a);
+    let expected = interner.union(vec![member_any, member_b]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn discriminant_exclude_any_property_fast_general_fallback_preserved() {
+    let interner = TypeInterner::new();
+    let kind = interner.intern_string("kind");
+    let value = interner.intern_string("value");
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let member_any = interner.object(vec![
+        PropertyInfo::new(kind, TypeId::ANY),
+        PropertyInfo::new(value, TypeId::NUMBER),
+    ]);
+    let member_a_number = interner.object(vec![
+        PropertyInfo::new(kind, kind_a),
+        PropertyInfo::new(value, TypeId::NUMBER),
+    ]);
+    let member_a_string = interner.object(vec![
+        PropertyInfo::new(kind, kind_a),
+        PropertyInfo::new(value, TypeId::STRING),
+    ]);
+    let member_b = interner.object(vec![PropertyInfo::new(kind, kind_b)]);
+    let union = interner.union(vec![member_any, member_a_number, member_a_string, member_b]);
+
+    let ctx = NarrowingContext::new(&interner);
+
+    // Multiple concrete exclusions force the fast path's general loop fallback.
+    // That path also needs to preserve any-typed discriminant properties.
+    let narrowed = ctx.narrow_by_excluding_discriminant(union, &[kind], kind_a);
+    let expected = interner.union(vec![member_any, member_b]);
+    assert_eq!(narrowed, expected);
+}
+
 // =============================================================================
 // Discriminant No-Match Returns Never
 // =============================================================================

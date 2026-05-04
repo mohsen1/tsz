@@ -6,6 +6,7 @@ use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -256,8 +257,11 @@ impl<'a> CheckerState<'a> {
                     !params.is_empty() && self.is_simple_type_reference(type_alias.type_node);
                 let is_non_generic_mapped_cycle = params.is_empty()
                     && self.is_non_generic_mapped_type_circular(sym_id, type_alias.type_node);
+                let is_jsx_runtime_bridge_alias = self
+                    .is_jsx_import_source_runtime_bridge_alias(decl_arena, type_alias.type_node);
                 let is_circular = circularity_eligible
                     && !generic_self_ref
+                    && !is_jsx_runtime_bridge_alias
                     && (self.is_direct_circular_reference(
                         sym_id,
                         alias_type,
@@ -1899,5 +1903,91 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
+    }
+
+    fn is_jsx_import_source_runtime_bridge_alias(
+        &self,
+        decl_arena: &tsz_parser::parser::node::NodeArena,
+        type_node: NodeIndex,
+    ) -> bool {
+        use tsz_common::checker_options::JsxMode;
+
+        let Some(node) = decl_arena.get(type_node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = decl_arena.get_type_ref(node) else {
+            return false;
+        };
+        if !entity_name_text_in_arena(decl_arena, type_ref.type_name)
+            .is_some_and(|name| name.starts_with("JSX."))
+        {
+            return false;
+        }
+
+        let pragma_source = self.extract_jsx_import_source_pragma();
+        let jsx_mode = self.effective_jsx_mode();
+        let uses_import_source = matches!(jsx_mode, JsxMode::ReactJsx | JsxMode::ReactJsxDev)
+            || pragma_source.is_some()
+            || !self.ctx.compiler_options.jsx_import_source.is_empty();
+        if !uses_import_source {
+            return false;
+        }
+
+        let source = pragma_source.unwrap_or_else(|| {
+            if self.ctx.compiler_options.jsx_import_source.is_empty() {
+                "react".to_string()
+            } else {
+                self.ctx.compiler_options.jsx_import_source.clone()
+            }
+        });
+        if source.starts_with('/') {
+            return false;
+        }
+        let runtime_suffix = if jsx_mode == JsxMode::ReactJsxDev {
+            "jsx-dev-runtime"
+        } else {
+            "jsx-runtime"
+        };
+
+        let mut package_roots = vec![source.clone()];
+        if let Some(types_root) = Self::types_package_root_for_jsx_import_source(&source) {
+            package_roots.push(types_root);
+        }
+
+        let file_name = decl_arena
+            .source_files
+            .first()
+            .map(|source_file| source_file.file_name.replace('\\', "/"));
+        let Some(file_name) = file_name else {
+            return false;
+        };
+
+        package_roots.iter().any(|package_root| {
+            let runtime_dir_suffix = format!("/node_modules/{package_root}/{runtime_suffix}/");
+            let runtime_file_suffix = format!("/node_modules/{package_root}/{runtime_suffix}.d.");
+            file_name.contains(&runtime_dir_suffix) || file_name.contains(&runtime_file_suffix)
+        })
+    }
+
+    fn types_package_root_for_jsx_import_source(source: &str) -> Option<String> {
+        let root = if let Some(stripped) = source.strip_prefix('@') {
+            let mut parts = stripped.split('/');
+            let scope = parts.next()?;
+            let package = parts.next()?;
+            if scope.is_empty() || package.is_empty() || parts.next().is_some() {
+                return None;
+            }
+            format!("@types/{scope}__{package}")
+        } else {
+            let root = source.split('/').next()?;
+            if root.is_empty() {
+                return None;
+            }
+            format!("@types/{root}")
+        };
+        Some(root)
     }
 }

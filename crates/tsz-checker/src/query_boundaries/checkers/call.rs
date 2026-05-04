@@ -80,6 +80,20 @@ pub(crate) fn get_function_parameter_types(db: &dyn TypeDatabase, type_id: TypeI
     tsz_solver::type_queries::get_function_parameter_types(db, type_id)
 }
 
+pub(crate) fn contains_index_access_with_type_parameter_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_index_access_with_type_parameter_object(db, type_id)
+}
+
+pub(crate) fn contains_index_access_with_variadic_tuple_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_index_access_with_variadic_tuple_object(db, type_id)
+}
+
 pub(crate) fn stable_call_recovery_return_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,

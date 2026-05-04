@@ -1512,6 +1512,12 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        // tsc suppresses whole-attrs TS2322 when props is primitive and an IntrinsicAttributes required-prop is missing — TS2741 covers it.
+        let suppress_for_primitive_props_with_missing_ia_required =
+            crate::query_boundaries::common::is_primitive_type(self.ctx.types, props_type)
+                && self
+                    .get_intrinsic_attributes_type()
+                    .is_some_and(|ia| self.jsx_has_missing_required_props(ia, &provided_attrs));
         let reported_special_attr_assignability = if !reported_custom_children_assignability
             && !has_excess_property_error
             && !spread_covers_all
@@ -1524,6 +1530,7 @@ impl<'a> CheckerState<'a> {
             // the full props type produces false TS2322. TSC skips this path for
             // generic components.
             && !props_has_type_params
+            && !suppress_for_primitive_props_with_missing_ia_required
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
             if !self.is_assignable_to(attrs_type, props_type) {

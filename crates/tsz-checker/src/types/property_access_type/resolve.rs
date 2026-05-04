@@ -921,21 +921,12 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_some_and(|declares| !declares)
             {
-                let type_display = if let Some(obj_lit_idx) = self
-                    .prior_js_prototype_object_literal_assignment_node(
+                let type_display = self
+                    .prior_js_prototype_object_literal_assignment_display(
                         prototype_access.expression,
                         read_pos,
-                    ) {
-                    let obj_lit_type = self.get_type_of_node(obj_lit_idx);
-                    // Format structurally even if `display_alias` aims this
-                    // anonymous prototype literal at the constructor's
-                    // `prototype` symbol.  tsc displays the literal's shape
-                    // (e.g. `{ set: () => void; get(): void; }`) at the
-                    // assignment site, never the symbol name.
-                    self.format_type_skip_object_display_alias(obj_lit_type)
-                } else {
-                    self.format_type(display_object_type)
-                };
+                    )
+                    .unwrap_or_else(|| self.format_type(display_object_type));
                 self.error_property_not_exist_with_apparent_type(property_name, &type_display, idx);
             }
             if !commonjs_named_props_disallowed {
@@ -2521,18 +2512,26 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else {
-                            // Suppress TS2339 for index access types (like T[keyof T])
-                            // or for unknown/error types that result from unresolved generics.
-                            //
-                            // Do not suppress bare type parameters here: tsc reports property
-                            // misses on generic receivers and formats constrained type parameters
-                            // through their constraint.
-                            let should_suppress =
+                            // Suppress TS2339 for IndexAccess display (T[keyof T]) when the
+                            // evaluated receiver still contains type parameters; tsc emits
+                            // TS2339 once the access resolves to a concrete shape (e.g. E[K]
+                            // → A | B). Also suppress for unknown/error fallbacks. Bare type
+                            // parameters are NOT suppressed — tsc reports property misses on
+                            // generic receivers via their constraint.
+                            let display_is_index_access =
                                 crate::query_boundaries::common::is_index_access_type(
                                     self.ctx.types,
                                     display_object_type,
-                                ) || display_object_type == TypeId::UNKNOWN
-                                    || display_object_type == TypeId::ERROR;
+                                );
+                            let evaluated_receiver_is_resolved =
+                                !crate::query_boundaries::common::contains_type_parameters(
+                                    self.ctx.types,
+                                    object_type_for_access,
+                                );
+                            let should_suppress = (display_is_index_access
+                                && !evaluated_receiver_is_resolved)
+                                || display_object_type == TypeId::UNKNOWN
+                                || display_object_type == TypeId::ERROR;
                             if !should_suppress {
                                 self.error_property_not_exist_at(
                                     property_name,

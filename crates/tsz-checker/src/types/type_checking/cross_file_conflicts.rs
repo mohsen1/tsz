@@ -1069,7 +1069,7 @@ impl<'a> CheckerState<'a> {
         Some(format!("@types/{module_root}"))
     }
 
-    pub(super) fn resolve_jsx_runtime_export_fallback(
+    pub(crate) fn resolve_jsx_runtime_export_fallback(
         &self,
         runtime_module: &str,
     ) -> Option<tsz_binder::SymbolId> {
