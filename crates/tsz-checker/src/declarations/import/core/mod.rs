@@ -1,6 +1,7 @@
 //! Core import/export checking implementation.
 
 mod ambient_modules;
+mod ambient_named_members;
 mod default_namespace_imports;
 mod helpers;
 mod import_members;

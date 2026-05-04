@@ -22,11 +22,40 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        if self.is_ambient_module_match(module_name)
-            || self.any_ambient_module_declared(module_name)
-        {
+        let is_ambient_module = self.is_ambient_module_match(module_name)
+            || self.any_ambient_module_declared(module_name);
+        if is_ambient_module {
             self.check_js_type_only_imports_for_ambient_module(import, module_name);
-            return;
+            if self
+                .ctx
+                .binder
+                .shorthand_ambient_modules
+                .contains(module_name)
+            {
+                return;
+            }
+            let import_idx = self
+                .ctx
+                .arena
+                .parent_of(import.module_specifier)
+                .or_else(|| self.ctx.arena.parent_of(import.import_clause));
+            let wrong_context_allows_module_semantics = import_idx.is_some_and(|idx| {
+                self.is_in_non_module_element_context(idx)
+                    && !self.is_inside_function_body(idx)
+                    && !self.is_inside_namespace_declaration(idx)
+            });
+            if self
+                .resolve_effective_module_exports_from_file(
+                    module_name,
+                    Some(self.ctx.current_file_idx),
+                )
+                .is_none()
+            {
+                if wrong_context_allows_module_semantics {
+                    self.check_named_imports_against_empty_ambient_module(import, module_name);
+                }
+                return;
+            }
         }
 
         let clause_node = match self.ctx.arena.get(import.import_clause) {
@@ -117,6 +146,17 @@ impl<'a> CheckerState<'a> {
                     Some(self.ctx.current_file_idx),
                 )
             }
+            .or_else(|| {
+                (self
+                    .ctx
+                    .declared_modules_contains(self.ctx.binder, module_name)
+                    && !self
+                        .ctx
+                        .binder
+                        .shorthand_ambient_modules
+                        .contains(module_name))
+                .then(tsz_binder::SymbolTable::new)
+            })
         } else {
             None
         };
@@ -765,14 +805,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-    }
-
-    fn check_js_type_only_imports_for_ambient_module(
-        &mut self,
-        import: &tsz_parser::parser::node::ImportDeclData,
-        module_name: &str,
-    ) {
-        self.check_js_type_only_imports_after_import_validation(import, module_name);
     }
 
     pub(crate) fn check_js_type_only_imports_after_import_validation(
