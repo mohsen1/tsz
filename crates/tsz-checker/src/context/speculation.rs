@@ -224,19 +224,6 @@ impl CheckerContext<'_> {
     /// speculatively).
     pub(crate) fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
         let truncate_at = self.clamped_diag_len(snap);
-        #[allow(clippy::print_stderr)]
-        if std::env::var_os("TSZ_DBG_PROP").is_some() {
-            for d in &self.diagnostics[truncate_at..] {
-                if d.message_text.contains("propertyNotOnHtml") {
-                    eprintln!(
-                        "[rollback_diagnostics] dropping: code={} msg={}",
-                        d.code, d.message_text
-                    );
-                    // Print backtrace
-                    eprintln!("{}", std::backtrace::Backtrace::capture());
-                }
-            }
-        }
         cleanup_ts2454_dedup(
             &mut self.emitted_ts2454_errors,
             &self.diagnostics[truncate_at..],
