@@ -448,7 +448,18 @@ impl<'a> CheckerState<'a> {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?.clone();
 
+        // Track whether any source file in the target arena declares a JSDoc
+        // typedef with this name. tsc treats such a typedef as a type-only
+        // exported member of the module, so even when the body fails to
+        // resolve we return `any` instead of `None` to avoid a false-positive
+        // TS2694 — matching tsc's behavior of silently using `any` for
+        // unresolved identifiers inside a JSDoc typedef body.
+        let mut typedef_exists_with_broken_body = false;
+
         for source_file in &target_arena.source_files {
+            if !Self::source_file_has_jsdoc_typedef_named(source_file, typedef_name) {
+                continue;
+            }
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
             let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
@@ -470,15 +481,18 @@ impl<'a> CheckerState<'a> {
 
             if let Some((ty, _)) =
                 checker.resolve_jsdoc_typedef_info(typedef_name, &comments, &source_text)
-                && ty != TypeId::ERROR
-                && ty != TypeId::UNKNOWN
             {
                 self.ctx.merge_symbol_file_targets_from(&checker.ctx);
-                return Some(ty);
+                if ty != TypeId::ERROR && ty != TypeId::UNKNOWN {
+                    return Some(ty);
+                }
+                typedef_exists_with_broken_body = true;
+            } else {
+                typedef_exists_with_broken_body = true;
             }
         }
 
-        None
+        typedef_exists_with_broken_body.then_some(TypeId::ANY)
     }
 
     /// Resolve the type parameters (with constraints) of a JSDoc typedef in another file.

@@ -1542,6 +1542,70 @@ impl<'a> CheckerState<'a> {
                         if Self::is_simple_type_name(base_name)
                             && self.resolve_jsdoc_type_str(base_name).is_some()
                         {
+                            // Recurse into each type argument so unknown
+                            // identifiers like `@typedef {Record<Keyword, V>} T`
+                            // surface as TS2304 — tsc validates the entire
+                            // typedef body, not just the base name.
+                            let args_str = &expr[angle_idx + 1..expr.len() - 1];
+                            for arg in Self::split_type_args_respecting_nesting(args_str) {
+                                let arg_trimmed = arg.trim();
+                                if arg_trimmed.is_empty() || !Self::is_simple_type_name(arg_trimmed)
+                                {
+                                    continue;
+                                }
+                                if template_names.iter().any(|t| t == arg_trimmed) {
+                                    continue;
+                                }
+                                if self.resolve_jsdoc_type_str(arg_trimmed).is_some() {
+                                    continue;
+                                }
+                                // Forward / recursive references like
+                                // `@typedef {ReadonlyArray<Json>} JsonArray`
+                                // declared above the `@typedef Json` itself
+                                // can fail point-in-time resolution while
+                                // still being valid. Skip when *any* known
+                                // source file in the project declares a
+                                // `@typedef Name` matching this argument —
+                                // text-based, so it is immune to typedef
+                                // resolution re-entrancy.
+                                let mut declared_as_typedef = false;
+                                if let Some(arenas) = self.ctx.all_arenas.as_ref() {
+                                    for arena in arenas.iter() {
+                                        for sf in arena.source_files.iter() {
+                                            if Self::source_file_has_jsdoc_typedef_named(
+                                                sf,
+                                                arg_trimmed,
+                                            ) {
+                                                declared_as_typedef = true;
+                                                break;
+                                            }
+                                        }
+                                        if declared_as_typedef {
+                                            break;
+                                        }
+                                    }
+                                }
+                                if !declared_as_typedef {
+                                    for sf in self.ctx.arena.source_files.iter() {
+                                        if Self::source_file_has_jsdoc_typedef_named(
+                                            sf,
+                                            arg_trimmed,
+                                        ) {
+                                            declared_as_typedef = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if declared_as_typedef {
+                                    continue;
+                                }
+                                self.emit_jsdoc_cannot_find_name(
+                                    arg_trimmed,
+                                    comment.pos,
+                                    comment.end,
+                                    &source_text,
+                                );
+                            }
                             continue;
                         }
                     }
