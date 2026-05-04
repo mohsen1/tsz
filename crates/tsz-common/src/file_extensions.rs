@@ -7,8 +7,8 @@
 //!
 //! Two extension families are tracked:
 //!
-//! - **TS family**: `.ts`, `.tsx`, `.mts`, `.cts`, `.d.ts`, `.d.mts`, `.d.cts`
-//!   (and `.d.tsx` for completeness, though it's rare).
+//! - **TS family**: `.ts`, `.tsx`, `.mts`, `.cts`, `.d.ts`, `.d.mts`, `.d.cts`.
+//!   `.d.tsx` is treated as a `.tsx` source path, matching TypeScript.
 //! - **JS family**: `.js`, `.jsx`, `.mjs`, `.cjs`.
 //!
 //! tsc-display behaviour:
@@ -21,16 +21,15 @@
 use std::path::{Path, PathBuf};
 
 /// TypeScript declaration extensions. Always stripped from display.
-pub const TS_DECLARATION_EXTENSIONS: &[&str] = &[".d.ts", ".d.tsx", ".d.mts", ".d.cts"];
+pub const TS_DECLARATION_EXTENSIONS: &[&str] = &[".d.ts", ".d.mts", ".d.cts"];
 
 /// TypeScript source extensions. Always stripped from display.
 pub const TS_SOURCE_EXTENSIONS: &[&str] = &[".ts", ".tsx", ".mts", ".cts"];
 
 /// All TS-family extensions (declaration + source). Longest first so a
 /// `strip_suffix` loop matches `.d.ts` before `.ts`.
-pub const TS_FAMILY_EXTENSIONS: &[&str] = &[
-    ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts",
-];
+pub const TS_FAMILY_EXTENSIONS: &[&str] =
+    &[".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts"];
 
 /// JS-family extensions. tsc preserves these in `typeof import("X.js")`
 /// display when the imported module is itself a JS file.
@@ -43,8 +42,8 @@ pub const JSON_EXTENSION: &str = ".json";
 /// All TS+JS-family extensions plus `.json`. Used by module resolution to
 /// recognize any file extension that the resolver can produce.
 pub const KNOWN_MODULE_EXTENSIONS: &[&str] = &[
-    ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
-    ".cjs", ".json",
+    ".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs",
+    ".json",
 ];
 
 /// Strip a TS-family extension from a module-specifier display string.
@@ -109,17 +108,21 @@ pub fn is_ts_file(path: &Path) -> bool {
 /// Return true when `path` is in the JavaScript family.
 #[must_use]
 pub fn is_js_file(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| JS_FAMILY_EXTENSIONS.iter().any(|ext| name.ends_with(ext)))
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            JS_FAMILY_EXTENSIONS
+                .iter()
+                .any(|candidate| ext == candidate.trim_start_matches('.'))
+        })
 }
 
 /// Return true when `path` is a JSON file.
 #[must_use]
 pub fn is_json_file(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(JSON_EXTENSION))
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext == JSON_EXTENSION.trim_start_matches('.'))
 }
 
 /// Check if a path is a valid module file for module resolution purposes.
@@ -232,6 +235,7 @@ mod tests {
         assert_eq!(strip_ts_extension("foo.d.ts"), "foo");
         assert_eq!(strip_ts_extension("foo.d.mts"), "foo");
         assert_eq!(strip_ts_extension("foo.d.cts"), "foo");
+        assert_eq!(strip_ts_extension("foo.d.tsx"), "foo.d");
     }
 
     #[test]
@@ -249,8 +253,10 @@ mod tests {
         assert!(is_ts_file(Path::new("index.d.ts")));
         assert!(is_ts_file(Path::new("index.d.mts")));
         assert!(is_ts_source_file(Path::new("index.mts")));
+        assert!(is_ts_source_file(Path::new("index.d.tsx")));
         assert!(!is_ts_source_file(Path::new("index.d.mts")));
         assert!(is_ts_declaration_file(Path::new("index.d.cts")));
+        assert!(!is_ts_declaration_file(Path::new("index.d.tsx")));
         assert!(is_js_file(Path::new("index.cjs")));
         assert!(is_json_file(Path::new("package.json")));
         assert!(!is_valid_module_file(Path::new("index.js")));
@@ -284,6 +290,14 @@ mod tests {
         assert_eq!(
             strip_ts_declaration_extension_from_path(Path::new("src/index.d.mts")),
             Some(PathBuf::from("src/index"))
+        );
+        assert_eq!(
+            strip_ts_source_extension_from_path(Path::new("src/index.d.tsx")),
+            Some(PathBuf::from("src/index.d"))
+        );
+        assert_eq!(
+            strip_ts_declaration_extension_from_path(Path::new("src/index.d.tsx")),
+            None
         );
     }
 }
