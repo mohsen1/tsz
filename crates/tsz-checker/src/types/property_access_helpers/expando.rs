@@ -530,12 +530,20 @@ impl<'a> CheckerState<'a> {
         let mut parts = Vec::new();
 
         for elem_idx in obj_lit.elements.nodes.clone() {
-            let elem_node = self.ctx.arena.get(elem_idx)?;
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
             match elem_node.kind {
                 syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                    let prop = self.ctx.arena.get_property_assignment(elem_node)?;
-                    let name = self.prototype_object_literal_display_name(prop.name)?;
-                    let value_node = self.ctx.arena.get(prop.initializer)?;
+                    let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                        continue;
+                    };
+                    let Some(name) = self.prototype_object_literal_display_name(prop.name) else {
+                        continue;
+                    };
+                    let Some(value_node) = self.ctx.arena.get(prop.initializer) else {
+                        continue;
+                    };
                     let value_display = if value_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION {
                         self.prototype_callable_display(prop.initializer)
                     } else {
@@ -545,8 +553,12 @@ impl<'a> CheckerState<'a> {
                     parts.push(format!("{name}: {value_display}"));
                 }
                 syntax_kind_ext::METHOD_DECLARATION => {
-                    let method = self.ctx.arena.get_method_decl(elem_node)?;
-                    let name = self.prototype_object_literal_display_name(method.name)?;
+                    let Some(method) = self.ctx.arena.get_method_decl(elem_node) else {
+                        continue;
+                    };
+                    let Some(name) = self.prototype_object_literal_display_name(method.name) else {
+                        continue;
+                    };
                     let method_display = self.prototype_callable_display(elem_idx);
                     parts.push(Self::prototype_method_display(&name, &method_display));
                 }

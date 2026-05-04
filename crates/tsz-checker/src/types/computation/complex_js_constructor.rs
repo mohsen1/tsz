@@ -89,8 +89,10 @@ impl<'a> CheckerState<'a> {
                                 .resolve_identifier(self.ctx.arena, analysis_expr_idx)
                         })
                         .or_else(|| {
-                            self.ctx.arena.parent_of(analysis_expr_idx).and_then(
-                                |parent_idx| {
+                            self.ctx
+                                .arena
+                                .parent_of(analysis_expr_idx)
+                                .and_then(|parent_idx| {
                                     let parent_node = self.ctx.arena.get(parent_idx)?;
                                     let var_decl =
                                         self.ctx.arena.get_variable_declaration(parent_node)?;
@@ -100,12 +102,9 @@ impl<'a> CheckerState<'a> {
                                     self.ctx
                                         .binder
                                         .resolve_identifier(self.ctx.arena, var_decl.name)
-                                        .or_else(|| {
-                                            self.ctx.binder.get_node_symbol(var_decl.name)
-                                        })
+                                        .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name))
                                         .or_else(|| self.ctx.binder.get_node_symbol(parent_idx))
-                                },
-                            )
+                                })
                         })
                 }
             });
