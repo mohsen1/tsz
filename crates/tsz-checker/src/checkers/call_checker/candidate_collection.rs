@@ -5,13 +5,15 @@ use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
-    array_element_type_for_type, is_type_parameter_type, tuple_elements_for_type,
+    array_element_type_for_type, contains_index_access_with_type_parameter_object,
+    contains_index_access_with_variadic_tuple_object, is_type_parameter_type,
+    tuple_elements_for_type,
 };
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TupleElement, TypeData, TypeId};
+use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
     /// Collect argument types with contextual typing from expected parameter types.
@@ -829,45 +831,9 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .find(|target_prop| target_prop.name == source_prop.name)
                 .is_some_and(|target_prop| {
-                    Self::contains_type_parameter_index_access(db, source_prop.type_id)
-                        && Self::contains_variadic_tuple_index_access(db, target_prop.type_id)
+                    contains_index_access_with_type_parameter_object(db, source_prop.type_id)
+                        && contains_index_access_with_variadic_tuple_object(db, target_prop.type_id)
                 })
-        })
-    }
-
-    fn contains_type_parameter_index_access(
-        db: &dyn tsz_solver::TypeDatabase,
-        type_id: TypeId,
-    ) -> bool {
-        tsz_solver::query::contains_type_matching(
-            db,
-            type_id,
-            |key| matches!(key, TypeData::IndexAccess(object, _) if is_type_parameter_type(db, *object)),
-        )
-    }
-
-    fn contains_variadic_tuple_index_access(
-        db: &dyn tsz_solver::TypeDatabase,
-        type_id: TypeId,
-    ) -> bool {
-        tsz_solver::query::contains_type_matching(db, type_id, |key| {
-            matches!(
-                key,
-                TypeData::IndexAccess(object, _)
-                    if Self::is_variadic_tuple_with_type_parameter(db, *object)
-            )
-        })
-    }
-
-    fn is_variadic_tuple_with_type_parameter(
-        db: &dyn tsz_solver::TypeDatabase,
-        type_id: TypeId,
-    ) -> bool {
-        tuple_elements_for_type(db, type_id).is_some_and(|elems| {
-            elems.iter().any(|elem| {
-                elem.rest
-                    && crate::query_boundaries::common::contains_type_parameters(db, elem.type_id)
-            })
         })
     }
 

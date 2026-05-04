@@ -6,7 +6,7 @@ use crate::state::CheckerState;
 use crate::test_utils::{check_source_code_messages, check_source_diagnostics};
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::{PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo};
+use tsz_solver::{PropertyInfo, TupleElement, TypeId, TypeParamInfo};
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     check_source_code_messages(source)
@@ -420,7 +420,7 @@ fn recursive_mapped_tuple_spread_depth_shape_is_detected() {
     });
     let bar = types.intern_string("bar");
 
-    let source_bar = types.intern(TypeData::IndexAccess(elements, TypeId::NUMBER));
+    let source_bar = types.index_access(elements, TypeId::NUMBER);
     let source_elem = types.object(vec![PropertyInfo {
         name: bar,
         type_id: source_bar,
@@ -443,7 +443,7 @@ fn recursive_mapped_tuple_spread_depth_shape_is_detected() {
             rest: false,
         },
     ]);
-    let expected_bar = types.intern(TypeData::IndexAccess(tuple, types.literal_string("0")));
+    let expected_bar = types.index_access(tuple, types.literal_string("0"));
     let expected_type = types.object(vec![PropertyInfo {
         name: bar,
         type_id: expected_bar,
