@@ -1944,16 +1944,27 @@ const fn is_directive_separator(b: u8) -> bool {
 
 /// Check if a comment text contains `@ts-expect-error` or `@ts-ignore`.
 fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
-    if let Some(pos) = comment.find("@ts-expect-error") {
-        let after = pos + "@ts-expect-error".len();
-        if after >= comment.len() || is_directive_separator(comment.as_bytes()[after]) {
-            return Some((DirectiveKind::ExpectError, pos));
-        }
+    let bytes = comment.as_bytes();
+    let mut pos = if comment.starts_with("//") || comment.starts_with("/*") {
+        2
+    } else {
+        0
+    };
+
+    while pos < bytes.len() && matches!(bytes[pos], b'/' | b' ' | b'\t' | b'\r' | b'\n' | b'*') {
+        pos += 1;
     }
-    if let Some(pos) = comment.find("@ts-ignore") {
-        let after = pos + "@ts-ignore".len();
+
+    for (kind, text) in [
+        (DirectiveKind::ExpectError, "@ts-expect-error"),
+        (DirectiveKind::Ignore, "@ts-ignore"),
+    ] {
+        if !comment[pos..].starts_with(text) {
+            continue;
+        }
+        let after = pos + text.len();
         if after >= comment.len() || is_directive_separator(comment.as_bytes()[after]) {
-            return Some((DirectiveKind::Ignore, pos));
+            return Some((kind, pos));
         }
     }
     None
@@ -2384,6 +2395,57 @@ mod tests {
                 "TS{code} should still be classified as a real syntax error"
             );
         }
+    }
+
+    #[test]
+    fn ts_directive_scan_ignores_jsdoc_example_mentions() {
+        let source = r#"/**
+Example:
+```
+// @ts-expect-error
+foo.bar;
+```
+*/
+const value = 1;
+"#;
+        assert!(
+            find_ts_directives(source).is_empty(),
+            "directives embedded in documentation examples must not target source lines"
+        );
+    }
+
+    #[test]
+    fn ts_directive_scan_keeps_real_line_directives() {
+        let directives =
+            find_ts_directives("// @ts-expect-error: intentional\nconst x: string = 1;");
+        assert_eq!(directives.len(), 1);
+        assert!(directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_scan_keeps_triple_slash_directives() {
+        let directives = find_ts_directives("/// @ts-ignore\nx();");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_scan_keeps_block_comment_directives() {
+        let directives = find_ts_directives(
+            r#"/**
+ @ts-expect-error */
+texts.push(100);
+
+{/*@ts-ignore*/}
+<MyComponent foo={100} />"#,
+        );
+        assert_eq!(directives.len(), 2);
+        assert!(directives[0].is_expect_error);
+        assert!(!directives[1].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 2);
+        assert_eq!(directives[1].suppressed_line, 5);
     }
 
     #[test]

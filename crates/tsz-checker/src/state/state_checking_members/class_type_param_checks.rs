@@ -198,7 +198,14 @@ impl<'a> CheckerState<'a> {
                 .and_then(|ext| self.ctx.arena.get(ext.parent))
                 .is_some_and(|parent| parent.is_type_node());
             if node.is_type_node() && !parent_is_type_node {
-                self.check_type_node_for_class_type_param_refs(node_idx, class_type_param_names);
+                let names_to_check: Vec<String> = class_type_param_names
+                    .iter()
+                    .filter(|name| {
+                        !self.type_parameter_name_is_shadowed_before_static_member(name, node_idx)
+                    })
+                    .cloned()
+                    .collect();
+                self.check_type_node_for_class_type_param_refs(node_idx, &names_to_check);
                 continue;
             }
             stack.extend(self.ctx.arena.get_children(node_idx));

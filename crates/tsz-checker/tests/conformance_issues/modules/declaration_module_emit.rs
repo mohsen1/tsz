@@ -1,6 +1,51 @@
 use super::super::core::*;
 
 #[test]
+fn test_import_equals_export_equals_function_namespace_overloads_report_no_match() {
+    let files = [
+        (
+            "/file.d.ts",
+            r#"
+declare namespace Foo {
+    interface Whatever {
+        prop: any;
+    }
+}
+
+declare function Foo(opts?: Foo.Whatever): void;
+declare function Foo(cb: Function, opts?: Foo.Whatever): void;
+
+export = Foo;
+"#,
+        ),
+        (
+            "/index.ts",
+            r#"
+import X = require("./file");
+
+X(0);
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_lib_and_options(
+        &files,
+        "/index.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        codes.contains(&2769),
+        "Expected TS2769 for overloaded export= function mismatch. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_named_default_import_from_export_equals_class_uses_default_import_rules() {
     let files = [
         (
@@ -528,6 +573,47 @@ model.cache;
             .iter()
             .any(|(code, _)| *code == 2503 || *code == 2694),
         "Expected module augmentation member on namespace import to resolve in type position, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_namespace_import_conflict_uses_local_namespace_for_qualified_type_members() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "/file1.ts",
+                r#"
+export namespace Library {
+    export type Bar = { a: number };
+}
+"#,
+            ),
+            (
+                "/file2.ts",
+                r#"
+import * as Lib from "./file1";
+namespace Lib {
+    export const foo: string = "";
+}
+var x: Lib.Bar;
+"#,
+            ),
+        ],
+        "/file2.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2440),
+        "Expected TS2440 for namespace import/local namespace conflict. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2694),
+        "Expected TS2694 for missing local namespace type member. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -1081,11 +1167,20 @@ export { configs };
             ),
             (
                 "main.ts",
+                // Locally declare a `Record`-shaped helper so `no_lib: true`
+                // doesn't leave the type reference unresolved. Otherwise
+                // `Record<string, ...>` lowers to
+                // `Application(UnresolvedTypeName('Record'), ...)`, which is
+                // (correctly) classified as an error type by `is_error_type`
+                // post the Devin-flagged fix on PR #2616, and the
+                // assignability check is short-circuited — so we'd never
+                // see the TS2322 this test is meant to assert on.
                 r#"
 import * as pluginImportX from "./pkg/index";
 const cfg = pluginImportX.configs["stage-0"];
+type RecordLike<K extends string, V> = { [P in K]: V };
 interface Plugin {
-  configs?: Record<string, { parser: string | null }>;
+  configs?: RecordLike<string, { parser: string | null }>;
 }
 const p: Plugin = pluginImportX;
 "#,

@@ -329,8 +329,36 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             TypeData::Intrinsic(crate::types::IntrinsicKind::String)
             | TypeData::Conditional(_)
-            | TypeData::Application(_)
             | TypeData::Infer(_) => true,
+
+            // Generic type alias application like `Exclude<keyof T, "x">`. The
+            // evaluator may leave such bound applications unreduced when the
+            // resolver in this context lacks the lib alias body, so we fall
+            // back to a structural inspection: an application of two arguments
+            // where the first arg is a finite set of literal keys and the
+            // second arg is a literal that equals `prop_name` exhibits the
+            // tsc Exclude/Omit shape — exclude that key. Other applications
+            // remain conservatively permissive.
+            TypeData::Application(app_id) => {
+                let app = self.interner().type_application(app_id);
+                if app.args.len() == 2
+                    && let Some(filter_atom) =
+                        crate::visitor::literal_string(self.interner(), app.args[1])
+                {
+                    let filter_str = self.interner().resolve_atom(filter_atom);
+                    if filter_str == prop_name {
+                        // The first arg may itself be an unreduced Application
+                        // (e.g. `keyof T` rendered as Lazy/Application). Only
+                        // treat as exclusion when we can confirm `prop_name`
+                        // appears in arg[0] as a literal — otherwise stay
+                        // permissive to avoid false negatives.
+                        if self.application_first_arg_excludes_key(app.args[0], prop_name) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
 
             // Generic keyof that survived evaluation.  The solver's NoopResolver
             // cannot resolve Lazy(DefId) constraints, so `keyof P` stays deferred
@@ -375,6 +403,37 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 ..
             }
         )
+    }
+
+    /// Check whether `type_id` is a *finite* union of string-literal keys that
+    /// includes `prop_name` AND has at least two distinct keys. The two-keys
+    /// floor is what distinguishes the Exclude/Omit shape from a degenerate
+    /// `(A extends Narrowable ? ...)`-style conditional whose first argument
+    /// is a single literal — those are not exclusions and we should leave
+    /// them permissive.
+    fn application_first_arg_excludes_key(&self, type_id: TypeId, prop_name: &str) -> bool {
+        use crate::types::TypeData;
+        let key = match self.interner().lookup(type_id) {
+            Some(k) => k,
+            None => return false,
+        };
+        if let TypeData::Union(members) = key {
+            let members = self.interner().type_list(members);
+            let mut literal_count = 0usize;
+            let mut found_prop = false;
+            for &member in members.iter() {
+                if let Some(atom) = crate::visitor::literal_string(self.interner(), member) {
+                    literal_count += 1;
+                    if self.interner().resolve_atom(atom) == prop_name {
+                        found_prop = true;
+                    }
+                } else {
+                    return false;
+                }
+            }
+            return found_prop && literal_count >= 2;
+        }
+        false
     }
 
     /// Check if a mapped type has a string index signature (constraint includes `string`).

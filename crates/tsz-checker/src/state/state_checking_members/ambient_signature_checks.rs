@@ -642,7 +642,7 @@ impl<'a> CheckerState<'a> {
             self.js_prototype_owner_expression_for_node(member_idx)
                 .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr))
                 .and_then(|owner_target| {
-                    self.js_constructor_body_instance_type_for_function(owner_target)
+                    self.synthesize_js_constructor_instance_type(owner_target, TypeId::ANY, &[])
                 })
         } else {
             None

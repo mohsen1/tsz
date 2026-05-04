@@ -297,9 +297,20 @@ impl<'a> CheckerState<'a> {
             }
             other => return other,
         };
-        left_sym = self
-            .resolve_alias_symbol(left_sym, visited_aliases)
-            .unwrap_or(left_sym);
+        let lib_binders = self.get_lib_binders();
+        let left_sym_has_local_namespace_conflict = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(left_sym, &lib_binders)
+            .is_some_and(|symbol| {
+                self.ctx
+                    .namespace_import_alias_has_local_namespace_conflict(symbol)
+            });
+        if !left_sym_has_local_namespace_conflict {
+            left_sym = self
+                .resolve_alias_symbol(left_sym, visited_aliases)
+                .unwrap_or(left_sym);
+        }
 
         // When the left side of a qualified name resolves to a type parameter,
         // it cannot serve as a namespace (no exports). In tsc, type parameters
@@ -307,7 +318,6 @@ impl<'a> CheckerState<'a> {
         // `E.Whatever` — the import `* as E` takes precedence.
         // Fall back to file_locals lookup which bypasses the scope chain
         // (where the type parameter lives) and finds file-level imports directly.
-        let lib_binders = self.get_lib_binders();
         if self
             .ctx
             .binder
@@ -383,6 +393,27 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(original_left_sym, &lib_binders);
+        let unresolved_left_has_local_namespace_conflict =
+            unresolved_left_symbol.as_ref().is_some_and(|symbol| {
+                self.ctx
+                    .namespace_import_alias_has_local_namespace_conflict(symbol)
+            });
+        let left_name_has_import_conflict = self
+            .ctx
+            .arena
+            .get(qn.left)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .is_some_and(|ident| {
+                self.ctx
+                    .import_conflict_names
+                    .contains(ident.escaped_text.as_str())
+            })
+            && left_symbol.has_any_flags(symbol_flags::MODULE);
+        let left_has_local_namespace_conflict = self
+            .ctx
+            .namespace_import_alias_has_local_namespace_conflict(left_symbol)
+            || unresolved_left_has_local_namespace_conflict
+            || left_name_has_import_conflict;
         let module_specifier = unresolved_left_symbol
             .and_then(|symbol| symbol.import_module.clone())
             .or_else(|| left_symbol.import_module.clone())
@@ -398,7 +429,9 @@ impl<'a> CheckerState<'a> {
                     })
             });
 
-        if let Some(module_specifier) = module_specifier.as_deref() {
+        if !left_has_local_namespace_conflict
+            && let Some(module_specifier) = module_specifier.as_deref()
+        {
             if left_symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx
@@ -422,8 +455,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(reexported_sym) =
-            self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
+        if !left_has_local_namespace_conflict
+            && let Some(reexported_sym) =
+                self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
         {
             let reexported_sym =
                 self.propagate_cross_file_member_target(left_sym, reexported_sym, right_name);
@@ -443,7 +477,8 @@ impl<'a> CheckerState<'a> {
                 .get_symbol_with_libs(original_left_sym, &lib_binders)
                 .and_then(|symbol| symbol.import_module.clone())
         });
-        if let Some(ref module_specifier) = augmentation_module_specifier
+        if !left_has_local_namespace_conflict
+            && let Some(ref module_specifier) = augmentation_module_specifier
             && let Some(augmented_sym) = self.resolve_module_augmentation_member_symbol(
                 module_specifier,
                 right_name,

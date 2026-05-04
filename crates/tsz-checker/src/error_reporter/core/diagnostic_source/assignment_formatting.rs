@@ -87,6 +87,10 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if let Some(display) = self.related_generic_indexed_access_source_display(source, target) {
+            return display;
+        }
+
         let in_arith_compound = self.in_arithmetic_compound_assignment_context(anchor_idx);
 
         if !in_arith_compound
@@ -681,6 +685,35 @@ impl<'a> CheckerState<'a> {
         display.contains("[keyof ")
     }
 
+    pub(in crate::error_reporter) fn related_generic_indexed_access_source_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        let (source_object, source_index) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, source)?;
+        let (target_object, target_index) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, target)?;
+
+        let source_index_info =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, source_index)?;
+        crate::query_boundaries::common::type_param_info(self.ctx.types, target_index)?;
+        if source_index == target_index {
+            return None;
+        }
+
+        let source_object_display = self.format_type_for_assignability_message(source_object);
+        let target_object_display = self.format_type_for_assignability_message(target_object);
+        let source_short = simple_or_namespace_member_name(&source_object_display)?;
+        let target_short = simple_or_namespace_member_name(&target_object_display)?;
+        if source_short != target_short {
+            return None;
+        }
+
+        let source_index_display = self.ctx.types.resolve_atom_ref(source_index_info.name);
+        Some(format!("{source_short}[{source_index_display}]"))
+    }
+
     pub(in crate::error_reporter) fn format_nested_assignment_source_type_for_diagnostic(
         &mut self,
         source: TypeId,
@@ -951,6 +984,26 @@ impl<'a> CheckerState<'a> {
         let primitive_kind = source;
         !target_accepts_literal_primitive_kind(self.ctx.types, target, primitive_kind)
     }
+}
+
+fn simple_or_namespace_member_name(display: &str) -> Option<&str> {
+    if display.starts_with("typeof ")
+        || display.starts_with("import(")
+        || display.contains('<')
+        || display.contains('[')
+        || display.contains(' ')
+    {
+        return None;
+    }
+    let name = display.rsplit_once('.').map_or(display, |(_, short)| short);
+    let mut chars = name.chars();
+    let first = chars.next()?;
+    if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        return None;
+    }
+    chars
+        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        .then_some(name)
 }
 
 /// Whether `target` accepts a literal whose widened primitive kind is

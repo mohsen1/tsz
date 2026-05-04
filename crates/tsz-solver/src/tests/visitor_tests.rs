@@ -416,6 +416,19 @@ fn test_contains_error_type() {
 }
 
 #[test]
+fn test_is_error_type_for_unresolved_type_application() {
+    let interner = TypeInterner::new();
+
+    let unresolved = interner.unresolved_type_name(interner.intern_string("MissingType"));
+    let unresolved_app = interner.application(unresolved, vec![TypeId::STRING]);
+    assert!(is_error_type(&interner, unresolved_app));
+
+    let regular_base = interner.lazy(DefId(1));
+    let regular_app = interner.application(regular_base, vec![TypeId::ERROR]);
+    assert!(!is_error_type(&interner, regular_app));
+}
+
+#[test]
 fn test_contains_type_matching() {
     let interner = TypeInterner::new();
 
