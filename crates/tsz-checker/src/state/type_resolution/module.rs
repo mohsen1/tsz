@@ -139,6 +139,26 @@ impl<'a> CheckerState<'a> {
         resolved
     }
 
+    fn module_augmentation_export_preempts_reexport_alias(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        augmenting_file_idx: usize,
+    ) -> bool {
+        let Some(binder) = self.ctx.get_binder_for_file(augmenting_file_idx) else {
+            return false;
+        };
+        let Some(symbol) = binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let arena = self.ctx.get_arena_for_file(augmenting_file_idx as u32);
+
+        symbol.declarations.iter().any(|decl| {
+            arena
+                .get(*decl)
+                .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
+        })
+    }
+
     /// Resolve a named type reference to its `TypeId`.
     ///
     /// This is a core function for resolving type names like `User`, `Array`, `Promise`,
@@ -508,17 +528,6 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         source_file_idx: Option<usize>,
     ) -> Option<tsz_binder::SymbolId> {
-        if let Some((sym_id, binder_idx)) =
-            self.resolve_ambient_module_export(module_specifier, export_name)
-        {
-            // Record cross-file origin so delegate_cross_arena_symbol_resolution
-            // can find the correct arena/binder for this symbol.
-            if !self.ctx.has_symbol_file_index(sym_id) {
-                self.ctx.register_symbol_file_target(sym_id, binder_idx);
-            }
-            return Some(sym_id);
-        }
-
         // First, try to resolve the module specifier to a target file index.
         // When source_file_idx is provided, resolve from that file's perspective
         // (for following re-export chains where specifiers are relative to the
@@ -529,7 +538,21 @@ impl<'a> CheckerState<'a> {
                 .resolve_import_target_from_file(from_file, module_specifier)
         } else {
             self.ctx.resolve_import_target(module_specifier)
-        }?;
+        };
+
+        let Some(target_file_idx) = target_file_idx else {
+            if let Some((sym_id, binder_idx)) =
+                self.resolve_ambient_module_export(module_specifier, export_name)
+            {
+                // Record cross-file origin so delegate_cross_arena_symbol_resolution
+                // can find the correct arena/binder for this symbol.
+                if !self.ctx.has_symbol_file_index(sym_id) {
+                    self.ctx.register_symbol_file_target(sym_id, binder_idx);
+                }
+                return Some(sym_id);
+            }
+            return None;
+        };
 
         // Get the target file's binder
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
@@ -545,6 +568,44 @@ impl<'a> CheckerState<'a> {
                 .register_symbol_file_target(sym_id, target_file_idx);
             Some(sym_id)
         };
+
+        let is_reexport_alias = |sym_id: tsz_binder::SymbolId| {
+            target_binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.import_module.is_some())
+        };
+
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
+            && let Some(sym_id) =
+                self.resolve_export_from_table(target_binder, exports_table, export_name)
+        {
+            if !is_reexport_alias(sym_id) {
+                return record_and_return(sym_id);
+            }
+        }
+
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, module_specifier)
+            && let Some(sym_id) =
+                self.resolve_export_from_table(target_binder, exports_table, export_name)
+        {
+            if !is_reexport_alias(sym_id) {
+                return record_and_return(sym_id);
+            }
+        }
+
+        let augmentation_export =
+            self.resolve_module_augmentation_export_for_file(target_file_idx, export_name);
+        if let Some((sym_id, augmenting_file_idx)) = augmentation_export
+            && self.module_augmentation_export_preempts_reexport_alias(sym_id, augmenting_file_idx)
+        {
+            self.ctx
+                .register_symbol_file_target(sym_id, augmenting_file_idx);
+            return Some(sym_id);
+        }
 
         if let Some(source_binder) = self.ctx.get_binder_for_file(from_file)
             && let Some((sym_id, _is_type_only)) =
@@ -562,26 +623,6 @@ impl<'a> CheckerState<'a> {
             return record_and_return(sym_id);
         }
 
-        // Look up the export in the target binder's module_exports.
-        // Prefer canonical file key, then module specifier fallback.
-        if let Some(exports_table) = self
-            .ctx
-            .module_exports_for_module(target_binder, &target_file_name)
-            && let Some(sym_id) =
-                self.resolve_export_from_table(target_binder, exports_table, export_name)
-        {
-            return record_and_return(sym_id);
-        }
-
-        if let Some(exports_table) = self
-            .ctx
-            .module_exports_for_module(target_binder, module_specifier)
-            && let Some(sym_id) =
-                self.resolve_export_from_table(target_binder, exports_table, export_name)
-        {
-            return record_and_return(sym_id);
-        }
-
         // Follow re-export chains (wildcard and named re-exports) BEFORE
         // falling back to file_locals. file_locals may contain merged globals
         // that shadow the actual re-exported symbols.
@@ -594,9 +635,7 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
-        if let Some((sym_id, augmenting_file_idx)) =
-            self.resolve_module_augmentation_export_for_file(target_file_idx, export_name)
-        {
+        if let Some((sym_id, augmenting_file_idx)) = augmentation_export {
             self.ctx
                 .register_symbol_file_target(sym_id, augmenting_file_idx);
             return Some(sym_id);
