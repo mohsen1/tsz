@@ -88,7 +88,6 @@ fn check_commonjs_two_files(
     let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
     resolved_modules.insert(module_specifier.to_string());
     checker.ctx.set_resolved_modules(resolved_modules);
-
     checker.check_source_file(root_b);
 
     checker
@@ -130,6 +129,114 @@ fn check_commonjs_single_file(file_name: &str, source: &str) -> Vec<(u32, String
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+#[test]
+fn test_commonjs_void_zero_export_write_reports_missing_property() {
+    let diagnostics = check_commonjs_single_file(
+        "assignmentToVoidZero2.js",
+        r#"
+exports.j = 1;
+exports.k = void 0;
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("'k'")),
+        "Expected TS2339 for void-zero CommonJS export `k`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_named_import_rejects_void_zero_commonjs_export_write() {
+    let diagnostics = check_commonjs_two_files(
+        "assignmentToVoidZero2.js",
+        r#"
+exports.j = 1;
+exports.k = void 0;
+"#,
+        "importer.js",
+        r#"
+import { j, k } from './assignmentToVoidZero2';
+j + k;
+"#,
+        "./assignmentToVoidZero2",
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2305 && message.contains("'k'")),
+        "Expected TS2305 for void-zero CommonJS export `k`, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, message)| *code != 2305 || !message.contains("'j'")),
+        "Did not expect TS2305 for concrete CommonJS export `j`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_declared_export_equals_module_named_import_is_not_rejected_by_js_surface() {
+    let files = [
+        (
+            "/demoModule.d.ts",
+            r#"
+declare namespace demoNS {
+    function f(): void;
+}
+declare module "demoModule" {
+    import alias = demoNS;
+    export = alias;
+}
+"#,
+        ),
+        (
+            "/user.ts",
+            r#"
+import { f } from "demoModule";
+f();
+"#,
+        ),
+    ];
+    let diagnostics = check_named_files_entry(
+        &files,
+        "/user.ts",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| !matches!(*code, 2305 | 2497 | 2616 | 2595)),
+        "Did not expect JS export-surface or export= mismatch diagnostics for declared member `f`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_import_declaration_inside_js_function_skips_module_resolution() {
+    let diagnostics = check_commonjs_single_file(
+        "check.js",
+        r#"
+function container() {
+    import "fs";
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2882),
+        "Did not expect TS2882 for import declaration in function body, got: {diagnostics:#?}"
+    );
 }
 
 fn check_named_files_entry(
