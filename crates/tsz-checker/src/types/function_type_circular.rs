@@ -849,6 +849,89 @@ impl<'a> CheckerState<'a> {
                             ))
                     })
             }
+            syntax_kind_ext::SWITCH_STATEMENT => self
+                .ctx
+                .arena
+                .get_switch(node)
+                .and_then(|switch_data| self.ctx.arena.get(switch_data.case_block))
+                .and_then(|case_block_node| self.ctx.arena.get_block(case_block_node))
+                .is_some_and(|case_block| {
+                    case_block
+                        .statements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .any(|clause_idx| {
+                            self.ctx
+                                .arena
+                                .get(clause_idx)
+                                .and_then(|clause_node| self.ctx.arena.get_case_clause(clause_node))
+                                .is_some_and(|clause| {
+                                    clause.statements.nodes.iter().copied().any(|stmt| {
+                                        self.statement_has_resolving_var_in_call_like_return(
+                                            stmt,
+                                            resolving_vars,
+                                        )
+                                    })
+                                })
+                        })
+                }),
+            syntax_kind_ext::TRY_STATEMENT => {
+                self.ctx.arena.get_try(node).is_some_and(|try_data| {
+                    self.statement_has_resolving_var_in_call_like_return(
+                        try_data.try_block,
+                        resolving_vars,
+                    ) || (try_data.catch_clause.is_some()
+                        && self.statement_has_resolving_var_in_call_like_return(
+                            try_data.catch_clause,
+                            resolving_vars,
+                        ))
+                        || (try_data.finally_block.is_some()
+                            && self.statement_has_resolving_var_in_call_like_return(
+                                try_data.finally_block,
+                                resolving_vars,
+                            ))
+                })
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                self.ctx
+                    .arena
+                    .get_catch_clause(node)
+                    .is_some_and(|catch_data| {
+                        self.statement_has_resolving_var_in_call_like_return(
+                            catch_data.block,
+                            resolving_vars,
+                        )
+                    })
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => {
+                self.ctx.arena.get_loop(node).is_some_and(|loop_data| {
+                    self.statement_has_resolving_var_in_call_like_return(
+                        loop_data.statement,
+                        resolving_vars,
+                    )
+                })
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                self.ctx.arena.get_for_in_of(node).is_some_and(|loop_data| {
+                    self.statement_has_resolving_var_in_call_like_return(
+                        loop_data.statement,
+                        resolving_vars,
+                    )
+                })
+            }
+            syntax_kind_ext::LABELED_STATEMENT => self
+                .ctx
+                .arena
+                .get_labeled_statement(node)
+                .is_some_and(|labeled| {
+                    self.statement_has_resolving_var_in_call_like_return(
+                        labeled.statement,
+                        resolving_vars,
+                    )
+                }),
             _ => false,
         }
     }
