@@ -528,7 +528,15 @@ impl<'a> NarrowingContext<'a> {
                             .then_some(prop_type)
                             .and_then(|ty| construct_return_type_for_type(self.db, ty))
                             .unwrap_or(prop_type);
-                        index_map.entry(prop_type).or_default().push(member);
+                        // A member whose discriminant property has type `any` can
+                        // hold any literal value, so it must match every bucket
+                        // (just like a top-level any/unknown member). Otherwise
+                        // it would be invisible to literal-value lookups below.
+                        if prop_type == TypeId::ANY {
+                            any_unknown_members.push(member);
+                        } else {
+                            index_map.entry(prop_type).or_default().push(member);
+                        }
                     }
                     None => {
                         // Member doesn't have a simple property lookup — can't index
