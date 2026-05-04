@@ -938,19 +938,11 @@ impl<'a> CheckerState<'a> {
             }
             if js_expando_before_assignment {
                 // Suppress TS2565 when a leading JSDoc `@type` annotation
-                // declares the property's type AND the receiver is a
-                // function-as-constructor (not an ES `class`):
+                // declares a function constructor prototype property's type:
                 //   function C() { this.x = false; }
                 //   /** @type {number} */
                 //   C.prototype.x;
-                // tsc treats this as a typed declaration of `C.prototype.x`
-                // and skips the "used before being assigned" error so the
-                // JSDoc type can flow into downstream `this.x = ...` checks.
-                // For ES `class`-declared receivers tsc still emits TS2565
-                // (the prototype shape is the class's instance type, so
-                // late-attaching a property via prototype is genuinely
-                // "used before assigned"). Restricting to FUNCTION-flagged
-                // receivers preserves that behavior.
+                // ES class receivers still report TS2565.
                 let suppress_for_jsdoc_type_decl = self.is_js_file()
                     && self.ctx.compiler_options.check_js
                     && self.expando_receiver_is_function_constructor(access.expression)
@@ -968,6 +960,15 @@ impl<'a> CheckerState<'a> {
                             &[property_name],
                         ),
                         diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                    );
+                } else if let Some(declared_type) = self
+                    .enclosing_expression_statement(idx)
+                    .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
+                {
+                    self.check_jsdoc_prototype_type_decl_constructor_assignment(
+                        access.expression,
+                        property_name,
+                        declared_type,
                     );
                 }
             }

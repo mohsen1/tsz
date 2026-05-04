@@ -1033,4 +1033,91 @@ impl<'a> CheckerState<'a> {
             _ => Some(false), // Skip non-value declarations (interface, type alias)
         }
     }
+
+    pub(crate) fn check_jsdoc_prototype_type_decl_constructor_assignment(
+        &mut self,
+        prototype_expr_idx: NodeIndex,
+        property_name: &str,
+        declared_type: TypeId,
+    ) {
+        let Some(prototype_node) = self.ctx.arena.get(prototype_expr_idx) else {
+            return;
+        };
+        if prototype_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return;
+        }
+        let Some(prototype_access) = self.ctx.arena.get_access_expr(prototype_node) else {
+            return;
+        };
+        if self
+            .ctx
+            .arena
+            .get_identifier_at(prototype_access.name_or_argument)
+            .is_none_or(|ident| ident.escaped_text != "prototype")
+        {
+            return;
+        }
+        let Some(func_idx) = self.js_prototype_owner_function_target(prototype_access.expression)
+        else {
+            return;
+        };
+        let Some(body_idx) = self
+            .ctx
+            .arena
+            .get(func_idx)
+            .and_then(|node| self.ctx.arena.get_function(node))
+            .and_then(|func| (!func.body.is_none()).then_some(func.body))
+        else {
+            return;
+        };
+        let Some((source_idx, diag_idx)) =
+            self.constructor_this_assignment_for_property(body_idx, property_name)
+        else {
+            return;
+        };
+
+        let source_type = self.get_type_of_node(source_idx);
+        let target_type =
+            crate::query_boundaries::common::remove_undefined(self.ctx.types, declared_type);
+        if !self.is_assignable_to(source_type, target_type) {
+            let _ = self.check_assignable_or_report_at_exact_anchor(
+                source_type,
+                target_type,
+                source_idx,
+                diag_idx,
+            );
+        }
+    }
+
+    fn constructor_this_assignment_for_property(
+        &mut self,
+        body_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let body_node = self.ctx.arena.get(body_idx)?;
+        let block = self.ctx.arena.get_block(body_node)?;
+        let mut stmts = Vec::new();
+        for &stmt_idx in &block.statements.nodes {
+            self.collect_nested_js_this_assignment_statements(stmt_idx, &mut stmts);
+        }
+        let this_aliases = self.collect_this_aliases(&stmts);
+
+        for stmt_idx in stmts {
+            let Some((found_name, rhs_idx, is_private, _)) =
+                self.extract_this_property_assignment(stmt_idx, &this_aliases)
+            else {
+                continue;
+            };
+            if is_private || found_name != property_name {
+                continue;
+            }
+            let stmt_node = self.ctx.arena.get(stmt_idx)?;
+            let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+            let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+            let binary = self.ctx.arena.get_binary_expr(expr_node)?;
+            return Some((rhs_idx, binary.left));
+        }
+
+        None
+    }
 }
