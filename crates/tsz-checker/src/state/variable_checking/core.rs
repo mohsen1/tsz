@@ -48,6 +48,46 @@ impl<'a> CheckerState<'a> {
         .map_or(TypingRequest::NONE, TypingRequest::with_contextual_type)
     }
 
+    fn should_suppress_identifier_initializer_context_for_index_access(
+        &mut self,
+        initializer_idx: NodeIndex,
+        contextual_type: TypeId,
+    ) -> bool {
+        if self
+            .ctx
+            .arena
+            .get(initializer_idx)
+            .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
+        {
+            return false;
+        }
+        crate::query_boundaries::common::index_access_parts(self.ctx.types, contextual_type)
+            .is_some()
+    }
+
+    fn identifier_initializer_symbol_type_for_index_access_target(
+        &mut self,
+        initializer_idx: NodeIndex,
+        contextual_type: TypeId,
+    ) -> Option<TypeId> {
+        if self
+            .ctx
+            .arena
+            .get(initializer_idx)
+            .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
+            || crate::query_boundaries::common::index_access_parts(self.ctx.types, contextual_type)
+                .is_none()
+        {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol(initializer_idx)?;
+        self.ctx
+            .symbol_types
+            .get(&sym_id)
+            .copied()
+            .filter(|&ty| ty != TypeId::ERROR && ty != TypeId::UNKNOWN)
+    }
+
     fn cached_inferred_variable_type(
         &self,
         decl_idx: NodeIndex,
@@ -777,11 +817,17 @@ impl<'a> CheckerState<'a> {
                         && checker.suppress_initializer_contextual_type_for_generic_call(
                             var_decl.initializer,
                         );
+                    let suppress_identifier_context = checker
+                        .should_suppress_identifier_initializer_context_for_index_access(
+                            var_decl.initializer,
+                            evaluated_type,
+                        );
                     let request = if let Some(jsdoc_callable_context) = jsdoc_callable_context {
                         TypingRequest::with_contextual_type(jsdoc_callable_context)
                     } else if evaluated_type != TypeId::ANY
                         && !jsdoc_blocks_callable_context
                         && !suppress_initializer_context
+                        && !suppress_identifier_context
                     {
                         TypingRequest::with_contextual_type(evaluated_type)
                     } else {
@@ -860,8 +906,17 @@ impl<'a> CheckerState<'a> {
                     }
                     let init_snap = checker.ctx.snapshot_diagnostics();
                     checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
-                    let init_type =
+                    let mut init_type =
                         checker.get_type_of_node_with_request(var_decl.initializer, &request);
+                    if init_type == TypeId::ERROR
+                        && let Some(symbol_type) = checker
+                            .identifier_initializer_symbol_type_for_index_access_target(
+                                var_decl.initializer,
+                                evaluated_type,
+                            )
+                    {
+                        init_type = symbol_type;
+                    }
                     // Ensure the contextually-typed init type is stored in node_types
                     // for the initializer expression. Error elaboration may re-check
                     // the initializer without contextual type, which widens literal

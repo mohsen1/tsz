@@ -18,6 +18,49 @@ use crate::visitor::{
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    pub(crate) fn resolved_type_param_info(
+        &self,
+        type_id: TypeId,
+    ) -> Option<crate::types::TypeParamInfo> {
+        type_param_info(self.interner, type_id).or_else(|| {
+            let resolved = self.resolve_lazy_type(type_id);
+            (resolved != type_id)
+                .then(|| type_param_info(self.interner, resolved))
+                .flatten()
+        })
+    }
+
+    pub(crate) fn index_accesses_have_same_object_distinct_type_param_keys(
+        &self,
+        source_object: TypeId,
+        source_key: TypeId,
+        target_object: TypeId,
+        target_key: TypeId,
+    ) -> bool {
+        let resolved_source_object = self.resolve_lazy_type(source_object);
+        let resolved_target_object = self.resolve_lazy_type(target_object);
+        if source_object != target_object && resolved_source_object != resolved_target_object {
+            return false;
+        }
+
+        self.index_accesses_have_distinct_type_param_keys(source_key, target_key)
+    }
+
+    pub(crate) fn index_accesses_have_distinct_type_param_keys(
+        &self,
+        source_key: TypeId,
+        target_key: TypeId,
+    ) -> bool {
+        let Some(source_param) = self.resolved_type_param_info(source_key) else {
+            return false;
+        };
+        let Some(target_param) = self.resolved_type_param_info(target_key) else {
+            return false;
+        };
+
+        source_param.name != target_param.name
+    }
+
     pub(crate) fn can_use_object_intersection_fast_path(&self, members: &[TypeId]) -> bool {
         if members.len() < INTERSECTION_OBJECT_FAST_PATH_THRESHOLD {
             return false;
@@ -282,14 +325,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // but a different type parameter key, they are not subtypes even if they have
         // the same constraint. This prevents `T1[K] <: T2[K]` when T1 != T2.
         if let Some((s_obj, s_idx)) = index_access_parts(self.interner, source)
-            && s_obj == t_obj
-            && let Some(s_param) = type_param_info(self.interner, s_idx)
-            && let Some(t_param) = type_param_info(self.interner, t_idx)
+            && self.index_accesses_have_same_object_distinct_type_param_keys(
+                s_obj, s_idx, t_obj, t_idx,
+            )
         {
-            // Both keys are type parameters with different names - not subtypes
-            if s_param.name != t_param.name {
-                return false;
-            }
+            return false;
         }
 
         // Check if index is a generic type parameter
@@ -359,14 +399,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // but a different type parameter key, they are not subtypes even if they have
         // the same constraint. This prevents `T1[K] <: T2[K]` when T1 != T2.
         if let Some((t_obj, t_idx)) = index_access_parts(self.interner, target)
-            && object_type == t_obj
-            && let Some(s_param) = type_param_info(self.interner, key_type)
-            && let Some(t_param) = type_param_info(self.interner, t_idx)
+            && self.index_accesses_have_same_object_distinct_type_param_keys(
+                object_type,
+                key_type,
+                t_obj,
+                t_idx,
+            )
         {
-            // Both keys are type parameters with different names - not subtypes
-            if s_param.name != t_param.name {
-                return false;
-            }
+            return false;
         }
 
         let original = self.interner.index_access(object_type, key_type);

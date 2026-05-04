@@ -192,3 +192,34 @@ class Holder<{tparam} extends keyof Things> {{
         );
     }
 }
+
+#[test]
+fn distinct_key_params_reject_assignment_between_deferred_indexed_accesses() {
+    let source = r#"
+interface OptA { id?: string; }
+interface OptB { name?: number; }
+interface Things {
+    a: OptA;
+    b: OptB;
+}
+class Holder<K1 extends keyof Things, K2 extends keyof Things> {
+    M() {
+        let c1: Things[K1] = {};
+        const c2: Things[K2] = c1;
+    }
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| {
+            d.code == 2322
+                && d.message_text
+                    .contains("Type 'Things[K1]' is not assignable to type 'Things[K2]'.")
+        }),
+        "Things[K1] assigned to independent Things[K2] must emit TS2322; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
