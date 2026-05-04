@@ -75,7 +75,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsWithIns
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsWithInstanceOfByConstructorSignature.ts | expected:[TS2322,TS2339,TS2551] actual:[TS2322,TS2339,TS2551]
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsWithInstanceOfBySymbolHasInstance.ts | expected:[TS2322,TS2339,TS2551] actual:[TS2322,TS2339,TS2551]
 FAIL TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_errorLocations1.ts | expected:[TS1360,TS2322,TS2345,TS2741] actual:[TS1360,TS2322,TS2345,TS2741]
-FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/typeOnlyESMImportFromCJS.ts | expected:[TS1541,TS1542] actual:[]
 FAIL TypeScript/tests/cases/conformance/generators/generatorReturnContextualType.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/FunctionAndModuleWithSameNameAndCommonRoot.ts | expected:[TS2403,TS2433] actual:[TS2403,TS2433]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeFromChainedAssignment.ts | expected:[TS2322,TS2339,TS2345] actual:[TS2322,TS2339,TS2345]
@@ -98,6 +97,7 @@ FAIL TypeScript/tests/cases/conformance/salsa/classCanExtendConstructorFunction.
 FAIL TypeScript/tests/cases/conformance/salsa/plainJSBinderErrors.ts | expected:[TS1101,TS1102,TS1107,TS1210,TS1214,TS1215,TS1262,TS1344,TS1359,TS2528,TS18012] actual:[TS1101,TS1262,TS1344,TS2528]
 FAIL TypeScript/tests/cases/conformance/salsa/prototypePropertyAssignmentMergeWithInterfaceMethod.ts | expected:[TS2503,TS2552,TS2694] actual:[TS2503,TS2552]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromJSConstructor.ts | expected:[TS2322,TS2531,TS7008] actual:[TS2322,TS7008]
+FAIL TypeScript/tests/cases/conformance/salsa/typeFromParamTagForFunction.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts | expected:[TS2322,TS2339,TS2403,TS2540,TS2542] actual:[TS2322,TS2339,TS2403,TS2540,TS2542]
 FAIL TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts | expected:[TS1338,TS2304,TS2322,TS2344] actual:[TS1338,TS2304,TS2322,TS2344]
 FAIL TypeScript/tests/cases/conformance/types/intersection/commonTypeIntersection.ts | expected:[TS2322] actual:[TS2322]
@@ -9380,6 +9380,7 @@ PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/preserveValueIm
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/preserveValueImports_mixedImports.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/preserveValueImports_module.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/renamed.ts
+PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/typeOnlyESMImportFromCJS.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/typeQuery.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnlyMerge1.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnlyMerge2.ts
@@ -11277,7 +11278,6 @@ PASS TypeScript/tests/cases/conformance/salsa/typeFromJSInitializer.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromJSInitializer2.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromJSInitializer3.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromJSInitializer4.ts
-PASS TypeScript/tests/cases/conformance/salsa/typeFromParamTagForFunction.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment10.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment10_1.ts
