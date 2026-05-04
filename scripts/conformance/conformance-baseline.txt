@@ -40,7 +40,6 @@ FAIL TypeScript/tests/cases/compiler/maxConstraints.ts | expected:[TS2345] actua
 FAIL TypeScript/tests/cases/compiler/mergeSymbolReexportInterface.ts | expected:[TS2300,TS2741] actual:[TS2300,TS2741]
 FAIL TypeScript/tests/cases/compiler/mergeSymbolRexportFunction.ts | expected:[TS2451] actual:[TS1362,TS2300,TS2349]
 FAIL TypeScript/tests/cases/compiler/mergedDeclarations7.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts | expected:[TS2564,TS2567] actual:[TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258,TS2305,TS2307] actual:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258]
 FAIL TypeScript/tests/cases/compiler/moduleNodeDefaultImports.ts | expected:[TS2349] actual:[TS2339,TS2349,TS2367]
 FAIL TypeScript/tests/cases/compiler/namespaceMergedWithFunctionWithOverloadsUsage.ts | expected:[TS2769] actual:[]
@@ -4292,6 +4291,7 @@ PASS TypeScript/tests/cases/compiler/moduleAugmentationDisallowedExtensions.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDoesInterfaceMergeOfReexport.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceMergeOfReexport.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDuringSyntheticDefaultCheck.ts
+PASS TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendAmbientModule1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendAmbientModule2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendFileModule1.ts
