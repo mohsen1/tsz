@@ -1794,13 +1794,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Try to get the name if the expression is an identifier
-        // Use specific error codes (TS18047/18048/18049) when name is available
+        // Use specific error codes (TS18047/18048/18049) when tsc would name
+        // the nullish receiver. Element access can report on a property access
+        // receiver, e.g. `matchResult.groups["x"]` reports
+        // `'matchResult.groups' is possibly 'undefined'.`
         let name = self.ctx.arena.get(idx).and_then(|node| {
             self.ctx
                 .arena
                 .get_identifier(node)
                 .map(|ident| ident.escaped_text.clone())
+                .or_else(|| {
+                    (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+                        .then(|| self.expression_text(idx))
+                        .flatten()
+                })
                 .or_else(|| {
                     (node.kind == SyntaxKind::ThisKeyword as u16).then(|| "this".to_string())
                 })

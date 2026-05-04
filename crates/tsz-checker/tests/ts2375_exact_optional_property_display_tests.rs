@@ -65,6 +65,20 @@ fn check_strict_no_exact(source: &str) -> Vec<(u32, String)> {
     )
 }
 
+fn check_strict_exact_optional_no_unchecked(source: &str) -> Vec<(u32, String)> {
+    check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            exact_optional_property_types: true,
+            no_unchecked_indexed_access: true,
+            ..Default::default()
+        },
+    )
+}
+
 /// With `exactOptionalPropertyTypes: true`, assigning `{ foo: undefined }` to
 /// `{ foo?: number }` should produce a TS2375 message that shows the target as
 /// `{ foo?: number }`, not `{ foo?: number | undefined }`.
@@ -137,5 +151,102 @@ const x: { foo?: string | undefined } = { foo: undefined };
     assert!(
         ts2375.is_empty(),
         "TS2375 must not be emitted when the property type explicitly includes undefined. Got: {diags:?}"
+    );
+}
+
+/// When an assignability failure involves a shared optional target property,
+/// tsc uses TS2375 under `exactOptionalPropertyTypes` because the source-side
+/// optional read can be `undefined` while the target optional slot excludes it.
+/// This applies even when the immediate related-info property is a separate
+/// required-property mismatch, as in `regexpExecAndMatchTypeUsages.ts`.
+#[test]
+fn ts2375_emitted_for_shared_optional_property_source_optional() {
+    let source = r#"
+interface A {
+    required?: string;
+    shared?: number;
+}
+interface B {
+    required: string;
+    shared?: number;
+}
+declare const a: A;
+const b: B = a;
+"#;
+    let diags = check_strict_exact_optional(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2375
+                && message.contains("Type 'A' is not assignable to type 'B'")
+                && message.contains("exactOptionalPropertyTypes")
+        }),
+        "expected TS2375 for shared exact-optional mismatch, got: {diags:#?}"
+    );
+}
+
+/// The same required-property mismatch should stay TS2322 when the target's
+/// shared optional property explicitly accepts `undefined`.
+#[test]
+fn shared_optional_explicit_undefined_keeps_ts2322() {
+    let source = r#"
+interface A {
+    required?: string;
+    shared?: number;
+}
+interface B {
+    required: string;
+    shared?: number | undefined;
+}
+declare const a: A;
+const b: B = a;
+"#;
+    let diags = check_strict_exact_optional(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "expected TS2322 for required-property mismatch, got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2375),
+        "must not emit TS2375 when target optional property includes undefined, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn identical_optional_properties_do_not_emit_ts2375() {
+    let source = r#"
+interface A {
+    shared?: number;
+}
+interface B {
+    shared?: number;
+}
+declare const a: A;
+const b: B = a;
+"#;
+    let diags = check_strict_exact_optional(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2375),
+        "identical optional properties are assignable and must not emit TS2375, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn element_access_names_optional_property_receiver_in_ts18048() {
+    let source = r#"
+declare const matchResult: { groups?: { [key: string]: string } };
+matchResult.groups["someVariable"].length;
+"#;
+    let diags = check_strict_exact_optional_no_unchecked(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 18048 && message.contains("'matchResult.groups' is possibly 'undefined'")
+        }),
+        "expected TS18048 to name optional property receiver, got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2532 && message.contains("Object is possibly 'undefined'")
+        }),
+        "expected TS2532 for noUncheckedIndexedAccess result before `.length`, got: {diags:#?}"
     );
 }
