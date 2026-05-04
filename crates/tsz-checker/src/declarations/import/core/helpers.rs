@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::symbol_flags;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -927,6 +927,59 @@ impl<'a> CheckerState<'a> {
             self.resolve_property_access_with_env(export_type, import_name),
             PropertyAccessResult::Success { .. }
         )
+    }
+
+    pub(crate) fn named_imports_resolve_via_export_equals_target(
+        &mut self,
+        bindings_node: Option<&Node>,
+        exports_table: Option<&tsz_binder::SymbolTable>,
+        module_name: &str,
+        has_non_default_named_imports: bool,
+    ) -> bool {
+        let Some(table) = exports_table else {
+            return false;
+        };
+        if !has_non_default_named_imports {
+            return false;
+        }
+        let Some(bindings_node) = bindings_node else {
+            return false;
+        };
+        let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node) else {
+            return false;
+        };
+
+        let mut saw_non_default = false;
+        for element_idx in &named_imports.elements.nodes {
+            let Some(element_node) = self.ctx.arena.get(*element_idx) else {
+                return false;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
+                return false;
+            };
+            let Some(name_node) = self.ctx.arena.get(specifier.name) else {
+                return false;
+            };
+            let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+                return false;
+            };
+
+            let name = name_ident.escaped_text.as_str();
+            if name == "default" {
+                continue;
+            }
+            saw_non_default = true;
+            if !self.has_named_export_via_export_equals(table, name)
+                && self
+                    .resolve_named_export_via_export_equals(module_name, name)
+                    .is_none()
+                && !self.has_named_export_via_export_equals_type(table, name)
+            {
+                return false;
+            }
+        }
+
+        saw_non_default
     }
 
     /// Check if an import resolves to a `.ts`/`.tsx` source file (not a `.d.ts` declaration).
