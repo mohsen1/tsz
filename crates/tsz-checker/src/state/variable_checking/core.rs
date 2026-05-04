@@ -845,6 +845,14 @@ impl<'a> CheckerState<'a> {
                                 // property-access errors survive the pre-contextual reset.
                                 || diag.code
                                     == crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                                // TS2304: "Cannot find name" is a name-resolution
+                                // failure tied to the source identifier; it must
+                                // survive the pre-contextual reset so e.g.
+                                // `var x: T = new T()` reports both the
+                                // annotation and value-position lookups when `T`
+                                // is unresolved.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
                                 || diag.start < init_start
                                 || diag.start >= init_end
                         });

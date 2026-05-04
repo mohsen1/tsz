@@ -230,6 +230,21 @@ fn test_ts2304_emitted_for_undefined_name() {
 }
 
 #[test]
+fn test_ts2304_preserved_for_unresolved_var_initializer_constructor() {
+    let diagnostics = check_without_lib(r#"var chain: ScopeChain = new ScopeChain();"#);
+
+    let scope_chain_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'ScopeChain'"))
+        .collect();
+    assert_eq!(
+        scope_chain_errors.len(),
+        2,
+        "Expected TS2304 for both the type annotation and constructor initializer, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2304_not_emitted_for_lib_globals_with_lib() {
     let diagnostics = check_with_lib(r#"console.log("hello");"#);
 
