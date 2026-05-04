@@ -740,7 +740,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             Some(TypeData::ReadonlyType(_))
                         )
                     {
-                        continue;
+                        self.type_param_equivalences.truncate(equiv_start);
+                        return SubtypeResult::False;
                     }
 
                     // Try unpacking this union member as a tuple
@@ -755,8 +756,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let mut variant_params: Vec<ParamInfo> = prefix_params.to_vec();
                     variant_params.extend(member_unpacked);
 
-                    // Try the comparison with this variant
-                    if self
+                    if !self
                         .check_params_compatible(
                             &source_params_unpacked,
                             &variant_params,
@@ -765,11 +765,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .is_true()
                     {
                         self.type_param_equivalences.truncate(equiv_start);
-                        return SubtypeResult::True;
+                        return SubtypeResult::False;
                     }
                 }
                 self.type_param_equivalences.truncate(equiv_start);
-                return SubtypeResult::False;
+                return SubtypeResult::True;
             }
         }
 
@@ -919,6 +919,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let Some(rest_param) = source_params_unpacked.last() else {
                     return SubtypeResult::False;
                 };
+                if self.is_tuple_list_rest_type(rest_param.type_id)
+                    && target_fixed_count > source_fixed_count
+                {
+                    let tuple_elements: Vec<crate::types::TupleElement> = target_params_unpacked
+                        .iter()
+                        .skip(source_fixed_count)
+                        .take(target_fixed_count.saturating_sub(source_fixed_count))
+                        .map(|param| crate::types::TupleElement {
+                            type_id: param.type_id,
+                            name: param.name,
+                            optional: param.optional,
+                            rest: false,
+                        })
+                        .collect();
+                    let target_rest_tuple = self.interner.tuple(tuple_elements);
+                    if !self.are_parameters_compatible_impl(
+                        rest_param.type_id,
+                        target_rest_tuple,
+                        is_method,
+                    ) {
+                        return SubtypeResult::False;
+                    }
+                    return SubtypeResult::True;
+                }
                 let rest_elem_type = self.get_array_element_type(rest_param.type_id);
                 let rest_is_top = self.allow_bivariant_rest && rest_elem_type.is_any_or_unknown();
 

@@ -800,6 +800,56 @@ const y: IP = gp;
 }
 
 #[test]
+fn test_tuple_union_rest_target_requires_all_variants_for_fixed_source() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+declare let f1: (x: string, ...args: [string] | [number, boolean]) => void;
+declare let f2: (x: string, y: string) => void;
+declare let f3: (x: string, y: number, z: boolean) => void;
+
+f2 = f1;
+f3 = f1;
+f1 = f2;
+f1 = f3;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2322_count = relevant.iter().filter(|(code, _)| *code == 2322).count();
+
+    assert_eq!(
+        ts2322_count, 2,
+        "Only assigning fixed-parameter functions to a tuple-union rest target should fail. Actual diagnostics: {relevant:#?}"
+    );
+    assert!(
+        relevant.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("(x: string, y: string) => void")
+                && message.contains("(x: string, ...args: [string] | [number, boolean]) => void")
+        }),
+        "Expected TS2322 for f1 = f2. Actual diagnostics: {relevant:#?}"
+    );
+    assert!(
+        relevant.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("(x: string, y: number, z: boolean) => void")
+                && message.contains("(x: string, ...args: [string] | [number, boolean]) => void")
+        }),
+        "Expected TS2322 for f1 = f3. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_spy_comparison_checking_reports_ts2339() {
     if !lib_files_available() {
         return;
