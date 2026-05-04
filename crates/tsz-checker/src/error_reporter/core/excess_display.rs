@@ -146,7 +146,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 prop.write_type
             };
-            if self.is_asserted_types_actors_display_property(prop.name, read) {
+            if self.should_strip_readonly_deep_for_nested_object_property(read) {
                 read = self.strip_readonly_deep_for_excess_display(read);
                 write = self.strip_readonly_deep_for_excess_display(write);
             }
@@ -184,23 +184,45 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::type_application(self.ctx.types, ty).is_none()
     }
 
-    fn is_asserted_types_actors_display_property(
-        &self,
-        name: tsz_common::interner::Atom,
-        ty: TypeId,
-    ) -> bool {
-        if self.ctx.types.resolve_atom_ref(name).as_ref() != "types" {
-            return false;
-        }
+    /// Decide whether a property whose value type is `ty` should have its
+    /// readonly modifiers stripped deeply for the excess-property display.
+    ///
+    /// The structural rule: tsc displays an asserted-type property (e.g.
+    /// `types: {} as { actors: { ... } }`) without readonly modifiers, while
+    /// a sibling property whose value is a flat anonymous object (e.g.
+    /// `invoke: { src: "str" }`) retains readonly modifiers picked up from
+    /// the surrounding reverse-mapped contextual type.
+    ///
+    /// We approximate that distinction structurally: when the property's
+    /// value is an anonymous object whose own shape contains at least one
+    /// nested object-typed property, strip readonly deeply. Flat anonymous
+    /// objects (whose properties are all leaves) and named/aliased/indexed
+    /// types are left alone, matching tsc's display.
+    fn should_strip_readonly_deep_for_nested_object_property(&self, ty: TypeId) -> bool {
         let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
         else {
             return false;
         };
-        shape
-            .properties
-            .iter()
-            .any(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == "actors")
+
+        // Restrict to anonymous, non-aliased, non-applied object literals.
+        if self.ctx.types.get_display_alias(ty).is_some()
+            || self.ctx.definition_store.find_def_for_type(ty).is_some()
+            || crate::query_boundaries::common::type_application(self.ctx.types, ty).is_some()
+            || shape.string_index.is_some()
+            || shape.number_index.is_some()
+            || shape.properties.is_empty()
+        {
+            return false;
+        }
+
+        // Apply only when the value contains at least one nested object-typed
+        // property — that's the structural shape produced by `value as { ... }`
+        // assertions whose inner types are themselves objects.
+        shape.properties.iter().any(|prop| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, prop.type_id)
+                .is_some()
+        })
     }
 
     fn strip_readonly_deep_for_excess_display(&self, ty: TypeId) -> TypeId {
