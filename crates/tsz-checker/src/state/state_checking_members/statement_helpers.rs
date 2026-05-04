@@ -37,6 +37,27 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    pub(super) fn maybe_report_exported_function_anonymous_class_return_private_members(
+        &mut self,
+        decl_idx: NodeIndex,
+        name_idx: NodeIndex,
+        name: &str,
+        return_type: TypeId,
+    ) {
+        if !self.ctx.emit_declarations() || self.ctx.is_declaration_file() || name.is_empty() {
+            return;
+        }
+        if !self.is_declaration_type_emitted_without_annotation(decl_idx) {
+            return;
+        }
+        let Some(instance_type) = self.instance_type_from_constructor_type(return_type) else {
+            return;
+        };
+        if self.instance_type_is_from_anonymous_class(instance_type) {
+            self.report_instance_type_private_members_as_ts4094(name_idx, instance_type);
+        }
+    }
+
     fn is_declaration_type_emitted_without_annotation(&self, decl_idx: NodeIndex) -> bool {
         let parent_kind = self
             .ctx
@@ -50,6 +71,7 @@ impl<'a> CheckerState<'a> {
                 !self.ctx.binder.is_external_module()
                     || self.is_declaration_exported(self.ctx.arena, decl_idx)
             }
+            Some(kind) if kind == syntax_kind_ext::EXPORT_DECLARATION => true,
             Some(kind) if kind == syntax_kind_ext::MODULE_BLOCK => {
                 self.is_declaration_exported(self.ctx.arena, decl_idx)
             }

@@ -22,11 +22,40 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        if self.is_ambient_module_match(module_name)
-            || self.any_ambient_module_declared(module_name)
-        {
+        let is_ambient_module = self.is_ambient_module_match(module_name)
+            || self.any_ambient_module_declared(module_name);
+        if is_ambient_module {
             self.check_js_type_only_imports_for_ambient_module(import, module_name);
-            return;
+            if self
+                .ctx
+                .binder
+                .shorthand_ambient_modules
+                .contains(module_name)
+            {
+                return;
+            }
+            let import_idx = self
+                .ctx
+                .arena
+                .parent_of(import.module_specifier)
+                .or_else(|| self.ctx.arena.parent_of(import.import_clause));
+            let wrong_context_allows_module_semantics = import_idx.is_some_and(|idx| {
+                self.is_in_non_module_element_context(idx)
+                    && !self.is_inside_function_body(idx)
+                    && !self.is_inside_namespace_declaration(idx)
+            });
+            if self
+                .resolve_effective_module_exports_from_file(
+                    module_name,
+                    Some(self.ctx.current_file_idx),
+                )
+                .is_none()
+            {
+                if wrong_context_allows_module_semantics {
+                    self.check_named_imports_against_empty_ambient_module(import, module_name);
+                }
+                return;
+            }
         }
 
         let clause_node = match self.ctx.arena.get(import.import_clause) {
@@ -117,6 +146,17 @@ impl<'a> CheckerState<'a> {
                     Some(self.ctx.current_file_idx),
                 )
             }
+            .or_else(|| {
+                (self
+                    .ctx
+                    .declared_modules_contains(self.ctx.binder, module_name)
+                    && !self
+                        .ctx
+                        .binder
+                        .shorthand_ambient_modules
+                        .contains(module_name))
+                .then(tsz_binder::SymbolTable::new)
+            })
         } else {
             None
         };
@@ -154,6 +194,8 @@ impl<'a> CheckerState<'a> {
         let quoted_module = format!("\"{module_name}\"");
         let has_json_default_export =
             self.module_has_json_default_export(module_name, Some(self.ctx.current_file_idx));
+        let json_default_only =
+            has_json_default_export && self.current_file_uses_esm_import_syntax();
         let has_module_exports_binding =
             self.module_uses_module_exports_interop(module_name, resolution_mode);
         let has_default_binding = has_json_default_export
@@ -548,6 +590,10 @@ impl<'a> CheckerState<'a> {
                 if !exports_table.has(import_name)
                     && !self.has_named_export_via_export_equals(&exports_table, import_name)
                 {
+                    if has_json_default_export && !json_default_only {
+                        continue;
+                    }
+
                     // Before emitting TS2305, check if this import can be resolved
                     // through re-export chains (wildcard or named re-exports).
                     let found_via_reexport = self.named_import_found_via_reexport(
@@ -618,11 +664,27 @@ impl<'a> CheckerState<'a> {
                             // TS2497 + TS2616/TS2595/TS2597 already emitted
                             // earlier in this function for the export-equals
                             // import mismatch.
-                        } else if has_json_default_export
+                        } else if json_default_only
                             || has_module_exports_binding
                             || exports_table.has("default")
                             || exports_table.has("export=")
                         {
+                            if json_default_only
+                                && self.ctx.compiler_options.module.is_node_module()
+                            {
+                                let module_kind = self.module_kind_display_name();
+                                let message = format_message(
+                                    diagnostic_messages::NAMED_IMPORTS_FROM_A_JSON_FILE_INTO_AN_ECMASCRIPT_MODULE_ARE_NOT_ALLOWED_WHEN_MO,
+                                    &[module_kind],
+                                );
+                                self.error_at_node(
+                                    name_idx,
+                                    &message,
+                                    diagnostic_codes::NAMED_IMPORTS_FROM_A_JSON_FILE_INTO_AN_ECMASCRIPT_MODULE_ARE_NOT_ALLOWED_WHEN_MO,
+                                );
+                                continue;
+                            }
+
                             // Before emitting TS2614, try a type-level resolution for
                             // `export =` modules where the member may be a key of a
                             // mapped type stored as the type of the `export =` target.
@@ -725,14 +787,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-    }
-
-    fn check_js_type_only_imports_for_ambient_module(
-        &mut self,
-        import: &tsz_parser::parser::node::ImportDeclData,
-        module_name: &str,
-    ) {
-        self.check_js_type_only_imports_after_import_validation(import, module_name);
     }
 
     pub(crate) fn check_js_type_only_imports_after_import_validation(
@@ -898,100 +952,6 @@ impl<'a> CheckerState<'a> {
         is_namespace
             && !target_sym.has_any_flags(value_flags_except_module)
             && !self.symbol_has_runtime_value_in_binder(owner_binder, target_sym_id)
-    }
-
-    fn ambient_module_declares_namespace(&self, module_name: &str, namespace_name: &str) -> bool {
-        let clean_module = module_name.trim_matches('"').trim_matches('\'');
-        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
-            return false;
-        };
-
-        for arena in all_arenas.iter() {
-            for node in &arena.nodes {
-                if node.kind != syntax_kind_ext::MODULE_DECLARATION {
-                    continue;
-                }
-                let Some(module_decl) = arena.get_module(node) else {
-                    continue;
-                };
-                let Some(name_node) = arena.get(module_decl.name) else {
-                    continue;
-                };
-                if !arena.get_literal(name_node).is_some_and(|lit| {
-                    lit.text.trim_matches('"').trim_matches('\'') == clean_module
-                }) {
-                    continue;
-                }
-                let Some(body_node) = arena.get(module_decl.body) else {
-                    continue;
-                };
-                let Some(block) = arena.get_module_block(body_node) else {
-                    continue;
-                };
-                let Some(statements) = block.statements.as_ref() else {
-                    continue;
-                };
-                for &stmt_idx in &statements.nodes {
-                    let Some(stmt_node) = arena.get(stmt_idx) else {
-                        continue;
-                    };
-                    if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
-                        continue;
-                    }
-                    let Some(inner_module) = arena.get_module(stmt_node) else {
-                        continue;
-                    };
-                    let Some(inner_name_node) = arena.get(inner_module.name) else {
-                        continue;
-                    };
-                    if arena
-                        .get_identifier(inner_name_node)
-                        .is_some_and(|ident| ident.escaped_text == namespace_name)
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    fn report_checked_js_default_namespace_import_value_uses(
-        &mut self,
-        binding_idx: NodeIndex,
-        local_name: &str,
-    ) {
-        let Some(local_sym_id) = self.resolve_identifier_symbol_without_tracking(binding_idx)
-        else {
-            return;
-        };
-
-        for (raw_idx, node) in self.ctx.arena.nodes.iter().enumerate() {
-            if node.kind != SyntaxKind::Identifier as u16 {
-                continue;
-            }
-            let idx = NodeIndex(raw_idx as u32);
-            if idx == binding_idx || self.is_identifier_in_type_position(idx) {
-                continue;
-            }
-            let Some(ident) = self.ctx.arena.get_identifier(node) else {
-                continue;
-            };
-            if ident.escaped_text != local_name {
-                continue;
-            }
-            if self.resolve_identifier_symbol_without_tracking(idx) != Some(local_sym_id) {
-                continue;
-            }
-            self.report_wrong_meaning(
-                local_name,
-                idx,
-                local_sym_id,
-                crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
-                crate::query_boundaries::name_resolution::NameLookupKind::Value,
-            );
-        }
     }
 
     fn import_local_binding_is_type_only(&self, local_name_idx: NodeIndex) -> bool {

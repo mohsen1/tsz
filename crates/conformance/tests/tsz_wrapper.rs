@@ -209,6 +209,21 @@ fn extract_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
 }
 
 #[test]
+fn test_tests_lib_dir_for_cases_dir_uses_sibling_lib_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let cases_dir = temp.path().join("TypeScript/tests/cases");
+    std::fs::create_dir_all(&cases_dir).unwrap();
+
+    assert_eq!(
+        tests_lib_dir_for_cases_dir(&cases_dir),
+        temp.path()
+            .canonicalize()
+            .unwrap()
+            .join("TypeScript/tests/lib")
+    );
+}
+
+#[test]
 fn test_prepare_test_dir_copies_root_tsconfig_to_root() {
     let content = "";
     let filenames = vec![

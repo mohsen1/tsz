@@ -1038,7 +1038,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn spread_iterability_error_anchor(&self, expr_idx: NodeIndex) -> NodeIndex {
+    pub(crate) fn spread_iterability_error_anchor(&self, expr_idx: NodeIndex) -> NodeIndex {
         let mut current = self.ctx.arena.parent_of(expr_idx);
         while let Some(parent_idx) = current {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
@@ -1058,7 +1058,7 @@ impl<'a> CheckerState<'a> {
         expr_idx
     }
 
-    fn emit_ts2589_spread_instantiation_depth(&mut self, error_node: NodeIndex) {
+    pub(crate) fn emit_ts2589_spread_instantiation_depth(&mut self, error_node: NodeIndex) {
         self.error_at_node(
             error_node,
             diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
