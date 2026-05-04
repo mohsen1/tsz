@@ -600,6 +600,44 @@ fn parse_template_recovery_preserves_follow_up_statement() {
 }
 
 #[test]
+fn parse_unterminated_template_recovery_suppresses_markers_when_tail_template_has_interpolation() {
+    // Regression: when the tail template before `,` contains a `${...}`
+    // interpolation (e.g. `\`...${var}...\`,`), tsc treats it as a
+    // continuation of the outer unterminated template's content and does
+    // NOT surface synthetic TS1005 "',' expected." or "'}' expected."
+    // markers. tsz was emitting both anyway because the heuristic only
+    // looked at the unterminated tail (which starts AT the closing
+    // backtick), missing the opening backtick that lives BEFORE `start`.
+    //
+    // Conformance: this is the differentiator between
+    // `labeledStatementDeclarationListInLoopNoCrash3.ts` (interpolated
+    // tail — no markers) and `...NoCrash4.ts` (plain tail — markers).
+    let source = "function f(){\n  this.classFormat(`${style('active')});\n  const x = [\n    `font-size: var(--button-size-${fontType}-fontSize)`,\n    `height: var(--button-size-${fontType}-height)`,\n  ].join(';')\n}\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let synthetic_recovery_at_eof: Vec<_> = diags
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::EXPECTED
+                && (diag.message == "'}' expected." || diag.message == "',' expected.")
+                && diag.start as usize == source.len()
+        })
+        .collect();
+    assert!(
+        synthetic_recovery_at_eof.is_empty(),
+        "should not emit synthetic recovery markers at EOF when tail template has `${{...}}` interpolation: {synthetic_recovery_at_eof:?}"
+    );
+
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::UNTERMINATED_TEMPLATE_LITERAL),
+        "expected TS1160 unterminated template literal even when synthetic markers suppressed, got {diags:?}"
+    );
+}
+
+#[test]
 fn parse_unterminated_template_recovery_reports_comma_after_next_template_literal() {
     let source = "function f(){\n  this.classFormat(`${style('active')});\n  const x = [\n    `font-size: var(--button-size-${fontType}-fontSize)`,\n    `height: var foo`,\n  ].join(';')\n}\n";
     let (parser, _root) = parse_source(source);
