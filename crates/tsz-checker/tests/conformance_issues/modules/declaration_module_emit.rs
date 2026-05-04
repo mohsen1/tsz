@@ -531,6 +531,47 @@ model.cache;
     );
 }
 
+#[test]
+fn test_namespace_import_conflict_uses_local_namespace_for_qualified_type_members() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "/file1.ts",
+                r#"
+export namespace Library {
+    export type Bar = { a: number };
+}
+"#,
+            ),
+            (
+                "/file2.ts",
+                r#"
+import * as Lib from "./file1";
+namespace Lib {
+    export const foo: string = "";
+}
+var x: Lib.Bar;
+"#,
+            ),
+        ],
+        "/file2.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2440),
+        "Expected TS2440 for namespace import/local namespace conflict. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2694),
+        "Expected TS2694 for missing local namespace type member. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// TS2719: when two different types share the same display name (e.g. a type
 /// parameter `T` shadowing an interface `T`), the checker should emit "Two
 /// different types with this name exist, but they are unrelated" instead of
