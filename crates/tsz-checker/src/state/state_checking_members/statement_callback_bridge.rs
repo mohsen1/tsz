@@ -1,6 +1,7 @@
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::statements::StatementCheckCallbacks;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -288,18 +289,42 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     && self.ctx.emit_declarations()
                     && !self.ctx.is_declaration_file()
                 {
-                    let expr_type = self.get_type_of_node(clause_idx);
-                    let resolved_type = self.resolve_lazy_type(expr_type);
-                    if let Some((from_path, type_name)) = self
-                        .first_non_portable_object_assign_object_literal_reference(clause_idx)
-                        .or_else(|| self.first_non_portable_type_reference(expr_type))
-                        .or_else(|| self.first_non_portable_type_reference(resolved_type))
-                    {
-                        self.error_at_node_msg(
-                            clause_idx,
-                            crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
-                            &["default", &type_name, &from_path],
-                        );
+                    let default_clause_is_identifier = self
+                        .ctx
+                        .arena
+                        .get(clause_idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
+                    if !default_clause_is_identifier {
+                        // Declaration emit runs the authoritative portability check.
+                        // Skipping the checker precheck here avoids duplicate/over-eager
+                        // TS2883 on default-exported local identifiers.
+                        let expr_type = self.get_type_of_node(clause_idx);
+                        let is_object_assign_default = self
+                            .ctx
+                            .arena
+                            .get(clause_idx)
+                            .and_then(|node| self.ctx.arena.get_call_expr(node))
+                            .and_then(|call| self.ctx.arena.get(call.expression))
+                            .and_then(|callee| self.ctx.arena.get_access_expr(callee))
+                            .is_some_and(|access| {
+                                self.ctx.arena.get_identifier_text(access.expression)
+                                    == Some("Object")
+                                    && self.ctx.arena.get_identifier_text(access.name_or_argument)
+                                        == Some("assign")
+                            });
+                        if !is_object_assign_default {
+                            let resolved_type = self.resolve_lazy_type(expr_type);
+                            if let Some((from_path, type_name)) = self
+                                .first_non_portable_type_reference(expr_type)
+                                .or_else(|| self.first_non_portable_type_reference(resolved_type))
+                            {
+                                self.error_at_node_msg(
+                                    clause_idx,
+                                    crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
+                                    &["default", &type_name, &from_path],
+                                );
+                            }
+                        }
                     }
                 }
 

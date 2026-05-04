@@ -12,6 +12,10 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
+pub(crate) use super::lib_decls::{
+    collect_lib_decls_with_arenas, collect_lib_decls_with_arenas_in_contexts, dedup_decl_arenas,
+    resolve_lib_context_fallback_arena, resolve_lib_fallback_arena,
+};
 use super::lib_name_text::{entity_name_text_from_decl_arenas, entity_name_text_in_arena};
 use super::lib_scoped_heritage::LibHeritageBase;
 
@@ -59,79 +63,6 @@ pub(crate) fn keyword_name_to_type_id(name: &str) -> Option<TypeId> {
         "bigint" => Some(TypeId::BIGINT),
         _ => None,
     }
-}
-
-/// Resolve fallback arena for a lib symbol from merged binders/lib contexts.
-pub(crate) fn resolve_lib_fallback_arena<'a>(
-    binder: &'a tsz_binder::BinderState,
-    sym_id: tsz_binder::SymbolId,
-    lib_contexts: &'a [crate::context::LibContext],
-    user_arena: &'a NodeArena,
-) -> &'a NodeArena {
-    binder
-        .symbol_arenas
-        .get(&sym_id)
-        .map(std::convert::AsRef::as_ref)
-        .or_else(|| lib_contexts.first().map(|ctx| ctx.arena.as_ref()))
-        .unwrap_or(user_arena)
-}
-
-/// Resolve fallback arena for a lib symbol within a single lib context.
-pub(crate) fn resolve_lib_context_fallback_arena<'a>(
-    binder: &'a tsz_binder::BinderState,
-    sym_id: tsz_binder::SymbolId,
-    lib_arena: &'a NodeArena,
-) -> &'a NodeArena {
-    binder
-        .symbol_arenas
-        .get(&sym_id)
-        .map(std::convert::AsRef::as_ref)
-        .unwrap_or(lib_arena)
-}
-
-/// Build `(NodeIndex, &NodeArena)` pairs for a symbol's declarations.
-/// Uses `declaration_arenas`, then falls back to user or lib arena.
-pub(crate) fn collect_lib_decls_with_arenas<'a>(
-    binder: &'a tsz_binder::BinderState,
-    sym_id: tsz_binder::SymbolId,
-    declarations: &[NodeIndex],
-    fallback_arena: &'a NodeArena,
-    user_arena: Option<&'a NodeArena>,
-) -> Vec<(NodeIndex, &'a NodeArena)> {
-    declarations
-        .iter()
-        .flat_map(|&decl_idx| {
-            if let Some(arenas) = binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-                arenas
-                    .iter()
-                    .map(|arc| (decl_idx, arc.as_ref()))
-                    .collect::<Vec<_>>()
-            } else if let Some(ua) = user_arena
-                && ua.get(decl_idx).is_some()
-            {
-                // User augmentations are not in declaration_arenas.
-                vec![(decl_idx, ua)]
-            } else {
-                vec![(decl_idx, fallback_arena)]
-            }
-        })
-        .collect()
-}
-
-/// Deduplicate declaration-arena pairs by `(NodeIndex, arena pointer)`.
-pub(crate) fn dedup_decl_arenas<'a>(
-    decls: &[(NodeIndex, &'a NodeArena)],
-) -> Vec<(NodeIndex, &'a NodeArena)> {
-    let mut seen = Vec::with_capacity(decls.len());
-    let mut out = Vec::with_capacity(decls.len());
-    for &(idx, arena) in decls {
-        let key = (idx, arena as *const NodeArena);
-        if !seen.contains(&key) {
-            seen.push(key);
-            out.push((idx, arena));
-        }
-    }
-    out
 }
 
 /// Resolve a `NodeIndex` directly to a `DefId` via the merged binder.
@@ -221,7 +152,9 @@ pub(crate) fn resolve_lib_node_in_arenas(
     decl_arenas: &[(NodeIndex, &NodeArena)],
     fallback_arena: &NodeArena,
 ) -> Option<tsz_binder::SymbolId> {
-    if let Some(sym_id) = binder.get_node_symbol(node_idx) {
+    if let Some(sym_id) =
+        resolve_node_symbol_in_decl_arenas(binder, node_idx, decl_arenas, fallback_arena)
+    {
         return Some(sym_id);
     }
     for (_, arena) in decl_arenas {
@@ -249,6 +182,32 @@ pub(crate) fn resolve_lib_node_in_arenas(
         }
     }
     None
+}
+
+fn resolve_node_symbol_in_decl_arenas(
+    binder: &tsz_binder::BinderState,
+    node_idx: NodeIndex,
+    decl_arenas: &[(NodeIndex, &NodeArena)],
+    fallback_arena: &NodeArena,
+) -> Option<tsz_binder::SymbolId> {
+    for (_, arena) in decl_arenas {
+        if let Some(sym_id) = resolve_node_symbol_in_arena(binder, arena, node_idx) {
+            return Some(sym_id);
+        }
+    }
+    resolve_node_symbol_in_arena(binder, fallback_arena, node_idx)
+}
+
+fn resolve_node_symbol_in_arena(
+    binder: &tsz_binder::BinderState,
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+) -> Option<tsz_binder::SymbolId> {
+    let arena_ptr = arena as *const NodeArena as usize;
+    binder
+        .cross_file_node_symbols
+        .get(&arena_ptr)
+        .and_then(|node_symbols| node_symbols.get(&node_idx.0).copied())
 }
 
 /// Walk a binder's scope chain from the enclosing scope of `node_idx` up to the
@@ -513,11 +472,12 @@ impl<'a> CheckerState<'a> {
         let fallback_arena =
             resolve_lib_fallback_arena(self.ctx.binder, sym_id, &lib_contexts, self.ctx.arena);
 
-        let decls_with_arenas = collect_lib_decls_with_arenas(
+        let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
             self.ctx.binder,
             sym_id,
             &symbol.declarations,
             fallback_arena,
+            &lib_contexts,
             Some(self.ctx.arena),
         );
 
@@ -800,11 +760,12 @@ impl<'a> CheckerState<'a> {
                     self.ctx.arena,
                 );
 
-                let decls_with_arenas = collect_lib_decls_with_arenas(
+                let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
                     self.ctx.binder,
                     sym_id,
                     &symbol.declarations,
                     fallback_arena,
+                    &lib_contexts,
                     Some(self.ctx.arena),
                 );
                 let mut prewarmed_lazy_type_params = rustc_hash::FxHashMap::default();

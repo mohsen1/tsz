@@ -5,6 +5,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -215,11 +216,78 @@ impl<'a> CheckerState<'a> {
                             }
                         } else {
                             let expr_type = self.get_type_of_node(export_data.expression);
+                            let mut object_assign_candidate = export_data.expression;
+                            if let Some(name) =
+                                self.ctx.arena.get_identifier_text(export_data.expression)
+                            {
+                                for &candidate_stmt_idx in statements {
+                                    let Some(candidate_stmt) =
+                                        self.ctx.arena.get(candidate_stmt_idx)
+                                    else {
+                                        continue;
+                                    };
+                                    if candidate_stmt.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                                        continue;
+                                    }
+                                    let Some(variable) =
+                                        self.ctx.arena.get_variable(candidate_stmt)
+                                    else {
+                                        continue;
+                                    };
+                                    for &decl_list_idx in &variable.declarations.nodes {
+                                        let Some(decl_list_node) =
+                                            self.ctx.arena.get(decl_list_idx)
+                                        else {
+                                            continue;
+                                        };
+                                        let Some(decl_list) =
+                                            self.ctx.arena.get_variable(decl_list_node)
+                                        else {
+                                            continue;
+                                        };
+                                        for &decl_idx in &decl_list.declarations.nodes {
+                                            let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                            else {
+                                                continue;
+                                            };
+                                            let Some(decl) =
+                                                self.ctx.arena.get_variable_declaration(decl_node)
+                                            else {
+                                                continue;
+                                            };
+                                            if self.ctx.arena.get_identifier_text(decl.name)
+                                                == Some(name)
+                                                && decl.initializer.is_some()
+                                            {
+                                                object_assign_candidate = decl.initializer;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let is_object_assign_default = self
+                                .ctx
+                                .arena
+                                .get(object_assign_candidate)
+                                .and_then(|node| self.ctx.arena.get_call_expr(node))
+                                .and_then(|call| self.ctx.arena.get(call.expression))
+                                .and_then(|callee| self.ctx.arena.get_access_expr(callee))
+                                .is_some_and(|access| {
+                                    self.ctx.arena.get_identifier_text(access.expression)
+                                        == Some("Object")
+                                        && self
+                                            .ctx
+                                            .arena
+                                            .get_identifier_text(access.name_or_argument)
+                                            == Some("assign")
+                                });
                             // TS2883: The inferred type of 'default' cannot be
                             // named without a reference to an external package.
                             if !export_data.is_export_equals
                                 && self.ctx.emit_declarations()
                                 && !self.ctx.is_declaration_file()
+                                && !is_object_assign_default
                             {
                                 let resolved_type = self.resolve_lazy_type(expr_type);
                                 if let Some((from_path, type_name)) = self

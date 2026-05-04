@@ -35,7 +35,6 @@ impl<'a> CheckerState<'a> {
         let (params, this_type) = self.extract_params_from_parameter_list(&func.parameters);
         let (return_type, type_predicate) =
             self.return_type_and_predicate(func.type_annotation, &params);
-
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_updates);
 

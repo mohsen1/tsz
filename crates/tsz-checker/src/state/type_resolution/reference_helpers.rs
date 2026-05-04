@@ -5,7 +5,7 @@ use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -324,7 +324,17 @@ impl<'a> CheckerState<'a> {
         let def_id = self.ctx.get_or_create_def_id(sym_id);
 
         // Step 2: extract and cache type parameters if not already cached.
-        if self.ctx.get_def_type_params(def_id).is_none() {
+        let should_extract_params = self
+            .ctx
+            .get_def_type_params(def_id)
+            .map(|cached| {
+                !cached.is_empty()
+                    && cached
+                        .iter()
+                        .all(|param| param.constraint.is_none() && param.default.is_none())
+            })
+            .unwrap_or(true);
+        if should_extract_params {
             let params = self.extract_declared_type_params_for_reference_symbol(sym_id, name);
             if !params.is_empty() {
                 self.ctx.insert_def_type_params(def_id, params);
@@ -358,7 +368,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> Vec<tsz_solver::TypeParamInfo> {
-        let Some(symbol) = self.get_symbol_globally(sym_id) else {
+        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
             return Vec::new();
         };
         let declarations = symbol.declarations.clone();
@@ -368,90 +378,167 @@ impl<'a> CheckerState<'a> {
         let mut merged: Vec<tsz_solver::TypeParamInfo> = Vec::new();
         let mut jsdoc_fallback: Option<Vec<tsz_solver::TypeParamInfo>> = None;
         for &decl_idx in &declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
+            let decl_arenas: Vec<&NodeArena> = self
+                .ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .map(|arenas| arenas.iter().map(std::convert::AsRef::as_ref).collect())
+                .or_else(|| {
+                    self.ctx
+                        .binder
+                        .symbol_arenas
+                        .get(&sym_id)
+                        .map(|arena| vec![arena.as_ref()])
+                })
+                .unwrap_or_else(|| vec![self.ctx.arena]);
 
-            let decl_params: Option<Vec<tsz_solver::TypeParamInfo>> = if let Some(type_alias) =
-                self.ctx.arena.get_type_alias(node)
-            {
-                let name_matches = self
-                    .ctx
-                    .arena
-                    .get(type_alias.name)
-                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .is_none_or(|ident| ident.escaped_text == expected_name);
-                if name_matches {
-                    let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
-                    self.pop_type_parameters(updates);
-                    Some(params)
-                } else {
-                    None
-                }
-            } else if let Some(iface) = self.ctx.arena.get_interface(node) {
-                let name_matches = self
-                    .ctx
-                    .arena
-                    .get(iface.name)
-                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .is_none_or(|ident| ident.escaped_text == expected_name);
-                if name_matches {
-                    let (params, updates) = self.push_type_parameters(&iface.type_parameters);
-                    self.pop_type_parameters(updates);
-                    Some(params)
-                } else {
-                    None
-                }
-            } else if !mixed_class_interface && let Some(class) = self.ctx.arena.get_class(node) {
-                let name_matches = self
-                    .ctx
-                    .arena
-                    .get(class.name)
-                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .is_none_or(|ident| ident.escaped_text == expected_name);
-                if name_matches {
-                    let (params, updates) = self.push_type_parameters(&class.type_parameters);
-                    self.pop_type_parameters(updates);
-                    if params.is_empty()
-                        && self.is_js_file()
-                        && let Some(jsdoc_params) =
-                            self.jsdoc_template_type_params_for_class_decl(decl_idx)
-                        && !jsdoc_params.is_empty()
+            for decl_arena in decl_arenas {
+                let Some(node) = decl_arena.get(decl_idx) else {
+                    continue;
+                };
+
+                let decl_params: Option<Vec<tsz_solver::TypeParamInfo>> = if let Some(type_alias) =
+                    decl_arena.get_type_alias(node)
+                {
+                    if let Some(name_node) = decl_arena.get(type_alias.name)
+                        && let Some(ident) = decl_arena.get_identifier(name_node)
+                        && ident.escaped_text != expected_name
                     {
-                        jsdoc_fallback.get_or_insert(jsdoc_params);
-                        None
+                        continue;
+                    }
+                    let params = if std::ptr::eq(decl_arena, self.ctx.arena) {
+                        let (params, updates) =
+                            self.push_type_parameters(&type_alias.type_parameters);
+                        self.pop_type_parameters(updates);
+                        params
                     } else {
-                        Some(params)
+                        let type_resolver = |node_idx: NodeIndex| {
+                            decl_arena.get_identifier_text(node_idx).and_then(|name| {
+                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    .and_then(|def_id| {
+                                        self.ctx.def_to_symbol_id_with_fallback(def_id)
+                                    })
+                                    .map(|sym_id| sym_id.0)
+                            })
+                        };
+                        let def_id_resolver = |node_idx: NodeIndex| {
+                            decl_arena.get_identifier_text(node_idx).and_then(|name| {
+                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                            })
+                        };
+                        let value_resolver =
+                            |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                        let name_resolver = |type_name: &str| {
+                            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                        };
+                        tsz_lowering::TypeLowering::with_hybrid_resolver(
+                            decl_arena,
+                            self.ctx.types,
+                            &type_resolver,
+                            &def_id_resolver,
+                            &value_resolver,
+                        )
+                        .with_name_def_id_resolver(&name_resolver)
+                        .prefer_name_def_id_resolution()
+                        .collect_type_alias_type_parameters(type_alias)
+                    };
+                    Some(params)
+                } else if let Some(iface) = decl_arena.get_interface(node) {
+                    if let Some(name_node) = decl_arena.get(iface.name)
+                        && let Some(ident) = decl_arena.get_identifier(name_node)
+                        && ident.escaped_text != expected_name
+                    {
+                        continue;
+                    }
+                    let params = if std::ptr::eq(decl_arena, self.ctx.arena) {
+                        let (params, updates) = self.push_type_parameters(&iface.type_parameters);
+                        self.pop_type_parameters(updates);
+                        params
+                    } else {
+                        let type_resolver = |node_idx: NodeIndex| {
+                            decl_arena.get_identifier_text(node_idx).and_then(|name| {
+                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    .and_then(|def_id| {
+                                        self.ctx.def_to_symbol_id_with_fallback(def_id)
+                                    })
+                                    .map(|sym_id| sym_id.0)
+                            })
+                        };
+                        let def_id_resolver = |node_idx: NodeIndex| {
+                            decl_arena.get_identifier_text(node_idx).and_then(|name| {
+                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                            })
+                        };
+                        let value_resolver =
+                            |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                        let name_resolver = |type_name: &str| {
+                            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                        };
+                        tsz_lowering::TypeLowering::with_hybrid_resolver(
+                            decl_arena,
+                            self.ctx.types,
+                            &type_resolver,
+                            &def_id_resolver,
+                            &value_resolver,
+                        )
+                        .with_name_def_id_resolver(&name_resolver)
+                        .prefer_name_def_id_resolution()
+                        .collect_merged_interface_type_parameters(&[(decl_idx, decl_arena)])
+                    };
+                    Some(params)
+                } else if !mixed_class_interface && let Some(class) = decl_arena.get_class(node) {
+                    if let Some(name_node) = decl_arena.get(class.name)
+                        && let Some(ident) = decl_arena.get_identifier(name_node)
+                        && ident.escaped_text != expected_name
+                    {
+                        continue;
+                    }
+                    if std::ptr::eq(decl_arena, self.ctx.arena) {
+                        let (params, updates) = self.push_type_parameters(&class.type_parameters);
+                        self.pop_type_parameters(updates);
+                        if !params.is_empty() {
+                            Some(params)
+                        } else if self.is_js_file()
+                            && let Some(jsdoc_params) =
+                                self.jsdoc_template_type_params_for_class_decl(decl_idx)
+                            && !jsdoc_params.is_empty()
+                        {
+                            jsdoc_fallback.get_or_insert(jsdoc_params);
+                            None
+                        } else {
+                            Some(params)
+                        }
+                    } else {
+                        None
                     }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
-            let Some(params) = decl_params else {
-                continue;
-            };
-            if params.is_empty() {
-                continue;
-            }
-            if merged.is_empty() {
-                merged = params;
-                continue;
-            }
-            // Merge defaults across declarations of a merged class/interface.
-            // tsc spreads type-parameter defaults across all merged declarations:
-            // a default specified on any declaration applies for the unsupplied
-            // position. Only fill missing slots so the leftmost-with-default wins.
-            for (slot, incoming) in merged.iter_mut().zip(params.iter()) {
-                if slot.default.is_none() && incoming.default.is_some() {
-                    *slot = tsz_solver::TypeParamInfo {
-                        name: slot.name,
-                        constraint: slot.constraint,
-                        default: incoming.default,
-                        is_const: slot.is_const,
-                    };
+                let Some(params) = decl_params else {
+                    continue;
+                };
+                if params.is_empty() {
+                    continue;
+                }
+                if merged.is_empty() {
+                    merged = params;
+                    continue;
+                }
+                // Merge defaults across declarations of a merged class/interface.
+                // tsc spreads type-parameter defaults across all merged declarations:
+                // a default specified on any declaration applies for the unsupplied
+                // position. Only fill missing slots so the leftmost-with-default wins.
+                for (slot, incoming) in merged.iter_mut().zip(params.iter()) {
+                    if slot.default.is_none() && incoming.default.is_some() {
+                        *slot = tsz_solver::TypeParamInfo {
+                            name: slot.name,
+                            constraint: slot.constraint,
+                            default: incoming.default,
+                            is_const: slot.is_const,
+                        };
+                    }
                 }
             }
         }

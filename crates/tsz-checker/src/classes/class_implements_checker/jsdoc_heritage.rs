@@ -453,16 +453,16 @@ impl<'a> CheckerState<'a> {
         let name = self
             .heritage_name_text(expr_idx)
             .unwrap_or_else(|| "<expression>".to_string());
+        let type_params = self.type_params_for_heritage_symbol(heritage_sym);
         if (self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(heritage_sym))
             || self.is_well_known_lib_type_name(&name)
-            || self
-                .get_cross_file_symbol(heritage_sym)
-                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::VARIABLE))
+            || (type_params.is_empty()
+                && self
+                    .get_cross_file_symbol(heritage_sym)
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::VARIABLE)))
         {
             return;
         }
-
-        let type_params = self.type_params_for_heritage_symbol(heritage_sym);
         if type_params.is_empty() {
             return;
         }
@@ -714,6 +714,23 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: tsz_binder::SymbolId,
     ) -> Vec<tsz_solver::TypeParamInfo> {
+        let import_target = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+            Some((
+                symbol.import_module.as_ref()?.clone(),
+                symbol.import_name.as_ref()?.clone(),
+            ))
+        });
+
+        if let Some((module_specifier, import_name)) = import_target
+            && import_name != "*"
+            && import_name != "default"
+            && let Some(export_sym) =
+                self.resolve_direct_imported_heritage_export(&module_specifier, &import_name)
+            && let Some(type_params) = self.type_params_for_cross_file_heritage_symbol(export_sym)
+        {
+            return type_params;
+        }
+
         let mut type_params = self.get_type_params_for_symbol(sym_id);
         if type_params.is_empty() {
             let mut visited_aliases = AliasCycleTracker::new();
@@ -721,7 +738,122 @@ impl<'a> CheckerState<'a> {
                 type_params = self.get_type_params_for_symbol(resolved);
             }
         }
+        if type_params.is_empty()
+            && let Some((module_specifier, import_name)) =
+                self.get_cross_file_symbol(sym_id).and_then(|symbol| {
+                    Some((
+                        symbol.import_module.as_ref()?,
+                        symbol.import_name.as_deref()?,
+                    ))
+                })
+            && import_name != "*"
+            && import_name != "default"
+            && let Some(export_sym) = self.resolve_cross_file_export(module_specifier, import_name)
+        {
+            type_params = self.get_type_params_for_symbol(export_sym);
+        }
         type_params
+    }
+
+    fn resolve_direct_imported_heritage_export(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.as_str();
+
+        let sym_id = target_binder
+            .module_exports
+            .get(target_file_name)
+            .and_then(|exports| exports.get(export_name))
+            .or_else(|| {
+                target_binder
+                    .module_exports
+                    .get(module_specifier)
+                    .and_then(|exports| exports.get(export_name))
+            })
+            .or_else(|| target_binder.file_locals.get(export_name))?;
+
+        self.ctx
+            .register_symbol_file_target(sym_id, target_file_idx);
+        Some(sym_id)
+    }
+
+    fn type_params_for_cross_file_heritage_symbol(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        use tsz_binder::symbol_flags;
+
+        let file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let symbol = binder.get_symbol(sym_id)?;
+        let flags = symbol.flags;
+        if flags & (symbol_flags::TYPE_ALIAS | symbol_flags::CLASS | symbol_flags::INTERFACE) == 0 {
+            return None;
+        }
+
+        let mut decl_candidates = Vec::new();
+        if symbol.value_declaration.is_some() {
+            decl_candidates.push(symbol.value_declaration);
+        }
+        for &decl in &symbol.declarations {
+            if decl != symbol.value_declaration {
+                decl_candidates.push(decl);
+            }
+        }
+
+        for decl_idx in decl_candidates {
+            let Some(params) = self.simple_cross_file_heritage_type_params(arena, flags, decl_idx)
+            else {
+                continue;
+            };
+            if !params.is_empty() {
+                return Some(params);
+            }
+        }
+        None
+    }
+
+    fn simple_cross_file_heritage_type_params(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        flags: u32,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        use tsz_binder::symbol_flags;
+
+        let node = arena.get(decl_idx)?;
+        let type_parameters = if flags & symbol_flags::TYPE_ALIAS != 0 {
+            arena.get_type_alias(node)?.type_parameters.as_ref()?
+        } else if flags & symbol_flags::CLASS != 0 {
+            arena.get_class(node)?.type_parameters.as_ref()?
+        } else if flags & symbol_flags::INTERFACE != 0 {
+            arena.get_interface(node)?.type_parameters.as_ref()?
+        } else {
+            return None;
+        };
+
+        let mut params = Vec::with_capacity(type_parameters.nodes.len());
+        for &param_idx in &type_parameters.nodes {
+            let node = arena.get(param_idx)?;
+            let data = arena.get_type_parameter(node)?;
+            let name = arena
+                .get(data.name)
+                .and_then(|name_node| arena.get_identifier(name_node))
+                .map(|id_data| id_data.escaped_text.clone())?;
+            params.push(tsz_solver::TypeParamInfo {
+                name: self.ctx.types.intern_string(&name),
+                constraint: None,
+                default: (data.default != NodeIndex::NONE).then_some(TypeId::UNKNOWN),
+                is_const: arena.has_modifier(&data.modifiers, SyntaxKind::ConstKeyword),
+            });
+        }
+        Some(params)
     }
 
     fn split_jsdoc_type_arguments(type_args: &str) -> Vec<&str> {

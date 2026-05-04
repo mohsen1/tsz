@@ -546,6 +546,9 @@ mod variadic_tuple_elaboration_tests;
 #[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;
+#[cfg(test)]
+#[path = "tests/zod_type_query_regression_tests.rs"]
+mod zod_type_query_regression_tests;
 
 // Re-export key types
 pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};

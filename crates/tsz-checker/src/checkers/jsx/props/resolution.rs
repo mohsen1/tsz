@@ -1037,9 +1037,7 @@ impl<'a> CheckerState<'a> {
                                 )
                                 .is_some_and(|sigs| !sigs.is_empty());
                         if !has_function_context {
-                            if let Some(entry) = provided_attrs.last_mut() {
-                                entry.1 = TypeId::ANY;
-                            }
+                            self.retry_jsx_attr(value_node_idx, request, &mut provided_attrs);
                             continue;
                         }
                         self.ctx

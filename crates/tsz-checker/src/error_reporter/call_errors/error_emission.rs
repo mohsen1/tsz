@@ -49,7 +49,23 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.as_type_database(),
             param_type,
         ) {
-            return;
+            let evaluated_arg_type = self.evaluate_type_with_env(arg_type);
+            let evaluated_param_type = self.evaluate_type_with_env(param_type);
+            if crate::query_boundaries::common::contains_infer_types(
+                self.ctx.types.as_type_database(),
+                evaluated_arg_type,
+            ) || crate::query_boundaries::common::contains_infer_types(
+                self.ctx.types.as_type_database(),
+                evaluated_param_type,
+            ) || crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                evaluated_arg_type,
+            ) || crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                evaluated_param_type,
+            ) {
+                return;
+            }
         }
         if self.should_suppress_partial_self_argument_mismatch(arg_type, param_type) {
             return;

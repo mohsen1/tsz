@@ -671,6 +671,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a non-generic definition body in **both** type environments.
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
+        self.definition_store.set_body(def_id, body);
         self.with_envs_for_register("insert_def", |env| {
             env.insert_def(def_id, body);
         });
@@ -684,6 +685,9 @@ impl<'a> CheckerContext<'a> {
         body: TypeId,
         params: Vec<tsz_solver::TypeParamInfo>,
     ) {
+        self.definition_store.set_body(def_id, body);
+        self.definition_store
+            .set_type_params(def_id, params.clone());
         let declared_variances = tsz_solver::TypeResolver::get_type_param_variance(self, def_id);
         self.with_envs_for_register("insert_def_with_params", |env| {
             env.insert_def_with_params(def_id, body, params.clone());

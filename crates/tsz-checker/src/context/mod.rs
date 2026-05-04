@@ -52,8 +52,8 @@ use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::TypeId;
 use tsz_solver::def::{DefId, DefinitionStore};
+use tsz_solver::{PropertyInfo, TypeId};
 
 // Re-export CheckerOptions and ScriptTarget from tsz-common
 use tsz_binder::{BinderState, ModuleAugmentation};
@@ -156,6 +156,42 @@ pub struct PendingImplicitAnyVar {
     pub name_node: NodeIndex,
     /// Which deferred implicit-any behavior applies to this declaration.
     pub kind: PendingImplicitAnyKind,
+}
+
+/// In-progress object literal initializer for a variable declaration.
+///
+/// TypeScript allows later property initializers to reference earlier properties
+/// through the variable being initialized, e.g.
+/// `const keys = { all: ["x"] as const, list: () => [...keys.all] }`.
+/// The full variable type is not available while the object literal is being
+/// checked, so this stack exposes only properties that have already been
+/// processed for the exact active literal.
+#[derive(Clone, Debug)]
+pub struct PartialObjectLiteralInitializer {
+    pub variable_symbol: SymbolId,
+    pub object_literal: NodeIndex,
+    pub properties: FxHashMap<Atom, PropertyInfo>,
+}
+
+impl PartialObjectLiteralInitializer {
+    #[must_use]
+    pub fn new(variable_symbol: SymbolId, object_literal: NodeIndex) -> Self {
+        Self {
+            variable_symbol,
+            object_literal,
+            properties: FxHashMap::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ObjectLiteralTracking {
+    /// Raw object-literal property diagnostic target, keyed by property element for TS2322/TS2345 display recovery.
+    pub property_diag_targets: FxHashMap<NodeIndex, TypeId>,
+    /// Contextual target type for an object literal, keyed by literal node for per-property diagnostic recovery.
+    pub contextual_targets: FxHashMap<NodeIndex, TypeId>,
+    /// Stack of in-progress object literal variable initializers.
+    pub partial_initializers: Vec<PartialObjectLiteralInitializer>,
 }
 
 /// Persistent cache for type checking results across LSP queries.
@@ -366,11 +402,8 @@ pub struct CheckerContext<'a> {
     /// Request-aware cache for audited non-empty request paths only.
     pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
 
-    /// Raw object-literal property diagnostic target, keyed by property element for TS2322/TS2345 display recovery.
-    pub object_literal_property_diag_targets: FxHashMap<NodeIndex, TypeId>,
-
-    /// Contextual target type for an object literal, keyed by literal node for per-property diagnostic recovery.
-    pub object_literal_contextual_targets: FxHashMap<NodeIndex, TypeId>,
+    /// Object-literal diagnostic recovery and active initializer state.
+    pub object_literal_tracking: ObjectLiteralTracking,
 
     /// Internal counters for request-aware cache usage and cache-clear churn.
     pub request_cache_counters: RequestCacheCounters,

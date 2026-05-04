@@ -2,6 +2,7 @@
 //! and expando function pattern detection.
 
 mod helpers;
+mod known_globals;
 mod resolve;
 
 #[cfg(test)]

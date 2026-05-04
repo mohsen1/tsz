@@ -4,6 +4,7 @@
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -747,7 +748,7 @@ impl<'a> CheckerState<'a> {
                         })
             })
             .collect();
-        if local_interface_decls.len() == declarations.len() {
+        if local_interface_decls.len() == declarations.len() && !self.ctx.is_declaration_file() {
             let mut merged = TypeId::ERROR;
             for decl_idx in local_interface_decls {
                 let interface_type = self.get_type_of_interface(decl_idx);
@@ -784,6 +785,22 @@ impl<'a> CheckerState<'a> {
         // Stable-identity helper: prefer Lazy(DefId) over Ref(SymbolRef)
         let def_id_resolver = |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
         let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+        let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                .or_else(|| {
+                    resolve_name_to_lib_symbol(
+                        type_name,
+                        self.ctx.binder,
+                        self.ctx.global_file_locals_index.as_deref(),
+                        self.ctx
+                            .all_binders
+                            .as_ref()
+                            .map(|binders| binders.as_ref().as_slice()),
+                        &self.ctx.lib_contexts,
+                    )
+                    .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
+                })
+        };
         let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
             computed_names.get(&expr_idx).copied()
         };
@@ -802,7 +819,13 @@ impl<'a> CheckerState<'a> {
         )
         .with_type_param_bindings(type_param_bindings)
         .with_computed_name_resolver(&computed_name_resolver)
-        .with_lazy_type_params_resolver(&lazy_type_params_resolver);
+        .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+        .with_name_def_id_resolver(&name_resolver);
+        let lowering = if self.ctx.is_declaration_file() && !self.ctx.lib_contexts.is_empty() {
+            lowering.prefer_name_def_id_resolution()
+        } else {
+            lowering
+        };
         let interface_type =
             lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
         // Seed a partial structural interface type before heritage merging so
@@ -1141,25 +1164,26 @@ impl<'a> CheckerState<'a> {
                         };
                         if node.kind == syntax_kind_ext::TYPE_REFERENCE
                             && let Some(type_ref) = decl_arena.get_type_ref(node)
+                            && let Some(name_node) = decl_arena.get(type_ref.type_name)
+                            && name_node.kind == SyntaxKind::Identifier as u16
+                            && let Some(name) = decl_arena.get_identifier_text(type_ref.type_name)
                         {
-                            let has_type_args = type_ref
-                                .type_arguments
-                                .as_ref()
-                                .is_some_and(|args| !args.nodes.is_empty());
-                            if !has_type_args
-                                && let Some(name_node) = decl_arena.get(type_ref.type_name)
-                                && name_node.kind == SyntaxKind::Identifier as u16
-                                && let Some(name) =
-                                    decl_arena.get_identifier_text(type_ref.type_name)
-                            {
-                                self.prime_lib_type_params(name);
-                                if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                                    let def_id = self.ctx.get_or_create_def_id(sym_id);
-                                    if let Some(params) = self.ctx.get_def_type_params(def_id)
-                                        && !params.is_empty()
-                                    {
-                                        prewarmed_lazy_type_params.insert(def_id, params);
-                                    }
+                            self.prime_lib_type_params(name);
+                            if let Some(sym_id) = resolve_name_to_lib_symbol(
+                                name,
+                                self.ctx.binder,
+                                self.ctx.global_file_locals_index.as_deref(),
+                                self.ctx
+                                    .all_binders
+                                    .as_ref()
+                                    .map(|binders| binders.as_ref().as_slice()),
+                                &self.ctx.lib_contexts,
+                            ) {
+                                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                                if let Some(params) = self.ctx.get_def_type_params(def_id)
+                                    && !params.is_empty()
+                                {
+                                    prewarmed_lazy_type_params.insert(def_id, params);
                                 }
                             }
                         }
@@ -1184,7 +1208,16 @@ impl<'a> CheckerState<'a> {
                     if is_compiler_managed_type(ident_name) {
                         return None;
                     }
-                    let sym_id = binder.file_locals.get(ident_name)?;
+                    let sym_id = resolve_name_to_lib_symbol(
+                        ident_name,
+                        binder,
+                        self.ctx.global_file_locals_index.as_deref(),
+                        self.ctx
+                            .all_binders
+                            .as_ref()
+                            .map(|binders| binders.as_ref().as_slice()),
+                        &self.ctx.lib_contexts,
+                    )?;
                     let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
                     symbol.has_any_flags(symbol_flags::TYPE).then_some(sym_id)
                 };
@@ -1202,8 +1235,46 @@ impl<'a> CheckerState<'a> {
                 // Stable-identity helper for DefId-based resolution
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
                     if needs_text_based_resolution {
-                        multi_arena_resolve(node_idx)
-                            .map(|sym_id| self.ctx.get_or_create_def_id(sym_id))
+                        decls_with_arenas
+                            .iter()
+                            .find_map(|(_, arena)| arena.get_identifier_text(node_idx))
+                            .or_else(|| fallback_arena.get_identifier_text(node_idx))
+                            .and_then(|name| {
+                                namespace_prefix
+                                    .as_ref()
+                                    .and_then(|prefix| {
+                                        let mut scoped =
+                                            String::with_capacity(prefix.len() + 1 + name.len());
+                                        scoped.push_str(prefix);
+                                        scoped.push('.');
+                                        scoped.push_str(name);
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(
+                                            &scoped,
+                                        )
+                                    })
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
+                                    .or_else(|| {
+                                        resolve_name_to_lib_symbol(
+                                            name,
+                                            self.ctx.binder,
+                                            self.ctx.global_file_locals_index.as_deref(),
+                                            self.ctx
+                                                .all_binders
+                                                .as_ref()
+                                                .map(|binders| binders.as_ref().as_slice()),
+                                            &self.ctx.lib_contexts,
+                                        )
+                                        .map(|sym_id| {
+                                            self.ctx.get_canonical_lib_def_id(name, sym_id)
+                                        })
+                                    })
+                            })
+                            .or_else(|| {
+                                multi_arena_resolve(node_idx)
+                                    .map(|sym_id| self.ctx.get_or_create_def_id(sym_id))
+                            })
                     } else {
                         self.resolve_def_id_for_lowering(node_idx)
                     }
@@ -1220,6 +1291,19 @@ impl<'a> CheckerState<'a> {
                             self.resolve_entity_name_text_to_def_id_for_lowering(&scoped)
                         })
                         .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
+                        .or_else(|| {
+                            resolve_name_to_lib_symbol(
+                                type_name,
+                                self.ctx.binder,
+                                self.ctx.global_file_locals_index.as_deref(),
+                                self.ctx
+                                    .all_binders
+                                    .as_ref()
+                                    .map(|binders| binders.as_ref().as_slice()),
+                                &self.ctx.lib_contexts,
+                            )
+                            .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
+                        })
                 };
 
                 let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
@@ -1246,6 +1330,11 @@ impl<'a> CheckerState<'a> {
                     symbol.escaped_name.clone(),
                     self.ctx.get_or_create_def_id(sym_id),
                 );
+                let lowering = if needs_text_based_resolution {
+                    lowering.prefer_name_def_id_resolution()
+                } else {
+                    lowering
+                };
 
                 // Use merged interface lowering for multi-arena declarations
                 let has_multi_arenas = has_declaration_arenas;
@@ -1352,6 +1441,10 @@ impl<'a> CheckerState<'a> {
                         && let Some(node) = lib_arena.get(decl_idx)
                         && let Some(type_alias) = lib_arena.get_type_alias(node)
                     {
+                        self.prime_type_reference_params_in_alias_body(
+                            lib_arena,
+                            type_alias.type_node,
+                        );
                         let type_param_bindings = self.get_type_param_bindings();
                         let binder = &self.ctx.binder;
                         let lib_binders = self.get_lib_binders();

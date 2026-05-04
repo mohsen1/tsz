@@ -995,10 +995,17 @@ impl<'a> CheckerState<'a> {
             has_construct_signatures(self, actual) && has_construct_signatures(self, expected);
         let constructor_generic_mismatch = constructor_mismatch
             && (actual_has_generic_signatures || expected_has_generic_signatures);
-        if assign_query::contains_infer_types(self.ctx.types, actual)
-            || assign_query::contains_infer_types(self.ctx.types, expected)
-        {
-            return true;
+        let actual_contains_infer = assign_query::contains_infer_types(self.ctx.types, actual);
+        let expected_contains_infer = assign_query::contains_infer_types(self.ctx.types, expected);
+        if actual_contains_infer || expected_contains_infer {
+            let evaluated_actual = self.evaluate_type_with_env(actual);
+            let evaluated_expected = self.evaluate_type_with_env(expected);
+            let evaluated_still_has_holes =
+                assign_query::contains_infer_types(self.ctx.types, evaluated_actual)
+                    || assign_query::contains_infer_types(self.ctx.types, evaluated_expected)
+                    || assign_query::contains_type_parameters(self.ctx.types, evaluated_actual)
+                    || assign_query::contains_type_parameters(self.ctx.types, evaluated_expected);
+            return evaluated_still_has_holes;
         }
         if callable_mismatch {
             let refined_actual = if self

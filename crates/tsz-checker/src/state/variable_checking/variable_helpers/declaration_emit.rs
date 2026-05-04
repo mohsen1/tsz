@@ -330,6 +330,10 @@ impl<'a> CheckerState<'a> {
             return Some(info);
         }
 
+        if self.type_has_public_surface_reference_with_portable_arguments(inferred_type) {
+            return None;
+        }
+
         if let Some(shape) = query::callable_shape(self.ctx.types, inferred_type) {
             for sig in &shape.call_signatures {
                 for param in &sig.params {
@@ -361,6 +365,80 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn type_has_public_surface_reference_with_portable_arguments(&self, type_id: TypeId) -> bool {
+        if let Some(alias) = self.ctx.types.get_display_alias(type_id)
+            && alias != type_id
+            && self.type_has_public_surface_reference_with_portable_arguments(alias)
+        {
+            return true;
+        }
+
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        if !self.type_id_is_public_package_export_surface(base) {
+            return false;
+        }
+        args.iter()
+            .copied()
+            .all(|arg| self.first_non_portable_type_reference(arg).is_none())
+    }
+
+    fn type_id_is_public_package_export_surface(&self, type_id: TypeId) -> bool {
+        let Some(def_id) = lazy_def_id(self.ctx.types, type_id) else {
+            return false;
+        };
+        let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id) else {
+            return false;
+        };
+        let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {
+            return false;
+        };
+        let Some(source_path) = self.symbol_source_path(sym_id) else {
+            return false;
+        };
+        if !source_path.contains("/node_modules/") && !source_path.contains("\\node_modules\\") {
+            return false;
+        }
+        if Self::node_modules_segment_count(&source_path) >= 2 {
+            return false;
+        }
+
+        let name = symbol.escaped_name.as_str();
+        let mut binders: Vec<&tsz_binder::BinderState> = vec![self.ctx.binder];
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            binders.extend(all_binders.iter().map(std::convert::AsRef::as_ref));
+        }
+
+        binders.into_iter().any(|binder| {
+            binder.module_exports.iter().any(|(_, exports)| {
+                exports.get(name).is_some_and(|exported| {
+                    exported == sym_id
+                        || binder.resolve_import_symbol(exported) == Some(sym_id)
+                        || self.ctx.binder.resolve_import_symbol(exported) == Some(sym_id)
+                        || self.resolve_alias_symbol(exported, &mut AliasCycleTracker::new())
+                            == Some(sym_id)
+                })
+            })
+        })
+    }
+
+    fn node_modules_segment_count(path: &str) -> usize {
+        use std::path::{Component, Path};
+
+        Path::new(path)
+            .components()
+            .filter(|component| {
+                matches!(
+                    component,
+                    Component::Normal(part) if part.to_str() == Some("node_modules")
+                )
+            })
+            .count()
     }
 
     pub(crate) fn first_private_name_from_external_module_reference(

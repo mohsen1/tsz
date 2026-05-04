@@ -850,6 +850,11 @@ impl<'a> CheckerState<'a> {
 
             // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
+            let result_params = checker
+                .ctx
+                .get_existing_def_id(sym_id)
+                .and_then(|def_id| checker.ctx.get_def_type_params(def_id))
+                .unwrap_or_default();
 
             // Collect child data before dropping (child borrows from self.ctx.types).
 
@@ -984,13 +989,13 @@ impl<'a> CheckerState<'a> {
                     sym_id,
                     target_file_idx as u32,
                     result,
-                    Vec::new(),
+                    result_params.clone(),
                 );
             }
 
             self.ctx.leave_recursion();
             Self::leave_cross_arena_delegation();
-            return Some((result, Vec::new()));
+            return Some((result, result_params));
         }
 
         None
@@ -1459,13 +1464,20 @@ impl<'a> CheckerState<'a> {
 
         let substitution = type_args
             .filter(|type_args| {
-                !interface_params.is_empty() && interface_params.len() == type_args.len()
+                !interface_params.is_empty() && type_args.len() <= interface_params.len()
+            })
+            .and_then(|type_args| {
+                crate::query_boundaries::type_defaults::fill_application_defaults(
+                    checker.ctx.types,
+                    type_args,
+                    &interface_params,
+                )
             })
             .map(|type_args| {
                 crate::query_boundaries::common::TypeSubstitution::from_args(
                     checker.ctx.types,
                     &interface_params,
-                    type_args,
+                    &type_args,
                 )
             });
 

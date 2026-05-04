@@ -1115,6 +1115,22 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.emit_declarations() || self.ctx.is_declaration_file() || name.is_empty() {
             return;
         }
+
+        let initializer_is_object_assign = self
+            .ctx
+            .arena
+            .get(initializer)
+            .and_then(|node| self.ctx.arena.get_call_expr(node))
+            .and_then(|call| self.ctx.arena.get(call.expression))
+            .and_then(|callee| self.ctx.arena.get_access_expr(callee))
+            .is_some_and(|access| {
+                self.ctx.arena.get_identifier_text(access.expression) == Some("Object")
+                    && self.ctx.arena.get_identifier_text(access.name_or_argument) == Some("assign")
+            });
+        if initializer_is_object_assign {
+            return;
+        }
+
         if name == "globalThis"
             && initializer.is_some()
             && let Some(init_sym_id) = self.exported_variable_initializer_symbol(initializer)

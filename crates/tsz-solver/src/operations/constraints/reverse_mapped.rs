@@ -1091,6 +1091,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let s_app = self.interner.type_application(s_app_id);
                 let t_app = self.interner.type_application(t_app_id);
                 s_app.base == t_app.base
+                    || self
+                        .checker
+                        .promise_like_type_argument(source)
+                        .zip(self.checker.promise_like_type_argument(target))
+                        .is_some()
             }
             (TypeData::Object(_), TypeData::Object(_))
             | (TypeData::ObjectWithIndex(_), TypeData::ObjectWithIndex(_))

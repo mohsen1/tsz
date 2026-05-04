@@ -15,6 +15,35 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn partial_object_literal_initializer_property_type(
+        &self,
+        expression: NodeIndex,
+        name_or_argument: NodeIndex,
+    ) -> Option<TypeId> {
+        let expr_node = self.ctx.arena.get(expression)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let property_name = self
+            .ctx
+            .arena
+            .get_identifier_at(name_or_argument)
+            .map(|ident| ident.escaped_text.as_str())?;
+        let variable_symbol = self.resolve_identifier_symbol_without_tracking(expression)?;
+        let property_atom = self.ctx.types.intern_string(property_name);
+        self.ctx
+            .object_literal_tracking
+            .partial_initializers
+            .iter()
+            .rev()
+            .find(|active| {
+                active.variable_symbol == variable_symbol
+                    && active.properties.contains_key(&property_atom)
+            })
+            .and_then(|active| active.properties.get(&property_atom))
+            .map(|prop| prop.type_id)
+    }
+
     /// Inner implementation of property access type resolution.
     pub(crate) fn get_type_of_property_access_inner(
         &mut self,
@@ -61,6 +90,13 @@ impl<'a> CheckerState<'a> {
             // Preserve diagnostics on the base expression when member name is missing.
             let _ = self.get_type_of_node(access.expression);
             return TypeId::ERROR;
+        }
+
+        if let Some(type_id) = self.partial_object_literal_initializer_property_type(
+            access.expression,
+            access.name_or_argument,
+        ) {
+            return type_id;
         }
 
         if self.is_js_file()
@@ -364,30 +400,11 @@ impl<'a> CheckerState<'a> {
         // not the DOM `Location` global type.
         if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
             && self.is_known_global_value_name(&ident.escaped_text)
+            && !self.known_global_value_has_local_shadow(access.expression, &ident.escaped_text)
         {
-            // Check if there's a local binding shadowing the global
-            let is_local_shadow = self
-                .resolve_identifier_symbol_without_tracking(access.expression)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| {
-                    // Local declarations shadow global value names. This includes
-                    // variables, classes, and functions — e.g., a file-local
-                    // `export declare class Promise<R>` must shadow the global
-                    // `Promise` so that its custom static members are visible.
-                    (symbol.flags
-                        & (symbol_flags::FUNCTION_SCOPED_VARIABLE
-                            | symbol_flags::BLOCK_SCOPED_VARIABLE
-                            | symbol_flags::PROPERTY
-                            | symbol_flags::CLASS
-                            | symbol_flags::FUNCTION))
-                        != 0
-                });
-
-            if !is_local_shadow {
-                let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
-                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                    object_type = value_type;
-                }
+            let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                object_type = value_type;
             }
         }
 
@@ -742,23 +759,11 @@ impl<'a> CheckerState<'a> {
         // actually resolves to a global, not when a local variable shadows it.
         if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
             && self.is_known_global_value_name(&ident.escaped_text)
+            && !self.known_global_value_has_local_shadow(access.expression, &ident.escaped_text)
         {
-            let is_local_shadow = self
-                .resolve_identifier_symbol_without_tracking(access.expression)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| {
-                    (symbol.flags
-                        & (symbol_flags::FUNCTION_SCOPED_VARIABLE
-                            | symbol_flags::BLOCK_SCOPED_VARIABLE
-                            | symbol_flags::PROPERTY))
-                        != 0
-                });
-
-            if !is_local_shadow {
-                let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
-                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                    display_object_type = value_type;
-                }
+            let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                display_object_type = value_type;
             }
         }
 
@@ -3052,7 +3057,6 @@ impl<'a> CheckerState<'a> {
         if !self.is_global_this_like_expression(expression) && !is_this_global {
             return None;
         }
-
         let base_display = if self.is_global_this_expression(expression) || is_this_global {
             "typeof globalThis"
         } else {
@@ -3066,11 +3070,9 @@ impl<'a> CheckerState<'a> {
             allow_unknown_property_fallback,
             base_display,
         );
-
         if property_type == TypeId::ERROR {
             return Some(TypeId::ERROR);
         }
-
         // TS7017: When noImplicitAny is enabled and the access target is
         // `typeof globalThis` and the property is not found, emit the index
         // signature error. Both `this.X` (when `this` resolves to global) and
