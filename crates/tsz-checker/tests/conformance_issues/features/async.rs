@@ -75,6 +75,43 @@ export let o4 = { [u]: 1 };
 }
 
 #[test]
+fn test_isolated_declarations_allows_const_computed_object_literal_exports() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+function prop<T>(v: T): T { return v }
+
+const s: unique symbol = Symbol();
+const str: string = "";
+enum E {
+    V = 10,
+}
+
+export const oWithComputedProperties = {
+    [1]: 1,
+    [1 + 3]: 1,
+    [prop(2)]: 2,
+    [s]: 1,
+    [E.V]: 1,
+    [str]: 0,
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ESNext,
+            isolated_declarations: true,
+            emit_declarations: true,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 9038),
+        "Expected no TS9038 for const computed object literal export.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_isolated_declarations_reports_exported_variable_statement_in_module_file() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[
