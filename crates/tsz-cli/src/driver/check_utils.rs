@@ -2364,9 +2364,124 @@ mod tests {
         parallel::merge_bind_results(bind_results)
     }
 
+    fn check_merged_program_file(files: &[(&str, &str)], entry_file: &str) -> Vec<Diagnostic> {
+        let program = merged_program(files);
+        let entry_idx = program
+            .files
+            .iter()
+            .position(|file| file.file_name == entry_file)
+            .expect("entry file should exist");
+        let augmentations = MergedAugmentations::from_program(&program);
+        let all_arenas = Arc::new(
+            program
+                .files
+                .iter()
+                .map(|file| Arc::clone(&file.arena))
+                .collect::<Vec<_>>(),
+        );
+        let all_binders = Arc::new(
+            program
+                .files
+                .iter()
+                .enumerate()
+                .map(|(file_idx, file)| {
+                    Arc::new(create_binder_from_bound_file_with_augmentations(
+                        file,
+                        &program,
+                        file_idx,
+                        &augmentations,
+                    ))
+                })
+                .collect::<Vec<_>>(),
+        );
+        let file_names = program
+            .files
+            .iter()
+            .map(|file| file.file_name.clone())
+            .collect::<Vec<_>>();
+        let (resolved_module_paths, resolved_modules) =
+            tsz::checker::module_resolution::build_module_resolution_maps(&file_names);
+        let opts = tsz_common::checker_options::CheckerOptions {
+            jsx_mode: tsz_common::checker_options::JsxMode::React,
+            no_unused_locals: true,
+            no_lib: true,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let interner = tsz_solver::TypeInterner::new();
+        let mut checker = CheckerState::new(
+            all_arenas[entry_idx].as_ref(),
+            all_binders[entry_idx].as_ref(),
+            &interner,
+            file_names[entry_idx].clone(),
+            opts,
+        );
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(entry_idx);
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::new(resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules);
+
+        checker.check_source_file(program.files[entry_idx].source_file);
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.code != 2318)
+            .cloned()
+            .collect()
+    }
+
     #[test]
     fn plain_class_needs_no_helpers() {
         assert!(helper_names("class C { method() {} }").is_empty());
+    }
+
+    #[test]
+    fn jsx_fragment_factory_scope_ignores_external_module_globals() {
+        let diagnostics = check_merged_program_file(
+            &[
+                (
+                    "/renderer.d.ts",
+                    r#"
+declare global {
+    namespace JSX {
+        interface IntrinsicElements { [e: string]: any; }
+        interface Element {}
+    }
+}
+export function h(): void;
+export function Fragment(): void;
+"#,
+                ),
+                (
+                    "/entry.tsx",
+                    r#"/** @jsx h
+ * @jsxFrag Fragment
+ */
+import { Fragment } from "./renderer";
+const _frag = <></>;
+"#,
+                ),
+            ],
+            "/entry.tsx",
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == 2874 && diag.message_text.contains("'h'")),
+            "Expected TS2874 for missing JSX factory `h`, got: {diagnostics:#?}"
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diag| diag.code == 2879 && diag.message_text.contains("Fragment")),
+            "Expected imported fragment factory to remain in scope, got: {diagnostics:#?}"
+        );
     }
 
     /// TS1101 ('with' statements not allowed in strict mode) is a grammar

@@ -544,7 +544,16 @@ impl<'a> CheckerState<'a> {
         if symbol.is_umd_export {
             return true;
         }
-        !(symbol.is_exported || symbol.import_module.is_some())
+        if symbol.is_exported || symbol.import_module.is_some() {
+            return false;
+        }
+        let Some(owner_binder) = self.ctx.get_binder_for_file(symbol.decl_file_idx as usize) else {
+            return false;
+        };
+        !owner_binder.is_external_module()
+            || owner_binder
+                .global_augmentations
+                .contains_key(symbol.escaped_name.as_str())
     }
 
     /// Check that the JSX factory is in scope (TS2874).
