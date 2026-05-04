@@ -9,7 +9,7 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TypeData, TypeId};
+use tsz_solver::{TupleElement, TypeData, TypeId};
 
 const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
 
@@ -127,6 +127,45 @@ impl<'a> CheckerState<'a> {
             && elem.name.is_some_and(|name| {
                 self.ctx.types.resolve_atom(name) == SPREAD_ARGUMENT_MARKER_NAME
             })
+    }
+
+    fn literalized_aggregate_actual_for_call_args(
+        &mut self,
+        args: &[NodeIndex],
+        index: usize,
+        actual: TypeId,
+    ) -> Option<TypeId> {
+        let actual_elements = common::tuple_elements(self.ctx.types, actual)?;
+        let expanded_args = self.build_expanded_args_for_error(args);
+        if index > expanded_args.len() {
+            return None;
+        }
+        let rest_args = &expanded_args[index..];
+        if rest_args.len() != actual_elements.len() {
+            return None;
+        }
+
+        let mut changed = false;
+        let elements: Vec<_> = actual_elements
+            .into_iter()
+            .zip(rest_args.iter().copied())
+            .map(|(element, arg_idx)| {
+                let type_id = self
+                    .literal_type_from_initializer(arg_idx)
+                    .inspect(|&literal_type| {
+                        changed |= literal_type != element.type_id;
+                    })
+                    .unwrap_or(element.type_id);
+                TupleElement {
+                    type_id,
+                    name: element.name,
+                    optional: element.optional,
+                    rest: element.rest,
+                }
+            })
+            .collect();
+
+        changed.then(|| self.ctx.types.tuple(elements))
     }
 
     fn should_attempt_deferred_literal_elaboration(&mut self, expected: TypeId) -> bool {
@@ -495,6 +534,14 @@ impl<'a> CheckerState<'a> {
                         };
                     }
                 }
+                let aggregate_literal_actual =
+                    self.literalized_aggregate_actual_for_call_args(args, index, actual);
+                let aggregate_rest_mismatch = common::tuple_elements(self.ctx.types, actual)
+                    .is_some()
+                    && arg_types
+                        .get(index)
+                        .copied()
+                        .is_none_or(|original| original != actual);
                 let reported_actual = match arg_types.get(index).copied() {
                     Some(TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) | None => actual,
                     Some(original) if self.is_spread_argument_marker_type(original) => actual,
@@ -502,7 +549,7 @@ impl<'a> CheckerState<'a> {
                         if original != actual
                             && common::tuple_elements(self.ctx.types, actual).is_some() =>
                     {
-                        actual
+                        aggregate_literal_actual.unwrap_or(actual)
                     }
                     Some(original) => original,
                 };
@@ -638,6 +685,12 @@ impl<'a> CheckerState<'a> {
                                 reported_expected,
                                 arg_idx,
                             );
+                        } else if aggregate_rest_mismatch {
+                            self.error_argument_not_assignable_at(
+                                reported_actual,
+                                reported_expected,
+                                arg_idx,
+                            );
                         } else {
                             let _ = self.check_argument_assignable_or_report(
                                 reported_actual,
@@ -675,11 +728,19 @@ impl<'a> CheckerState<'a> {
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
                         && !elaborated
                     {
-                        let _ = self.check_argument_assignable_or_report(
-                            reported_actual,
-                            reported_expected,
-                            call_idx,
-                        );
+                        if aggregate_rest_mismatch {
+                            self.error_argument_not_assignable_at(
+                                reported_actual,
+                                reported_expected,
+                                call_idx,
+                            );
+                        } else {
+                            let _ = self.check_argument_assignable_or_report(
+                                reported_actual,
+                                reported_expected,
+                                call_idx,
+                            );
+                        }
                     }
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];
@@ -710,11 +771,19 @@ impl<'a> CheckerState<'a> {
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
                         && !elaborated
                     {
-                        let _ = self.check_argument_assignable_or_report(
-                            reported_actual,
-                            reported_expected,
-                            last_arg,
-                        );
+                        if aggregate_rest_mismatch {
+                            self.error_argument_not_assignable_at(
+                                reported_actual,
+                                reported_expected,
+                                last_arg,
+                            );
+                        } else {
+                            let _ = self.check_argument_assignable_or_report(
+                                reported_actual,
+                                reported_expected,
+                                last_arg,
+                            );
+                        }
                     }
                 } else {
                     if allow_contextual_mismatch_deferral
@@ -726,11 +795,19 @@ impl<'a> CheckerState<'a> {
                             TypeId::ERROR
                         };
                     }
-                    let _ = self.check_argument_assignable_or_report(
-                        reported_actual,
-                        reported_expected,
-                        call_idx,
-                    );
+                    if aggregate_rest_mismatch {
+                        self.error_argument_not_assignable_at(
+                            reported_actual,
+                            reported_expected,
+                            call_idx,
+                        );
+                    } else {
+                        let _ = self.check_argument_assignable_or_report(
+                            reported_actual,
+                            reported_expected,
+                            call_idx,
+                        );
+                    }
                 }
 
                 if self.is_generic_callable_against_nongeneric_target(actual, expected) {

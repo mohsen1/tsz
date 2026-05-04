@@ -242,6 +242,12 @@ f1("foo");
         ts2345_count, 2,
         "Expected aggregate rest argument mismatches for tuple-union rest, got diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2345 && d.message_text.contains("[10]")),
+        "Expected literal tuple display for aggregate rest mismatch, got diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -268,7 +274,7 @@ baz(1, 2);
     assert!(
         diagnostics.iter().any(|d| {
             d.code == 2345
-                && d.message_text.contains("[number, number]")
+                && d.message_text.contains("[10, 20]")
                 && d.message_text.contains("CoolArray<number>")
         }),
         "Expected aggregate TS2345 for explicit CoolArray rest type argument, got diagnostics: {diagnostics:#?}"
