@@ -1,7 +1,7 @@
 use tsz_solver::operations::CallResult;
 use tsz_solver::{
-    AssignabilityChecker, ContextualTypeContext, FunctionShape, QueryDatabase, TypeData,
-    TypeDatabase, TypeEnvironment, TypeId, TypeResolver, TypeSubstitution,
+    AssignabilityChecker, ContextualTypeContext, FunctionShape, QueryDatabase, TypeDatabase,
+    TypeEnvironment, TypeId, TypeResolver, TypeSubstitution,
 };
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
@@ -84,32 +84,14 @@ pub(crate) fn contains_index_access_with_type_parameter_object(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    tsz_solver::query::contains_type_matching(
-        db,
-        type_id,
-        |key| matches!(key, TypeData::IndexAccess(object, _) if is_type_parameter_type(db, *object)),
-    )
+    tsz_solver::type_queries::contains_index_access_with_type_parameter_object(db, type_id)
 }
 
 pub(crate) fn contains_index_access_with_variadic_tuple_object(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    tsz_solver::query::contains_type_matching(db, type_id, |key| {
-        matches!(
-            key,
-            TypeData::IndexAccess(object, _)
-                if variadic_tuple_object_contains_type_parameter(db, *object)
-        )
-    })
-}
-
-fn variadic_tuple_object_contains_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tuple_elements_for_type(db, type_id).is_some_and(|elems| {
-        elems.iter().any(|elem| {
-            elem.rest && super::super::common::contains_type_parameters(db, elem.type_id)
-        })
-    })
+    tsz_solver::type_queries::contains_index_access_with_variadic_tuple_object(db, type_id)
 }
 
 pub(crate) fn stable_call_recovery_return_type(
