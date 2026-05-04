@@ -620,3 +620,67 @@ fn accessor_method_kind_mismatch_ts2423() {
         codes(&diags)
     );
 }
+
+#[test]
+fn mixin_expression_accessor_over_property_reports_ts2611_without_never_base() {
+    let source = r#"
+        function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {
+            return class extends superclass {
+                get name() {
+                    return "";
+                }
+            };
+        }
+
+        class BaseClass {
+            set name(v: string) {}
+        }
+
+        class MyClass extends mixin(BaseClass) {
+            get name() {
+                return "";
+            }
+        }
+    "#;
+    let diags = check_strict(source);
+    assert!(
+        has_code(&diags, 2611),
+        "Expected TS2611 for accessor overriding structural base property, got: {:?}",
+        codes(&diags)
+    );
+    assert!(
+        diags.iter().any(|diag| diag.code == 2611
+            && diag
+                .message_text
+                .contains("mixin<typeof BaseClass>.(Anonymous class) & BaseClass")),
+        "Expected TS2611 to display the mixin heritage base, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, 2509) && !has_code(&diags, 2416),
+        "Should not emit cascading TS2509/TS2416 for mixin base, got: {:?}",
+        codes(&diags)
+    );
+}
+
+#[test]
+fn mixin_expression_auto_accessor_over_auto_accessor_has_no_ts2611() {
+    let source = r#"
+        function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {
+            return class extends superclass {};
+        }
+
+        function wrapper<T>(value: T) {
+            class BaseClass {
+                accessor name = value;
+            }
+            return class MyClass extends mixin(BaseClass) {
+                accessor name = value;
+            };
+        }
+    "#;
+    let diags = check_strict(source);
+    assert!(
+        !has_code(&diags, 2611),
+        "Auto-accessor overriding auto-accessor should not emit TS2611, got: {diags:?}",
+    );
+}

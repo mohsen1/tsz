@@ -4,11 +4,54 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(in crate::error_reporter::core) fn is_generic_excess_union_member(
+        &self,
+        member: TypeId,
+        evaluated: TypeId,
+    ) -> bool {
+        crate::query_boundaries::common::contains_type_parameters(self.ctx.types, evaluated)
+            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, member)
+            || self.intersection_contains_type_parameter_like(member)
+            || self.intersection_contains_type_parameter_like(evaluated)
+    }
+
+    fn intersection_contains_type_parameter_like(&self, ty: TypeId) -> bool {
+        crate::query_boundaries::common::intersection_members(self.ctx.types, ty).is_some_and(
+            |members| {
+                members.iter().any(|member| {
+                    let evaluated =
+                        crate::query_boundaries::common::evaluate_type(self.ctx.types, *member);
+                    crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        evaluated,
+                    ) || crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                })
+            },
+        )
+    }
+
     pub(in crate::error_reporter::core) fn format_intersection_union_for_excess_display(
         &mut self,
         ty: TypeId,
     ) -> Option<String> {
         let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
+        let display_members = members
+            .iter()
+            .copied()
+            .filter(|member| {
+                let evaluated =
+                    crate::query_boundaries::common::evaluate_type(self.ctx.types, *member);
+                !self.is_generic_excess_union_member(*member, evaluated)
+            })
+            .collect::<Vec<_>>();
+        let members = if display_members.is_empty() {
+            members.as_slice()
+        } else {
+            display_members.as_slice()
+        };
         let member_displays = members
             .iter()
             .map(|&member| self.format_excess_union_member(member))

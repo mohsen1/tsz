@@ -1157,10 +1157,7 @@ impl<'a> CheckerState<'a> {
                     let evaluated =
                         crate::query_boundaries::common::evaluate_type(self.ctx.types, **member);
                     !crate::query_boundaries::common::is_primitive_type(self.ctx.types, evaluated)
-                        && !crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            evaluated,
-                        )
+                        && !self.is_generic_excess_union_member(**member, evaluated)
                 })
                 .map(|(i, member)| {
                     // Use original (pre-evaluation) member if available for display
