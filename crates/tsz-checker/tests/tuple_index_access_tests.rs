@@ -231,3 +231,76 @@ declare let c: any;
             .collect::<Vec<_>>()
     );
 }
+
+/// Regression for `restParameterWithBindingPattern3.ts`: object binding
+/// patterns whose property name is a numeric literal (`{0: a, 3: d}`) on
+/// a tuple type must emit TS2493 for any out-of-bounds index. Equivalent
+/// to element access via `tuple[3]` — both go through the destructuring
+/// path for parameter destructuring, but only the array-binding path was
+/// previously bounds-checked. Object-binding numeric keys had no check.
+#[test]
+fn ts2493_object_binding_pattern_numeric_property_on_tuple_out_of_bounds() {
+    let diagnostics = check_source_diagnostics(
+        r"
+function c(...{0: a, length, 3: d}: [boolean, string, number]) { }
+",
+    );
+    let ts2493_messages: Vec<String> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2493)
+        .map(|d| d.message_text.clone())
+        .collect();
+    assert!(
+        ts2493_messages.iter().any(|m| m.contains("at index '3'")),
+        "Expected TS2493 for out-of-bounds object-binding property '3' on \
+         tuple of length 3, got: {ts2493_messages:?}"
+    );
+}
+
+/// Companion regression: the bounds check is structural (per-tuple), not
+/// keyed off the user's identifier names. Different binding names with a
+/// different out-of-bounds key still surface TS2493 (locks the rule per
+/// CLAUDE.md §25 anti-hardcoding directive).
+#[test]
+fn ts2493_object_binding_pattern_numeric_property_on_tuple_param_name_independent() {
+    let diagnostics = check_source_diagnostics(
+        r"
+function fn(...{2: x, 5: y}: [boolean, string]) { }
+",
+    );
+    let ts2493_count = diagnostics.iter().filter(|d| d.code == 2493).count();
+    assert!(
+        ts2493_count >= 2,
+        "Expected TS2493 for both out-of-bounds keys '2' and '5' on tuple \
+         of length 2, got {}: {:?}",
+        ts2493_count,
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2493)
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Inverse rule: in-bounds numeric properties (and non-numeric keys like
+/// `length`) on a fixed tuple do NOT emit TS2493. This locks that the
+/// new check fires ONLY on out-of-bounds numeric keys.
+#[test]
+fn ts2493_object_binding_pattern_numeric_property_in_bounds_does_not_fire() {
+    let diagnostics = check_source_diagnostics(
+        r"
+function ok(...{0: a, 1: b, 2: c, length}: [boolean, string, number]) { }
+",
+    );
+    let ts2493_count = diagnostics.iter().filter(|d| d.code == 2493).count();
+    assert_eq!(
+        ts2493_count,
+        0,
+        "Did not expect TS2493 for in-bounds numeric properties, got: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2493)
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+}
