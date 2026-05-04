@@ -1129,6 +1129,14 @@ impl<'a> NarrowingContext<'a> {
                 // CRITICAL: Resolve Lazy types in property type before comparison.
                 let resolved_prop_type = self.resolve_type(prop_type);
 
+                // `any` properties can hold any value, so we can never prove the
+                // property is ALWAYS the excluded value. is_subtype_of(any, T)
+                // returns true for every non-never T (any is universally
+                // assignable), which would incorrectly drop the member here.
+                if resolved_prop_type == TypeId::ANY {
+                    return true;
+                }
+
                 // Exclude member ONLY if property type is subtype of excluded value
                 // This means the property is ALWAYS the excluded value
                 // REVERSE of narrow_by_discriminant logic
@@ -1170,12 +1178,20 @@ impl<'a> NarrowingContext<'a> {
                     true // no member has the property, keep
                 } else if prop_types.len() == 1 {
                     let normalized_prop_type = normalize_constructor_property_type(prop_types[0]);
-                    !is_subtype_of(self.db, normalized_prop_type, excluded_value)
+                    if normalized_prop_type == TypeId::ANY {
+                        true
+                    } else {
+                        !is_subtype_of(self.db, normalized_prop_type, excluded_value)
+                    }
                 } else {
                     let effective_type = self.db.intersection(prop_types);
                     let normalized_effective_type =
                         normalize_constructor_property_type(effective_type);
-                    !is_subtype_of(self.db, normalized_effective_type, excluded_value)
+                    if normalized_effective_type == TypeId::ANY {
+                        true
+                    } else {
+                        !is_subtype_of(self.db, normalized_effective_type, excluded_value)
+                    }
                 }
             } else {
                 // For non-Intersection: check the single member
@@ -1252,6 +1268,14 @@ impl<'a> NarrowingContext<'a> {
 
                 let resolved_prop_type = self.resolve_type(prop_type);
                 let resolved_prop_type = normalize_constructor_property_type(resolved_prop_type);
+
+                // `any` properties can hold any value, so we can never prove the
+                // property is ALWAYS one of the excluded values. is_subtype_of(any, T)
+                // returns true for every non-never T, which would incorrectly drop
+                // the member in this batch path too.
+                if resolved_prop_type == TypeId::ANY {
+                    return true;
+                }
 
                 // Optimization: if property type is directly in excluded set (literal match)
                 if excluded_set.contains(&resolved_prop_type) {
