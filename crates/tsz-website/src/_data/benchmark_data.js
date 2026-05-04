@@ -1301,6 +1301,7 @@ function generateCharts(data, mode = "projects") {
     const entries = (grouped.get(category) || []).slice();
     const slug = categorySlug(category);
     const meta = categoryMeta(category);
+    const isProject = isProjectCategory(category);
     if (!entries.length) continue;
 
     if (isExternalLibraryCategory(category)) {
@@ -1324,7 +1325,6 @@ function generateCharts(data, mode = "projects") {
       return (String(a.name || "") > String(b.name || "") ? 1 : -1);
     });
     const maxMs = Math.max(...entries.map((r) => Math.max(r.tsz_ms, r.tsgo_ms)));
-    const isProject = isProjectCategory(category);
     const desc = isProject ? "" : categoryDescription(category);
     const repoLink = meta.repo
       ? ` <a class="bench-category-repo" href="${meta.repo}" target="_blank" rel="noopener noreferrer">${escapeHtml(meta.repoLabel || meta.repo)}</a>`
