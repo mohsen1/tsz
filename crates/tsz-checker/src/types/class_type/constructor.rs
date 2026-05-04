@@ -1090,20 +1090,11 @@ impl<'a> CheckerState<'a> {
             if methods.contains_key(&name) {
                 continue;
             }
-            let read_type = accessor.getter.unwrap_or_else(|| {
-                if accessor.setter.is_some() {
-                    TypeId::UNDEFINED
-                } else {
-                    TypeId::UNKNOWN
-                }
-            });
             // When a setter parameter has no type annotation, its type is UNKNOWN
             // (sentinel). Filter out so we fall back to getter type, matching tsc.
-            let write_type = accessor
-                .setter
-                .filter(|&t| t != TypeId::UNKNOWN)
-                .or(accessor.getter)
-                .unwrap_or(read_type);
+            let setter_type = accessor.setter.filter(|&t| t != TypeId::UNKNOWN);
+            let read_type = accessor.getter.or(setter_type).unwrap_or(TypeId::UNKNOWN);
+            let write_type = setter_type.or(accessor.getter).unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             properties.insert(
                 name,
@@ -1994,20 +1985,11 @@ impl<'a> CheckerState<'a> {
         }
 
         for (&name, accessor) in accessors {
-            let read_type = accessor.getter.unwrap_or_else(|| {
-                if accessor.setter.is_some() {
-                    TypeId::UNDEFINED
-                } else {
-                    TypeId::UNKNOWN
-                }
-            });
             // When a setter parameter has no type annotation, its type is UNKNOWN
             // (sentinel). Filter out so we fall back to getter type, matching tsc.
-            let write_type = accessor
-                .setter
-                .filter(|&t| t != TypeId::UNKNOWN)
-                .or(accessor.getter)
-                .unwrap_or(read_type);
+            let setter_type = accessor.setter.filter(|&t| t != TypeId::UNKNOWN);
+            let read_type = accessor.getter.or(setter_type).unwrap_or(TypeId::UNKNOWN);
+            let write_type = setter_type.or(accessor.getter).unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             partial_ctor_props.push(PropertyInfo {
                 name,

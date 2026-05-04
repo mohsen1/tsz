@@ -104,15 +104,14 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
         let mut refined_return = factory.intersection2(return_type, base_arg_type);
 
-        // For mixin patterns, the intersection normalizer merges construct
-        // signatures from different constructor types into a single Callable.
-        // The instance type should be the INTERSECTION of all construct return
-        // types (since they came from an intersection of constructors), not a
-        // union. Compute the full intersected instance type and unify all
-        // construct signatures to return it.
-        let mixin_instance_type = self.compute_mixin_intersected_instance_type(refined_return);
-
-        if let Some(intersected_instance) = mixin_instance_type {
+        if let Some(mixin_instance_type) =
+            self.mixin_instance_type_from_returned_class(class_expr_idx, base_arg_type)
+        {
+            refined_return =
+                self.set_all_construct_return_types(refined_return, mixin_instance_type);
+        } else if let Some(intersected_instance) =
+            self.compute_mixin_intersected_instance_type(refined_return)
+        {
             refined_return =
                 self.set_all_construct_return_types(refined_return, intersected_instance);
         } else if let Some(base_instance_type) =
@@ -131,6 +130,28 @@ impl<'a> CheckerState<'a> {
         }
 
         refined_return
+    }
+
+    fn mixin_instance_type_from_returned_class(
+        &mut self,
+        class_expr_idx: NodeIndex,
+        base_arg_type: TypeId,
+    ) -> Option<TypeId> {
+        let class_data = self.ctx.arena.get_class_at(class_expr_idx)?;
+        let returned_instance = self.get_class_instance_type(class_expr_idx, class_data);
+        if matches!(returned_instance, TypeId::ANY | TypeId::ERROR) {
+            return None;
+        }
+        let base_instance = self.instance_type_from_constructor_type(base_arg_type)?;
+        if matches!(base_instance, TypeId::ANY | TypeId::ERROR) {
+            return None;
+        }
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .intersection2(returned_instance, base_instance),
+        )
     }
 
     /// Compute the intersected instance type from all construct signatures
@@ -162,17 +183,42 @@ impl<'a> CheckerState<'a> {
 
     /// Set all construct signature return types to the given type.
     fn set_all_construct_return_types(&self, ctor_type: TypeId, instance_type: TypeId) -> TypeId {
-        let Some(shape_id) =
-            crate::query_boundaries::common::callable_shape_id(self.ctx.types, ctor_type)
-        else {
-            return ctor_type;
-        };
-        let shape = self.ctx.types.callable_shape(shape_id);
-        let mut new_shape = (*shape).clone();
-        for sig in &mut new_shape.construct_signatures {
-            sig.return_type = instance_type;
+        match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
+            ConstructorReturnMergeKind::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                let mut new_shape = (*shape).clone();
+                for sig in &mut new_shape.construct_signatures {
+                    sig.return_type = instance_type;
+                }
+                self.ctx.types.factory().callable(new_shape)
+            }
+            ConstructorReturnMergeKind::Function(shape_id) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                if !shape.is_constructor {
+                    return ctor_type;
+                }
+                let mut new_shape = (*shape).clone();
+                new_shape.return_type = instance_type;
+                self.ctx.types.factory().function(new_shape)
+            }
+            ConstructorReturnMergeKind::Intersection(members) => {
+                let mut updated_members = Vec::with_capacity(members.len());
+                let mut changed = false;
+                for member in members {
+                    let updated = self.set_all_construct_return_types(member, instance_type);
+                    if updated != member {
+                        changed = true;
+                    }
+                    updated_members.push(updated);
+                }
+                if changed {
+                    self.ctx.types.factory().intersection(updated_members)
+                } else {
+                    ctor_type
+                }
+            }
+            ConstructorReturnMergeKind::Other => ctor_type,
         }
-        self.ctx.types.factory().callable(new_shape)
     }
 
     fn mixin_base_param_index(
@@ -270,14 +316,89 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let mixin_anonymous_display =
+            self.mixin_call_anonymous_instance_display(expr_idx, type_arguments);
+        if let Some(ref anonymous_display) = mixin_anonymous_display
+            && let Some(name) = names
+                .iter_mut()
+                .find(|name| name.contains("(Anonymous class)"))
+        {
+            *name = name.replacen("(Anonymous class)", anonymous_display, 1);
+        }
+
         // Sort names to approximate source order. The solver's intersection
         // normalization sorts members by TypeId for canonicalization, which may
         // not match the original declaration order. Alphabetical sort produces
         // consistent output matching tsc for common cases (named types come
         // before structural types: "I1 & I2", "A & { ... }").
         names.sort();
+        if let Some(anonymous_display) = mixin_anonymous_display
+            && let Some(index) = names.iter().position(|name| name == &anonymous_display)
+        {
+            let anonymous_name = names.remove(index);
+            names.insert(0, anonymous_name);
+        }
 
         Some(names.join(" & "))
+    }
+
+    pub(crate) fn mixin_call_anonymous_instance_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        type_arguments: Option<&tsz_parser::NodeList>,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        let (call_idx, heritage_type_arguments) =
+            if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(node) {
+                (
+                    expr_type_args.expression,
+                    expr_type_args.type_arguments.as_ref().or(type_arguments),
+                )
+            } else {
+                (expr_idx, type_arguments)
+            };
+        let call_node = self.ctx.arena.get(call_idx)?;
+        let call = self.ctx.arena.get_call_expr(call_node)?;
+        let callee_text = self.heritage_name_text(call.expression)?;
+
+        let explicit_type_arg_nodes: Vec<NodeIndex> = call
+            .type_arguments
+            .as_ref()
+            .or(heritage_type_arguments)
+            .map(|args| args.nodes.clone())
+            .unwrap_or_default();
+        let argument_nodes: Vec<NodeIndex> = call
+            .arguments
+            .as_ref()
+            .map(|args| args.nodes.clone())
+            .unwrap_or_default();
+
+        let type_arg_texts: Vec<String> = if !explicit_type_arg_nodes.is_empty() {
+            explicit_type_arg_nodes
+                .into_iter()
+                .map(|arg_idx| {
+                    let arg_type = self.get_type_from_type_node(arg_idx);
+                    self.format_type(arg_type)
+                })
+                .collect()
+        } else {
+            argument_nodes
+                .into_iter()
+                .map(|arg_idx| {
+                    let arg_type = self.get_type_of_node(arg_idx);
+                    self.format_type(arg_type)
+                })
+                .collect()
+        };
+        if type_arg_texts.is_empty() {
+            return None;
+        }
+
+        Some(format!(
+            "{}<{}>.(Anonymous class)",
+            callee_text,
+            type_arg_texts.join(", ")
+        ))
     }
 
     /// Collect display names from a constructor return type into `names`.
@@ -331,6 +452,142 @@ impl<'a> CheckerState<'a> {
         // Context>; }` prints as `A & { context: Context; }` (override19.ts).
         let display_type = self.simplify_heritage_instance_type_for_display(display_type);
         self.format_type(display_type)
+    }
+
+    pub(crate) fn implemented_interface_display_names_for_class_type(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<Vec<String>> {
+        let type_id = self.resolve_lazy_type(type_id);
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)?;
+        let mut candidate_symbols = Vec::new();
+        if let Some(sym_id) = shape.symbol {
+            candidate_symbols.push(sym_id);
+        }
+        for prop in &shape.properties {
+            if let Some(parent_id) = prop.parent_id
+                && !candidate_symbols.contains(&parent_id)
+            {
+                candidate_symbols.push(parent_id);
+            }
+        }
+
+        let mut names = Vec::new();
+        let mut seen_symbols = FxHashSet::default();
+
+        for class_sym_id in candidate_symbols {
+            if !seen_symbols.insert(class_sym_id) {
+                continue;
+            }
+            let Some(symbol) = self.get_symbol_globally(class_sym_id) else {
+                continue;
+            };
+            let symbol_name = symbol.escaped_name.clone();
+            let declarations = symbol.declarations.clone();
+            let names_len_before = names.len();
+            let mut saw_class_declaration = false;
+
+            for decl_idx in declarations {
+                let Some(class_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(class_data) = self.ctx.arena.get_class(class_node) else {
+                    continue;
+                };
+                saw_class_declaration = true;
+                let Some(heritage_clauses) = class_data.heritage_clauses.as_ref() else {
+                    continue;
+                };
+
+                for &clause_idx in &heritage_clauses.nodes {
+                    let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                        continue;
+                    };
+                    let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                        continue;
+                    };
+                    if heritage.token != SyntaxKind::ImplementsKeyword as u16 {
+                        continue;
+                    }
+
+                    for &type_idx in &heritage.types.nodes {
+                        let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                            continue;
+                        };
+                        let (expr_idx, type_arguments) = if let Some(expr_type_args) =
+                            self.ctx.arena.get_expr_type_args(type_node)
+                        {
+                            (
+                                expr_type_args.expression,
+                                expr_type_args.type_arguments.as_ref(),
+                            )
+                        } else if type_node.kind
+                            == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE
+                        {
+                            if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
+                                (type_ref.type_name, type_ref.type_arguments.as_ref())
+                            } else {
+                                (type_idx, None)
+                            }
+                        } else {
+                            (type_idx, None)
+                        };
+
+                        let display = self
+                            .resolve_heritage_symbol(expr_idx)
+                            .and_then(|sym_id| {
+                                self.format_symbol_reference_with_type_arguments(
+                                    sym_id,
+                                    type_arguments,
+                                )
+                            })
+                            .or_else(|| {
+                                self.heritage_name_text(expr_idx).map(|mut name| {
+                                    if let Some(args) = type_arguments
+                                        && !args.nodes.is_empty()
+                                    {
+                                        let arg_texts = args
+                                            .nodes
+                                            .iter()
+                                            .map(|&arg_idx| {
+                                                let arg_type =
+                                                    self.get_type_from_type_node(arg_idx);
+                                                self.format_type(arg_type)
+                                            })
+                                            .collect::<Vec<_>>();
+                                        name.push('<');
+                                        name.push_str(&arg_texts.join(", "));
+                                        name.push('>');
+                                    }
+                                    name
+                                })
+                            });
+                        if let Some(display) = display
+                            && !names.contains(&display)
+                        {
+                            names.push(display);
+                        }
+                    }
+                }
+            }
+
+            if saw_class_declaration
+                && names.len() == names_len_before
+                && !symbol_name.is_empty()
+                && symbol_name != "__type"
+                && !names.contains(&symbol_name)
+            {
+                names.push(symbol_name);
+            }
+        }
+
+        if names.is_empty() {
+            None
+        } else {
+            names.sort();
+            Some(names)
+        }
     }
 
     pub(crate) fn instance_type_from_constructor_type(

@@ -87,13 +87,13 @@ impl<'a> CheckerState<'a> {
         // Determine the base class display name from the instance type.
         let type_base_name = self
             .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
+            .or_else(|| self.collect_class_names_from_instance_type(instance_type))
             .or_else(|| self.intersection_instance_display_name(h_expr_idx, type_arguments))
             .or_else(|| {
                 heritage_sym_id.and_then(|sym_id| {
                     self.format_symbol_reference_with_type_arguments(sym_id, type_arguments)
                 })
             })
-            .or_else(|| self.collect_class_names_from_instance_type(instance_type))
             .unwrap_or_else(|| {
                 if base_class_name.is_empty() {
                     self.format_type(instance_type)
@@ -219,7 +219,7 @@ impl<'a> CheckerState<'a> {
     /// Collect class/interface names from an instance type by inspecting its
     /// structure. For intersections, walks each member; for objects, collects
     /// names from properties' `parent_id` symbols.
-    fn collect_class_names_from_instance_type(&self, instance_type: TypeId) -> Option<String> {
+    fn collect_class_names_from_instance_type(&mut self, instance_type: TypeId) -> Option<String> {
         let mut names: Vec<String> = Vec::new();
         let mut seen = rustc_hash::FxHashSet::default();
 
@@ -227,6 +227,16 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
         {
             for &member_id in members.iter() {
+                if let Some(interface_names) =
+                    self.implemented_interface_display_names_for_class_type(member_id)
+                {
+                    for name in interface_names {
+                        if !names.contains(&name) {
+                            names.push(name);
+                        }
+                    }
+                    continue;
+                }
                 if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
                     self.ctx.types,
                     member_id,
@@ -235,6 +245,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(symbol) = self.get_symbol_globally(sym_id)
                     && !symbol.escaped_name.is_empty()
                     && symbol.escaped_name != "__type"
+                    && !names.contains(&symbol.escaped_name)
                 {
                     names.push(symbol.escaped_name.clone());
                 }
@@ -242,11 +253,21 @@ impl<'a> CheckerState<'a> {
         } else if let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, instance_type)
         {
+            if let Some(interface_names) =
+                self.implemented_interface_display_names_for_class_type(instance_type)
+            {
+                for name in interface_names {
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
             if let Some(sym_id) = shape.symbol
                 && seen.insert(sym_id)
                 && let Some(symbol) = self.get_symbol_globally(sym_id)
                 && !symbol.escaped_name.is_empty()
                 && symbol.escaped_name != "__type"
+                && !names.contains(&symbol.escaped_name)
             {
                 names.push(symbol.escaped_name.clone());
             }
@@ -256,11 +277,18 @@ impl<'a> CheckerState<'a> {
                     && let Some(symbol) = self.get_symbol_globally(parent_sym_id)
                     && !symbol.escaped_name.is_empty()
                     && symbol.escaped_name != "__type"
+                    && !names.contains(&symbol.escaped_name)
                 {
                     names.push(symbol.escaped_name.clone());
                 }
             }
         }
+
+        let implemented_names = names.iter().cloned().collect::<rustc_hash::FxHashSet<_>>();
+        names.retain(|name| {
+            name.strip_suffix("Class")
+                .is_none_or(|implemented| !implemented_names.contains(implemented))
+        });
 
         if names.is_empty() {
             None
@@ -452,7 +480,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn format_heritage_instance_display(
         &mut self,
         instance_type: TypeId,
-        _h_expr_idx: tsz_parser::parser::base::NodeIndex,
+        h_expr_idx: tsz_parser::parser::base::NodeIndex,
         type_arguments: Option<&tsz_parser::parser::base::NodeList>,
     ) -> String {
         // tsc applies `getReducedType` when displaying heritage instance types
@@ -470,7 +498,13 @@ impl<'a> CheckerState<'a> {
         ) {
             return self.format_type_diagnostic(evaluated_display);
         }
-        let base_str = self.format_type(display_type);
+        let mut base_str = self.format_type(display_type);
+        if let Some(mixin_display) =
+            self.mixin_call_anonymous_instance_display(h_expr_idx, type_arguments)
+            && base_str.contains("(Anonymous class)")
+        {
+            base_str = base_str.replacen("(Anonymous class)", &mixin_display, 1);
+        }
         if let Some(alias_text) = self.array_or_tuple_alias_target_text_for_name(&base_str) {
             return alias_text;
         }
