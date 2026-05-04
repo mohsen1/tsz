@@ -890,7 +890,7 @@ impl ParserState {
             }
         }
 
-        if in_expression_context {
+        if in_expression_context && !self.suppress_next_jsx_head_missing_semicolon {
             self.recover_adjacent_jsx_siblings(jsx_node);
         }
 
@@ -1111,6 +1111,26 @@ impl ParserState {
             );
         }
 
+        if self.recover_jsx_missing_attr_initializer_head {
+            let end_pos = if self.is_token(SyntaxKind::GreaterThanToken) {
+                let end = self.token_end();
+                self.next_token();
+                end
+            } else {
+                self.token_pos()
+            };
+            return self.arena.add_jsx_opening(
+                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
+                start_pos,
+                end_pos,
+                crate::parser::node::JsxOpeningData {
+                    tag_name,
+                    type_arguments,
+                    attributes,
+                },
+            );
+        }
+
         // Check for opening element: >
         // Must check > first (matching tsc order) so that error tokens
         // (like stray `<`) fall through to the self-closing path, which
@@ -1204,7 +1224,7 @@ impl ParserState {
             let token_value = self.scanner.get_token_value_ref();
             let is_close_brace = self.is_token(SyntaxKind::CloseBraceToken)
                 || (self.is_token(SyntaxKind::JsxText) && token_value.starts_with("}"));
-            if is_close_brace {
+            if is_close_brace && !self.in_jsx_attribute_initializer_element {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     self.token_pos(),
@@ -1416,6 +1436,25 @@ impl ParserState {
                 let unexpected = self.token();
                 let should_abort = Self::is_jsx_attribute_list_abort_token(unexpected);
                 self.next_token();
+                if unexpected == SyntaxKind::StringLiteral {
+                    self.recover_jsx_missing_attr_initializer_head = true;
+                    aborted_for_outer_recovery = true;
+                    break;
+                }
+                if unexpected == SyntaxKind::OpenBracketToken {
+                    while !self.is_token(SyntaxKind::EndOfFileToken)
+                        && !self.is_token(SyntaxKind::GreaterThanToken)
+                        && !self.is_token(SyntaxKind::SlashToken)
+                    {
+                        self.next_token();
+                    }
+                    if self.is_token(SyntaxKind::GreaterThanToken) {
+                        self.next_token();
+                    }
+                    self.suppress_next_jsx_head_missing_semicolon = true;
+                    aborted_for_outer_recovery = true;
+                    break;
+                }
                 // Certain malformed attribute starters (`<X 32foo=...>`,
                 // `<X -foo=...>`) are recovered by tsc as the end of the JSX
                 // head after consuming the bad token. Keep the following
@@ -1489,7 +1528,11 @@ impl ParserState {
             } else if self.is_token(SyntaxKind::OpenBraceToken) {
                 self.parse_jsx_expression_for_attribute()
             } else if self.is_token(SyntaxKind::LessThanToken) {
-                self.parse_jsx_element_or_self_closing_or_fragment(true)
+                let was_in_initializer = self.in_jsx_attribute_initializer_element;
+                self.in_jsx_attribute_initializer_element = true;
+                let element = self.parse_jsx_element_or_self_closing_or_fragment(true);
+                self.in_jsx_attribute_initializer_element = was_in_initializer;
+                element
             } else {
                 // TS1145: '{' or JSX element expected.
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -1588,6 +1631,7 @@ impl ParserState {
         // Note: TS17000 for empty expressions is reported in the checker (checkGrammarJsxElement),
         // not in the parser, matching tsc behavior (one error per JSX element).
         let expression = if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.suppress_next_jsx_missing_brace_at_semicolon = true;
             NodeIndex::NONE
         } else if dot_dot_dot_token {
             // `{...expr}` is not valid as a JSX attribute initializer in JS/TS.
@@ -1799,7 +1843,10 @@ impl ParserState {
                     .get(window_start as usize..semicolon_pos as usize)
                     .is_some_and(|segment| segment.contains('{'));
 
-                if segment_has_open_brace && !has_missing_close_brace {
+                if segment_has_open_brace
+                    && !has_missing_close_brace
+                    && !self.suppress_next_jsx_missing_brace_at_semicolon
+                {
                     self.parse_error_at(
                         semicolon_pos,
                         0,
@@ -2041,6 +2088,9 @@ impl ParserState {
         self.parse_expected(SyntaxKind::LessThanSlashToken);
         let tag_name = self.parse_jsx_element_name();
         let end_pos = self.token_end();
+        if self.is_token(SyntaxKind::OpenBraceToken) {
+            self.recover_jsx_closing_tag_trailing_tail = true;
+        }
         if !self.parse_expected(SyntaxKind::GreaterThanToken) {
             if self.is_token(SyntaxKind::ColonToken) {
                 // Match tsc's malformed namespaced-closing-tag recovery: report
@@ -2052,7 +2102,11 @@ impl ParserState {
                 if self.is_identifier_or_keyword() {
                     self.parse_identifier_name();
                 }
-                if self.is_token(SyntaxKind::GreaterThanToken) {
+                let closing_head_has_dot = self
+                    .get_source_text()
+                    .get(start_pos as usize..self.token_pos() as usize)
+                    .is_some_and(|head| head.contains('.'));
+                if !closing_head_has_dot && self.is_token(SyntaxKind::GreaterThanToken) {
                     self.parse_error_at_current_token(
                         "',' expected.",
                         tsz_common::diagnostics::diagnostic_codes::EXPECTED,

@@ -2941,6 +2941,8 @@ impl ParserState {
                     let (
                         next_token_is_numeric_literal,
                         next_token_is_open_brace,
+                        next_token_is_slash,
+                        next_token_is_dot,
                         next_token_pos,
                         next_token_end,
                     ) = {
@@ -2950,6 +2952,8 @@ impl ParserState {
                         let result = (
                             self.is_token(SyntaxKind::NumericLiteral),
                             self.is_token(SyntaxKind::OpenBraceToken),
+                            self.is_token(SyntaxKind::SlashToken),
+                            self.is_token(SyntaxKind::DotToken),
                             self.token_pos(),
                             self.token_end(),
                         );
@@ -2989,12 +2993,83 @@ impl ParserState {
                     {
                         self.parse_jsx_element_or_self_closing_or_fragment(true)
                     } else {
-                        self.error_expression_expected();
+                        if next_token_is_slash {
+                            let jsx_close_tail = self
+                                .get_source_text()
+                                .get(self.token_pos() as usize..)
+                                .and_then(|tail| {
+                                    let line_len = tail.find(['\n', '\r']).unwrap_or(tail.len());
+                                    tail.get(..line_len)
+                                })
+                                .unwrap_or("")
+                                .to_string();
+                            if jsx_close_tail.starts_with("</.") {
+                                let start = self.token_pos();
+                                self.parse_error_at(
+                                    start,
+                                    1,
+                                    "Expression expected.",
+                                    diagnostic_codes::EXPRESSION_EXPECTED,
+                                );
+                                self.parse_error_at(
+                                    start + 2,
+                                    1,
+                                    "Declaration or statement expected.",
+                                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                                );
+                                while !self.is_token(SyntaxKind::EndOfFileToken)
+                                    && !self.is_token(SyntaxKind::GreaterThanToken)
+                                    && !self.is_token(SyntaxKind::SemicolonToken)
+                                {
+                                    self.next_token();
+                                }
+                                if self.is_token(SyntaxKind::GreaterThanToken) {
+                                    self.next_token();
+                                }
+                                return NodeIndex::NONE;
+                            }
+                            if jsx_close_tail.starts_with("</") && jsx_close_tail.contains('[') {
+                                let start = self.token_pos();
+                                self.parse_error_at(
+                                    start,
+                                    1,
+                                    "Expression expected.",
+                                    diagnostic_codes::EXPRESSION_EXPECTED,
+                                );
+                                while !self.is_token(SyntaxKind::EndOfFileToken)
+                                    && !self.is_token(SyntaxKind::GreaterThanToken)
+                                    && !self.is_token(SyntaxKind::SemicolonToken)
+                                {
+                                    self.next_token();
+                                }
+                                if self.is_token(SyntaxKind::GreaterThanToken) {
+                                    self.next_token();
+                                }
+                                return NodeIndex::NONE;
+                            }
+                        }
+                        if next_token_is_slash
+                            && self.jsx_missing_brace_semicolon_window_start
+                                == Some(self.token_pos())
+                        {
+                            self.parse_error_at_current_token(
+                                "Declaration or statement expected.",
+                                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                            );
+                        } else {
+                            self.error_expression_expected();
+                        }
                         // Match tsc's `"<:a ...>"` TSX recovery: `<` is not a JSX
                         // opener unless the lookahead token is identifier/keyword
                         // or `>`. Consume the invalid namespace head and let the
                         // following identifier surface as the missing-comma site.
                         self.next_token();
+                        if next_token_is_dot && self.is_token(SyntaxKind::DotToken) {
+                            self.parse_error_at_current_token(
+                                "Expression expected.",
+                                diagnostic_codes::EXPRESSION_EXPECTED,
+                            );
+                        }
                         if self.is_token(SyntaxKind::ColonToken) {
                             self.parse_error_at_current_token(
                                 "Expression expected.",
@@ -3022,7 +3097,45 @@ impl ParserState {
             }
             SyntaxKind::TemplateHead => self.parse_template_expression(),
             // Regex literal - rescan / or /= as regex
-            SyntaxKind::SlashToken | SyntaxKind::SlashEqualsToken => self.parse_regex_literal(),
+            SyntaxKind::SlashToken => {
+                let slash_pos = self.token_pos();
+                let malformed_jsx_closing_tail = slash_pos > 0
+                    && self
+                        .get_source_text()
+                        .as_bytes()
+                        .get(slash_pos as usize - 1)
+                        == Some(&b'<')
+                    && self
+                        .get_source_text()
+                        .get(slash_pos as usize - 1..)
+                        .and_then(|tail| {
+                            let line_len = tail.find(['\n', '\r']).unwrap_or(tail.len());
+                            tail.get(..line_len)
+                        })
+                        .is_some_and(|tail| tail.starts_with("</") && tail.contains('['));
+                if malformed_jsx_closing_tail {
+                    let start = slash_pos - 1;
+                    self.parse_error_at(
+                        start,
+                        1,
+                        "Expression expected.",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
+                    while !self.is_token(SyntaxKind::EndOfFileToken)
+                        && !self.is_token(SyntaxKind::GreaterThanToken)
+                        && !self.is_token(SyntaxKind::SemicolonToken)
+                    {
+                        self.next_token();
+                    }
+                    if self.is_token(SyntaxKind::GreaterThanToken) {
+                        self.next_token();
+                    }
+                    NodeIndex::NONE
+                } else {
+                    self.parse_regex_literal()
+                }
+            }
+            SyntaxKind::SlashEqualsToken => self.parse_regex_literal(),
             // Dynamic import or import.meta
             SyntaxKind::ImportKeyword => self.parse_import_expression(),
             // `as` and `satisfies` are binary operators but also valid identifiers.
