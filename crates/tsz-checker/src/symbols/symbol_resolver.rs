@@ -679,8 +679,25 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) -> Option<SymbolId> {
         let lib_binders = self.get_lib_binders();
+        let name = self
+            .ctx
+            .arena
+            .get_identifier_at(idx)
+            .map(|ident| ident.escaped_text.as_str());
         match self.resolve_identifier_symbol_in_type_position(idx) {
             TypeSymbolResolution::Type(sym_id) => {
+                if let Some(name) = name
+                    && let Some(local_namespace_sym_id) = self
+                        .ctx
+                        .local_namespace_symbol_for_conflicted_namespace_import(
+                            idx,
+                            name,
+                            sym_id,
+                            &lib_binders,
+                        )
+                {
+                    return Some(local_namespace_sym_id);
+                }
                 let mut visited_aliases = AliasCycleTracker::new();
                 Some(
                     self.resolve_alias_symbol(sym_id, &mut visited_aliases)
@@ -690,6 +707,18 @@ impl<'a> CheckerState<'a> {
             TypeSymbolResolution::ValueOnly(sym_id)
                 if self.is_import_equals_type_anchor(sym_id, &lib_binders) =>
             {
+                if let Some(name) = name
+                    && let Some(local_namespace_sym_id) = self
+                        .ctx
+                        .local_namespace_symbol_for_conflicted_namespace_import(
+                            idx,
+                            name,
+                            sym_id,
+                            &lib_binders,
+                        )
+                {
+                    return Some(local_namespace_sym_id);
+                }
                 self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
                 Some(sym_id)
             }
@@ -1115,6 +1144,17 @@ impl<'a> CheckerState<'a> {
             if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
                 && symbol.has_any_flags(symbol_flags::ALIAS)
             {
+                if let Some(local_namespace_sym_id) = self
+                    .ctx
+                    .local_namespace_symbol_for_conflicted_namespace_import(
+                        idx,
+                        name,
+                        local_sym_id,
+                        &lib_binders,
+                    )
+                {
+                    return TypeSymbolResolution::Type(local_namespace_sym_id);
+                }
                 if let Some(type_alias_id) = self
                     .ctx
                     .alias_partner_reverse(self.ctx.binder, local_sym_id)
@@ -1205,6 +1245,17 @@ impl<'a> CheckerState<'a> {
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                 && symbol.has_any_flags(symbol_flags::ALIAS)
             {
+                if let Some(local_namespace_sym_id) = self
+                    .ctx
+                    .local_namespace_symbol_for_conflicted_namespace_import(
+                        idx,
+                        name,
+                        sym_id,
+                        &lib_binders,
+                    )
+                {
+                    return TypeSymbolResolution::Type(local_namespace_sym_id);
+                }
                 if should_preserve_alias_symbol_in_type_position(sym_id) {
                     return TypeSymbolResolution::Type(sym_id);
                 }

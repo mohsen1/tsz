@@ -1176,6 +1176,73 @@ impl<'a> CheckerState<'a> {
         self.arena_has_checked_js_constructor_value_declaration(self.ctx.arena, decl_idx)
     }
 
+    pub(crate) fn checked_js_constructor_initializer_expression(
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        fn constructor_expr(
+            arena: &tsz_parser::parser::node::NodeArena,
+            idx: NodeIndex,
+        ) -> Option<NodeIndex> {
+            let idx = arena.skip_parenthesized_and_assertions(idx);
+            let node = arena.get(idx)?;
+            if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return Some(idx);
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let binary = arena.get_binary_expr(node)?;
+                let op = binary.operator_token;
+                if op == tsz_scanner::SyntaxKind::BarBarToken as u16
+                    || op == tsz_scanner::SyntaxKind::QuestionQuestionToken as u16
+                {
+                    return constructor_expr(arena, binary.right)
+                        .or_else(|| constructor_expr(arena, binary.left));
+                }
+            }
+            None
+        }
+
+        if decl_idx.is_none() {
+            return None;
+        }
+
+        let node = arena.get(decl_idx)?;
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let var_decl = arena.get_variable_declaration(node)?;
+            return constructor_expr(arena, var_decl.initializer);
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let binary = arena.get_binary_expr(node)?;
+            if !crate::query_boundaries::common::is_assignment_operator(binary.operator_token) {
+                return None;
+            }
+            return constructor_expr(arena, binary.right);
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let ext = arena.get_extended(decl_idx)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent_node = arena.get(ext.parent)?;
+            if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                return None;
+            }
+            let binary = arena.get_binary_expr(parent_node)?;
+            if binary.left != decl_idx
+                || !crate::query_boundaries::common::is_assignment_operator(binary.operator_token)
+            {
+                return None;
+            }
+            return constructor_expr(arena, binary.right);
+        }
+
+        None
+    }
+
     fn arena_has_checked_js_constructor_value_declaration(
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
@@ -1199,50 +1266,18 @@ impl<'a> CheckerState<'a> {
         };
         let is_function_assignment = || -> bool {
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let Some(ext) = arena.get_extended(decl_idx) else {
-                    return false;
-                };
-                if ext.parent.is_none() {
-                    return false;
-                };
-                let parent_idx = ext.parent;
-                let Some(parent_node) = arena.get(parent_idx) else {
-                    return false;
-                };
-                let Some(binary) = arena.get_binary_expr(parent_node) else {
-                    return false;
-                };
-                if binary.left != decl_idx || !self.is_assignment_operator(binary.operator_token) {
-                    return false;
-                }
-                return arena
-                    .get(binary.right)
-                    .is_some_and(|rhs| rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION);
+                return Self::checked_js_constructor_initializer_expression(arena, decl_idx)
+                    .is_some();
             }
 
             if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                let Some(binary_node) = arena.get(decl_idx) else {
-                    return false;
-                };
-                let Some(binary) = arena.get_binary_expr(binary_node) else {
-                    return false;
-                };
-                if !self.is_assignment_operator(binary.operator_token) {
-                    return false;
-                }
-                return arena
-                    .get(binary.right)
-                    .is_some_and(|rhs| rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION);
+                return Self::checked_js_constructor_initializer_expression(arena, decl_idx)
+                    .is_some();
             }
 
             if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                let Some(var_decl) = arena.get_variable_declaration(node) else {
-                    return false;
-                };
-                let Some(init_node) = arena.get(var_decl.initializer) else {
-                    return false;
-                };
-                return init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                return Self::checked_js_constructor_initializer_expression(arena, decl_idx)
+                    .is_some();
             }
 
             false

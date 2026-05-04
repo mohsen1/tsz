@@ -924,15 +924,42 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let left_sym_raw = self
                 .resolve_type_symbol(qn.left)
                 .or_else(|| self.resolve_type_or_alias_symbol(qn.left))?;
-            let left_sym_id = tsz_binder::SymbolId(left_sym_raw);
+            let mut left_sym_id = tsz_binder::SymbolId(left_sym_raw);
+            if let Some(left_name) = self
+                .ctx
+                .arena
+                .get_identifier_at(qn.left)
+                .map(|ident| ident.escaped_text.as_str())
+                && let Some(local_namespace_sym_id) = self
+                    .ctx
+                    .local_namespace_symbol_for_conflicted_namespace_import(
+                        qn.left,
+                        left_name,
+                        left_sym_id,
+                        &lib_binders,
+                    )
+            {
+                left_sym_id = local_namespace_sym_id;
+            }
 
             // If the left symbol is an import alias (e.g., `import Lib = require('./helper')`),
             // follow the import to the target module symbol which holds the actual exports.
-            let resolved_sym_id = self
+            let left_symbol_has_local_namespace_conflict = self
                 .ctx
                 .binder
-                .resolve_import_symbol(left_sym_id)
-                .unwrap_or(left_sym_id);
+                .get_symbol_with_libs(left_sym_id, &lib_binders)
+                .is_some_and(|symbol| {
+                    self.ctx
+                        .namespace_import_alias_has_local_namespace_conflict(symbol)
+                });
+            let resolved_sym_id = if left_symbol_has_local_namespace_conflict {
+                left_sym_id
+            } else {
+                self.ctx
+                    .binder
+                    .resolve_import_symbol(left_sym_id)
+                    .unwrap_or(left_sym_id)
+            };
             let resolved_symbol = self
                 .ctx
                 .binder
@@ -963,7 +990,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // Follow the ALIAS's import_module, resolving from the
                 // ALIAS's source file perspective (cross-file), then
                 // falling back to the merged binder (same-file).
-                if let Some(module_name) = alias_sym.import_module.as_ref() {
+                if !self
+                    .ctx
+                    .namespace_import_alias_has_local_namespace_conflict(alias_sym)
+                    && let Some(module_name) = alias_sym.import_module.as_ref()
+                {
                     let member = self
                         .ctx
                         .resolve_alias_import_member(alias_id, module_name, right_name)
@@ -988,6 +1019,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .ctx
                     .binder
                     .get_symbol_with_libs(left_sym_id, &lib_binders)
+                && !self
+                    .ctx
+                    .namespace_import_alias_has_local_namespace_conflict(left_sym)
                 && let Some(module_name) = left_sym.import_module.as_ref()
             {
                 // Use the current file's index to resolve the import target, since `left_sym`

@@ -2109,6 +2109,7 @@ fn show_config_compiler_options_to_json(
     }
     set_bool!(strict, "strict");
     set_bool!(no_emit, "noEmit");
+    set_bool!(no_check, "noCheck");
     set_bool!(no_emit_on_error, "noEmitOnError");
     set_bool!(declaration, "declaration");
     set_bool!(source_map, "sourceMap");
@@ -2307,6 +2308,7 @@ fn show_config_apply_cli_overrides(
     }
     set_if_true!(strict, "strict");
     set_if_true!(no_emit, "noEmit");
+    set_if_true!(no_check, "noCheck");
     set_if_true!(no_emit_on_error, "noEmitOnError");
     set_if_true!(declaration, "declaration");
     set_if_true!(source_map, "sourceMap");

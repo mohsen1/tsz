@@ -1130,6 +1130,7 @@ impl ParserState {
             // consumed as a JSDoc nullable.
             let saved_flags = self.context_flags;
             self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
+            self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
             let element_type = self.parse_type();
             self.context_flags = saved_flags;
             let rest_end = self.token_end();
@@ -1193,6 +1194,7 @@ impl ParserState {
         // consumed as JSDoc nullable (TS17019) — it should be the optional marker instead.
         let saved_flags = self.context_flags;
         self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
+        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
         let type_node = self.parse_type();
         self.context_flags = saved_flags;
 

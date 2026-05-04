@@ -300,6 +300,9 @@ impl<'a> CheckerState<'a> {
         source_file_idx: Option<usize>,
     ) -> Option<TypeId> {
         let json_type = self.json_module_type_for_module(module_name, source_file_idx)?;
+        if !self.current_file_uses_esm_import_syntax() {
+            return Some(json_type);
+        }
         let namespace_type = self.ctx.types.factory().object(vec![PropertyInfo {
             name: self.ctx.types.intern_string("default"),
             type_id: json_type,
@@ -314,10 +317,6 @@ impl<'a> CheckerState<'a> {
             is_string_named: false,
             single_quoted_name: false,
         }]);
-        self.ctx.namespace_module_names.insert(
-            namespace_type,
-            self.imported_namespace_display_module_name(module_name),
-        );
         Some(namespace_type)
     }
 

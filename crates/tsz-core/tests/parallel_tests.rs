@@ -2442,9 +2442,7 @@ enum E {
     );
 }
 
-// TODO: Implement TS2567 detection for re-exported class/enum merge conflicts.
 #[test]
-#[ignore]
 fn test_check_files_parallel_module_augmentation_reexported_enum_class_merge_emits_ts2567() {
     let files = vec![
         (

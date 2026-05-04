@@ -494,12 +494,18 @@ impl<'a> NarrowingContext<'a> {
                         if self.is_assignable_to(instance_type, member) {
                             return Some(instance_type);
                         }
-                        // Neither direction holds — create intersection per tsc
-                        // semantics. This handles cases like Date instanceof Object
-                        // where assignability checks may miss the relationship.
-                        // The intersection preserves the member's shape while
-                        // constraining it to the instance type.
-                        Some(self.db.intersection2(member, instance_type))
+                        // Neither direction holds — drop the member from the
+                        // narrowed union. tsc's `isTypeDerivedFrom` requires a
+                        // structural relationship; when the member and the
+                        // instance type are unrelated interfaces, the member
+                        // cannot satisfy `instanceof` at runtime and should
+                        // not survive narrowing as an intersection. The
+                        // earlier intersection fallback was producing forms
+                        // like `C2 & C1` for unrelated callable interfaces in
+                        // the typeGuardOfFormInstanceOfOnInterface repro,
+                        // leaking into TS2322 displays as `'C2 & C1'` instead
+                        // of dropping the unreachable branch.
+                        None
                     })
                     .collect()
             };

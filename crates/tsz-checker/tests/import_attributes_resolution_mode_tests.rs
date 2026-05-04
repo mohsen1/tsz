@@ -174,6 +174,51 @@ fn check_resolution_mode_with_targets_and_file_map(
     checker.ctx.diagnostics.clone()
 }
 
+fn check_json_module_import(
+    main_file_name: &str,
+    source: &str,
+    module: ModuleKind,
+    file_is_esm: Option<bool>,
+) -> Vec<Diagnostic> {
+    let (arena_main, binder_main, root_main) = parse_and_bind(main_file_name, source);
+    let (arena_json, binder_json, _) = parse_and_bind("config.json", r#"{ "version": 1 }"#);
+
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_main), Arc::clone(&arena_json)]);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_main), Arc::clone(&binder_json)]);
+
+    let mut resolved_module_paths = FxHashMap::default();
+    resolved_module_paths.insert((0usize, "./config.json".to_string()), 1usize);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_main.as_ref(),
+        binder_main.as_ref(),
+        &types,
+        main_file_name.to_string(),
+        CheckerOptions {
+            module,
+            no_lib: true,
+            resolve_json_module: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(0);
+    checker.ctx.file_is_esm = file_is_esm;
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker
+        .ctx
+        .set_resolved_modules(FxHashSet::from_iter(["./config.json".to_string()]));
+    checker.ctx.report_unresolved_imports = true;
+
+    checker.check_source_file(root_main);
+    checker.ctx.diagnostics.clone()
+}
+
 #[test]
 fn preserve_plain_ts_imports_use_import_branch_without_attributes() {
     let diagnostics = check_resolution_mode(
@@ -234,6 +279,119 @@ import type { RequireInterface } from "pkg" with { "resolution-mode": "require" 
     assert!(
         diagnostics.iter().all(|d| d.code != 2305 && d.code != 2823),
         "Expected no TS2305/TS2823 for a valid type-only import resolution-mode, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn node18_type_only_json_import_attribute_reports_ts2857_not_ts1463() {
+    let diagnostics = check_resolution_mode(
+        "main.mts",
+        r#"import type Config from "pkg" with { type: "json" };"#,
+        1,
+        ModuleKind::Node18,
+        Some(true),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2857),
+        "Expected TS2857 for type-only import attributes without resolution-mode, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 1463),
+        "Did not expect TS1463 for type-only JSON import attributes, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn node18_cts_import_attributes_report_ts2856() {
+    let diagnostics = check_resolution_mode(
+        "main.cts",
+        r#"import value from "pkg" with { type: "json" };"#,
+        1,
+        ModuleKind::Node18,
+        Some(false),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2856),
+        "Expected TS2856 for import attributes on a CJS-emitting import, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn node18_esm_default_json_import_without_attribute_reports_ts1543() {
+    let diagnostics = check_json_module_import(
+        "main.mts",
+        r#"import config from "./config.json";"#,
+        ModuleKind::Node18,
+        Some(true),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1543),
+        "Expected TS1543 for ESM JSON default import without type=json, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn node18_esm_namespace_json_import_without_attribute_reports_ts1543() {
+    let diagnostics = check_json_module_import(
+        "main.mts",
+        r#"import * as config from "./config.json";"#,
+        ModuleKind::Node18,
+        Some(true),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1543),
+        "Expected TS1543 for ESM JSON namespace import without type=json, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn node18_esm_named_json_import_reports_ts1544_not_ts2614() {
+    let diagnostics = check_json_module_import(
+        "main.mts",
+        r#"import { version } from "./config.json" with { type: "json" };"#,
+        ModuleKind::Node18,
+        Some(true),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1544),
+        "Expected TS1544 for ESM named import from JSON, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2614),
+        "Did not expect TS2614 for ESM named import from JSON, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn node18_esm_json_namespace_property_message_expands_default_shape() {
+    let diagnostics = check_json_module_import(
+        "main.mts",
+        r#"
+import * as config from "./config.json" with { type: "json" };
+config.version;
+"#,
+        ModuleKind::Node18,
+        Some(true),
+    );
+
+    let ts2339 = diagnostics
+        .iter()
+        .find(|d| d.code == 2339)
+        .expect("expected TS2339 for named property on ESM JSON namespace");
+    assert!(
+        ts2339
+            .message_text
+            .contains("{ default: { version: number; }; }"),
+        "Expected JSON namespace diagnostic to print the synthesized default object shape, got: {ts2339:?}"
+    );
+    assert!(
+        !ts2339.message_text.contains("typeof import"),
+        "Expected JSON namespace diagnostic not to use typeof import display, got: {ts2339:?}"
     );
 }
 
@@ -367,5 +525,52 @@ export interface Local extends Req {}
         ts2305.len(),
         1,
         "Expected exactly one TS2305 for the missing `RequireInterface` from the inline-type specifier (the canonical syntactic anchor); duplicates from the alias type-resolver indicate a regression. Got: {ts2305:?}"
+    );
+}
+
+/// Regression for Devin 🔴 on PR #2644: when `has_default_binding` was
+/// computed from `json_default_only` (which is gated on
+/// `current_file_uses_esm_import_syntax()`), CommonJS files importing a JSON
+/// module by default emitted a spurious TS1192 "no default export" error.
+/// `has_default_binding` must remain anchored on `has_json_default_export`
+/// regardless of whether the importing file uses ESM syntax.
+#[test]
+fn cjs_json_default_import_does_not_emit_ts1192() {
+    let diagnostics = check_json_module_import(
+        "main.cts",
+        r#"import config from "./config.json";"#,
+        ModuleKind::Node18,
+        Some(false),
+    );
+
+    assert!(
+        diagnostics.iter().all(|d| d.code != 1192),
+        "Did not expect TS1192 for CJS JSON default import, got: {diagnostics:?}"
+    );
+}
+
+/// Regression for Devin 🟡 on PR #2644: type-only imports in CJS files
+/// must emit TS2857 ("Import attributes cannot be used with type-only
+/// imports or exports") rather than TS2856 ("Import attributes are not
+/// allowed on statements that compile to CommonJS 'require' calls"),
+/// because type-only imports are erased at compile time and never produce
+/// `require()` calls. The type-only check must run before the CJS check.
+#[test]
+fn cjs_type_only_import_with_attributes_reports_ts2857_not_ts2856() {
+    let diagnostics = check_resolution_mode(
+        "main.cts",
+        r#"import type value from "pkg" with { type: "json" };"#,
+        1,
+        ModuleKind::Node18,
+        Some(false),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2857),
+        "Expected TS2857 for type-only import attributes in a CJS file, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2856),
+        "Did not expect TS2856 for type-only import attributes in a CJS file (type-only imports never compile to require), got: {diagnostics:?}"
     );
 }
