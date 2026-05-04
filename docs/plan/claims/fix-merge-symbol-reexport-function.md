@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-04
 - **Branch**: `fix/merge-symbol-reexport-function`
-- **PR**: TBD
+- **PR**: #2720
 - **Status**: claim
 - **Workstream**: 1 (Conformance)
 
