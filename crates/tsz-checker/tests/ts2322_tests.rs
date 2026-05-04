@@ -2559,6 +2559,109 @@ fn test_ts2345_function_return_mismatch_includes_related_return_detail() {
 }
 
 #[test]
+fn ts2322_function_return_mismatch_does_not_double_elaborate_with_outer_source() {
+    // Regression: render_return_type_mismatch was emitting two related
+    // information lines for the same gap:
+    //
+    //   1. "Return type 'Object' is not assignable to 'string'." (the fallback
+    //      label from the depth=0 branch)
+    //   2. "Type '(x: Object) => Object' is not assignable to type 'string'."
+    //      from the recursive nested render — and the source side was
+    //      WRONGLY rendered as the OUTER function type because
+    //      `format_nested_assignment_source_type_for_diagnostic` re-derived
+    //      the source from the anchor's expression (which is the outer
+    //      assignment value), ignoring the passed nested `source` (the
+    //      inner return type).
+    //
+    // tsc emits a single nested line:
+    //   "Type 'Object' is not assignable to type 'string'."
+    //
+    // Two assertions:
+    //  - The bogus "Type '(x: Object) => Object' is not assignable to type
+    //    'string'." line is NOT emitted (anchor-derived re-render fix).
+    //  - The "Return type ..." fallback line is NOT emitted when the nested
+    //    reason already carries the inner mismatch (avoids double elaboration).
+    let source = r#"
+        declare let f1: (x: Object) => string;
+        declare let f3: (x: Object) => Object;
+        f1 = f3;
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .expect("expected TS2322 for function return type mismatch");
+
+    let related_messages: Vec<&str> = ts2322
+        .related_information
+        .iter()
+        .map(|info| info.message_text.as_str())
+        .collect();
+
+    let bogus_outer_assignment = related_messages.iter().any(|msg| {
+        msg.contains("'(x: Object) => Object'") && msg.contains("not assignable to type 'string'")
+    });
+    assert!(
+        !bogus_outer_assignment,
+        "Should not claim the outer function type is not assignable to the inner return type, got: {related_messages:?}"
+    );
+
+    let return_type_label = related_messages
+        .iter()
+        .any(|msg| msg.contains("Return type 'Object' is not assignable to 'string'."));
+    let direct_inner_mismatch = related_messages
+        .iter()
+        .any(|msg| msg.contains("Type 'Object' is not assignable to type 'string'."));
+    assert!(
+        direct_inner_mismatch,
+        "Expected the direct inner mismatch line, got: {related_messages:?}"
+    );
+    assert!(
+        !return_type_label,
+        "Should not double-elaborate with both 'Return type ...' and the nested type mismatch, got: {related_messages:?}"
+    );
+}
+
+#[test]
+fn ts2322_function_return_mismatch_param_name_independent() {
+    // Same rule as the test above, but with different binding names —
+    // locks the rule as structural per the anti-hardcoding directive
+    // in CLAUDE.md §25.
+    let source = r#"
+        declare let alpha: (input: Object) => number;
+        declare let beta: (input: Object) => Object;
+        alpha = beta;
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .expect("expected TS2322 for function return type mismatch");
+
+    let related_messages: Vec<&str> = ts2322
+        .related_information
+        .iter()
+        .map(|info| info.message_text.as_str())
+        .collect();
+
+    assert!(
+        !related_messages.iter().any(|msg| {
+            msg.contains("'(input: Object) => Object'")
+                && msg.contains("not assignable to type 'number'")
+        }),
+        "Outer function source must not be re-rendered against inner return target, got: {related_messages:?}"
+    );
+    assert!(
+        related_messages
+            .iter()
+            .any(|msg| msg.contains("Type 'Object' is not assignable to type 'number'.")),
+        "Expected the direct inner mismatch line, got: {related_messages:?}"
+    );
+}
+
+#[test]
 fn test_ts2345_function_return_mismatch_related_detail_qualifies_same_named_returns() {
     let source = r#"
         declare namespace N { export interface Token { kind: "n"; } }
