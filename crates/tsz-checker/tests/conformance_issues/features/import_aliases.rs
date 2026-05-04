@@ -458,6 +458,46 @@ function blah() {
     );
 }
 
+/// In a bare block, tsc still performs module-specifier semantic checks after
+/// emitting the wrong-context grammar diagnostics.
+#[test]
+fn module_elements_in_bare_block_still_check_module_specifiers() {
+    let source = r#"
+{
+    declare module "ambient" {
+    }
+
+    export { baz as b } from "ambient";
+    import I2 = require("foo");
+    import { baz } from "ambient";
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+    let ts2305_count = codes.iter().filter(|&&code| code == 2305).count();
+    let module_not_found_count = codes
+        .iter()
+        .filter(|&&code| code == 2307 || code == 2792)
+        .count();
+
+    assert!(
+        codes.contains(&1232),
+        "Expected TS1232 for imports in a bare block. Got: {diagnostics:#?}"
+    );
+    assert!(
+        codes.contains(&1233),
+        "Expected TS1233 for re-export in a bare block. Got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2305_count, 2,
+        "Expected TS2305 for both missing ambient named exports. Got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        module_not_found_count, 1,
+        "Expected one module-not-found diagnostic for the unresolved require import. Got: {diagnostics:#?}"
+    );
+}
+
 /// `declare const/class/enum` inside a function body should emit TS1184.
 #[test]
 fn declare_in_block_context_emits_ts1184() {

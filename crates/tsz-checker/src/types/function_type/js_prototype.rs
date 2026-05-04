@@ -1,6 +1,7 @@
 //! JS prototype owner expression helpers and constructor body instance type resolution.
 use crate::state::CheckerState;
 use crate::types_domain::computation::complex_constructors::PrototypeMembers;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -134,7 +135,9 @@ impl<'a> CheckerState<'a> {
         let owner_text = self.expression_text(owner_expr)?;
 
         if !owner_text.contains('.')
-            && let Some(sym_id) = self.ctx.binder.file_locals.get(owner_text.as_str())
+            && let Some(sym_id) = self
+                .resolve_identifier_symbol(owner_expr)
+                .or_else(|| self.ctx.binder.file_locals.get(owner_text.as_str()))
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
             let value_decl = symbol.value_declaration;
@@ -208,17 +211,7 @@ impl<'a> CheckerState<'a> {
             })?;
         let mut properties = rustc_hash::FxHashMap::default();
         self.collect_js_constructor_this_properties(body_idx, &mut properties, None, false);
-        if let Some(func_node) = self.ctx.arena.get(func_idx)
-            && let Some(func) = self.ctx.arena.get_function(func_node)
-            && let Some(func_name) = func.name.into_option().and_then(|name_idx| {
-                self.ctx
-                    .arena
-                    .get(name_idx)
-                    .and_then(|n| self.ctx.arena.get_identifier(n))
-                    .map(|ident| ident.escaped_text.clone())
-            })
-            && let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx)
-        {
+        if let Some((func_name, sym_id)) = self.js_constructor_function_name_and_symbol(func_idx) {
             let PrototypeMembers {
                 method_bindings,
                 this_props,
@@ -256,5 +249,39 @@ impl<'a> CheckerState<'a> {
                     .object(properties.into_values().collect()),
             )
         }
+    }
+
+    fn js_constructor_function_name_and_symbol(
+        &self,
+        func_idx: NodeIndex,
+    ) -> Option<(String, SymbolId)> {
+        if let Some(func_node) = self.ctx.arena.get(func_idx)
+            && let Some(func) = self.ctx.arena.get_function(func_node)
+            && let Some(func_name) = func.name.into_option().and_then(|name_idx| {
+                self.ctx
+                    .arena
+                    .get(name_idx)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|ident| ident.escaped_text.clone())
+            })
+            && let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx)
+        {
+            return Some((func_name, sym_id));
+        }
+
+        let parent = self.ctx.arena.get_extended(func_idx)?.parent;
+        let parent_node = self.ctx.arena.get(parent)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+        if var_decl.initializer != func_idx {
+            return None;
+        }
+        let name = self
+            .ctx
+            .arena
+            .get(var_decl.name)
+            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.clone())?;
+        let sym_id = self.ctx.binder.get_node_symbol(parent)?;
+        Some((name, sym_id))
     }
 }

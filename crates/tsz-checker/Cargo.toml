@@ -550,6 +550,10 @@ name = "jsdoc_class_property_target_display"
 path = "tests/jsdoc_class_property_target_display.rs"
 
 [[test]]
+name = "jsdoc_prototype_assignment_target_display"
+path = "tests/jsdoc_prototype_assignment_target_display.rs"
+
+[[test]]
 name = "elaboration_wrapper_init_tests"
 path = "tests/elaboration_wrapper_init_tests.rs"
 
@@ -660,6 +664,10 @@ path = "tests/union_index_access_function_application_param_tests.rs"
 [[test]]
 name = "indexed_access_resolved_union_property_tests"
 path = "tests/indexed_access_resolved_union_property_tests.rs"
+
+[[test]]
+name = "jsx_pragma_factory_marks_imports_referenced_tests"
+path = "tests/jsx_pragma_factory_marks_imports_referenced_tests.rs"
 
 [lints]
 workspace = true

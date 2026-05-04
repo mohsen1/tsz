@@ -994,22 +994,48 @@ impl<'a> CheckerState<'a> {
     ///
     /// Used for TS4094: only class expressions need declaration-emit type literals,
     /// so only they require the private/protected member check.
-    pub(crate) fn instance_type_is_from_anonymous_class(&self, instance_type: TypeId) -> bool {
+    pub(crate) fn instance_type_is_from_anonymous_class(&mut self, instance_type: TypeId) -> bool {
+        self.instance_type_is_from_anonymous_class_inner(instance_type, &mut FxHashSet::default())
+    }
+
+    fn instance_type_is_from_anonymous_class_inner(
+        &mut self,
+        instance_type: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        let resolved = self.resolve_lazy_type(instance_type);
+        if !visited.insert(resolved) {
+            return false;
+        }
         let db = self.ctx.types.as_type_database();
+        if let Some(members) = crate::query_boundaries::common::intersection_members(db, resolved) {
+            return members
+                .into_iter()
+                .any(|member| self.instance_type_is_from_anonymous_class_inner(member, visited));
+        }
+
         let Some(shape) =
-            crate::query_boundaries::checkers::generic::get_object_shape(db, instance_type)
+            crate::query_boundaries::checkers::generic::get_object_shape(db, resolved)
         else {
             return false;
         };
         let Some(sym_id) = shape.symbol else {
-            return false;
+            // Mixin instantiation can materialize an anonymous-class instance as
+            // a merged object shape without preserving the original class symbol.
+            // The formatter still carries that provenance for declaration-emit
+            // display, so use it as a narrow TS4094 fallback.
+            return self.format_type(resolved).contains("(Anonymous class)");
         };
-        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
+        let Some(symbol) = self.get_symbol_globally(sym_id) else {
             return false;
         };
         let decl = symbol.value_declaration;
-        self.ctx
-            .arena
+        let arena = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            .unwrap_or(self.ctx.arena);
+        arena
             .get(decl)
             .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_EXPRESSION)
     }
@@ -1024,27 +1050,57 @@ impl<'a> CheckerState<'a> {
         instance_type: TypeId,
     ) {
         use crate::diagnostics::diagnostic_codes;
-        use tsz_common::common::Visibility;
 
-        let shape = {
-            let db = self.ctx.types.as_type_database();
-            crate::query_boundaries::checkers::generic::get_object_shape(db, instance_type)
-        };
-        let Some(shape) = shape else {
-            return;
-        };
-        let mut names: Vec<String> = shape
-            .properties
-            .iter()
-            .filter(|p| matches!(p.visibility, Visibility::Private | Visibility::Protected))
-            .map(|p| self.ctx.types.resolve_atom(p.name))
-            .collect();
+        let mut names = Vec::new();
+        self.collect_instance_private_member_names(
+            instance_type,
+            &mut FxHashSet::default(),
+            &mut names,
+        );
         names.sort();
+        names.dedup();
         for name in &names {
             self.error_at_node_msg(
                 report_at,
                 diagnostic_codes::PROPERTY_OF_EXPORTED_ANONYMOUS_CLASS_TYPE_MAY_NOT_BE_PRIVATE_OR_PROTECTED,
                 &[name.as_str()],
+            );
+        }
+    }
+
+    fn collect_instance_private_member_names(
+        &mut self,
+        instance_type: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+        names: &mut Vec<String>,
+    ) {
+        use tsz_common::common::Visibility;
+
+        let resolved = self.resolve_lazy_type(instance_type);
+        if !visited.insert(resolved) {
+            return;
+        }
+
+        if let Some(members) = crate::query_boundaries::common::intersection_members(
+            self.ctx.types.as_type_database(),
+            resolved,
+        ) {
+            for member in members {
+                self.collect_instance_private_member_names(member, visited, names);
+            }
+        }
+
+        let shape = {
+            let db = self.ctx.types.as_type_database();
+            crate::query_boundaries::checkers::generic::get_object_shape(db, resolved)
+        };
+        if let Some(shape) = shape {
+            names.extend(
+                shape
+                    .properties
+                    .iter()
+                    .filter(|p| matches!(p.visibility, Visibility::Private | Visibility::Protected))
+                    .map(|p| self.ctx.types.resolve_atom(p.name)),
             );
         }
     }

@@ -2360,6 +2360,34 @@ export class Monitor extends mix(AnonBase) {
     }
 
     #[test]
+    fn ts4094_exported_function_returning_anon_class_with_private_base() {
+        // The inferred return type of an exported function can be an anonymous
+        // class constructor whose declaration emit surface includes private
+        // members inherited from the base.
+        let codes = check_with_declaration(
+            r#"
+export class Base {
+    private property = "";
+}
+
+export type Constructor<T> = new (...args: any[]) => T;
+export function WithTags<T extends Constructor<Base>>(BaseCtor: T) {
+    return class extends BaseCtor {
+        tags(): void {}
+    };
+}
+
+export class Test extends WithTags(Base) {}
+"#,
+        );
+        let ts4094_count = codes.iter().filter(|&&code| code == 4094).count();
+        assert!(
+            ts4094_count >= 2,
+            "TS4094 expected for exported function return and named class heritage, got: {codes:?}"
+        );
+    }
+
+    #[test]
     fn ts4094_no_error_without_declaration_flag() {
         // Without `declaration: true`, TS4094 should not be emitted.
         let codes: Vec<u32> = check_source_diagnostics(

@@ -921,16 +921,12 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_some_and(|declares| !declares)
             {
-                let type_display = if let Some(obj_lit_idx) = self
-                    .prior_js_prototype_object_literal_assignment_node(
+                let type_display = self
+                    .prior_js_prototype_object_literal_assignment_display(
                         prototype_access.expression,
                         read_pos,
-                    ) {
-                    let obj_lit_type = self.get_type_of_node(obj_lit_idx);
-                    self.format_type(obj_lit_type)
-                } else {
-                    self.format_type(display_object_type)
-                };
+                    )
+                    .unwrap_or_else(|| self.format_type(display_object_type));
                 self.error_property_not_exist_with_apparent_type(property_name, &type_display, idx);
             }
             if !commonjs_named_props_disallowed {

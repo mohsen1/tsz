@@ -68,6 +68,20 @@ pub(crate) fn reset_global_resolution_fuel() {
     GLOBAL_RESOLUTION_FUEL.set(0);
 }
 
+/// Read the current global resolution fuel counter (for snapshot/restore).
+pub(crate) fn global_resolution_fuel_value() -> u32 {
+    GLOBAL_RESOLUTION_FUEL.get()
+}
+
+/// Restore the global resolution fuel counter to a previously captured value.
+///
+/// Used by speculative sites (return-type inference) that should not bill
+/// their work against the global fuel budget when the speculation is rolled
+/// back — the work will be redone in the non-speculative pass.
+pub(crate) fn restore_global_resolution_fuel(value: u32) {
+    GLOBAL_RESOLUTION_FUEL.set(value);
+}
+
 /// Reset ALL thread-local state in the lazy resolution module.
 /// Called between compilation sessions to prevent cross-compilation contamination.
 pub(crate) fn reset_all_thread_local_state() {

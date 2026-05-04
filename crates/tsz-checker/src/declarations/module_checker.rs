@@ -156,6 +156,15 @@ impl<'a> CheckerState<'a> {
             .ctx
             .declared_modules_contains(self.ctx.binder, module_name)
         {
+            let wrong_context_allows_module_semantics = self
+                .is_in_non_module_element_context(stmt_idx)
+                && !self.is_inside_function_body(stmt_idx)
+                && !self.is_inside_namespace_declaration(stmt_idx);
+            if !self.is_in_non_module_element_context(stmt_idx)
+                || wrong_context_allows_module_semantics
+            {
+                self.validate_reexported_members(export_decl, module_name, resolution_mode);
+            }
             self.ctx.import_resolution_stack.pop();
             return;
         }
@@ -476,8 +485,19 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get the module's canonical export surface.
-        let module_exports =
-            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode);
+        let module_exports = self
+            .resolve_effective_module_exports_with_mode(module_name, resolution_mode)
+            .or_else(|| {
+                (self
+                    .ctx
+                    .declared_modules_contains(self.ctx.binder, module_name)
+                    && !self
+                        .ctx
+                        .binder
+                        .shorthand_ambient_modules
+                        .contains(module_name))
+                .then(tsz_binder::SymbolTable::new)
+            });
         // TSC includes source-level quotes in module diagnostic messages
         let quoted_module = format!("\"{module_name}\"");
         let has_json_default_export =
