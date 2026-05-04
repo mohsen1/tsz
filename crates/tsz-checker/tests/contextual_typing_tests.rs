@@ -1220,6 +1220,28 @@ const r = call((x: number, y: string) => x + y.length, 1, "hello");
     );
 }
 
+#[test]
+fn test_generic_rest_tuple_callback_arity_follows_supplied_rest_args() {
+    let source = r#"
+declare function call<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
+
+call((x: string) => x.length, "hello");
+call(() => "ok", "extra");
+call((x: string) => x.length);
+"#;
+
+    let diagnostics = check_default(source);
+    let call_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2554)
+        .collect();
+    assert_eq!(
+        call_errors.len(),
+        2,
+        "Expected one too-many and one too-few arity error for generic rest tuple callbacks, got {diagnostics:?}"
+    );
+}
+
 /// Return-context substitution through array element types.
 /// Exercises the `array_element_type` matching path in `collect_return_context_substitution`.
 #[test]
