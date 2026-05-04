@@ -829,6 +829,77 @@ mod tests {
     }
 
     #[test]
+    fn test_discover_excludes_config_json_for_explicit_json_include() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_explicit_config_json_excluded");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("tsconfig.json"), r#"{ "compilerOptions": {} }"#).unwrap();
+        fs::write(dir.join("jsconfig.json"), r#"{ "compilerOptions": {} }"#).unwrap();
+        fs::write(dir.join("data.json"), r#"{ "key": "value" }"#).unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: Some(vec!["*.json".to_string()]),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: true,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.iter().any(|p| p.ends_with("data.json")),
+            "explicit JSON include should discover regular JSON files"
+        );
+        assert!(
+            !result.iter().any(|p| p.ends_with("tsconfig.json")),
+            "tsconfig.json must not be included as program input"
+        );
+        assert!(
+            !result.iter().any(|p| p.ends_with("jsconfig.json")),
+            "jsconfig.json must not be included as program input"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_treats_d_tsx_as_tsx_source_not_shadowed_declaration() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_d_tsx_source");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("index.tsx"), "export const x = <div />;").unwrap();
+        fs::write(dir.join("index.d.tsx"), "export const y = <div />;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.iter().any(|p| p.ends_with("index.tsx")),
+            "regular .tsx source should be discovered"
+        );
+        assert!(
+            result.iter().any(|p| p.ends_with("index.d.tsx")),
+            ".d.tsx should be discovered as a .tsx source, not dropped as a declaration"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_default_discovery_includes_mts_cts_and_module_js_variants() {
         let dir = std::env::temp_dir().join("tsz_fs_test_default_include_extensions");
         let _ = fs::remove_dir_all(&dir);
