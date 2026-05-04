@@ -265,6 +265,55 @@ fn test_transpile_helpers_emit_contracts() {
 }
 
 #[test]
+fn test_transpile_preserves_empty_module_from_ast() {
+    let output = transpile("export{};", Some(1), Some(5));
+    assert_eq!(output, "export {};\n");
+
+    let json = transpile_module("import type { T } from './types';", r#"{"module":5}"#);
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["outputText"].as_str().unwrap(), "export {};\n");
+    assert_eq!(parsed["diagnostics"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn test_transpile_ignores_module_words_in_trivia_and_strings() {
+    let source = "// import type { T } from './types';\nconst text = 'export value';";
+    let output = transpile(source, Some(1), Some(5));
+
+    assert!(output.contains("text = 'export value'"));
+    assert!(!output.contains("export {};"));
+}
+
+#[test]
+fn test_transpile_module_reports_invalid_options_json() {
+    let json = transpile_module("const n = 1;", "{ invalid json");
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed["outputText"].as_str().unwrap(), "");
+    let diagnostics = parsed["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["category"].as_u64().unwrap(), 1);
+    assert!(
+        diagnostics[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid transpile options JSON")
+    );
+}
+
+#[test]
+fn test_transpile_module_accepts_file_name_option() {
+    let json = transpile_module(
+        "export{};",
+        r#"{"module":5,"fileName":"virtual/input.mts"}"#,
+    );
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed["outputText"].as_str().unwrap(), "export {};\n");
+    assert_eq!(parsed["diagnostics"].as_array().unwrap().len(), 0);
+}
+
+#[test]
 fn test_json_and_syntax_kind_utilities_contracts() {
     let parsed = parse_json_text("{ // comment\n  \"ok\": true\n}");
     let parsed_value: Value = serde_json::from_str(&parsed).unwrap();
