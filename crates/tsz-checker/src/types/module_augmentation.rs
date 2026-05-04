@@ -609,8 +609,9 @@ impl<'a> CheckerState<'a> {
         type_args: Option<&[TypeId]>,
     ) -> Vec<tsz_solver::PropertyInfo> {
         use tsz_parser::parser::syntax_kind_ext::{
-            EXPORT_DECLARATION, FUNCTION_DECLARATION, INTERFACE_DECLARATION, METHOD_SIGNATURE,
-            MODULE_BLOCK, MODULE_DECLARATION, PROPERTY_SIGNATURE, VARIABLE_STATEMENT,
+            ENUM_DECLARATION, EXPORT_DECLARATION, FUNCTION_DECLARATION, INTERFACE_DECLARATION,
+            METHOD_SIGNATURE, MODULE_BLOCK, MODULE_DECLARATION, PROPERTY_SIGNATURE,
+            VARIABLE_STATEMENT,
         };
         use tsz_solver::PropertyInfo;
         use tsz_solver::TypeId;
@@ -728,6 +729,46 @@ impl<'a> CheckerState<'a> {
                 }
                 if let Some(updates) = interface_type_param_updates {
                     self.pop_type_parameters(updates);
+                }
+                continue;
+            }
+
+            if node.kind == ENUM_DECLARATION
+                && let Some(enum_decl) = arena.get_enum(node)
+            {
+                for &member_idx in &enum_decl.members.nodes {
+                    let Some(member_node) = arena.get(member_idx) else {
+                        continue;
+                    };
+                    let Some(member) = arena.get_enum_member(member_node) else {
+                        continue;
+                    };
+                    let Some(name_node) = arena.get(member.name) else {
+                        continue;
+                    };
+                    let member_name = arena
+                        .get_identifier(name_node)
+                        .map(|ident| ident.escaped_text.clone())
+                        .or_else(|| arena.get_literal(name_node).map(|lit| lit.text.clone()));
+                    let Some(member_name) = member_name else {
+                        continue;
+                    };
+
+                    aug_member_order += 1;
+                    members.push(PropertyInfo {
+                        name: self.ctx.types.intern_string(&member_name),
+                        type_id: TypeId::ANY,
+                        write_type: TypeId::ANY,
+                        optional: false,
+                        readonly: true,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: aug_member_order,
+                        is_string_named: false,
+                        single_quoted_name: false,
+                    });
                 }
                 continue;
             }

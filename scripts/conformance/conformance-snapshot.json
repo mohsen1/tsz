@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-04T21:30:50Z",
-  "git_sha": "6fcee3ecbdd75f3a0bce733501a326ffce55a3e5",
+  "timestamp": "2026-05-04T22:00:38Z",
+  "git_sha": "09c5f50de7a3fe6c97677f5e84f9dd950e4e4ebb",
   "summary": {
     "total_tests": 12582,
-    "passed": 12429,
-    "failed": 153,
+    "passed": 12431,
+    "failed": 151,
     "pass_rate": 98.8
   },
   "areas_by_pass_rate": [
@@ -170,18 +170,18 @@
       "pass_rate": 96.67
     },
     {
-      "area": "salsa",
-      "total": 191,
-      "passed": 185,
-      "failed": 6,
-      "pass_rate": 96.86
-    },
-    {
       "area": "types/members",
       "total": 34,
       "passed": 33,
       "failed": 1,
       "pass_rate": 97.06
+    },
+    {
+      "area": "salsa",
+      "total": 191,
+      "passed": 186,
+      "failed": 5,
+      "pass_rate": 97.38
     },
     {
       "area": "externalModules/typeOnly",
@@ -214,9 +214,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6453,
-      "failed": 67,
-      "pass_rate": 98.97
+      "passed": 6454,
+      "failed": 66,
+      "pass_rate": 98.99
     },
     {
       "area": "jsdoc",
@@ -998,10 +998,6 @@
       "count": 4
     },
     {
-      "code": "TS2339",
-      "count": 4
-    },
-    {
       "code": "TS18046",
       "count": 2
     },
@@ -1018,6 +1014,10 @@
       "count": 1
     },
     {
+      "code": "TS2339",
+      "count": 1
+    },
+    {
       "code": "TS2416",
       "count": 1
     },
@@ -1030,10 +1030,6 @@
     {
       "code": "TS2322",
       "count": 3
-    },
-    {
-      "code": "TS2339",
-      "count": 2
     },
     {
       "code": "TS2741",
@@ -1204,12 +1200,12 @@
   ],
   "top_extra_codes": [
     {
-      "code": "TS2339",
-      "count": 8
-    },
-    {
       "code": "TS2322",
       "count": 7
+    },
+    {
+      "code": "TS2339",
+      "count": 5
     },
     {
       "code": "TS18046",
@@ -1309,11 +1305,11 @@
     }
   ],
   "categories": {
-    "false_positive": 5,
+    "false_positive": 3,
     "all_missing": 3,
-    "wrong_code": 43,
-    "fingerprint_only": 102,
+    "wrong_code": 42,
+    "fingerprint_only": 103,
     "same_code_count_drift": 0,
-    "close_to_passing": 29
+    "close_to_passing": 28
   }
 }

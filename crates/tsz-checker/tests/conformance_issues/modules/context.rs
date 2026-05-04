@@ -64,6 +64,56 @@ export {};
 }
 
 #[test]
+fn module_augmentation_enum_merges_value_side_of_reexported_namespace() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "file.ts",
+                r#"
+export namespace Root {
+    export interface Foo {
+        x: number;
+    }
+}
+"#,
+            ),
+            ("reexport.ts", r#"export * from "./file";"#),
+            (
+                "augment.ts",
+                r#"
+import * as ns from "./reexport";
+
+declare module "./reexport" {
+    export enum Root {
+        A,
+        B,
+        C
+    }
+}
+
+declare const f: ns.Root.Foo;
+const g: ns.Root = ns.Root.A;
+f.x;
+"#,
+            ),
+        ],
+        "augment.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("Property 'A'")),
+        "Expected enum augmentation members on re-exported namespace value to resolve, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_js_constructor_branch_property_visible_cross_file() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[
