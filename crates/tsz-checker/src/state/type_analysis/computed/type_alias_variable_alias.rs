@@ -1927,18 +1927,22 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let pragma_source = self.extract_jsx_import_source_pragma();
         let jsx_mode = self.effective_jsx_mode();
         let uses_import_source = matches!(jsx_mode, JsxMode::ReactJsx | JsxMode::ReactJsxDev)
+            || pragma_source.is_some()
             || !self.ctx.compiler_options.jsx_import_source.is_empty();
         if !uses_import_source {
             return false;
         }
 
-        let source = if self.ctx.compiler_options.jsx_import_source.is_empty() {
-            "react"
-        } else {
-            self.ctx.compiler_options.jsx_import_source.as_str()
-        };
+        let source = pragma_source.unwrap_or_else(|| {
+            if self.ctx.compiler_options.jsx_import_source.is_empty() {
+                "react".to_string()
+            } else {
+                self.ctx.compiler_options.jsx_import_source.clone()
+            }
+        });
         if source.starts_with('/') {
             return false;
         }
@@ -1948,8 +1952,8 @@ impl<'a> CheckerState<'a> {
             "jsx-runtime"
         };
 
-        let mut package_roots = vec![source.to_string()];
-        if let Some(types_root) = Self::types_package_root_for_jsx_import_source(source) {
+        let mut package_roots = vec![source.clone()];
+        if let Some(types_root) = Self::types_package_root_for_jsx_import_source(&source) {
             package_roots.push(types_root);
         }
 
