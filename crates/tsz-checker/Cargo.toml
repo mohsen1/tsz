@@ -134,6 +134,10 @@ name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
 
 [[test]]
+name = "jsx_import_source_namespace_tests"
+path = "tests/jsx_import_source_namespace_tests.rs"
+
+[[test]]
 name = "type_alias_namespace_merge_tests"
 path = "tests/type_alias_namespace_merge_tests.rs"
 
@@ -660,6 +664,14 @@ path = "tests/strict_mode_reserved_word_in_qualified_type_tests.rs"
 [[test]]
 name = "union_index_access_function_application_param_tests"
 path = "tests/union_index_access_function_application_param_tests.rs"
+
+[[test]]
+name = "indexed_access_resolved_union_property_tests"
+path = "tests/indexed_access_resolved_union_property_tests.rs"
+
+[[test]]
+name = "js_exports_surface_fallback_for_named_imports_tests"
+path = "tests/js_exports_surface_fallback_for_named_imports_tests.rs"
 
 [[test]]
 name = "jsx_pragma_factory_marks_imports_referenced_tests"

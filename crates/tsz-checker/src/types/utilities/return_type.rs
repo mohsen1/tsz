@@ -392,7 +392,8 @@ impl<'a> CheckerState<'a> {
 
         if self.ctx.is_checking_statements
             && function_idx.is_some()
-            && !self.contextual_return_suppresses_circularity(return_context)
+            && (!self.contextual_return_suppresses_circularity(return_context)
+                || self.return_body_has_resolving_var_in_call_like(body_idx))
             && let Some(function_node) = self.ctx.arena.get(function_idx)
         {
             let should_record = matches!(

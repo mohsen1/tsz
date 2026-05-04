@@ -44,6 +44,15 @@ impl<'a> CheckerState<'a> {
         ) {
             return apparent;
         }
+        // Index-access narrowed types (e.g. `E[K]` where E and K are generic
+        // and the resolved value type is a closed union like `A | B`) should
+        // also defer to the apparent display. Returning the IndexAccess form
+        // would otherwise route through the suppress-on-IndexAccess branch
+        // in `error_property_not_exist_at`, silencing TS2339 entirely on a
+        // genuine missing-property situation.
+        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, narrowed) {
+            return apparent;
+        }
         if crate::query_boundaries::common::union_list_id(self.ctx.types, apparent).is_some() {
             return narrowed;
         }

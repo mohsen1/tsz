@@ -5619,3 +5619,40 @@ let d = <MyComponent initialValues={{ x: "y" }} nextValues={a => a.x} />;
         );
     }
 }
+
+/// When a class JSX component's constructor takes a primitive first parameter
+/// (e.g. `new(n: string): { x: number; render(): void }`) AND the JSX
+/// namespace's `IntrinsicAttributes` declares a required prop the caller did
+/// not pass (typically `key`), tsc reports ONLY `TS2741` for the missing
+/// required `IntrinsicAttributes` prop. It does NOT also emit `TS2322` for
+/// whole-attrs assignability against the primitive props type, because
+/// primitive props can never structurally accept JSX attributes — the
+/// assignability failure is uninformative when TS2741 already conveys the
+/// user-actionable error.
+///
+/// Mirrors the conformance test
+/// `conformance/jsx/tsxIntrinsicAttributeErrors.tsx`.
+#[test]
+fn jsx_class_primitive_props_with_missing_intrinsic_required_emits_only_ts2741_not_ts2322() {
+    let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface ElementClass { render: any; }
+    interface IntrinsicAttributes { key: string | number }
+    interface IntrinsicClassAttributes<T> { ref: T }
+    interface IntrinsicElements { div: { text?: string }; span: any; }
+}
+interface I { new(n: string): { x: number; render(): void } }
+declare var E: I;
+<E x={10} />
+"#;
+    let codes = jsx_codes(source);
+    assert!(
+        codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        "Expected TS2741 (missing required `key`) for class JSX with primitive props, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected NO TS2322 for class JSX whole-attrs assignability against primitive props, got: {codes:?}"
+    );
+}
