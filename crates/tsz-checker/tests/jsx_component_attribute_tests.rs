@@ -1911,6 +1911,44 @@ declare function UnwrappedLink2<T extends React.ElementType = React.ElementType>
 }
 
 #[test]
+fn test_generic_intrinsic_tag_type_parameter_checks_empty_attrs_against_lma() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    type LibraryManagedAttributes<C, P> = P;
+    interface IntrinsicElements {
+        div: { id: string };
+        span: { title: string };
+    }
+}
+
+declare namespace React {
+    interface SFC {
+        (): JSX.Element;
+    }
+}
+
+type Tags = "span" | "div";
+
+const Hoc = <Tag extends Tags>(
+   TagElement: Tag,
+): React.SFC => {
+   const Component = () => <TagElement />;
+   return Component;
+};
+"#;
+
+    let diags = jsx_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("LibraryManagedAttributes<Tag,")
+        }),
+        "Expected TS2322 for empty attrs against generic intrinsic LibraryManagedAttributes target, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_generic_jsx_props_conditional_component_props_with_ref_keeps_callback_context() {
     let lib_source = r#"
 declare namespace JSX {
