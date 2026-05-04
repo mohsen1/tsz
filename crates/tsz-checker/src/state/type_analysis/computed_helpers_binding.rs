@@ -58,7 +58,6 @@ impl<'a> CheckerState<'a> {
             && let Some(target_file_idx) = self
                 .ctx
                 .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
-                .or_else(|| self.ctx.resolve_import_target(module_name))
         {
             let arena = self.ctx.get_arena_for_file(target_file_idx as u32);
             if let Some(sf) = arena.source_files.first() {
