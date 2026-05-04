@@ -534,7 +534,9 @@ impl<'a> CheckerState<'a> {
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
         let force_nested_error_nullish_report =
             self.should_report_nullish_assignment_through_nested_target_error(source, target);
+        let exact_optional_mismatch = self.has_exact_optional_property_mismatch(source, target);
         if !force_nested_error_nullish_report
+            && !exact_optional_mismatch
             && self.should_suppress_assignability_diagnostic(source, target)
         {
             return true;
@@ -629,6 +631,11 @@ impl<'a> CheckerState<'a> {
                 ),
                 crate::diagnostics::diagnostic_codes::EXCESSIVE_COMPLEXITY_COMPARING_TYPES_AND,
             );
+            return false;
+        }
+
+        if exact_optional_mismatch {
+            self.diagnose_assignment_failure(source, target, diag_idx);
             return false;
         }
 

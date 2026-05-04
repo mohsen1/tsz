@@ -168,7 +168,7 @@ impl<'a> CheckerState<'a> {
     /// and should produce TS2375 instead of TS2322.
     ///
     /// Mirrors tsc's `getExactOptionalUnassignableProperties` + `isExactOptionalPropertyMismatch`.
-    pub(super) fn has_exact_optional_property_mismatch(
+    pub(crate) fn has_exact_optional_property_mismatch(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -186,22 +186,55 @@ impl<'a> CheckerState<'a> {
         };
         let source_shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source_eval);
+        let has_optional_source_for_required_target = source_shape.as_ref().is_some_and(|source| {
+            target_shape.properties.iter().any(|target_prop| {
+                let target_name = self.ctx.types.resolve_atom_ref(target_prop.name);
+                !target_prop.optional
+                    && !crate::query_boundaries::class_type::type_includes_undefined(
+                        self.ctx.types,
+                        target_prop.write_type,
+                    )
+                    && source
+                        .properties
+                        .iter()
+                        .find(|source_prop| {
+                            self.ctx.types.resolve_atom_ref(source_prop.name).as_ref()
+                                == target_name.as_ref()
+                        })
+                        .is_some_and(|source_prop| source_prop.optional)
+            })
+        });
         for target_prop in &target_shape.properties {
             if !target_prop.optional {
                 continue;
             }
-            // Check if the source has a property with the same name that includes undefined
-            let source_prop_type = source_shape
-                .as_ref()
-                .and_then(|s| s.properties.iter().find(|p| p.name == target_prop.name))
-                .map(|p| p.type_id);
-            if let Some(src_type) = source_prop_type
-                && crate::query_boundaries::class_type::type_includes_undefined(
+            let target_write_includes_undefined =
+                crate::query_boundaries::class_type::type_includes_undefined(
                     self.ctx.types,
-                    src_type,
-                )
-            {
-                return true;
+                    target_prop.write_type,
+                );
+            if target_write_includes_undefined {
+                continue;
+            }
+            // Check if the source has a property with the same name that includes undefined
+            let target_name = self.ctx.types.resolve_atom_ref(target_prop.name);
+            let source_prop = source_shape.as_ref().and_then(|s| {
+                s.properties.iter().find(|source_prop| {
+                    self.ctx.types.resolve_atom_ref(source_prop.name).as_ref()
+                        == target_name.as_ref()
+                })
+            });
+            if let Some(source_prop) = source_prop {
+                let source_type_includes_undefined =
+                    crate::query_boundaries::class_type::type_includes_undefined(
+                        self.ctx.types,
+                        source_prop.type_id,
+                    );
+                if source_type_includes_undefined
+                    || (source_prop.optional && has_optional_source_for_required_target)
+                {
+                    return true;
+                }
             }
         }
         false
@@ -741,7 +774,9 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         keyword_pos: Option<u32>,
     ) {
-        if self.should_suppress_assignability_diagnostic(source, target) {
+        if !self.has_exact_optional_property_mismatch(source, target)
+            && self.should_suppress_assignability_diagnostic(source, target)
+        {
             return;
         }
 
@@ -838,7 +873,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // Centralized suppression for TS2322 cascades on unresolved escape-hatch types.
-        if self.should_suppress_assignability_diagnostic(source, target) {
+        if !self.has_exact_optional_property_mismatch(source, target)
+            && self.should_suppress_assignability_diagnostic(source, target)
+        {
             if tracing::enabled!(Level::TRACE) {
                 trace!(
                     source = source.0,
