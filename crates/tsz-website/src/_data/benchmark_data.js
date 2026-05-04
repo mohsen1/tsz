@@ -1295,15 +1295,8 @@ function generateCharts(data, mode = "projects") {
       return categoryTitle(a).localeCompare(categoryTitle(b));
     });
   const visibleFailedResults = failedResults.filter((row) => failedBelongsToMode(row, mode));
-
-  let html = "";
-  for (const category of visibleCategories) {
+  const entriesForCategory = (category) => {
     const entries = (grouped.get(category) || []).slice();
-    const slug = categorySlug(category);
-    const meta = categoryMeta(category);
-    const isProject = isProjectCategory(category);
-    if (!entries.length) continue;
-
     if (isExternalLibraryCategory(category)) {
       const libraryName = libraryNameForCategory(category);
       const aggregate = buildAggregateBenchmark(entries, libraryName);
@@ -1311,6 +1304,23 @@ function generateCharts(data, mode = "projects") {
         entries.push(aggregate);
       }
     }
+    return entries;
+  };
+  const chartMaxMs = Math.max(
+    1,
+    ...visibleCategories
+      .flatMap((category) => entriesForCategory(category))
+      .flatMap((row) => [Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0]),
+    ...visibleFailedResults.flatMap((row) => [Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0]),
+  );
+
+  let html = "";
+  for (const category of visibleCategories) {
+    const entries = entriesForCategory(category);
+    const slug = categorySlug(category);
+    const meta = categoryMeta(category);
+    const isProject = isProjectCategory(category);
+    if (!entries.length) continue;
 
     entries.sort((a, b) => {
       if (isProject) {
@@ -1324,7 +1334,6 @@ function generateCharts(data, mode = "projects") {
       }
       return (String(a.name || "") > String(b.name || "") ? 1 : -1);
     });
-    const maxMs = Math.max(...entries.map((r) => Math.max(r.tsz_ms, r.tsgo_ms)));
     const desc = isProject ? "" : categoryDescription(category);
     const repoLink = meta.repo
       ? ` <a class="bench-category-repo" href="${meta.repo}" target="_blank" rel="noopener noreferrer">${escapeHtml(meta.repoLabel || meta.repo)}</a>`
@@ -1338,8 +1347,8 @@ function generateCharts(data, mode = "projects") {
 
     for (const r of entries) {
       const decorated = decorateRow(r, category, { isAggregate: r.is_aggregate });
-      const tszWidth = Math.max(2, (r.tsz_ms / maxMs) * barMaxWidth);
-      const tsgoWidth = Math.max(2, (r.tsgo_ms / maxMs) * barMaxWidth);
+      const tszWidth = Math.max(2, (r.tsz_ms / chartMaxMs) * barMaxWidth);
+      const tsgoWidth = Math.max(2, (r.tsgo_ms / chartMaxMs) * barMaxWidth);
       const winnerLabel = formatSpeedupLabel(r.tsz_ms, r.tsgo_ms);
 
       const metaParts = isProject
@@ -1382,12 +1391,11 @@ function generateCharts(data, mode = "projects") {
   <h3 class="bench-category-title" id="failures">${escapeHtml(failedTitle)}</h3>
   <p class="bench-category-desc">${escapeHtml(failedDescription)}</p>
   <div class="bench-chart">\n`;
-    const maxFailMs = Math.max(1, ...visibleFailedResults.flatMap((r) => [Number(r.tsz_ms) || 0, Number(r.tsgo_ms) || 0]));
     for (const r of visibleFailedResults) {
       const category = categoryFor(r.name || "", r.lines);
       const decorated = decorateRow(r, category);
-      const tszWidth = hasTiming(r.tsz_ms) ? Math.max(2, (r.tsz_ms / maxFailMs) * barMaxWidth) : 0;
-      const tsgoWidth = hasTiming(r.tsgo_ms) ? Math.max(2, (r.tsgo_ms / maxFailMs) * barMaxWidth) : 0;
+      const tszWidth = hasTiming(r.tsz_ms) ? Math.max(2, (r.tsz_ms / chartMaxMs) * barMaxWidth) : 0;
+      const tsgoWidth = hasTiming(r.tsgo_ms) ? Math.max(2, (r.tsgo_ms / chartMaxMs) * barMaxWidth) : 0;
       const metaParts = [decorated.kind, `${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`];
       html += `  <div class="bench-row bench-row-error">
     <div class="bench-name"><a href="${decorated.url}">${escapeHtml(displayName(r.name))}</a></div>
