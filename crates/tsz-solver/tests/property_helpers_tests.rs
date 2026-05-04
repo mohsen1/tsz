@@ -1251,8 +1251,7 @@ fn test_tuple_numeric_index() {
         },
     ]);
 
-    // Access index 0 -> string | undefined, index 1 -> number | undefined
-    // (array/tuple numeric index access unions with undefined by default)
+    // Fixed tuple numeric properties resolve to their declared element type.
     let result0 = evaluator.resolve_property_access(tuple, "0");
     match &result0 {
         PropertyAccessResult::Success {
@@ -1260,13 +1259,8 @@ fn test_tuple_numeric_index() {
             from_index_signature,
             ..
         } => {
-            // Result includes undefined due to element_type_with_undefined
-            assert_ne!(
-                *type_id,
-                TypeId::STRING,
-                "tuple[0] should include undefined"
-            );
-            assert!(*from_index_signature, "Should be from index signature");
+            assert_eq!(*type_id, TypeId::STRING);
+            assert!(!*from_index_signature, "fixed tuple element is a property");
         }
         _ => panic!("Expected Success for tuple[0], got {result0:?}"),
     }
@@ -1278,12 +1272,8 @@ fn test_tuple_numeric_index() {
             from_index_signature,
             ..
         } => {
-            assert_ne!(
-                *type_id,
-                TypeId::NUMBER,
-                "tuple[1] should include undefined"
-            );
-            assert!(*from_index_signature, "Should be from index signature");
+            assert_eq!(*type_id, TypeId::NUMBER);
+            assert!(!*from_index_signature, "fixed tuple element is a property");
         }
         _ => panic!("Expected Success for tuple[1], got {result1:?}"),
     }

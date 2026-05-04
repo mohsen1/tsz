@@ -1173,6 +1173,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return self.method_result(TypeId::STRING);
         }
 
+        if let Some(TypeData::Tuple(elements_id)) = self.interner().lookup(array_type)
+            && let Some(index_text) = crate::utils::canonicalize_numeric_name(prop_name)
+            && let Ok(index) = index_text.parse::<usize>()
+        {
+            let elements = self.interner().tuple_list(elements_id);
+            if let Some(element_type) = self.tuple_fixed_element_type(&elements, index) {
+                return PropertyAccessResult::simple(element_type);
+            }
+        }
+
         let element_type = self.array_element_type(array_type);
 
         // Try to use the Array<T> interface from lib.d.ts
@@ -1372,6 +1382,61 @@ impl<'a> PropertyAccessEvaluator<'a> {
             members.push(ty);
         }
         self.interner().union(members)
+    }
+
+    fn tuple_fixed_element_type(&self, elements: &[TupleElement], index: usize) -> Option<TypeId> {
+        self.tuple_fixed_element_type_inner(elements, index, 0)
+    }
+
+    fn tuple_fixed_element_type_inner(
+        &self,
+        elements: &[TupleElement],
+        index: usize,
+        depth: usize,
+    ) -> Option<TypeId> {
+        const MAX_TUPLE_SPREAD_DEPTH: usize = 64;
+
+        if depth > MAX_TUPLE_SPREAD_DEPTH {
+            return None;
+        }
+
+        let mut position = 0usize;
+        for elem in elements {
+            if elem.rest {
+                let rest_id = elem.type_id;
+                if rest_id.is_intrinsic() {
+                    return None;
+                }
+                let inner_list_id = match self.interner().lookup(rest_id) {
+                    Some(TypeData::Tuple(id)) => id,
+                    _ => return None,
+                };
+                let inner = self.interner().tuple_list(inner_list_id);
+                let rest_index = index.checked_sub(position)?;
+                if let Some(ty) = self.tuple_fixed_element_type_inner(&inner, rest_index, depth + 1)
+                {
+                    return Some(ty);
+                }
+                let inner_len = self.compute_tuple_fixed_length(rest_id)?;
+                position = position.checked_add(inner_len)?;
+            } else {
+                if position == index {
+                    let ty = if elem.optional {
+                        self.element_type_with_undefined(elem.type_id)
+                    } else {
+                        elem.type_id
+                    };
+                    return Some(ty);
+                }
+                position = position.checked_add(1)?;
+            }
+
+            if position > index {
+                return None;
+            }
+        }
+
+        None
     }
 
     fn element_type_with_undefined(&self, element_type: TypeId) -> TypeId {

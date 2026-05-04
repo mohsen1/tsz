@@ -10,5 +10,6 @@ pub mod class_inheritance;
 pub(crate) mod class_summary;
 pub mod constructor_checker;
 pub(crate) mod interface_heritage_display;
+pub(crate) mod interface_heritage_index;
 pub mod private_checker;
 pub mod super_checker;

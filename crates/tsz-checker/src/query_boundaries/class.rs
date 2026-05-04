@@ -705,3 +705,8 @@ pub(crate) fn build_own_member_summary(
 pub(crate) fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::data::is_valid_base_type(db, type_id)
 }
+
+/// Check if a type is a valid interface heritage base.
+pub(crate) fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::data::is_valid_interface_base_type(db, type_id)
+}

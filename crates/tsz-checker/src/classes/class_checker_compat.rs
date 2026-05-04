@@ -418,10 +418,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Collect derived interface index signatures across all declarations.
-        // These are checked against base index signatures for TS2430 compatibility.
-        let mut derived_string_index_type: Option<TypeId> = None;
-        let mut derived_number_index_type: Option<TypeId> = None;
+        let mut derived_string_index_type: Option<(TypeId, NodeIndex)> = None;
+        let mut derived_number_index_type: Option<(TypeId, NodeIndex)> = None;
         for &decl_idx in &all_iface_decls {
             let Some(sym_id) = iface_sym_id else {
                 continue;
@@ -461,9 +459,9 @@ impl<'a> CheckerState<'a> {
                             TypeId::ANY
                         };
                         if key_type == TypeId::NUMBER {
-                            derived_number_index_type = Some(value_type);
+                            derived_number_index_type = Some((value_type, member_idx));
                         } else {
-                            derived_string_index_type = Some(value_type);
+                            derived_string_index_type = Some((value_type, member_idx));
                         }
                     }
                 }
@@ -1544,16 +1542,29 @@ impl<'a> CheckerState<'a> {
                                     base_prop_type_id,
                                     *derived_member_idx,
                                 ) {
+                                    let diagnostic_base_name = self
+                                        .array_or_tuple_alias_target_text_for_name(&base_name)
+                                        .unwrap_or_else(|| base_name.clone());
                                     self.error_at_node(
                                         iface_data.name,
                                         &format!(
-                                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                                            "Interface '{derived_name}' incorrectly extends interface '{diagnostic_base_name}'."
                                         ),
                                         diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                     );
                                     break; // Report one incompatibility per base type
                                 }
                             }
+                        }
+
+                        if let Some((string_index_value, string_index_node)) =
+                            derived_string_index_type
+                        {
+                            self.check_type_alias_base_properties_against_derived_string_index(
+                                base_type,
+                                string_index_value,
+                                string_index_node,
+                            );
                         }
                     }
                 }
@@ -1889,8 +1900,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Check string index compatibility
-                if let (Some(derived_val), Some(base_val)) =
+                if let (Some((derived_val, _)), Some(base_val)) =
                     (derived_string_index_type, base_string_index_value)
                     && !self.is_assignable_to(derived_val, base_val)
                 {
@@ -1903,8 +1913,7 @@ impl<'a> CheckerState<'a> {
                         );
                 }
 
-                // Check number index compatibility
-                if let (Some(derived_val), Some(base_val)) =
+                if let (Some((derived_val, _)), Some(base_val)) =
                     (derived_number_index_type, base_number_index_value)
                     && !self.is_assignable_to(derived_val, base_val)
                 {

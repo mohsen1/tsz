@@ -1285,3 +1285,40 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         _ => false,
     }
 }
+
+/// Check if a type is a valid base type for an interface `extends` clause.
+///
+/// Interface heritage is narrower than class heritage: the base must be an
+/// object type or an intersection of object types with statically known
+/// members. Unions and type parameters are rejected with TS2312.
+#[allow(clippy::match_same_arms)]
+pub fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return type_id == TypeId::ANY || type_id == TypeId::OBJECT;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)) => true,
+        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => true,
+        Some(TypeData::Callable(_) | TypeData::Function(_)) => true,
+        Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&member| is_valid_interface_base_type(db, member))
+        }
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = db.mapped_type(mapped_id);
+            !contains_type_parameters_db(db, mapped.constraint)
+                && !mapped
+                    .name_type
+                    .is_some_and(|name_type| contains_type_parameters_db(db, name_type))
+        }
+        Some(TypeData::ReadonlyType(inner)) => is_valid_interface_base_type(db, inner),
+        Some(TypeData::Lazy(_) | TypeData::Application(_)) => true,
+        Some(TypeData::Union(_) | TypeData::TypeParameter(_)) => false,
+        _ => false,
+    }
+}
