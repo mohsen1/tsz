@@ -2540,13 +2540,11 @@ fn test_ts2345_function_return_mismatch_includes_related_return_detail() {
         })
         .expect("expected TS2345 for function return type mismatch");
 
-    assert!(
-        ts2345.related_information.iter().any(|info| {
-            info.message_text
-                .contains("Return type 'string' is not assignable to 'number'.")
-        }),
-        "Expected TS2345 to include return-type elaboration, got: {ts2345:?}"
-    );
+    // tsc emits the inner mismatch as a single "Type 'X' is not assignable
+    // to type 'Y'." line — no intermediate "Return type ..." prefix
+    // (verified: zero matches across all tsc baselines). The TS2345 path
+    // formerly emitted both lines; the fingerprint-policy fix collapses to
+    // just the direct mismatch line, matching tsc.
     assert!(
         ts2345.related_information.iter().any(|info| {
             info.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
@@ -2554,7 +2552,15 @@ fn test_ts2345_function_return_mismatch_includes_related_return_detail() {
                     .message_text
                     .contains("Type 'string' is not assignable to type 'number'.")
         }),
-        "Expected TS2345 to include nested type mismatch under the return-type detail, got: {ts2345:?}"
+        "Expected TS2345 to include direct inner type mismatch line, got: {ts2345:?}"
+    );
+    assert!(
+        ts2345.related_information.iter().all(|info| {
+            !info
+                .message_text
+                .contains("Return type 'string' is not assignable to 'number'.")
+        }),
+        "Should NOT emit \"Return type ...\" framing — tsc omits it: {ts2345:?}"
     );
 }
 
@@ -2679,12 +2685,16 @@ fn test_ts2345_function_return_mismatch_related_detail_qualifies_same_named_retu
         })
         .expect("expected TS2345 for function return type mismatch");
 
+    // tsc qualifies same-named types in the inner mismatch line itself
+    // ("Type 'N.Token' is not assignable to type 'M.Token'.") rather than
+    // through a separate "Return type ..." framing. The qualification still
+    // surfaces — just on the direct mismatch line.
     assert!(
         ts2345.related_information.iter().any(|info| {
             info.message_text
-                .contains("Return type 'N.Token' is not assignable to 'M.Token'.")
+                .contains("Type 'N.Token' is not assignable to type 'M.Token'.")
         }),
-        "Expected TS2345 related return detail to qualify same-named return types, got: {ts2345:?}"
+        "Expected TS2345 inner mismatch to qualify same-named return types, got: {ts2345:?}"
     );
 }
 

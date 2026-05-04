@@ -460,29 +460,31 @@ impl<'a> CheckerState<'a> {
                     source_str,
                     target_str,
                 );
-                let mut items = vec![
-                    DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Error,
-                        code: reason.diagnostic_code(),
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length,
-                        message_text: format!(
-                            "Return type '{source_str}' is not assignable to '{target_str}'."
-                        ),
-                    },
-                    DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length,
-                        message_text: format_message(
-                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            &[&source_str, &target_str],
-                        ),
-                    },
-                ];
+                // tsc's elaboration shape for TS2345 function-return-type
+                // mismatches goes straight from the top-level message into
+                // the inner mismatch line:
+                //
+                //   error TS2345: Argument of type '(a) => string' is not
+                //                 assignable to parameter of type '(a) => 1'.
+                //     Type 'string' is not assignable to type '1'.
+                //
+                // The intermediate "Return type 'X' is not assignable to 'Y'."
+                // framing is never emitted by tsc (verified: zero matches in
+                // tsc baselines). Emit only the inner mismatch line, then
+                // drill into any nested reason for further elaboration. This
+                // mirrors the same fix applied to TS2322's
+                // `render_return_type_mismatch` in iter 51.
+                let mut items = vec![DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length,
+                    message_text: format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    ),
+                }];
                 // Drill into nested reason to produce elaboration diagnostics
                 // (e.g. TS2741 "Property 'x' is missing..." when the return type
                 // mismatch is due to a missing property).
