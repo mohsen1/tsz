@@ -2,6 +2,13 @@ use anyhow::{Context, Result, bail};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use tsz_common::file_extensions::{
+    default_discovery_include_patterns, include_pattern_has_supported_extension, is_json_file,
+    strip_ts_declaration_extension_from_path, strip_ts_source_extension_from_path,
+};
+pub(crate) use tsz_common::file_extensions::{
+    is_js_file, is_ts_file, is_valid_module_file, is_valid_module_or_js_file,
+};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::config::TsConfig;
@@ -203,35 +210,7 @@ fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
 }
 
 pub fn default_include_patterns(allow_js: bool, resolve_json_module: bool) -> Vec<String> {
-    // tsc's default include is `["**/*"]` which matches all files, then filters
-    // by supported extensions. Our explicit patterns must cover all TypeScript
-    // extensions including `.mts` and `.cts` (ESM/CJS module variants).
-    let mut patterns = vec![
-        "*.ts".to_string(),
-        "*.tsx".to_string(),
-        "*.mts".to_string(),
-        "*.cts".to_string(),
-        "**/*.ts".to_string(),
-        "**/*.tsx".to_string(),
-        "**/*.mts".to_string(),
-        "**/*.cts".to_string(),
-    ];
-    if allow_js {
-        patterns.extend([
-            "*.js".to_string(),
-            "*.jsx".to_string(),
-            "*.mjs".to_string(),
-            "*.cjs".to_string(),
-            "**/*.js".to_string(),
-            "**/*.jsx".to_string(),
-            "**/*.mjs".to_string(),
-            "**/*.cjs".to_string(),
-        ]);
-    }
-    if resolve_json_module {
-        patterns.extend(["*.json".to_string(), "**/*.json".to_string()]);
-    }
-    patterns
+    default_discovery_include_patterns(allow_js, resolve_json_module)
 }
 
 /// The display string for default include patterns, matching tsc's output.
@@ -251,15 +230,7 @@ fn expand_include_patterns(patterns: &[String]) -> Vec<String> {
     let mut expanded = Vec::new();
     for pattern in patterns {
         // If pattern already has glob metacharacters with extensions, use as-is
-        if pattern.ends_with(".ts")
-            || pattern.ends_with(".tsx")
-            || pattern.ends_with(".js")
-            || pattern.ends_with(".jsx")
-            || pattern.ends_with(".mts")
-            || pattern.ends_with(".cts")
-            || pattern.ends_with(".mjs")
-            || pattern.ends_with(".cjs")
-        {
+        if include_pattern_has_supported_extension(pattern) {
             expanded.push(pattern.clone());
             continue;
         }
@@ -392,52 +363,6 @@ fn ensure_file_exists(path: &Path, original: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn is_js_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("js") | Some("jsx") | Some("mjs") | Some("cjs")
-    )
-}
-
-pub(crate) fn is_ts_file(path: &Path) -> bool {
-    let name = match path.file_name().and_then(|name| name.to_str()) {
-        Some(name) => name,
-        None => return false,
-    };
-
-    if name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts") {
-        return true;
-    }
-
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("ts") | Some("tsx") | Some("mts") | Some("cts")
-    )
-}
-
-/// Check if a path is a valid module file for module resolution purposes.
-/// This includes TypeScript files AND .json files (which can be imported with resolveJsonModule).
-/// NOTE: This intentionally excludes JS files (.js/.jsx/.mjs/.cjs). For export map
-/// resolution, tsc does not accept raw JS files as valid targets — the package author
-/// must provide declaration files via a `types` condition. JS files are only accepted
-/// as resolution targets in non-export contexts (e.g., `imports` field, `main` field)
-/// via `is_valid_module_or_js_file`.
-pub(crate) fn is_valid_module_file(path: &Path) -> bool {
-    is_ts_file(path) || is_json_file(path)
-}
-
-/// Like `is_valid_module_file` but also accepts JavaScript files.
-/// Used in non-export resolution paths (package.json `imports` field, `main` field,
-/// direct file resolution) where tsc will resolve to JS source files during
-/// import-following for source discovery.
-pub(crate) fn is_valid_module_or_js_file(path: &Path) -> bool {
-    is_ts_file(path) || is_js_file(path) || is_json_file(path)
-}
-
-fn is_json_file(path: &Path) -> bool {
-    matches!(path.extension().and_then(|ext| ext.to_str()), Some("json"))
-}
-
 /// Returns true for tsconfig.json / jsconfig.json files, which tsc excludes
 /// from program inputs even when resolveJsonModule is enabled.
 fn is_config_json(path: &Path) -> bool {
@@ -461,16 +386,7 @@ fn exclude_shadowed_declaration_files(files: BTreeSet<PathBuf>) -> BTreeSet<Path
     // Build a set of all non-declaration stems for O(1) lookup.
     let mut source_stems: BTreeSet<PathBuf> = BTreeSet::new();
     for path in &files {
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n,
-            None => continue,
-        };
-        // Skip declaration files.
-        if name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts") {
-            continue;
-        }
-        // Strip the source extension to get the stem path (dir + stem).
-        if let Some(stem) = strip_source_extension(path, name) {
+        if let Some(stem) = strip_ts_source_extension_from_path(path) {
             source_stems.insert(stem);
         }
     }
@@ -478,11 +394,7 @@ fn exclude_shadowed_declaration_files(files: BTreeSet<PathBuf>) -> BTreeSet<Path
     files
         .into_iter()
         .filter(|path| {
-            let name = match path.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n,
-                None => return true,
-            };
-            if let Some(decl_stem) = strip_declaration_extension(path, name) {
+            if let Some(decl_stem) = strip_ts_declaration_extension_from_path(path) {
                 // Keep the declaration file only if no source file shares its stem.
                 !source_stems.contains(&decl_stem)
             } else {
@@ -490,37 +402,6 @@ fn exclude_shadowed_declaration_files(files: BTreeSet<PathBuf>) -> BTreeSet<Path
             }
         })
         .collect()
-}
-
-/// Strip a source extension (.ts, .tsx, .mts, .cts) from a path and return the
-/// parent-joined stem.  Returns `None` for non-source extensions.
-fn strip_source_extension(path: &Path, name: &str) -> Option<PathBuf> {
-    let stem = if let Some(s) = name.strip_suffix(".tsx") {
-        s
-    } else if let Some(s) = name.strip_suffix(".mts") {
-        s
-    } else if let Some(s) = name.strip_suffix(".cts") {
-        s
-    } else if let Some(s) = name.strip_suffix(".ts") {
-        // Don't match `.d.ts` — that's a declaration extension.
-        if s.ends_with(".d") {
-            return None;
-        }
-        s
-    } else {
-        return None;
-    };
-    Some(path.with_file_name(stem))
-}
-
-/// Strip a declaration extension (.d.ts, .d.mts, .d.cts) and return the
-/// parent-joined stem.
-fn strip_declaration_extension(path: &Path, name: &str) -> Option<PathBuf> {
-    let stem = name
-        .strip_suffix(".d.ts")
-        .or_else(|| name.strip_suffix(".d.mts"))
-        .or_else(|| name.strip_suffix(".d.cts"))?;
-    Some(path.with_file_name(stem))
 }
 
 fn path_to_pattern(base_dir: &Path, path: &Path) -> Option<String> {
