@@ -135,6 +135,40 @@ fn get_all_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn test_ts2322_for_index_accesses_with_distinct_key_type_parameters() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+        declare namespace JSX {
+            interface IntrinsicElements {
+                div: { divOnly?: string };
+                span: { spanOnly?: string };
+            }
+        }
+
+        class I<
+            T1 extends keyof JSX.IntrinsicElements,
+            T2 extends keyof JSX.IntrinsicElements
+        > {
+            M() {
+                let c1: JSX.IntrinsicElements[T1] = {};
+                const c2: JSX.IntrinsicElements[T2] = c1;
+            }
+        }
+    "#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains(
+                    "Type 'IntrinsicElements[T1]' is not assignable to type 'IntrinsicElements[T2]'.",
+                )
+        }),
+        "Expected TS2322 for independent JSX.IntrinsicElements indexed accesses, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2322_identifier_literal_initializer_display_for_literal_sensitive_targets() {
     let diagnostics = get_all_diagnostics(
         r#"

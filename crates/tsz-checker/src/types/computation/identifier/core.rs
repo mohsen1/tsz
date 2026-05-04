@@ -30,6 +30,32 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|access| access.expression == idx)
     }
 
+    fn should_preserve_declared_generic_index_access_for_fresh_flow(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        declared_type: TypeId,
+        flow_type: TypeId,
+    ) -> bool {
+        if !self.symbol_value_decl_has_explicit_type_annotation(sym_id) {
+            return false;
+        }
+
+        let Some((_, index_type)) = common_query::index_access_parts(self.ctx.types, declared_type)
+        else {
+            return false;
+        };
+
+        let has_type_parameter_key =
+            common_query::is_type_parameter_like(self.ctx.types, index_type)
+                || common_query::is_type_parameter_like(
+                    self.ctx.types,
+                    self.resolve_lazy_type(index_type),
+                );
+        has_type_parameter_key
+            && (flow_type == TypeId::ANY
+                || common_query::is_fresh_object_type(self.ctx.types, flow_type))
+    }
+
     fn import_equals_alias_value_type(&mut self, sym_id: tsz_binder::SymbolId) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if !symbol.has_any_flags(symbol_flags::ALIAS) {
@@ -1644,6 +1670,12 @@ impl<'a> CheckerState<'a> {
                     // `any` through control flow. Preserve that evolved type instead of
                     // collapsing back to the declared `any`.
                     flow_type
+                } else if self.should_preserve_declared_generic_index_access_for_fresh_flow(
+                    sym_id,
+                    declared_type,
+                    flow_type,
+                ) {
+                    declared_type
                 } else if flow_type != declared_type && flow_type != TypeId::ERROR {
                     // Flow narrowed the type - but check if this is just the initializer
                     // literal being returned. For mutable variables without annotations,
