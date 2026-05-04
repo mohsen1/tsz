@@ -869,6 +869,7 @@ impl Parser {
             FullProviderOptions {
                 strict: checker_options.strict,
                 sound_mode: checker_options.sound_mode,
+                checker_options: Some(checker_options),
                 lib_contexts: &lib_contexts,
             },
         );
@@ -916,6 +917,7 @@ impl Parser {
             FullProviderOptions {
                 strict: checker_options.strict,
                 sound_mode: checker_options.sound_mode,
+                checker_options: Some(checker_options),
                 lib_contexts: &lib_contexts,
             },
         );
@@ -967,6 +969,7 @@ impl Parser {
             FullProviderOptions {
                 strict: checker_options.strict,
                 sound_mode: checker_options.sound_mode,
+                checker_options: Some(checker_options),
                 lib_contexts: &lib_contexts,
             },
         );

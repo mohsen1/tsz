@@ -78,6 +78,7 @@ fn test_hover_global_from_lib_uses_lib_context_type() {
         FullProviderOptions {
             strict: true,
             sound_mode: false,
+            checker_options: None,
             lib_contexts: &lib_contexts,
         },
     );
