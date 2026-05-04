@@ -55,6 +55,9 @@ scripts/session/quick-pick.sh --seed 42
 # Filter by error code if you want to stay in one family
 scripts/session/quick-pick.sh --code TS2322
 
+# Print the picked test's source body (truncated to 80 lines)
+scripts/session/quick-pick.sh --show-source
+
 # Pick and immediately run it through the conformance runner with --verbose
 scripts/session/quick-pick.sh --run
 ```
