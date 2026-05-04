@@ -500,6 +500,116 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn type_parameter_name_is_shadowed_before_static_member(
+        &self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, CLASS_STATIC_BLOCK_DECLARATION,
+            CONSTRUCTOR, CONSTRUCTOR_TYPE, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
+            FUNCTION_TYPE, GET_ACCESSOR, METHOD_DECLARATION, PROPERTY_DECLARATION, SET_ACCESSOR,
+        };
+
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            match node.kind {
+                k if k == FUNCTION_DECLARATION
+                    || k == FUNCTION_EXPRESSION
+                    || k == ARROW_FUNCTION =>
+                {
+                    if let Some(function) = self.ctx.arena.get_function(node)
+                        && self.type_parameter_list_contains_name(&function.type_parameters, name)
+                    {
+                        return true;
+                    }
+                }
+                k if k == FUNCTION_TYPE || k == CONSTRUCTOR_TYPE => {
+                    if let Some(function_type) = self.ctx.arena.get_function_type(node)
+                        && self
+                            .type_parameter_list_contains_name(&function_type.type_parameters, name)
+                    {
+                        return true;
+                    }
+                }
+                k if k == METHOD_DECLARATION => {
+                    if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                        if self.type_parameter_list_contains_name(&method.type_parameters, name) {
+                            return true;
+                        }
+                        if self.has_static_modifier(&method.modifiers) {
+                            return false;
+                        }
+                    }
+                }
+                k if k == GET_ACCESSOR || k == SET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                        if self.type_parameter_list_contains_name(&accessor.type_parameters, name) {
+                            return true;
+                        }
+                        if self.has_static_modifier(&accessor.modifiers) {
+                            return false;
+                        }
+                    }
+                }
+                k if k == PROPERTY_DECLARATION => {
+                    return false;
+                }
+                k if k == CLASS_STATIC_BLOCK_DECLARATION
+                    || k == CONSTRUCTOR
+                    || k == CLASS_DECLARATION
+                    || k == CLASS_EXPRESSION =>
+                {
+                    return false;
+                }
+                _ => {}
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            current = ext.parent;
+        }
+
+        false
+    }
+
+    fn type_parameter_list_contains_name(
+        &self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        name: &str,
+    ) -> bool {
+        let Some(type_parameters) = type_parameters else {
+            return false;
+        };
+
+        type_parameters.nodes.iter().any(|&type_param_idx| {
+            let Some(type_param_node) = self.ctx.arena.get(type_param_idx) else {
+                return false;
+            };
+            let Some(type_param) = self.ctx.arena.get_type_parameter(type_param_node) else {
+                return false;
+            };
+            let Some(name_node) = self.ctx.arena.get(type_param.name) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get_identifier(name_node)
+                .is_some_and(|ident| ident.escaped_text == name)
+        })
+    }
+
     /// Check if the enclosing non-arrow function has an explicit `this` parameter.
     ///
     /// TypeScript allows functions to declare `this` as their first parameter

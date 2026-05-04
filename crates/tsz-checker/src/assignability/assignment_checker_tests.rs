@@ -1359,7 +1359,7 @@ fn js_constructor_property_with_logical_or_is_declaration() {
     // Pattern: `X.Y = X.Y || function() {}` — tsc treats this as a
     // declaration (AssignmentDeclarationKind.Property), not a regular
     // assignment. No TS2322 should be emitted.
-    let diagnostics = check_js_source_diagnostics(
+    let diagnostics = check_source(
         r#"
 var test = {};
 test.K = test.K ||
@@ -1368,7 +1368,15 @@ test.K = test.K ||
 test.K.prototype = {
     add() {}
 };
+
+new test.K().add;
 "#,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
     );
 
     assert!(
@@ -1376,23 +1384,45 @@ test.K.prototype = {
         "JS lazy constructor initialization `X.Y = X.Y || function() {{}}` \
          should be treated as a declaration and not produce TS2322, got: {diagnostics:?}"
     );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2351 && d.code != 7009),
+        "JS lazy constructor initialization `X.Y = X.Y || function() {{}}` \
+         should keep the property constructable, got: {diagnostics:?}"
+    );
 }
 
 #[test]
 fn js_constructor_property_with_nullish_coalescing_is_declaration() {
     // Pattern: `X.Y = X.Y ?? function() {}` — same as above but with `??`.
-    let diagnostics = check_js_source_diagnostics(
+    let diagnostics = check_source(
         r#"
 var test = {};
 test.K = test.K ??
     function () {}
+
+test.K.prototype = {
+    add() {}
+};
+
+new test.K();
 "#,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
     );
 
     assert!(
         diagnostics.iter().all(|d| d.code != 2322),
         "JS lazy constructor initialization `X.Y = X.Y ?? function() {{}}` \
          should be treated as a declaration and not produce TS2322, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2351 && d.code != 7009),
+        "JS lazy constructor initialization `X.Y = X.Y ?? function() {{}}` \
+         should keep the property constructable, got: {diagnostics:?}"
     );
 }
 

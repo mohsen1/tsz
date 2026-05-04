@@ -1682,6 +1682,21 @@ pub(super) fn collect_diagnostics(
         c.export_hashes.retain(|path, _| used_paths.contains(path));
     }
 
+    if !program_has_real_syntax_errors {
+        let mut seen: FxHashSet<(String, u32, u32)> = diagnostics
+            .iter()
+            .map(|diag| (diag.file.clone(), diag.start, diag.code))
+            .collect();
+        diagnostics.extend(
+            tsz::parallel::collect_reexported_module_augmentation_enum_conflict_diagnostics(
+                program,
+                resolved_module_paths.as_ref(),
+            )
+            .into_iter()
+            .filter(|diag| seen.insert((diag.file.clone(), diag.start, diag.code))),
+        );
+    }
+
     diagnostics.extend(detect_missing_tslib_helper_diagnostics(
         program,
         options,
