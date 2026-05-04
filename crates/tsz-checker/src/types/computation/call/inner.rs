@@ -556,6 +556,18 @@ impl<'a> CheckerState<'a> {
         // When true, the post-inference retry should be suppressed because Round 2 already
         // correctly resolved the callback parameter types using the return context.
         let mut had_return_context_substitution = false;
+        // Checker-side intra-expression Round 2 substitution. When the two-pass logic
+        // builds a substitution that the solver's single-pass `resolve_call` cannot
+        // recover (e.g., a homomorphic mapped+infer return position drops the
+        // setup-derived inference), we use this to refine the solver's
+        // `instantiated_params` so the post-call assignability recheck sees the
+        // tighter expected type. See `intra_expression_inference_homomorphic_mapped_return_type`.
+        let mut checker_round2_substitution: Option<
+            crate::query_boundaries::common::TypeSubstitution,
+        > = None;
+        // Snapshot of the original shape (pre-solver), used to re-instantiate params
+        // when overriding the solver with `checker_round2_substitution`.
+        let mut checker_round2_shape: Option<common::FunctionShape> = None;
         let mut arg_types = if is_generic_call {
             if let Some(shape) = callee_shape {
                 // Pre-compute which parameter positions should skip excess property
@@ -1225,7 +1237,7 @@ impl<'a> CheckerState<'a> {
                             .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ELEMENT)
                     });
 
-                    if !has_spread_args {
+                    let two_pass_result = if !has_spread_args {
                         let mut progressive_arg_types = round1_arg_types;
                         let mut round2_arg_types = Vec::with_capacity(arg_count);
 
@@ -1585,7 +1597,29 @@ impl<'a> CheckerState<'a> {
                             None,
                             callable_ctx,
                         )
+                    };
+                    // Snapshot the checker's intra-expression Round 1 substitution
+                    // so the post-solver path can refine `instantiated_params` when
+                    // the solver's single-pass inference loses bindings the checker
+                    // established (e.g., `O = setup-derived-shape` is dropped
+                    // because `Unwrap<O>` in `map`'s return position fails to
+                    // reverse-infer).
+                    //
+                    // Gate on `extracted_round1_partials.iter().any()` — only when
+                    // at least one argument contributed a Round 1 partial type
+                    // (a non-sensitive object-literal property fed inference) is
+                    // there reason to believe the checker has information the
+                    // solver lacks. Otherwise (e.g., a `Promise.then(() => x, () => 1)`
+                    // call with two sensitive zero-param callbacks), Round 1's
+                    // substitution is derived from the same arg types the solver
+                    // sees at its boundary; overriding would clobber correct
+                    // solver inferences.
+                    let any_round1_partial = extracted_round1_partials.iter().any(|&b| b);
+                    if any_round1_partial && !substitution.is_empty() {
+                        checker_round2_substitution = Some(substitution.clone());
+                        checker_round2_shape = Some(shape.clone());
                     }
+                    two_pass_result
                 } else {
                     // Single-pass generic calls still erase type params from empty-array
                     // contextual types so `[]` does not feed raw `T[]` back into inference.
@@ -2072,6 +2106,25 @@ impl<'a> CheckerState<'a> {
                     actual_this_type,
                 )
             };
+        // When the checker's intra-expression Round 2 produced a substitution that
+        // pins type parameters the solver could not (the solver's single-pass
+        // inference dropped the binding because the same parameter appears in a
+        // homomorphic-mapped + `infer` return position that fails reverse
+        // inference), refine `instantiated_params` so the post-call assignability
+        // recheck sees the tighter expected types. We only override when the
+        // solver effectively defaulted to the type parameter's constraint.
+        if is_generic_call
+            && !is_super_call
+            && let Some(checker_sub) = checker_round2_substitution.as_ref()
+            && let Some(orig_shape) = checker_round2_shape.as_ref()
+            && let Some(params) = generic_instantiated_params.as_mut()
+        {
+            self.refine_instantiated_params_with_checker_substitution(
+                orig_shape,
+                params,
+                checker_sub,
+            );
+        }
         let needs_real_type_recheck = is_generic_call
             && (!is_super_call
                 || args.iter().enumerate().any(|(i, &arg_idx)| {
@@ -2192,7 +2245,7 @@ impl<'a> CheckerState<'a> {
 
             let (retry_generic_arg_types, retry_sanitized) =
                 self.sanitize_generic_inference_arg_types(call.expression, args, &arg_types);
-            let retry = if is_super_call {
+            let mut retry = if is_super_call {
                 (
                     self.resolve_new_with_checker_adapter(
                         callee_type_for_call,
@@ -2212,6 +2265,19 @@ impl<'a> CheckerState<'a> {
                     actual_this_type,
                 )
             };
+            // Apply the same checker-side substitution refinement to the retry's
+            // freshly-inferred params, so the recheck below sees the tighter
+            // expected types for the post-call assignability check.
+            if let Some(checker_sub) = checker_round2_substitution.as_ref()
+                && let Some(orig_shape) = checker_round2_shape.as_ref()
+                && let Some(retry_params) = retry.2.as_mut()
+            {
+                self.refine_instantiated_params_with_checker_substitution(
+                    orig_shape,
+                    retry_params,
+                    checker_sub,
+                );
+            }
             result = if retry_sanitized || needs_real_type_recheck {
                 if let Some(instantiated_params) = retry.2.as_ref() {
                     self.recheck_generic_call_arguments_with_real_types(

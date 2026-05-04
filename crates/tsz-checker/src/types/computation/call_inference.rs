@@ -1436,6 +1436,167 @@ impl<'a> CheckerState<'a> {
         (sanitized, changed)
     }
 
+    /// When the checker's intra-expression Round 2 inferred concrete types for
+    /// generic parameters that the solver's single-pass `resolve_call` could not
+    /// recover, refine the solver's `instantiated_params` so the post-call
+    /// assignability recheck sees the tighter expected types.
+    ///
+    /// The solver loses bindings in patterns where one object-literal property
+    /// contributes a concrete type to a parameter (`setup(): { outputs: O }`
+    /// pins `O = { ... }`) and another property's contextual signature uses the
+    /// same parameter through a homomorphic mapped + `infer` shape that fails
+    /// reverse inference (`map: (...) => Unwrap<O>`). The solver's defaulting
+    /// then widens the parameter to its constraint, masking errors in the
+    /// callback body. The checker's Round 2 substitution preserves the
+    /// concrete binding from `setup`.
+    ///
+    /// We only adopt the checker's value when it is strictly more specific than
+    /// the solver's (a fresh subtype). When the solver's inference is the same
+    /// or more specific, leave it untouched.
+    pub(crate) fn refine_instantiated_params_with_checker_substitution(
+        &mut self,
+        orig_shape: &FunctionShape,
+        params: &mut [tsz_solver::ParamInfo],
+        checker_sub: &common::TypeSubstitution,
+    ) {
+        // Build the merged substitution that would re-instantiate `orig_shape.params`
+        // using the checker's intra-expression Round 2 inferences. Skip type
+        // parameters where the checker's value is not concrete or where the
+        // checker matches the constraint (no improvement).
+        let mut merged = common::TypeSubstitution::new();
+        let mut any_override = false;
+        for tp in &orig_shape.type_params {
+            let Some(checker_val) = checker_sub.get(tp.name) else {
+                continue;
+            };
+            if checker_val == TypeId::UNKNOWN
+                || checker_val == TypeId::ERROR
+                || common::contains_infer_types(self.ctx.types, checker_val)
+                || common::contains_type_parameters(self.ctx.types, checker_val)
+            {
+                continue;
+            }
+            if Some(checker_val) == tp.constraint {
+                continue;
+            }
+            merged.insert(tp.name, checker_val);
+            any_override = true;
+        }
+        if !any_override {
+            return;
+        }
+        // Detect type parameters where the solver effectively defaulted (its
+        // instantiation can be reproduced by `T => T.constraint`). Only those
+        // are safe to override with the checker's value: when the solver
+        // bound a type parameter to anything else, it had information from the
+        // arg-type unification step that the checker doesn't see.
+        let mut constraint_default = common::TypeSubstitution::new();
+        for tp in &orig_shape.type_params {
+            constraint_default.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+        }
+        let mut solver_defaulted = rustc_hash::FxHashSet::default();
+        for tp in &orig_shape.type_params {
+            // Build a substitution that maps THIS tp to its constraint and
+            // every OTHER tp to a fresh marker. Then compare the resulting
+            // shape.params with the solver's instantiated_params at any
+            // position whose type contains this tp. If they agree, the
+            // solver defaulted this tp.
+            let mut probe = common::TypeSubstitution::new();
+            for other_tp in &orig_shape.type_params {
+                if other_tp.name == tp.name {
+                    probe.insert(
+                        other_tp.name,
+                        other_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                    );
+                } else if let Some(checker_val) = checker_sub.get(other_tp.name) {
+                    probe.insert(other_tp.name, checker_val);
+                } else {
+                    probe.insert(
+                        other_tp.name,
+                        other_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                    );
+                }
+            }
+            let mut all_match = true;
+            let mut any_referenced = false;
+            for (i, orig_param) in orig_shape.params.iter().enumerate() {
+                if i >= params.len() {
+                    break;
+                }
+                let referenced =
+                    common::collect_referenced_types(self.ctx.types, orig_param.type_id)
+                        .into_iter()
+                        .any(|ty| {
+                            common::type_param_info(self.ctx.types, ty)
+                                .is_some_and(|info| info.name == tp.name)
+                        });
+                if !referenced {
+                    continue;
+                }
+                any_referenced = true;
+                let probed = common::instantiate_type(self.ctx.types, orig_param.type_id, &probe);
+                if probed == params[i].type_id {
+                    continue;
+                }
+                // Different `TypeId`s can still represent the same type
+                // (alias unfoldings, interner aliasing, etc.). Treat as equal
+                // when each side is mutually assignable to the other.
+                let mutually_assignable = self.is_assignable_to_with_env(probed, params[i].type_id)
+                    && self.is_assignable_to_with_env(params[i].type_id, probed);
+                if !mutually_assignable {
+                    all_match = false;
+                    break;
+                }
+            }
+            if any_referenced && all_match {
+                solver_defaulted.insert(tp.name);
+            }
+        }
+        // Drop checker overrides for type params the solver did NOT default —
+        // the solver had non-default information we shouldn't clobber.
+        let mut filtered_merged = common::TypeSubstitution::new();
+        let mut any_filtered_override = false;
+        for tp in &orig_shape.type_params {
+            if let Some(val) = merged.get(tp.name)
+                && solver_defaulted.contains(&tp.name)
+            {
+                filtered_merged.insert(tp.name, val);
+                any_filtered_override = true;
+            } else if let Some(other) = checker_sub.get(tp.name) {
+                // Even when we keep the solver's binding for this tp, we still
+                // need a substitution entry so re-instantiating doesn't leave
+                // bare `tp` refs in composite types referencing both this tp
+                // and a tp we are overriding. Use the checker's value for
+                // structural completeness; if the solver had more info this
+                // entry won't be applied (the per-param assignability gate
+                // below will reject any widening).
+                filtered_merged.insert(tp.name, other);
+            }
+        }
+        if !any_filtered_override {
+            return;
+        }
+        for (i, orig_param) in orig_shape.params.iter().enumerate() {
+            if i >= params.len() {
+                break;
+            }
+            let new_type =
+                common::instantiate_type(self.ctx.types, orig_param.type_id, &filtered_merged);
+            if new_type == params[i].type_id {
+                continue;
+            }
+            if common::contains_type_parameters(self.ctx.types, new_type) {
+                continue;
+            }
+            // Final guard: only adopt when the checker's instantiation is a
+            // fresh subtype of the solver's. This rejects any widening the
+            // filtered substitution might still introduce.
+            if self.is_assignable_to_with_env(new_type, params[i].type_id) {
+                params[i].type_id = new_type;
+            }
+        }
+    }
+
     pub(crate) fn recheck_generic_call_arguments_with_real_types(
         &mut self,
         result: CallResult,

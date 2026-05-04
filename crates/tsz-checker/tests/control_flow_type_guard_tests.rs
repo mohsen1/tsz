@@ -18,6 +18,32 @@ fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn homomorphic_mapped_type_preserves_null_in_primitive_union() {
+    let source = r#"
+type Narrowable = string | number | bigint | boolean;
+
+type Narrow<A> = (A extends Narrowable ? A : never) | ({
+    [K in keyof A]: Narrow<A[K]>;
+});
+
+const satisfies =
+  <TWide,>() =>
+  <TNarrow extends TWide>(narrow: Narrow<TNarrow>) =>
+    narrow;
+
+type Item = { value: string | null };
+
+satisfies<Item>()({ value: null });
+"#;
+
+    let diagnostics = strict_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2322),
+        "homomorphic mapped types should preserve null in primitive unions: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_user_defined_type_guard_narrowing_full() {
     let source = r#"
 interface X {

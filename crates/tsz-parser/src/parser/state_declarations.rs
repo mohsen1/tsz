@@ -2651,7 +2651,9 @@ impl ParserState {
             // If we encounter 'from' keyword in the specifier list, it likely means we have:
             // import { a from "module"  (missing closing brace)
             // In this case, break the loop to avoid parsing 'from' as an identifier
-            if self.is_token(SyntaxKind::FromKeyword) {
+            if self.is_token(SyntaxKind::FromKeyword)
+                && !self.next_token_continues_import_specifier_name()
+            {
                 self.last_named_imports_recovered_to_from = true;
                 break;
             }
@@ -2776,6 +2778,19 @@ impl ParserState {
                 elements: self.make_node_list(elements),
             },
         )
+    }
+
+    fn next_token_continues_import_specifier_name(&mut self) -> bool {
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+        self.next_token();
+        let result = matches!(
+            self.current_token,
+            SyntaxKind::AsKeyword | SyntaxKind::CommaToken | SyntaxKind::CloseBraceToken
+        );
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
     }
 
     /// Parse a module export name: either an identifier/keyword or a string literal.

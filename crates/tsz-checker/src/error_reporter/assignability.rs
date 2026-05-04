@@ -1193,7 +1193,9 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> (String, String) {
-        let source_str = self.format_assignability_type_for_message(source, target);
+        let source_str = self
+            .related_generic_indexed_access_source_display(source, target)
+            .unwrap_or_else(|| self.format_assignability_type_for_message(source, target));
         let mut source_str = self.rewrite_source_display_for_non_literal_target_assignability(
             source, target, source_str,
         );
