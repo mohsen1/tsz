@@ -120,4 +120,145 @@ impl<'a> CheckerState<'a> {
         }
         normalized_ty
     }
+
+    pub(in crate::error_reporter::core) fn normalize_nested_excess_display_type(
+        &self,
+        ty: TypeId,
+    ) -> TypeId {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
+            return ty;
+        };
+
+        let mut normalized = shape.as_ref().clone();
+        let mut changed = false;
+        for prop in &mut normalized.properties {
+            let should_normalize_nested =
+                self.should_normalize_nested_excess_display_property(prop.type_id);
+            let mut read = if should_normalize_nested {
+                self.normalize_excess_display_type(prop.type_id)
+            } else {
+                prop.type_id
+            };
+            let mut write = if should_normalize_nested {
+                self.normalize_excess_display_type(prop.write_type)
+            } else {
+                prop.write_type
+            };
+            if self.should_strip_readonly_deep_for_nested_object_property(read) {
+                read = self.strip_readonly_deep_for_excess_display(read);
+                write = self.strip_readonly_deep_for_excess_display(write);
+            }
+            changed |= read != prop.type_id || write != prop.write_type;
+            prop.type_id = read;
+            prop.write_type = write;
+        }
+        if changed {
+            self.ctx.types.factory().object_with_index(normalized)
+        } else {
+            ty
+        }
+    }
+
+    fn should_normalize_nested_excess_display_property(&self, ty: TypeId) -> bool {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
+            return false;
+        };
+
+        // Excess-property messages preserve literal types at the top level, but
+        // TypeScript widens anonymous nested object-literal properties. Do not
+        // apply that display normalization to named/interface/application types
+        // or index-signature containers such as Record<K, T>.
+        !shape.properties.is_empty()
+            && shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.properties.iter().all(|prop| {
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, prop.type_id)
+                    .is_none()
+            })
+            && self.ctx.types.get_display_alias(ty).is_none()
+            && self.ctx.definition_store.find_def_for_type(ty).is_none()
+            && crate::query_boundaries::common::type_application(self.ctx.types, ty).is_none()
+    }
+
+    /// Decide whether a property whose value type is `ty` should have its
+    /// readonly modifiers stripped deeply for the excess-property display.
+    ///
+    /// The structural rule: tsc displays an asserted-type property (e.g.
+    /// `types: {} as { actors: { ... } }`) without readonly modifiers, while
+    /// a sibling property whose value is a flat anonymous object (e.g.
+    /// `invoke: { src: "str" }`) retains readonly modifiers picked up from
+    /// the surrounding reverse-mapped contextual type.
+    ///
+    /// We approximate that distinction structurally: when the property's
+    /// value is an anonymous object whose own shape contains at least one
+    /// nested object-typed property, strip readonly deeply. Flat anonymous
+    /// objects (whose properties are all leaves) and named/aliased/indexed
+    /// types are left alone, matching tsc's display.
+    fn should_strip_readonly_deep_for_nested_object_property(&self, ty: TypeId) -> bool {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
+            return false;
+        };
+
+        // Restrict to anonymous, non-aliased, non-applied object literals.
+        if self.ctx.types.get_display_alias(ty).is_some()
+            || self.ctx.definition_store.find_def_for_type(ty).is_some()
+            || crate::query_boundaries::common::type_application(self.ctx.types, ty).is_some()
+            || shape.string_index.is_some()
+            || shape.number_index.is_some()
+            || shape.properties.is_empty()
+        {
+            return false;
+        }
+
+        // Apply only when the value contains at least one nested object-typed
+        // property — that's the structural shape produced by `value as { ... }`
+        // assertions whose inner types are themselves objects.
+        shape.properties.iter().any(|prop| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, prop.type_id)
+                .is_some()
+        })
+    }
+
+    fn strip_readonly_deep_for_excess_display(&self, ty: TypeId) -> TypeId {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
+            return ty;
+        };
+
+        let mut normalized = shape.as_ref().clone();
+        let mut changed = false;
+        for prop in &mut normalized.properties {
+            let read = self.strip_readonly_deep_for_excess_display(prop.type_id);
+            let write = self.strip_readonly_deep_for_excess_display(prop.write_type);
+            changed |= prop.readonly || read != prop.type_id || write != prop.write_type;
+            prop.readonly = false;
+            prop.type_id = read;
+            prop.write_type = write;
+        }
+        if let Some(index) = normalized.string_index.as_mut() {
+            let value = self.strip_readonly_deep_for_excess_display(index.value_type);
+            changed |= index.readonly || value != index.value_type;
+            index.readonly = false;
+            index.value_type = value;
+        }
+        if let Some(index) = normalized.number_index.as_mut() {
+            let value = self.strip_readonly_deep_for_excess_display(index.value_type);
+            changed |= index.readonly || value != index.value_type;
+            index.readonly = false;
+            index.value_type = value;
+        }
+
+        if changed {
+            self.ctx.types.factory().object_with_index(normalized)
+        } else {
+            ty
+        }
+    }
 }

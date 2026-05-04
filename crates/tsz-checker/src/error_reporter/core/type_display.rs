@@ -1379,6 +1379,7 @@ impl<'a> CheckerState<'a> {
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
         let display_ty = self.strip_top_level_readonly_for_excess_display(display_ty);
+        let display_ty = self.normalize_nested_excess_display_type(display_ty);
         self.format_type_diagnostic_widened(display_ty)
     }
 

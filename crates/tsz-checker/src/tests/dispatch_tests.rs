@@ -1606,6 +1606,130 @@ const result: [string, number] = extractPrimitives({ primitive: "" }, { primitiv
 }
 
 #[test]
+fn reverse_mapped_array_return_rejects_mapped_element_to_type_parameter_array() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Stuff {
+    field: number;
+    anotherField: string;
+}
+function doStuffWithStuffArr<T extends Stuff>(arr: { [K in keyof T & keyof Stuff]: T[K] }[]): T[] {
+    return arr;
+}
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.iter().any(|d| {
+            d.message_text.contains(
+                "Type '{ [K in keyof T & keyof Stuff]: T[K]; }[]' is not assignable to type 'T[]'",
+            )
+        }),
+        "Expected TS2322 for reverse-mapped array return, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn reverse_mapped_dependent_default_uses_inferred_literal_not_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+type Record<K extends string, T> = { [P in K]: T };
+type StateConfig<TAction extends string> = {
+  entry?: TAction;
+  states?: Record<string, StateConfig<TAction>>;
+};
+declare function createMachine<
+  TConfig extends StateConfig<TAction>,
+  TAction extends string = TConfig["entry"] extends string ? TConfig["entry"] : string,
+>(config: { [K in keyof TConfig & keyof StateConfig<any>]: TConfig[K] }): [TAction, TConfig];
+createMachine({
+  entry: "foo",
+  states: {
+    a: {
+      entry: "bar",
+    },
+  },
+});
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.iter().any(|d| {
+            d.message_text
+                .contains("Type '\"bar\"' is not assignable to type '\"foo\"'")
+        }),
+        "Expected nested entry to be checked against inferred literal \"foo\", got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn reverse_mapped_excess_property_display_matches_nested_and_asserted_branches() {
+    let diags = check_source_diagnostics(
+        r#"
+interface WithNestedProp {
+  prop: string;
+  nested: { prop: string; };
+  other: { prop: string; };
+}
+declare function withNestedProp<T extends WithNestedProp>(props: {[K in keyof T & keyof WithNestedProp]: T[K]}): T;
+withNestedProp({prop: "foo", nested: { prop: "bar" }, other: { prop: "baz" }, extra: 10 });
+
+type IsLiteralString<T extends string> = string extends T ? false : true;
+interface ProvidedActor {
+  src: string;
+  logic: () => unknown;
+}
+type DistributeActors<TActor> = TActor extends { src: infer TSrc } ? { src: TSrc; } : never;
+interface MachineConfig<TActor extends ProvidedActor> {
+  types?: { actors?: TActor; };
+  invoke: IsLiteralString<TActor["src"]> extends true ? DistributeActors<TActor> : { src: string; };
+}
+declare function createXMachine<
+  const TConfig extends MachineConfig<TActor>,
+  TActor extends ProvidedActor = TConfig extends { types: { actors: ProvidedActor} } ? TConfig["types"]["actors"] : ProvidedActor,
+>(config: {[K in keyof MachineConfig<any> & keyof TConfig]: TConfig[K]}): TConfig;
+const child = () => "foo";
+createXMachine({
+  types: {} as {
+    actors: {
+      src: "str";
+      logic: typeof child;
+    };
+  },
+  invoke: {
+    src: "str",
+  },
+  extra: 10
+});
+"#,
+    );
+
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+    assert!(
+        ts2353.iter().any(|d| {
+            d.message_text.contains(
+                "type '{ prop: \"foo\"; nested: { prop: string; }; other: { prop: string; }; }'",
+            )
+        }),
+        "Expected anonymous nested object excess display to preserve top literal and structurally widen nested props, got: {:?}",
+        ts2353.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    assert!(
+        ts2353.iter().any(|d| {
+            d.message_text.contains(
+                "types: { actors: { src: \"str\"; logic: () => string; }; }; invoke: { readonly src: \"str\"; };",
+            )
+        }),
+        "Expected asserted types branch to strip readonly while invoke remains readonly, got: {:?}",
+        ts2353.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ts7006_emitted_for_intra_binding_pattern_reference() {
     // When a destructuring binding element's default references another binding in the
     // same pattern (intra-binding-pattern reference), the contextual type for that

@@ -100,6 +100,18 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    pub(super) fn target_is_or_displays_type_application(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::type_application(self.ctx.types, type_id).is_some()
+            || self
+                .ctx
+                .types
+                .get_display_alias(type_id)
+                .is_some_and(|alias| {
+                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                        .is_some()
+                })
+    }
+
     pub(super) fn check_object_literal_named_property_value(
         &mut self,
         obj_literal_idx: NodeIndex,
