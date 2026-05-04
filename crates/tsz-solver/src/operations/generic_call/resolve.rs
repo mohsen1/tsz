@@ -17,6 +17,73 @@ use super::{
 };
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn type_param_name_if_generic_rest_tuple_param(
+        &self,
+        func: &FunctionShape,
+        type_id: TypeId,
+    ) -> Option<tsz_common::Atom> {
+        let type_id = self.unwrap_readonly(type_id);
+        let Some(TypeData::TypeParameter(info)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+
+        func.type_params
+            .iter()
+            .any(|type_param| type_param.name == info.name)
+            .then_some(info.name)
+    }
+
+    fn generic_rest_tuple_callback_arity_mismatch(
+        &mut self,
+        func: &FunctionShape,
+        arg_types: &[TypeId],
+    ) -> Option<CallResult> {
+        let rest_param = func.params.last().filter(|param| param.rest)?;
+        let rest_type_param =
+            self.type_param_name_if_generic_rest_tuple_param(func, rest_param.type_id)?;
+        let rest_start = func.params.len().saturating_sub(1);
+        let rest_arg_count = arg_types.len().saturating_sub(rest_start);
+
+        for (index, param) in func.params.iter().take(rest_start).enumerate() {
+            let Some(target_shape) =
+                Self::get_contextual_signature_cached(self.interner, param.type_id)
+            else {
+                continue;
+            };
+            let target_shape = self.normalize_function_shape_params_for_context(&target_shape);
+            let Some(target_rest) = target_shape.params.last().filter(|param| param.rest) else {
+                continue;
+            };
+            if self.type_param_name_if_generic_rest_tuple_param(func, target_rest.type_id)
+                != Some(rest_type_param)
+            {
+                continue;
+            }
+
+            let Some(source_type) = arg_types.get(index).copied() else {
+                continue;
+            };
+            let Some(source_shape) =
+                Self::get_contextual_signature_cached(self.interner, source_type)
+            else {
+                continue;
+            };
+            let source_shape = self.normalize_function_shape_params_for_context(&source_shape);
+            let (callback_min, callback_max) = self.arg_count_bounds(&source_shape.params);
+
+            if rest_arg_count < callback_min || callback_max.is_some_and(|max| rest_arg_count > max)
+            {
+                return Some(CallResult::ArgumentCountMismatch {
+                    expected_min: rest_start + callback_min,
+                    expected_max: callback_max.map(|max| rest_start + max),
+                    actual: arg_types.len(),
+                });
+            }
+        }
+
+        None
+    }
+
     pub(super) fn resolve_generic_call_inner(
         &mut self,
         func: &FunctionShape,
@@ -2191,6 +2258,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 actual,
                 fallback_return: return_type,
             };
+        }
+
+        if let Some(result) = self.generic_rest_tuple_callback_arity_mismatch(func, &final_args) {
+            return result;
         }
 
         if let Some(result) =
