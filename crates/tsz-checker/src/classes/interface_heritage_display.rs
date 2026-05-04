@@ -11,17 +11,15 @@ impl<'a> CheckerState<'a> {
         base_name_raw: &str,
         type_arguments: Option<&tsz_parser::parser::NodeList>,
     ) -> String {
-        if let Some(args) = type_arguments {
+        if let Some(args) = type_arguments
+            && !args.nodes.is_empty()
+        {
             let arg_strs: Vec<String> = args
                 .nodes
                 .iter()
                 .map(|&arg_idx| self.format_interface_heritage_type_argument(arg_idx))
                 .collect();
-            return if arg_strs.is_empty() {
-                base_name_raw.to_string()
-            } else {
-                format!("{}<{}>", base_name_raw, arg_strs.join(", "))
-            };
+            return format!("{}<{}>", base_name_raw, arg_strs.join(", "));
         }
 
         let base_type = self.get_type_from_type_node(type_idx);
@@ -32,9 +30,15 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic(evaluated);
         }
 
-        if let Some(alias_text) = self.type_alias_target_text_for_symbol(base_sym_id)
-            && alias_text.starts_with("typeof ")
-        {
+        if let Some(alias_text) = self.type_alias_target_text_for_symbol(base_sym_id) {
+            if alias_text.starts_with("typeof ") {
+                return alias_text;
+            }
+            if Self::is_array_or_tuple_alias_text(&alias_text) {
+                return alias_text;
+            }
+        }
+        if let Some(alias_text) = self.array_or_tuple_alias_target_text_for_name(base_name_raw) {
             return alias_text;
         }
 
@@ -47,7 +51,10 @@ impl<'a> CheckerState<'a> {
         base_name_raw.to_string()
     }
 
-    fn type_alias_target_text_for_symbol(&self, sym_id: tsz_binder::SymbolId) -> Option<String> {
+    pub(crate) fn type_alias_target_text_for_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<String> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         for &decl_idx in &symbol.declarations {
             let decl_arena =
@@ -71,10 +78,28 @@ impl<'a> CheckerState<'a> {
             let start = start as usize;
             let end = end as usize;
             if start < end && end <= source.len() {
-                return Some(source[start..end].trim().to_string());
+                return Some(Self::clean_alias_target_text(&source[start..end]));
             }
         }
         None
+    }
+
+    pub(crate) fn array_or_tuple_alias_target_text_for_name(&self, name: &str) -> Option<String> {
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(text) = self.type_alias_target_text_for_symbol(sym_id)
+            && Self::is_array_or_tuple_alias_text(&text)
+        {
+            return Some(text);
+        }
+        None
+    }
+
+    fn is_array_or_tuple_alias_text(text: &str) -> bool {
+        text.starts_with('[') || text.ends_with("[]")
+    }
+
+    fn clean_alias_target_text(text: &str) -> String {
+        text.trim().trim_end_matches(';').trim_end().to_string()
     }
 
     fn format_interface_heritage_type_argument(&mut self, arg_idx: NodeIndex) -> String {

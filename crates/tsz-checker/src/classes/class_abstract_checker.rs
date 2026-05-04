@@ -463,7 +463,17 @@ impl<'a> CheckerState<'a> {
         // `A & { context: Context; }` instead of
         // `A & { context: InstanceType<typeof Context>; }`.
         let display_type = self.simplify_heritage_instance_type_for_display(instance_type);
+        let evaluated_display = self.evaluate_type_with_env(display_type);
+        if crate::query_boundaries::common::is_array_or_tuple_type(
+            self.ctx.types,
+            evaluated_display,
+        ) {
+            return self.format_type_diagnostic(evaluated_display);
+        }
         let base_str = self.format_type(display_type);
+        if let Some(alias_text) = self.array_or_tuple_alias_target_text_for_name(&base_str) {
+            return alias_text;
+        }
         if let Some(type_arguments) = type_arguments
             && !type_arguments.nodes.is_empty()
         {

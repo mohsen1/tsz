@@ -379,11 +379,25 @@ impl<'a> CheckerState<'a> {
             if info.name.starts_with('#') {
                 continue;
             }
+            let base_type_for_member = if info.is_static {
+                base_static_type
+            } else {
+                base_instance_type
+            };
+            let base_prop_result = base_type_for_member.map(|base_type_id| {
+                self.resolve_property_access_with_env(base_type_id, &info.name)
+            });
+            let member_exists_via_type = base_prop_result.is_some_and(|result| {
+                matches!(
+                    result,
+                    crate::query_boundaries::common::PropertyAccessResult::Success { .. }
+                )
+            });
             let member_exists_in_base = if info.is_static {
                 base_static_member_names.contains(&info.name)
             } else {
                 base_instance_member_names.contains(&info.name)
-            };
+            } || member_exists_via_type;
 
             if info.has_dynamic_name {
                 if info.has_override {
@@ -454,11 +468,6 @@ impl<'a> CheckerState<'a> {
             // Check property type compatibility with base (TS2416)
             // Only check if the member actually exists in the base type —
             // otherwise there's no override to be incompatible with.
-            let base_type_for_member = if info.is_static {
-                base_static_type
-            } else {
-                base_instance_type
-            };
             if let Some(base_type_id) = base_type_for_member
                 && member_exists_in_base
             {
@@ -466,8 +475,9 @@ impl<'a> CheckerState<'a> {
                 // Skip if either type is ANY
                 if member_type != TypeId::ANY {
                     use crate::query_boundaries::common::PropertyAccessResult;
-                    let base_prop_result =
-                        self.resolve_property_access_with_env(base_type_id, &info.name);
+                    let base_prop_result = base_prop_result.unwrap_or_else(|| {
+                        self.resolve_property_access_with_env(base_type_id, &info.name)
+                    });
                     if let PropertyAccessResult::Success {
                         type_id: base_type, ..
                     } = base_prop_result
@@ -505,8 +515,12 @@ impl<'a> CheckerState<'a> {
                                 let member_type_str = self.format_type(member_type);
                                 let base_type_str = self.format_type(base_type);
                                 let display_name = format_property_name_for_diagnostic(&info.name);
-                                let base_class_display_name =
-                                    base_class_name_for_diagnostic(base_class_name);
+                                let base_class_display_name = self
+                                    .array_or_tuple_alias_target_text_for_name(base_class_name)
+                                    .map(Cow::Owned)
+                                    .unwrap_or_else(|| {
+                                        base_class_name_for_diagnostic(base_class_name)
+                                    });
                                 self.error_at_node(
                                     info.name_idx,
                                     &format!(
