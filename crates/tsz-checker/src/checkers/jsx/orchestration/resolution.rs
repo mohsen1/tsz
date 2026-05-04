@@ -426,6 +426,15 @@ impl<'a> CheckerState<'a> {
                 self.get_jsx_component_metadata_type(tag_name_idx, component_type);
             let resolved_component_type =
                 self.normalize_jsx_component_type_for_resolution(component_type);
+            let dynamic_intrinsic_has_known_tag_constraint = self
+                .get_intrinsic_elements_type()
+                .is_some_and(|intrinsic_elements_type| {
+                    self.jsx_dynamic_intrinsic_type_has_known_tag_constraint(
+                        tag_name_idx,
+                        component_type,
+                        intrinsic_elements_type,
+                    )
+                });
             let specific_intrinsic_tag = self.get_jsx_specific_string_literal_component_tag_name(
                 tag_name_idx,
                 resolved_component_type,
@@ -472,11 +481,18 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::common::is_keyof_type(
                     self.ctx.types,
                     resolved_component_type,
-                ))
+                )
+                || dynamic_intrinsic_has_known_tag_constraint)
                 && !tried_specific_intrinsic_lookup
             {
                 let needs_dynamic_intrinsic_props_check =
-                    crate::query_boundaries::common::contains_type_parameters(
+                    crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        component_type,
+                    ) || crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        resolved_component_type,
+                    ) || crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types,
                         component_type,
                     ) || crate::query_boundaries::common::contains_type_parameters(
@@ -488,7 +504,7 @@ impl<'a> CheckerState<'a> {
                     ) || crate::query_boundaries::common::is_keyof_type(
                         self.ctx.types,
                         resolved_component_type,
-                    );
+                    ) || dynamic_intrinsic_has_known_tag_constraint;
                 if needs_dynamic_intrinsic_props_check
                     && let Some((props_type, raw_has_type_params, display_target)) = self
                         .get_jsx_dynamic_intrinsic_props_for_component_type(

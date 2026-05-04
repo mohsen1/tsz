@@ -452,6 +452,70 @@ impl<'a> CheckerState<'a> {
         fallback_type
     }
 
+    pub(in crate::checkers_domain::jsx) fn jsx_dynamic_intrinsic_type_has_known_tag_constraint(
+        &mut self,
+        tag_name_idx: NodeIndex,
+        component_type: TypeId,
+        intrinsic_elements_type: TypeId,
+    ) -> bool {
+        let evaluated = self.evaluate_type_with_env(component_type);
+        let evaluated = self.resolve_lazy_type(evaluated);
+        if evaluated != component_type && evaluated != TypeId::ERROR {
+            return self.jsx_dynamic_intrinsic_type_has_known_tag_constraint(
+                tag_name_idx,
+                evaluated,
+                intrinsic_elements_type,
+            );
+        }
+
+        if crate::query_boundaries::assignability::get_keyof_type(self.ctx.types, component_type)
+            .is_some_and(|operand| operand == intrinsic_elements_type)
+        {
+            return true;
+        }
+
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type)
+            && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                component_type,
+            )
+            && constraint != component_type
+        {
+            if crate::query_boundaries::assignability::get_keyof_type(self.ctx.types, constraint)
+                .is_some_and(|operand| operand == intrinsic_elements_type)
+            {
+                return true;
+            }
+            if self.jsx_dynamic_intrinsic_type_has_known_tag_constraint(
+                tag_name_idx,
+                constraint,
+                intrinsic_elements_type,
+            ) {
+                return true;
+            }
+        }
+
+        if let Some(tag_name) = self.get_jsx_single_string_literal_tag_name(component_type) {
+            return self
+                .get_jsx_intrinsic_props_for_tag(tag_name_idx, &tag_name, false)
+                .is_some();
+        }
+
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
+        else {
+            return false;
+        };
+        !members.is_empty()
+            && members.into_iter().all(|member| {
+                let Some(tag_name) = self.get_jsx_single_string_literal_tag_name(member) else {
+                    return false;
+                };
+                self.get_jsx_intrinsic_props_for_tag(tag_name_idx, &tag_name, false)
+                    .is_some()
+            })
+    }
+
     pub(in crate::checkers_domain::jsx) fn get_jsx_dynamic_intrinsic_props_for_component_type(
         &mut self,
         tag_name_idx: NodeIndex,
@@ -464,20 +528,45 @@ impl<'a> CheckerState<'a> {
             .factory()
             .index_access(intrinsic_elements_type, component_type);
         let normalized_props = self.normalize_jsx_required_props_target(raw_props_type);
-        if matches!(
-            normalized_props,
-            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
-        ) {
+        if matches!(normalized_props, TypeId::ANY | TypeId::ERROR) {
             return None;
         }
+        let has_known_tag_constraint = self.jsx_dynamic_intrinsic_type_has_known_tag_constraint(
+            tag_name_idx,
+            component_type,
+            intrinsic_elements_type,
+        );
+        let use_deferred_raw_props = has_known_tag_constraint
+            && (normalized_props == TypeId::UNKNOWN
+                || crate::query_boundaries::common::is_type_parameter_like(
+                    self.ctx.types,
+                    component_type,
+                )
+                || crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    component_type,
+                ));
+        if normalized_props == TypeId::UNKNOWN && !has_known_tag_constraint {
+            return None;
+        }
+        let props_arg = if use_deferred_raw_props {
+            raw_props_type
+        } else {
+            normalized_props
+        };
 
         let semantic_props_type = self
-            .get_jsx_library_managed_attributes_application(component_type, normalized_props)
-            .unwrap_or(raw_props_type);
+            .get_jsx_library_managed_attributes_application(component_type, props_arg)
+            .unwrap_or(props_arg);
+        let display_fallback = if use_deferred_raw_props {
+            raw_props_type
+        } else {
+            normalized_props
+        };
         let display_props_type = self.get_jsx_dynamic_intrinsic_display_props_type(
             tag_name_idx,
             component_type,
-            normalized_props,
+            display_fallback,
         );
         let display_props_type = self
             .get_jsx_library_managed_attributes_application(component_type, display_props_type)
@@ -486,6 +575,9 @@ impl<'a> CheckerState<'a> {
         let raw_has_type_params = crate::query_boundaries::common::contains_type_parameters(
             self.ctx.types,
             raw_props_type,
+        ) || crate::query_boundaries::common::is_type_parameter_like(
+            self.ctx.types,
+            component_type,
         ) || crate::query_boundaries::common::contains_type_parameters(
             self.ctx.types,
             semantic_props_type,
