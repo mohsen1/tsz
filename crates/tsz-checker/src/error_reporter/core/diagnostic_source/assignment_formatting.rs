@@ -732,6 +732,25 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        // Skip the anchor-expression-derived path when `source` does not
+        // correspond to the anchor's expression type. This happens during
+        // nested elaboration of a structural failure (e.g. function-return
+        // mismatch elaborates with the inner return types as `source`/
+        // `target`, but the anchor still points at the outer assignment
+        // expression). In that case the expression's type is the OUTER
+        // value, which produces the bogus
+        // "Type '(x: Object) => Object' is not assignable to type 'string'."
+        // message — a category-error claim that the outer function is not
+        // assignable to the inner return type.
+        let anchor_expr_type = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .map(|expr_idx| self.get_type_of_node(expr_idx));
+        let source_matches_anchor_expr = anchor_expr_type
+            .is_some_and(|expr_type| expr_type == source || expr_type == TypeId::ERROR);
+        if !source_matches_anchor_expr {
+            return self.format_assignability_type_for_message(source, target);
+        }
+
         if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
                 return display;

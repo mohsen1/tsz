@@ -2281,19 +2281,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
 
-            let ret_source_str = self.format_type_diagnostic(source_return);
-            let ret_target_str = self.format_type_diagnostic(target_return);
-            let ret_msg =
-                format!("Return type '{ret_source_str}' is not assignable to '{ret_target_str}'.");
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: file_name,
-                start,
-                length,
-                message_text: ret_msg,
-                category: DiagnosticCategory::Message,
-                code: reason.diagnostic_code(),
-            });
-
+            // tsc's elaboration shape for return-type mismatches goes
+            // straight from the top-level message into the inner mismatch
+            // (e.g. "Type 'Object' is not assignable to type 'string'.")
+            // without an intermediate "Return type 'X' is not assignable
+            // to 'Y'." line. Only emit the "Return type ..." fallback when
+            // there is no nested reason that already carries the inner
+            // mismatch — otherwise we'd double-elaborate the same gap.
             if let Some(nested) = nested_reason
                 && depth < 5
             {
@@ -2311,6 +2305,20 @@ impl<'a> CheckerState<'a> {
                     message_text: nested_diag.message_text,
                     category: DiagnosticCategory::Message,
                     code: nested_diag.code,
+                });
+            } else {
+                let ret_source_str = self.format_type_diagnostic(source_return);
+                let ret_target_str = self.format_type_diagnostic(target_return);
+                let ret_msg = format!(
+                    "Return type '{ret_source_str}' is not assignable to '{ret_target_str}'."
+                );
+                diag.related_information.push(DiagnosticRelatedInformation {
+                    file: file_name,
+                    start,
+                    length,
+                    message_text: ret_msg,
+                    category: DiagnosticCategory::Message,
+                    code: reason.diagnostic_code(),
                 });
             }
 
