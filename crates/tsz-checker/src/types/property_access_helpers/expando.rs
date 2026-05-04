@@ -1481,7 +1481,11 @@ impl<'a> CheckerState<'a> {
             // not a meaningful type assignment. Skip it so the property type doesn't
             // become `undefined`, which would cause spurious TS18048 diagnostics.
             if !self.js_assignment_rhs_is_void_zero(binary.right) {
-                let rhs_idx = self.ctx.arena.skip_parenthesized(binary.right);
+                let rhs_idx = Self::checked_js_constructor_initializer_expression(
+                    self.ctx.arena,
+                    binary.left,
+                )
+                .unwrap_or_else(|| self.ctx.arena.skip_parenthesized(binary.right));
                 let rhs_type = self.get_type_of_node(rhs_idx);
                 if rhs_type != TypeId::ANY
                     && rhs_type != TypeId::ERROR
