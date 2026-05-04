@@ -178,3 +178,122 @@ class C4 extends Constructor<T4>() { 0: number }
         "tuple fixed element override should emit TS2416. Got: {messages:?}"
     );
 }
+
+/// When an interface extends another, tsc displays the derived (own)
+/// members first in declaration order, followed by inherited base members.
+/// Test the structural rule by varying the iteration variable name in the
+/// mapped type — if the rule is hardcoded against a name spelling, switching
+/// it would break the assertion.
+#[test]
+fn interface_extends_displays_own_members_before_inherited() {
+    fn check_derived_first(iter_var: &str) {
+        let source = format!(
+            r#"
+interface Base {{
+    inherited_one: number;
+    inherited_two: number;
+}}
+interface Mid extends Base {{
+    mid_one: number;
+    mid_two: number;
+}}
+interface Derived extends Mid {{
+    own_one: number;
+    own_two: number;
+}}
+type Spread<T> = {{ [{iter_var} in keyof T]: T[{iter_var}] }};
+declare let d: Derived;
+declare function consume<T>(spread: Spread<T>): T;
+const out = consume(d);
+const fail: string = out;
+"#,
+        );
+        let diags = diagnostics(&source);
+        let display = diags
+            .into_iter()
+            .find(|(code, _)| *code == 2322)
+            .map(|(_, msg)| msg)
+            .unwrap_or_default();
+        assert!(
+            !display.is_empty(),
+            "Expected TS2322 diagnostic showing inferred T (iter_var='{iter_var}'). Got nothing."
+        );
+
+        let positions: Vec<_> = [
+            "own_one",
+            "own_two",
+            "mid_one",
+            "mid_two",
+            "inherited_one",
+            "inherited_two",
+        ]
+        .iter()
+        .map(|name| {
+            display.find(name).unwrap_or_else(|| {
+                panic!(
+                    "Property '{name}' missing from TS2322 message (iter_var='{iter_var}'). Got: {display}"
+                )
+            })
+        })
+        .collect();
+
+        for window in positions.windows(2) {
+            assert!(
+                window[0] < window[1],
+                "Expected derived-first member order in inferred T (iter_var='{iter_var}'). \
+                 Got: {display}"
+            );
+        }
+    }
+
+    // Run with two different iteration-variable names so the test would catch
+    // any printer/solver heuristic that happened to be keyed on a specific name.
+    check_derived_first("K");
+    check_derived_first("P");
+}
+
+/// Method overrides (where a derived interface re-declares a method that the
+/// base also declares with extra signatures) must keep the derived position.
+/// Ensures `merge_properties` keeps the override at the derived (low)
+/// `declaration_order` rather than collapsing it back into the inherited slot.
+#[test]
+fn interface_method_override_keeps_derived_position() {
+    let source = r#"
+interface Base {
+    addEv(t: string): void;
+    other: number;
+}
+interface Derived extends Base {
+    own_first: number;
+    addEv<K>(t: K): void;
+}
+type Spread<T> = { [K in keyof T]: T[K] };
+declare let d: Derived;
+declare function consume<T>(spread: Spread<T>): T;
+const out = consume(d);
+const fail: string = out;
+"#;
+    let display = diagnostics(source)
+        .into_iter()
+        .find(|(code, _)| *code == 2322)
+        .map(|(_, msg)| msg)
+        .unwrap_or_default();
+    assert!(!display.is_empty(), "Expected TS2322 diagnostic.");
+
+    // The override `addEv` is declared in Derived after `own_first`, so it
+    // should appear after `own_first` and before any base-only members.
+    let pos_own = display
+        .find("own_first")
+        .expect("own_first should be in display");
+    let pos_addev = display.find("addEv").expect("addEv should be in display");
+    let pos_other = display.find("other").expect("other should be in display");
+
+    assert!(
+        pos_own < pos_addev,
+        "own_first should precede addEv override. Got: {display}"
+    );
+    assert!(
+        pos_addev < pos_other,
+        "addEv (override of base method, kept at derived position) should precede base-only 'other'. Got: {display}"
+    );
+}
