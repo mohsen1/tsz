@@ -38,6 +38,13 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
     ) -> Option<String> {
         let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
+        // Excess-property reporting on a union with both generic and concrete
+        // members (e.g. `T & { prop: boolean } | { name: string }`) only applies
+        // to the non-generic members in tsc — generic members can be
+        // instantiated to anything, so an "excess" property might still be
+        // valid there. Filter the generic members out before formatting so the
+        // diagnostic message points at the concrete shape that actually
+        // rejects the property.
         let display_members = members
             .iter()
             .copied()
@@ -60,6 +67,17 @@ impl<'a> CheckerState<'a> {
             .iter()
             .any(|display| display.contains(" & "))
         {
+            // Single concrete member after filtering — fall back to the
+            // standard pipeline so the union-wrapper isn't preserved as
+            // `{name:string;}` when only one member remains.
+            if members.len() == 1 && member_displays.len() == 1 {
+                return Some(
+                    member_displays
+                        .into_iter()
+                        .next()
+                        .expect("single display remains after filtering"),
+                );
+            }
             return None;
         }
         Some(

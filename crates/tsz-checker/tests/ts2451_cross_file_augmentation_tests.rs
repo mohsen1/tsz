@@ -136,3 +136,48 @@ fn targeted_augmentation_commonjs_const_uses_ts2300() {
         "augmentation-vs-CommonJS-property conflict must not emit TS2451; got: {for_a:?}"
     );
 }
+
+#[test]
+fn type_only_reexported_function_conflicts_with_augmentation_const_as_ts2451() {
+    let files = [
+        (
+            "main.ts",
+            "import { Row } from \"./index\";\n\
+             Row();\n",
+        ),
+        (
+            "a.d.ts",
+            "import \"./index\";\n\
+             declare module \"./index\" {\n    const Row: () => void;\n}\n",
+        ),
+        ("index.d.ts", "export type { Row } from \"./common\";\n"),
+        ("common.d.ts", "export declare function Row(): void;\n"),
+    ];
+
+    let all_diags: Vec<_> = (0..files.len())
+        .flat_map(|entry_idx| compile_module_files(&files, entry_idx))
+        .collect();
+    let row_diags: Vec<_> = all_diags
+        .iter()
+        .filter(|(_, msg, _)| msg.contains("'Row'") || msg.contains("Row"))
+        .collect();
+    let ts2451_count = row_diags
+        .iter()
+        .filter(|(code, _, _)| *code == 2451)
+        .count();
+
+    assert!(
+        ts2451_count >= 2,
+        "expected TS2451 on the augmentation const and type-only reexport specifier; got {row_diags:?}"
+    );
+    assert!(
+        row_diags.iter().all(|(code, _, _)| *code != 2300),
+        "function-valued type-only reexport vs augmentation const should not be TS2300; got {row_diags:?}"
+    );
+    assert!(
+        row_diags
+            .iter()
+            .all(|(code, _, _)| *code != 1362 && *code != 2349),
+        "augmentation value should suppress type-only value and non-callable cascades; got {row_diags:?}"
+    );
+}

@@ -6,27 +6,24 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn has_targeted_aug(
-        &self,
-        declarations: &[(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)],
-    ) -> bool {
-        declarations.iter().any(|(_, _, is_local, _, origin)| {
-            !*is_local && *origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
-        })
-    }
-
     /// Does any cross-file `TargetedModuleAugmentation` declaration contribute a
-    /// non-block-scoped kind (e.g. CommonJS `module.exports` property, function,
-    /// interface)? Used to pick TS2300 vs TS2451 when the augmentation target
-    /// is genuinely not a `const`/`let` redeclaration.
-    pub(super) fn targeted_aug_has_non_block_scoped(
+    /// non-block-scoped kind that should still select TS2300? Once a real
+    /// block-scoped declaration participates, tsc keeps TS2451 for value
+    /// declarations such as functions/classes/vars and reserves TS2300 for
+    /// synthetic CommonJS object-property export conflicts.
+    pub(super) fn targeted_aug_should_force_ts2300(
         &self,
         declarations: &[(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)],
     ) -> bool {
+        let has_block_scoped = declarations
+            .iter()
+            .any(|(_, flags, _, _, _)| (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0);
+
         declarations.iter().any(|(_, flags, is_local, _, origin)| {
             !*is_local
                 && *origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
                 && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
+                && (!has_block_scoped || (flags & symbol_flags::PROPERTY) != 0)
         })
     }
 
