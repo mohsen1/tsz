@@ -1466,6 +1466,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                                 effective_asserted,
                                             );
                                     }
+                                    if have_overlap
+                                        && self
+                                            .object_literal_this_property_blocks_assertion_overlap(
+                                                assertion.expression,
+                                                effective_asserted,
+                                            )
+                                    {
+                                        have_overlap = false;
+                                    }
                                     if !have_overlap {
                                         // tsc anchors TS2352 at the full assertion node
                                         // (`<T>expr` / `expr as T`), not just the inner

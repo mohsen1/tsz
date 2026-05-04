@@ -967,7 +967,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn object_literal_source_type_display(
+    pub(in crate::error_reporter) fn object_literal_source_type_display(
         &mut self,
         expr_idx: NodeIndex,
         target: Option<TypeId>,
@@ -1014,6 +1014,15 @@ impl<'a> CheckerState<'a> {
             let property_name = self
                 .get_property_name(prop.name)
                 .map(|name| self.ctx.types.intern_string(&name));
+            if self
+                .ctx
+                .arena
+                .get(prop.initializer)
+                .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16)
+            {
+                parts.push(format!("{display_name}: this"));
+                continue;
+            }
             let value_type = self.get_type_of_node(prop.initializer);
             if value_type == TypeId::ERROR {
                 return None;
