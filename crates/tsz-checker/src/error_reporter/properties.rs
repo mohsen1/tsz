@@ -1427,6 +1427,9 @@ impl<'a> CheckerState<'a> {
         if self.is_namespace_import_rooted_expression(expr_idx) {
             return false;
         }
+        if self.ctx.is_js_file() && self.commonjs_destructured_named_export_exists(expr_idx) {
+            return false;
+        }
         let name = expr_text;
         if loc.is_some() {
             let (code, message) = if let Some(ref name) = name {
