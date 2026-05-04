@@ -89,7 +89,7 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents2.tsx 
 FAIL TypeScript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx | expected:[TS17021] actual:[TS2304,TS2339,TS17002,TS17021]
 FAIL TypeScript/tests/cases/conformance/node/nodeModules1.ts | expected:[TS1471,TS1479,TS2307,TS2834,TS2835] actual:[TS1471,TS1479,TS2307,TS2834,TS2835]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesCJSEmit1.ts | expected:[TS1192,TS2304,TS2882] actual:[TS2882]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesResolveJsonModule.ts | expected:[TS2823] actual:[TS2339,TS2823]
+FAIL TypeScript/tests/cases/conformance/node/nodeModulesJson.ts | expected:[TS1544,TS2339,TS2823] actual:[TS1544,TS2339,TS2823]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts | expected:[TS1005,TS1068,TS1137,TS1434] actual:[TS1005,TS1068,TS1137,TS1434]
 FAIL TypeScript/tests/cases/conformance/references/library-reference-5.ts | expected:[TS2403] actual:[TS2403]
 FAIL TypeScript/tests/cases/conformance/salsa/assignmentToVoidZero2.ts | expected:[TS2305,TS2339] actual:[TS2305,TS2339]
@@ -97,7 +97,6 @@ FAIL TypeScript/tests/cases/conformance/salsa/classCanExtendConstructorFunction.
 FAIL TypeScript/tests/cases/conformance/salsa/plainJSBinderErrors.ts | expected:[TS1101,TS1102,TS1107,TS1210,TS1214,TS1215,TS1262,TS1344,TS1359,TS2528,TS18012] actual:[TS1101,TS1262,TS1344,TS2528]
 FAIL TypeScript/tests/cases/conformance/salsa/prototypePropertyAssignmentMergeWithInterfaceMethod.ts | expected:[TS2503,TS2552,TS2694] actual:[TS2503,TS2552]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromJSConstructor.ts | expected:[TS2322,TS2531,TS7008] actual:[TS2322,TS7008]
-FAIL TypeScript/tests/cases/conformance/salsa/typeFromParamTagForFunction.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts | expected:[TS2322,TS2339,TS2403,TS2540,TS2542] actual:[TS2322,TS2339,TS2403,TS2540,TS2542]
 FAIL TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts | expected:[TS1338,TS2304,TS2322,TS2344] actual:[TS1338,TS2304,TS2322,TS2344]
 FAIL TypeScript/tests/cases/conformance/types/intersection/commonTypeIntersection.ts | expected:[TS2322] actual:[TS2322]
@@ -4272,6 +4271,7 @@ PASS TypeScript/tests/cases/compiler/moduleAugmentationDeclarationEmit1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDeclarationEmit2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDisallowedExtensions.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDoesInterfaceMergeOfReexport.ts
+PASS TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceEnumMergeOfReexport.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceMergeOfReexport.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDuringSyntheticDefaultCheck.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts
@@ -10277,7 +10277,6 @@ PASS TypeScript/tests/cases/conformance/node/nodeModulesImportResolutionIntoExpo
 PASS TypeScript/tests/cases/conformance/node/nodeModulesImportResolutionNoCycle.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmit1.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts
-PASS TypeScript/tests/cases/conformance/node/nodeModulesJson.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesNoDirectoryModule.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesPackageExports.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesPackageImports.ts
@@ -10286,6 +10285,7 @@ PASS TypeScript/tests/cases/conformance/node/nodeModulesPackageImportsRootWildca
 PASS TypeScript/tests/cases/conformance/node/nodeModulesPackagePatternExports.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesPackagePatternExportsExclude.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesPackagePatternExportsTrailers.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesResolveJsonModule.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesSynchronousCallErrors.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesTopLevelAwait.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit1.ts
@@ -11276,6 +11276,7 @@ PASS TypeScript/tests/cases/conformance/salsa/typeFromJSInitializer.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromJSInitializer2.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromJSInitializer3.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromJSInitializer4.ts
+PASS TypeScript/tests/cases/conformance/salsa/typeFromParamTagForFunction.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment10.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment10_1.ts
@@ -12575,7 +12576,6 @@ XFAIL TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts | e
 XFAIL TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts | expected:[TS2300,TS2430,TS2536] actual:[TS2300,TS2536]
 XFAIL TypeScript/tests/cases/compiler/isolatedDeclarationErrorsObjects.ts | expected:[TS7006,TS7032] actual:[TS7006,TS7032,TS9038]
 XFAIL TypeScript/tests/cases/compiler/jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne.tsx | expected:[TS2300] actual:[TS2300,TS2456]
-XFAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceEnumMergeOfReexport.ts | expected:[] actual:[TS2339]
 XFAIL TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts | expected:[TS2322,TS2345,TS2589] actual:[TS2322,TS2339,TS2345,TS2589]
 XFAIL TypeScript/tests/cases/compiler/spellingSuggestionJSXAttribute.tsx | expected:[TS2322,TS2769] actual:[TS2322,TS2769]
 XFAIL TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts | expected:[TS2344] actual:[TS2344]
