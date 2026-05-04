@@ -532,11 +532,19 @@ impl<'a> CheckerState<'a> {
         skip_source_elaboration: bool,
     ) -> bool {
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
-        if self.should_suppress_assignability_diagnostic(source, target) {
+        let force_nested_error_nullish_report =
+            self.should_report_nullish_assignment_through_nested_target_error(source, target);
+        if !force_nested_error_nullish_report
+            && self.should_suppress_assignability_diagnostic(source, target)
+        {
             return true;
         }
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
+        }
+        if force_nested_error_nullish_report {
+            self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+            return false;
         }
 
         if is_keyof_type(self.ctx.types, target)
@@ -735,11 +743,19 @@ impl<'a> CheckerState<'a> {
         diag_idx: NodeIndex,
     ) -> bool {
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
-        if self.should_suppress_assignability_diagnostic(source, target) {
+        let force_nested_error_nullish_report =
+            self.should_report_nullish_assignment_through_nested_target_error(source, target);
+        if !force_nested_error_nullish_report
+            && self.should_suppress_assignability_diagnostic(source, target)
+        {
             return true;
         }
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
+        }
+        if force_nested_error_nullish_report {
+            self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
+            return false;
         }
         if self.is_assignable_to(source, target) {
             return true;

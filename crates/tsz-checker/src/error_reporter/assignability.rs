@@ -40,6 +40,36 @@ pub(crate) fn is_primitive_type_name(name: &str) -> bool {
     )
 }
 
+/// Returns true when a formatted-type display represents a single literal
+/// value (a quoted string, a numeric literal, or one of the keyword
+/// literals `true`/`false`/`null`/`undefined`).
+///
+/// TS2719 is meant for two NOMINAL types that share a name but are
+/// structurally distinct (typically merged-declaration ambiguity). Literal
+/// values have no nominal identity, so identical literal-value displays
+/// always mean identical types — emitting TS2719 with messages like
+/// `Type '"foo"' is not assignable to type '"foo"'` is misleading.
+pub(crate) fn display_is_literal_value(s: &str) -> bool {
+    if s == "true" || s == "false" || s == "null" || s == "undefined" {
+        return true;
+    }
+    if s.starts_with('"') || s.starts_with('\'') || s.starts_with('`') {
+        return true;
+    }
+    let bare = s.strip_prefix('-').unwrap_or(s);
+    let mut chars = bare.chars();
+    chars.next().is_some_and(|c| c.is_ascii_digit())
+        && chars.all(|c| {
+            c.is_ascii_digit()
+                || c == '.'
+                || c == 'e'
+                || c == 'E'
+                || c == '+'
+                || c == '-'
+                || c == 'n'
+        })
+}
+
 /// Returns true if the name is a reserved type name that cannot be used as
 /// an interface or class name (TS2427/TS2414). Matches tsc's
 /// `checkTypeNameIsReserved` which checks the `typeNames` set.
@@ -1840,28 +1870,20 @@ impl<'a> CheckerState<'a> {
             // `true` — that lookup wrongly repaints the source as an unrelated
             // boxed/wrapper interface (TypeId-keyed `find_def_for_type` can hand
             // back `Boolean`/`Number` for primitive sources).  Keep the literal.
-            let display_is_literal_value = |s: &str| {
-                if s == "true" || s == "false" || s == "null" || s == "undefined" {
-                    return true;
-                }
-                if s.starts_with('"') || s.starts_with('\'') || s.starts_with('`') {
-                    return true;
-                }
-                let bare = s.strip_prefix('-').unwrap_or(s);
-                let mut chars = bare.chars();
-                chars.next().is_some_and(|c| c.is_ascii_digit())
-                    && chars.all(|c| {
-                        c.is_ascii_digit()
-                            || c == '.'
-                            || c == 'e'
-                            || c == 'E'
-                            || c == '+'
-                            || c == '-'
-                            || c == 'n'
-                    })
-            };
+            let display_is_literal_value = display_is_literal_value;
 
-            let (message, code) = if src_str == tgt_str && !authoritative_names_differ {
+            // TS2719 is reserved for two NOMINAL types that share a name but are
+            // structurally distinct (typically merged-declaration ambiguity).
+            // Literal-value displays — `"foo"`, `42`, `true`, etc. — never carry
+            // a nominal identity, so identical literal-value displays must mean
+            // identical types. Emitting TS2719 with `Type '"name"' is not
+            // assignable to type '"name"'` is misleading. Fall through to TS2322.
+            let pair_is_literal_value =
+                display_is_literal_value(&src_str) && display_is_literal_value(&tgt_str);
+            let (message, code) = if src_str == tgt_str
+                && !authoritative_names_differ
+                && !pair_is_literal_value
+            {
                 (
                     format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,

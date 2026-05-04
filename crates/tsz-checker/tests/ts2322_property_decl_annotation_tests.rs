@@ -8,12 +8,9 @@
 //!
 //! After the lowering fix in PR #1464, the unresolved type-position identifier
 //! lowers to `UnresolvedTypeName` instead of `TypeId::ERROR`, so the `error`
-//! sentinel never leaks into a cascading message. As a side effect the
-//! cascading TS2322 is currently suppressed for this exact shape (tsc emits
-//! both TS2304 and TS2322 — restoring the cascading TS2322 with the source
-//! annotation is a tracked follow-up). These tests pin the invariants we still
-//! own: TS2304 fires for each unresolved name, and any TS2322 that does land
-//! must show the annotation text and never the `error` sentinel.
+//! sentinel never leaks into a cascading message. These tests pin the cascade
+//! invariant too: tsc still reports TS2322 for `null` assigned to a function or
+//! class type whose nested members mention an unresolved type.
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     let mut parser =
@@ -55,9 +52,8 @@ class EnclosingScopeContext {
 "#;
     let diags = get_diagnostics(source);
 
-    // TS2304 must fire for the unresolved name. tsz currently does not
-    // re-cascade a TS2322 for this exact shape; if/when the cascading TS2322
-    // is restored it must show `() => SymbolScope`, never `() => error`.
+    // TS2304 must fire for the unresolved name, and TS2322 must still fire for
+    // the nullish assignment because the target's top-level shape is callable.
     let ts2304: Vec<_> = diags.iter().filter(|(code, _)| *code == 2304).collect();
     assert!(
         !ts2304.is_empty(),
@@ -65,6 +61,11 @@ class EnclosingScopeContext {
     );
 
     let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected one cascading TS2322 for null assigned to () => SymbolScope, got: {diags:?}"
+    );
     for (_, msg) in &ts2322 {
         assert!(
             !msg.contains("error"),
@@ -88,9 +89,7 @@ class Context {
 "#;
     let diags = get_diagnostics(source);
 
-    // One TS2304 per declaration must fire. The cascading TS2322 is currently
-    // suppressed (follow-up); pin only the `error`-sentinel and annotation-text
-    // invariants for any TS2322 that does land.
+    // One TS2304 and one cascading TS2322 per declaration must fire.
     let ts2304: Vec<_> = diags.iter().filter(|(code, _)| *code == 2304).collect();
     assert!(
         ts2304.len() >= 2,
@@ -98,6 +97,11 @@ class Context {
     );
 
     let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected one TS2322 per null-initialized function property, got: {diags:?}"
+    );
     for (_, msg) in &ts2322 {
         assert!(
             !msg.contains("error"),
@@ -106,6 +110,35 @@ class Context {
         assert!(
             msg.contains("SymbolScope"),
             "TS2322 message must show annotation '() => SymbolScope': {msg}"
+        );
+    }
+}
+
+/// Returning `null` from a function whose declared class return type contains
+/// nested unresolved members should still emit TS2322 at the return statement.
+#[test]
+fn ts2322_return_null_to_class_type_with_unresolved_member_type() {
+    let source = r#"
+class EnclosingScopeContext {
+    public scopeGetter: () => SymbolScope = null;
+}
+function findEnclosingScopeAt(): EnclosingScopeContext {
+    return null;
+}
+"#;
+    let diags = get_diagnostics(source);
+
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.iter().any(|(_, msg)| {
+            msg.contains("Type 'null' is not assignable to type 'EnclosingScopeContext'")
+        }),
+        "expected TS2322 for return null against class type with nested unresolved member, got: {diags:?}"
+    );
+    for (_, msg) in &ts2322 {
+        assert!(
+            !msg.contains("error"),
+            "TS2322 message must not contain internal 'error' sentinel: {msg}"
         );
     }
 }

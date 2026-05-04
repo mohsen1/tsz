@@ -10,4 +10,5 @@ mod assignability_diagnostics;
 mod assignability_type_param_helpers;
 pub mod assignment_checker;
 pub(crate) mod compound_assignment;
+mod nullish_error_targets;
 pub mod subtype_identity_checker;
