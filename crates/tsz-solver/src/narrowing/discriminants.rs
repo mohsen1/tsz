@@ -413,6 +413,9 @@ impl<'a> NarrowingContext<'a> {
                     .then_some(raw_prop_type)
                     .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
                     .unwrap_or(raw_prop_type);
+                if prop_type == TypeId::ANY {
+                    continue;
+                }
                 let is_excluded = if prop_type == literal_value {
                     true
                 } else {
@@ -451,6 +454,10 @@ impl<'a> NarrowingContext<'a> {
                 .then_some(raw_prop_type)
                 .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
                 .unwrap_or(raw_prop_type);
+            if !keep_matching && prop_type == TypeId::ANY {
+                kept.push(member);
+                continue;
+            }
             let should_keep = if prop_type == literal_value
                 || crate::type_queries::contains_generic_type_parameters_db(self.db, prop_type)
             {
