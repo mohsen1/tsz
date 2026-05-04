@@ -680,12 +680,27 @@ impl<'a> CheckerState<'a> {
 
                     // Only check for conflicts within the same scope.
                     // A symbol in a different namespace/module should not conflict.
+                    //
+                    // Some declarations (e.g. TYPE_ALIAS_DECLARATION, FUNCTION_DECLARATION)
+                    // own their own scope for type parameters/locals. Walking from the
+                    // declaration node itself returns that inner scope, which never matches
+                    // the import's enclosing scope. Look at the declaration's parent so
+                    // we compare the scope where the *name* is introduced. This mirrors
+                    // the merged-symbol path above (line 567-576).
                     if let Some(import_scope_id) = import_scope {
                         let decl_in_same_scope = sym.declarations.iter().any(|&decl_idx| {
-                            self.ctx
-                                .binder
-                                .find_enclosing_scope(self.ctx.arena, decl_idx)
-                                == Some(import_scope_id)
+                            let owner_scope =
+                                self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                                    let parent = ext.parent;
+                                    if parent.is_some() {
+                                        self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                                    } else {
+                                        self.ctx
+                                            .binder
+                                            .find_enclosing_scope(self.ctx.arena, decl_idx)
+                                    }
+                                });
+                            owner_scope == Some(import_scope_id)
                         });
                         if !decl_in_same_scope {
                             continue;
@@ -699,7 +714,22 @@ impl<'a> CheckerState<'a> {
                     });
 
                     let is_type_alias = sym.has_any_flags(symbol_flags::TYPE_ALIAS);
-                    if import_has_value && (is_value || is_type_alias) && has_local_declaration {
+                    // tsc treats `export import X = ...` + `export type X` as a
+                    // legitimate dual-namespace merge — no TS2440. The local
+                    // must be type-only (no overlap with the import's value).
+                    let import_is_exported = self
+                        .ctx
+                        .arena
+                        .get_extended(stmt_idx)
+                        .and_then(|ext| self.ctx.arena.get(ext.parent))
+                        .is_some_and(|pn| pn.kind == syntax_kind_ext::EXPORT_DECLARATION);
+                    let dual_ns_merge =
+                        is_type_alias && !is_value && import_is_exported && sym.is_exported;
+                    if import_has_value
+                        && (is_value || is_type_alias)
+                        && has_local_declaration
+                        && !dual_ns_merge
+                    {
                         let message = format_message(
                             diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                             &[name],

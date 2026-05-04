@@ -1956,6 +1956,124 @@ impl<'a> CheckerState<'a> {
         self.check_global_augmentation_const_enum_rebind_diagnostics();
         self.check_cross_file_global_augmentation_member_conflicts();
         self.check_cross_file_module_augmentation_member_conflicts();
+        self.check_alias_partner_merge_export_consistency();
+    }
+
+    /// TS2395 across binder-split `import X = ...` ↔ `type X = ...`
+    /// partnerships.
+    ///
+    /// The binder splits an import-equals declaration (`ALIAS`) and a
+    /// same-name local `type X = ...` / `interface X` (`TYPE_ALIAS` /
+    /// `INTERFACE`) into two separate symbols, recording the partnership in
+    /// `alias_partners`. Per-symbol duplicate-identifier checks therefore see
+    /// only one declaration each and skip the merged-declaration
+    /// export-consistency rule. tsc treats them as a single merged
+    /// declaration, so we must emit TS2395 across the partnership when their
+    /// export status differs in the same scope.
+    ///
+    /// Only `IMPORT_EQUALS_DECLARATION` aliases participate in this rule.
+    /// ES6 imports (`import { X }`, `import X from`) and namespace re-exports
+    /// (`export * as X`) populate the same `alias_partners` map but tsc does
+    /// not treat them as merged declarations for TS2395 purposes:
+    /// - `import { X }` + `type X` already reports TS2440 alone.
+    /// - `export * as X` + `export type X` is a legitimate dual-namespace
+    ///   merge with no diagnostic.
+    fn check_alias_partner_merge_export_consistency(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Snapshot the partner map up-front: we need to mutate `self` (emit
+        // diagnostics) while iterating, and the map is shared via Arc.
+        let pairs: Vec<(tsz_binder::SymbolId, tsz_binder::SymbolId)> =
+            if let Some(ref ap) = self.ctx.program_alias_partners {
+                ap.iter().map(|(&a, &b)| (a, b)).collect()
+            } else {
+                self.ctx
+                    .binder
+                    .alias_partners
+                    .iter()
+                    .map(|(&a, &b)| (a, b))
+                    .collect()
+            };
+
+        for (type_alias_id, alias_id) in pairs {
+            // Both halves of the partnership must be local symbols in the
+            // current binder; cross-file alias partners are handled by their
+            // own merge logic.
+            let Some(type_alias_sym) = self.ctx.binder.get_symbol(type_alias_id) else {
+                continue;
+            };
+            let Some(alias_sym) = self.ctx.binder.get_symbol(alias_id) else {
+                continue;
+            };
+
+            // Restrict to import-equals partnerships. The binder records
+            // partnerships for ES6 import bindings and `export * as ns` too,
+            // but tsc only treats import-equals as a merged-declaration peer
+            // of a same-named type alias.
+            let alias_is_import_equals = alias_sym.declarations.iter().any(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+            });
+            if !alias_is_import_equals {
+                continue;
+            }
+
+            // The partnership is meaningful only when both halves' declarations
+            // are local to this file. Symbol-level `is_exported` is the source
+            // of truth: each partner symbol holds a single declaration kind
+            // (binder split), so `is_exported` reflects that declaration's
+            // status. Per-decl `is_declaration_exported` for IMPORT_EQUALS_
+            // DECLARATION is intentionally unaware of the export modifier
+            // because the existing per-symbol TS2395 logic relies on that.
+            let mut decls: Vec<NodeIndex> = Vec::new();
+            let mut all_local = true;
+            for &decl_idx in type_alias_sym
+                .declarations
+                .iter()
+                .chain(alias_sym.declarations.iter())
+            {
+                if !self.ctx.binder.node_symbols.contains_key(&decl_idx.0) {
+                    all_local = false;
+                    break;
+                }
+                decls.push(decl_idx);
+            }
+            if !all_local || decls.len() < 2 {
+                continue;
+            }
+
+            // Skip when both partner symbols agree on export status.
+            if type_alias_sym.is_exported == alias_sym.is_exported {
+                continue;
+            }
+
+            // Skip when all declarations live in an ambient `declare namespace`
+            // (identifier-named ambient namespace), matching the existing
+            // per-symbol TS2395 suppression for ambient contexts.
+            if decls
+                .iter()
+                .all(|&d| self.is_in_ambient_namespace_not_module(d))
+            {
+                continue;
+            }
+
+            let name = type_alias_sym.escaped_name.clone();
+            let message = format_message(
+                diagnostic_messages::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
+                &[&name],
+            );
+            for decl_idx in decls {
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
+                );
+            }
+        }
     }
 
     fn check_block_scoped_function_outer_conflicts(&mut self) {
