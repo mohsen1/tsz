@@ -223,9 +223,22 @@ impl<'a> CheckerState<'a> {
                 .get(unwrapped_expr)
                 .is_some_and(|e| e.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
 
+        // tsc still reports TS2322 when the declared return type contains a
+        // nested error (e.g. a class whose members reference unresolved
+        // identifiers) but the surface structure is otherwise distinguishable
+        // from the return value — `return null` against a non-nullable target
+        // is still TS2322 because `null` is not the structural target.
+        let return_is_nullish_literal =
+            return_type == TypeId::NULL || return_type == TypeId::UNDEFINED;
+        let target_is_top_level_error = expected_type == TypeId::ERROR;
+        let expected_contains_error_nested =
+            self.type_contains_error(expected_type) && !target_is_top_level_error;
+        let allow_check_through_nested_error =
+            return_is_nullish_literal && expected_contains_error_nested;
         let assignability_ok = if !skip_assignability
             && expected_type != TypeId::ANY
-            && !self.type_contains_error(expected_type)
+            && !target_is_top_level_error
+            && (!expected_contains_error_nested || allow_check_through_nested_error)
         {
             if is_conditional_expr && !self.is_assignable_to(return_type, expected_type) {
                 // Per-branch error elaboration for conditional expressions.

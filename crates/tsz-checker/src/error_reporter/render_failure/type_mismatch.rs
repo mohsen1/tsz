@@ -340,6 +340,12 @@ impl<'a> CheckerState<'a> {
         // equal the source's primitive display.
         if source_str == target_str
             && !crate::error_reporter::assignability::is_primitive_type_name(&source_str)
+            // Literal-value displays (`"foo"`, `42`, `true`, etc.) have no
+            // nominal identity. Identical literal displays always mean
+            // identical types, so emitting TS2719 with messages like
+            // `Type '"foo"' is not assignable to type '"foo"'` is misleading.
+            // Fall through to TS2322.
+            && !crate::error_reporter::assignability::display_is_literal_value(&source_str)
         {
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,

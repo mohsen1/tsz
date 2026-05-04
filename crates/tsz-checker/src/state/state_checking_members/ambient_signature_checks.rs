@@ -358,11 +358,14 @@ impl<'a> CheckerState<'a> {
                 };
             let init_type = self.get_type_of_node_with_request(prop.initializer, &request);
 
+            // Match tsc TS2322 on `null = () => Unresolved`: allow the check
+            // through a nested-error target only for nullish initializers.
+            let init_is_nullish = init_type == TypeId::NULL || init_type == TypeId::UNDEFINED;
+            let nested_err =
+                declared_type != TypeId::ERROR && self.type_contains_error(declared_type);
             if declared_type != TypeId::ANY
-                && !self.type_contains_error(declared_type)
-                // Use prop.initializer as source_idx for excess-property resolution,
-                // and prop.name as diag_idx for TS2322 diagnostic anchoring (tsc
-                // points at the property name, not the initializer value).
+                && declared_type != TypeId::ERROR
+                && (!nested_err || init_is_nullish)
                 && self.check_assignable_or_report_at(
                     init_type,
                     declared_type,
