@@ -9,7 +9,9 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeData, TypeId};
+
+const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
 
 pub(super) struct CallResultContext<'a> {
     pub(super) callee_expr: NodeIndex,
@@ -111,6 +113,20 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             callee_type,
         )
+    }
+
+    fn is_spread_argument_marker_type(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Tuple(elems_id)) = self.ctx.types.lookup(type_id) else {
+            return false;
+        };
+        let elems = self.ctx.types.tuple_list(elems_id);
+        let [elem] = &*elems else {
+            return false;
+        };
+        elem.rest
+            && elem.name.is_some_and(|name| {
+                self.ctx.types.resolve_atom(name) == SPREAD_ARGUMENT_MARKER_NAME
+            })
     }
 
     fn should_attempt_deferred_literal_elaboration(&mut self, expected: TypeId) -> bool {
@@ -481,6 +497,13 @@ impl<'a> CheckerState<'a> {
                 }
                 let reported_actual = match arg_types.get(index).copied() {
                     Some(TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) | None => actual,
+                    Some(original) if self.is_spread_argument_marker_type(original) => actual,
+                    Some(original)
+                        if original != actual
+                            && common::tuple_elements(self.ctx.types, actual).is_some() =>
+                    {
+                        actual
+                    }
                     Some(original) => original,
                 };
                 let reported_expected = self
@@ -622,6 +645,41 @@ impl<'a> CheckerState<'a> {
                                 arg_idx,
                             );
                         }
+                    }
+                } else if index >= arg_types.len() {
+                    if should_try_deferred_elaboration
+                        && !self.should_suppress_weak_key_arg_mismatch(
+                            callee_expr,
+                            args,
+                            index,
+                            actual,
+                        )
+                        && let Some(last_arg) = args.last().copied()
+                    {
+                        elaborated = self.try_elaborate_object_literal_arg_error_with_source(
+                            last_arg,
+                            expected,
+                            Some(actual),
+                        );
+                    }
+                    if !elaborated
+                        && allow_contextual_mismatch_deferral
+                        && self.should_defer_contextual_argument_mismatch(actual, expected)
+                    {
+                        return if fallback_return != TypeId::ERROR {
+                            fallback_return
+                        } else {
+                            TypeId::ERROR
+                        };
+                    }
+                    if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
+                        && !elaborated
+                    {
+                        let _ = self.check_argument_assignable_or_report(
+                            reported_actual,
+                            reported_expected,
+                            call_idx,
+                        );
                     }
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];

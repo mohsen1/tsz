@@ -17,6 +17,8 @@ use crate::utils::{self, TupleRestExpansion};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
+const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
+
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn is_string_like_type(&self, type_id: TypeId) -> bool {
         matches!(
@@ -337,7 +339,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         allow_bivariant_callbacks: bool,
     ) -> Option<CallResult> {
         let arg_count = arg_types.len();
+        let rest_start = params
+            .last()
+            .filter(|param| param.rest)
+            .map(|_| params.len().saturating_sub(1));
+        let aggregate_rest_check = self.check_aggregate_rest_arguments(params, arg_types, strict);
         for (i, arg_type) in arg_types.iter().enumerate() {
+            if rest_start.is_some_and(|start| i >= start)
+                && let Some(result) = aggregate_rest_check.clone()
+            {
+                return result;
+            }
+
             // Detect spread marker tuples [...T] created by the checker for generic
             // TypeParameter spreads.  Only match markers: a 1-rest-element tuple
             // whose inner type is a TypeParameter (not a regular variadic tuple).
@@ -628,7 +641,138 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 });
             }
         }
+        if rest_start == Some(arg_count)
+            && let Some(result) = aggregate_rest_check
+        {
+            return result;
+        }
         None
+    }
+
+    fn check_aggregate_rest_arguments(
+        &mut self,
+        params: &[ParamInfo],
+        arg_types: &[TypeId],
+        strict: bool,
+    ) -> Option<Option<CallResult>> {
+        let rest_param = params.last().filter(|param| param.rest)?;
+        let rest_start = params.len().saturating_sub(1);
+        let rest_type = self.unwrap_readonly(rest_param.type_id);
+        let rest_type = self.evaluate_rest_param_type(rest_type);
+        if !self.rest_type_needs_aggregate_argument_check(rest_type) {
+            return None;
+        }
+
+        let actual = self.aggregate_rest_actual_type(&arg_types[rest_start..]);
+        let assignable = if strict {
+            self.checker.is_assignable_to_strict(actual, rest_type)
+        } else {
+            self.checker.is_assignable_to(actual, rest_type)
+        };
+        if assignable {
+            return Some(None);
+        }
+
+        Some(Some(CallResult::ArgumentTypeMismatch {
+            index: rest_start,
+            expected: rest_type,
+            actual,
+            fallback_return: TypeId::ERROR,
+        }))
+    }
+
+    fn rest_type_needs_aggregate_argument_check(&mut self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                self.rest_type_needs_aggregate_argument_check(inner)
+            }
+            Some(TypeData::Tuple(_)) => true,
+            Some(TypeData::Union(members)) => {
+                let members: Vec<_> = self.interner.type_list(members).iter().copied().collect();
+                members
+                    .into_iter()
+                    .any(|member| self.rest_type_needs_aggregate_argument_check(member))
+            }
+            Some(
+                TypeData::Application(_)
+                | TypeData::Conditional(_)
+                | TypeData::Intersection(_)
+                | TypeData::Lazy(_)
+                | TypeData::Mapped(_)
+                | TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::IndexAccess(_, _),
+            ) => true,
+            _ => false,
+        }
+    }
+
+    fn aggregate_rest_actual_type(&mut self, rest_args: &[TypeId]) -> TypeId {
+        if rest_args.len() == 1
+            && let Some(inner) = self.spread_argument_marker_inner(rest_args[0])
+        {
+            return self.normalize_spread_actual_type(inner);
+        }
+
+        let elements = rest_args
+            .iter()
+            .map(|&arg| {
+                if let Some(inner) = self.spread_argument_marker_inner(arg) {
+                    TupleElement {
+                        type_id: self.normalize_spread_actual_type(inner),
+                        name: None,
+                        optional: false,
+                        rest: true,
+                    }
+                } else {
+                    TupleElement {
+                        type_id: arg,
+                        name: None,
+                        optional: false,
+                        rest: false,
+                    }
+                }
+            })
+            .collect();
+        self.interner.tuple(elements)
+    }
+
+    fn spread_argument_marker_inner(&self, type_id: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+        let elems = self.interner.tuple_list(elems_id);
+        let [elem] = &*elems else {
+            return None;
+        };
+        if !elem.rest {
+            return None;
+        }
+        let name = elem.name?;
+        (self.interner.resolve_atom(name) == SPREAD_ARGUMENT_MARKER_NAME).then_some(elem.type_id)
+    }
+
+    fn normalize_spread_actual_type(&mut self, type_id: TypeId) -> TypeId {
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                self.normalize_spread_actual_type(inner)
+            }
+            Some(TypeData::Union(members)) => {
+                let members: Vec<_> = self.interner.type_list(members).iter().copied().collect();
+                let normalized = members
+                    .into_iter()
+                    .map(|member| self.normalize_spread_actual_type(member))
+                    .collect();
+                self.interner.union(normalized)
+            }
+            _ => type_id,
+        }
     }
 
     /// Check if a parameter type contains `void` — either is `void` directly
