@@ -5,7 +5,9 @@ use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
-    array_element_type_for_type, is_type_parameter_type, tuple_elements_for_type,
+    array_element_type_for_type, contains_index_access_with_type_parameter_object,
+    contains_index_access_with_variadic_tuple_object, is_type_parameter_type,
+    tuple_elements_for_type,
 };
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
@@ -101,6 +103,7 @@ impl<'a> CheckerState<'a> {
         // Track whether TS2556 was already emitted in this call.
         // tsc only reports TS2556 on the first non-tuple spread, not subsequent ones.
         let mut emitted_ts2556 = false;
+        let mut recover_after_spread_ts2589 = false;
 
         for (i, &arg_idx) in args.iter().enumerate() {
             // Skip sensitive arguments in Round 1 of two-pass generic inference.
@@ -116,12 +119,43 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            if recover_after_spread_ts2589 {
+                self.get_type_of_node(arg_idx);
+                arg_types.push(TypeId::ANY);
+                effective_index += 1;
+                continue;
+            }
+
             if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
                 // Handle spread elements specially - expand tuple types
                 if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
                     && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
                 {
                     let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+                    let expected_at_spread = expected_for_index(effective_index, expanded_count);
+                    let recursive_mapped_tuple_depth = expected_at_spread.is_some_and(|expected| {
+                        Self::recursive_mapped_tuple_spread_may_exceed_depth_in_types(
+                            self.ctx.types,
+                            spread_type,
+                            expected,
+                        )
+                    });
+                    if recursive_mapped_tuple_depth {
+                        let anchor = self.spread_iterability_error_anchor(spread_data.expression);
+                        if let Some((start, end)) = self.get_node_span(anchor)
+                            && !self.has_diagnostic_code_within_span(
+                                start,
+                                end,
+                                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                            )
+                        {
+                            self.emit_ts2589_spread_instantiation_depth(anchor);
+                        }
+                        recover_after_spread_ts2589 = true;
+                        arg_types.push(TypeId::ANY);
+                        effective_index += 1;
+                        continue;
+                    }
 
                     // Check if spread argument is iterable, emit TS2488 if not
                     self.check_spread_iterability(spread_type, spread_data.expression);
@@ -259,8 +293,7 @@ impl<'a> CheckerState<'a> {
                         // We check this via `is_rest_parameter_position` on the callable type,
                         // falling back to the large-index probe when the callable type isn't available.
                         if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
-                            let current_expected =
-                                expected_for_index(effective_index, expanded_count);
+                            let current_expected = expected_at_spread;
 
                             // Check if this spread position is a rest parameter position.
                             // Use the callable type context if available for precise check;
@@ -765,6 +798,43 @@ impl<'a> CheckerState<'a> {
         }
 
         arg_types
+    }
+
+    pub(crate) fn recursive_mapped_tuple_spread_may_exceed_depth_in_types(
+        db: &dyn tsz_solver::TypeDatabase,
+        spread_type: TypeId,
+        expected_type: TypeId,
+    ) -> bool {
+        let Some(spread_elem) = array_element_type_for_type(db, spread_type) else {
+            return false;
+        };
+        if !crate::query_boundaries::common::contains_type_parameters(db, spread_elem)
+            || !crate::query_boundaries::common::contains_type_parameters(db, expected_type)
+        {
+            return false;
+        }
+
+        let Some(source_shape) =
+            crate::query_boundaries::common::object_shape_for_type(db, spread_elem)
+        else {
+            return false;
+        };
+        let Some(target_shape) =
+            crate::query_boundaries::common::object_shape_for_type(db, expected_type)
+        else {
+            return false;
+        };
+
+        source_shape.properties.iter().any(|source_prop| {
+            target_shape
+                .properties
+                .iter()
+                .find(|target_prop| target_prop.name == source_prop.name)
+                .is_some_and(|target_prop| {
+                    contains_index_access_with_type_parameter_object(db, source_prop.type_id)
+                        && contains_index_access_with_variadic_tuple_object(db, target_prop.type_id)
+                })
+        })
     }
 
     /// Check if a type is or references a const type parameter.

@@ -1113,6 +1113,14 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write(&es5_output);
                 }
+                let class_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].pos < class_close_pos
+                {
+                    self.comment_emit_idx += 1;
+                }
+                self.emit_trailing_comments(class_close_pos);
+                self.skip_comments_for_erased_node(node);
             }
             EmitDirective::ES5ClassExpression { class_node } => {
                 self.emit_class_expression_es5(*class_node);
@@ -1313,6 +1321,14 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write(&es5_output);
                 }
+                let class_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].pos < class_close_pos
+                {
+                    self.comment_emit_idx += 1;
+                }
+                self.emit_trailing_comments(class_close_pos);
+                self.skip_comments_for_erased_node(node);
             }
             EmitDirective::ES5ClassExpression { class_node } => {
                 self.emit_class_expression_es5(*class_node);

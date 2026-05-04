@@ -84,6 +84,14 @@ fn arrow_default_optional_chain_temp_is_scoped_to_es5_body() {
 }
 
 #[test]
+fn optional_parameter_missing_initializer_skips_question_after_trivia() {
+    let source = "function f(a ? = ) {}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert_eq!(output, "function f(a = ) { }\n");
+}
+
+#[test]
 fn decorated_anonymous_class_expression_sets_empty_function_name() {
     let source = "declare let dec: any;\n(@dec class {});";
     let output = parse_lower_print(

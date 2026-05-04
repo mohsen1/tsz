@@ -207,7 +207,11 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_object_literal_entries_es5(&mut self, elements: &[NodeIndex]) {
-        self.emit_object_literal_entries_es5_with_comments(elements, false, None);
+        self.emit_object_literal_entries_es5_with_comments(elements, false, None, false);
+    }
+
+    fn emit_object_literal_prefix_entries_es5(&mut self, elements: &[NodeIndex]) {
+        self.emit_object_literal_entries_es5_with_comments(elements, false, None, true);
     }
 
     fn emit_object_literal_entries_es5_with_comments(
@@ -215,6 +219,7 @@ impl<'a> Printer<'a> {
         elements: &[NodeIndex],
         has_trailing_comma: bool,
         source_range: Option<(u32, u32)>,
+        suppress_source_trailing_comma: bool,
     ) {
         if elements.is_empty() {
             self.write("{}");
@@ -278,8 +283,14 @@ impl<'a> Printer<'a> {
                 } else {
                     self.find_comma_pos_after(token_end, next_pos)
                 };
+                let is_last = i == elements.len() - 1;
+                let source_comma = comma_already_past || comma_pos.is_some();
                 let needs_comma = if self.source_text.is_some() {
-                    has_trailing_comma || comma_already_past || comma_pos.is_some()
+                    if is_last && suppress_source_trailing_comma {
+                        has_trailing_comma
+                    } else {
+                        has_trailing_comma || source_comma
+                    }
                 } else {
                     i < elements.len() - 1 || has_trailing_comma
                 };
@@ -576,6 +587,7 @@ impl<'a> Printer<'a> {
                 elements,
                 has_trailing_comma,
                 source_range,
+                false,
             );
             return;
         }
@@ -597,7 +609,7 @@ impl<'a> Printer<'a> {
 
         // Emit initial non-computed properties as the object literal
         if first_computed_idx > 0 {
-            self.emit_object_literal_entries_es5(&elements[..first_computed_idx]);
+            self.emit_object_literal_prefix_entries_es5(&elements[..first_computed_idx]);
         } else {
             self.write("{}");
         }
@@ -740,7 +752,7 @@ impl<'a> Printer<'a> {
                         .position(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
                         .unwrap_or(elems.len());
                     if first_computed > 0 {
-                        self.emit_object_literal_entries_es5(&elems[..first_computed]);
+                        self.emit_object_literal_prefix_entries_es5(&elems[..first_computed]);
                     } else {
                         self.write("{}");
                     }
@@ -797,7 +809,9 @@ impl<'a> Printer<'a> {
                                 })
                                 .unwrap_or(elems.len());
                             if first_computed > 0 {
-                                self.emit_object_literal_entries_es5(&elems[..first_computed]);
+                                self.emit_object_literal_prefix_entries_es5(
+                                    &elems[..first_computed],
+                                );
                             } else {
                                 self.write("{}");
                             }
@@ -841,7 +855,9 @@ impl<'a> Printer<'a> {
                                     })
                                     .unwrap_or(elems.len());
                                 if first_computed > 0 {
-                                    self.emit_object_literal_entries_es5(&elems[..first_computed]);
+                                    self.emit_object_literal_prefix_entries_es5(
+                                        &elems[..first_computed],
+                                    );
                                 } else {
                                     self.write("{}");
                                 }

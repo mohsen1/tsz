@@ -366,6 +366,19 @@ impl<'a> TypeInstantiator<'a> {
         }
     }
 
+    fn is_primitive_or_primitive_union(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        if crate::visitors::visitor_predicates::is_primitive_type(interner, type_id) {
+            return true;
+        }
+        let Some(TypeData::Union(members)) = interner.lookup(type_id) else {
+            return false;
+        };
+        interner
+            .type_list(members)
+            .iter()
+            .all(|&member| crate::visitors::visitor_predicates::is_primitive_type(interner, member))
+    }
+
     /// Check whether a mapped template actually depends on the source object's
     /// indexed member type `source_obj[K]`. Array/tuple preservation is only
     /// valid for these homomorphic-style templates; unrelated templates like
@@ -1064,7 +1077,16 @@ impl<'a> TypeInstantiator<'a> {
                         }
                         return self.interner.union(results);
                     }
-                    if let Some(TypeData::Union(members)) = self.interner.lookup(substituted) {
+                    let distribution_source = match self.interner.lookup(substituted) {
+                        Some(TypeData::Union(_)) => substituted,
+                        _ => crate::evaluation::evaluate::evaluate_type(
+                            self.interner,
+                            substituted,
+                        ),
+                    };
+                    if let Some(TypeData::Union(members)) =
+                        self.interner.lookup(distribution_source)
+                    {
                         let members = self.interner.type_list(members);
                         // Limit distribution to prevent OOM with large unions
                         // (e.g., string literal unions with thousands of members)
@@ -1383,10 +1405,7 @@ impl<'a> TypeInstantiator<'a> {
                     // unions or other compound types (not just at the top level of a type
                     // alias body). Without this, `{ [K in keyof null]: null[K] }` inside
                     // a union evaluates to `{}` instead of `null`.
-                    if crate::visitors::visitor_predicates::is_primitive_type(
-                        self.interner,
-                        resolved,
-                    ) {
+                    if Self::is_primitive_or_primitive_union(self.interner, resolved) {
                         self.exit_shadowing_scope(shadowed_len, saved_visiting);
                         return resolved;
                     }

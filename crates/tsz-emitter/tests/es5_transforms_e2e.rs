@@ -66,6 +66,33 @@ fn test_destructuring_rest_array() {
 }
 
 #[test]
+fn test_assignment_object_rest_uses_es5_lowering() {
+    // Regression: when targeting ES5 the new ES2018 object-rest assignment
+    // handler must NOT intercept dispatch. The ES5 destructuring lowering
+    // already emits fully ES5-compatible output (no `{ a } = src` syntax).
+    let output = emit_es5("var a, rest;\n({a, ...rest} = obj);\n");
+    // The buggy ES2018 path emits `{ a: a } = obj, rest = __rest(obj, ["a"])`
+    // — the `{ a: a } = obj` portion is ES2015+ destructuring, invalid for ES5.
+    // The correct ES5 lowering emits `a = obj.a, rest = __rest(obj, ["a"])`.
+    assert!(
+        !output.contains("} = obj"),
+        "ES5 output must not contain object destructuring assignment syntax.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{ a") && !output.contains("{a"),
+        "ES5 output must not retain an object literal pattern on the LHS.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("a = obj.a") || output.contains("a = obj[\"a\"]"),
+        "Expected ES5-compatible property assignment for non-rest binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__rest"),
+        "Expected __rest helper for object rest.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_destructuring_nested_object() {
     let output = emit_es5("const {a: {b}} = obj;\n");
     assert!(

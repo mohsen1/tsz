@@ -531,6 +531,17 @@ impl<'a> Printer<'a> {
         modifiers: &Option<NodeList>,
     ) {
         if let Some(mods) = modifiers {
+            let static_count = mods
+                .nodes
+                .iter()
+                .filter(|&&idx| {
+                    self.arena
+                        .get(idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16)
+                })
+                .count();
+            let suppress_static = static_count > 1;
+
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
@@ -539,7 +550,9 @@ impl<'a> Printer<'a> {
                             self.write_line();
                         }
                     } else if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
-                        self.write("static ");
+                        if !suppress_static {
+                            self.write("static ");
+                        }
                     } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16 {
                         self.write("accessor ");
                     } else if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
@@ -618,6 +631,11 @@ impl<'a> Printer<'a> {
         );
         // Map closing `)` to its source position
         self.write(")");
+        if let Some(return_type) =
+            self.recovered_constructor_return_type(open_paren_pos, search_end)
+        {
+            self.write(return_type);
+        }
         self.write(" ");
 
         let prev_emitting_function_body_block = self.emitting_function_body_block;
@@ -647,6 +665,82 @@ impl<'a> Printer<'a> {
         self.ctx.block_scope_state.exit_scope();
         self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
+    }
+
+    fn recovered_constructor_return_type(
+        &self,
+        open_paren_pos: u32,
+        search_end: u32,
+    ) -> Option<&'a str> {
+        let source = self.source_text?;
+        let bytes = source.as_bytes();
+        let mut scan = open_paren_pos as usize;
+        let limit = std::cmp::min(search_end as usize, bytes.len());
+        if scan >= limit || bytes.get(scan) != Some(&b'(') {
+            return None;
+        }
+
+        let mut depth = 0i32;
+        while scan < limit {
+            match bytes[scan] {
+                b'(' | b'[' | b'{' => {
+                    depth += 1;
+                    scan += 1;
+                }
+                b')' => {
+                    depth -= 1;
+                    scan += 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                b']' | b'}' => {
+                    depth -= 1;
+                    scan += 1;
+                }
+                b'/' if scan + 1 < limit && bytes[scan + 1] == b'*' => {
+                    scan += 2;
+                    while scan + 1 < limit && !(bytes[scan] == b'*' && bytes[scan + 1] == b'/') {
+                        scan += 1;
+                    }
+                    if scan + 1 < limit {
+                        scan += 2;
+                    }
+                }
+                b'/' if scan + 1 < limit && bytes[scan + 1] == b'/' => {
+                    while scan < limit && bytes[scan] != b'\n' && bytes[scan] != b'\r' {
+                        scan += 1;
+                    }
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[scan];
+                    scan += 1;
+                    while scan < limit && bytes[scan] != quote {
+                        if bytes[scan] == b'\\' {
+                            scan += 1;
+                        }
+                        scan += 1;
+                    }
+                    if scan < limit {
+                        scan += 1;
+                    }
+                }
+                _ => scan += 1,
+            }
+        }
+
+        while scan < limit && matches!(bytes[scan], b' ' | b'\t' | b'\r' | b'\n') {
+            scan += 1;
+        }
+        if bytes.get(scan) != Some(&b':') {
+            return None;
+        }
+
+        let mut end = limit;
+        while end > scan && matches!(bytes[end - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            end -= 1;
+        }
+        source.get(scan..end)
     }
 
     /// Collect parameter property names from constructor parameters.

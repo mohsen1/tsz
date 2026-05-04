@@ -1018,6 +1018,12 @@ impl<'a> CheckerState<'a> {
         // If not found in direct exports, check for re-exports
         // The member might be re-exported from another module
         if let Some(ref module_specifier) = symbol.import_module {
+            if self
+                .ctx
+                .namespace_import_alias_has_local_namespace_conflict(symbol)
+            {
+                return None;
+            }
             if symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx
@@ -1349,50 +1355,14 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(super) fn is_type_query_in_non_flow_sensitive_signature_parameter(
+    pub(crate) fn is_type_query_in_non_flow_sensitive_signature_parameter(
         &self,
         idx: NodeIndex,
     ) -> bool {
-        let mut current = idx;
-        let mut saw_parameter = false;
-
-        while let Some(ext) = self.ctx.arena.get_extended(current) {
-            let parent = ext.parent;
-            if parent.is_none() {
-                break;
-            }
-
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                break;
-            };
-
-            match parent_node.kind {
-                syntax_kind_ext::PARAMETER => saw_parameter = true,
-                k if k == syntax_kind_ext::CALL_SIGNATURE
-                    || k == syntax_kind_ext::CONSTRUCT_SIGNATURE
-                    || k == syntax_kind_ext::METHOD_SIGNATURE
-                    || k == syntax_kind_ext::FUNCTION_TYPE
-                    || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
-                {
-                    return saw_parameter;
-                }
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION
-                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || k == syntax_kind_ext::ARROW_FUNCTION
-                    || k == syntax_kind_ext::METHOD_DECLARATION
-                    || k == syntax_kind_ext::CONSTRUCTOR
-                    || k == syntax_kind_ext::GET_ACCESSOR
-                    || k == syntax_kind_ext::SET_ACCESSOR =>
-                {
-                    return false;
-                }
-                _ => {}
-            }
-
-            current = parent;
-        }
-
-        false
+        crate::types_domain::type_node_helpers::is_type_query_in_non_flow_sensitive_signature_parameter(
+            self.ctx.arena,
+            idx,
+        )
     }
 
     /// Get type from a type query node (typeof X).

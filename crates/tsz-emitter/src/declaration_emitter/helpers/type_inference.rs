@@ -3091,13 +3091,10 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 Some(Self::object_type_top_level_member_names(ty, true))
             })
-            .collect::<Option<Vec<_>>>();
-        let Some(object_arm_names) = object_arm_names else {
-            return;
-        };
+            .collect::<Vec<_>>();
 
         let mut property_names = Vec::<String>::new();
-        for names in &object_arm_names {
+        for names in object_arm_names.iter().flatten() {
             for name in names {
                 if !property_names.iter().any(|existing| existing == name) {
                     property_names.push(name.clone());
@@ -3131,6 +3128,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         for (ty, present_names) in types.iter_mut().zip(object_arm_names) {
+            let Some(present_names) = present_names else {
+                continue;
+            };
             let missing_names = property_names
                 .iter()
                 .filter(|name| !present_names.iter().any(|present| present == *name))
@@ -3189,8 +3189,11 @@ impl<'a> DeclarationEmitter<'a> {
         let mut depth = 0usize;
         for line in trimmed.lines() {
             if depth == 1
-                && Self::object_type_member_name_from_line(line, true)
-                    .is_some_and(|name| line.trim_start().starts_with(&format!("{name}(")))
+                && Self::object_type_member_name_from_line(line, true).is_some_and(|name| {
+                    let trimmed_line = line.trim_start();
+                    trimmed_line.starts_with(&format!("{name}("))
+                        || trimmed_line.starts_with(&format!("{name}?("))
+                })
             {
                 return true;
             }
@@ -4854,6 +4857,26 @@ mod tests {
     }
 
     #[test]
+    fn empty_object_union_arm_expands_with_mixed_non_object_arm() {
+        let mut types = vec![
+            "{\n    foo: number;\n}".to_string(),
+            "{}".to_string(),
+            "number".to_string(),
+        ];
+
+        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
+
+        assert_eq!(
+            types,
+            vec![
+                "{\n    foo: number;\n}".to_string(),
+                "{\n    foo?: undefined;\n}".to_string(),
+                "number".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn object_union_arms_expand_missing_sibling_properties_and_methods() {
         let mut types = vec![
             "{\n    foo: number;\n    m(): void;\n}".to_string(),
@@ -4867,6 +4890,26 @@ mod tests {
             vec![
                 "{\n    foo: number;\n    m(): void;\n    bar?: undefined;\n}".to_string(),
                 "{\n    bar: number;\n    foo?: undefined;\n    m?: undefined;\n}".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn optional_method_triggers_object_union_sibling_expansion() {
+        let mut types = vec![
+            "{\n    m?(): void;\n}".to_string(),
+            "{\n    value: number;\n}".to_string(),
+            "string".to_string(),
+        ];
+
+        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
+
+        assert_eq!(
+            types,
+            vec![
+                "{\n    m?(): void;\n    value?: undefined;\n}".to_string(),
+                "{\n    value: number;\n    m?: undefined;\n}".to_string(),
+                "string".to_string(),
             ]
         );
     }

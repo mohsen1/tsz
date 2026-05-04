@@ -531,11 +531,12 @@ impl<'a> Printer<'a> {
                                     self.write(&output);
                                 }
                                 while self.comment_emit_idx < self.all_comments.len()
-                                    && self.all_comments[self.comment_emit_idx].end
-                                        <= clause_node.end
+                                    && self.all_comments[self.comment_emit_idx].pos
+                                        < clause_node.end
                                 {
                                     self.comment_emit_idx += 1;
                                 }
+                                self.skip_comments_for_erased_node(clause_node);
                                 self.write_line();
                                 // For ES5, decorator calls are inside the IIFE,
                                 // but we still need the CommonJS export assignment
@@ -946,7 +947,8 @@ impl<'a> Printer<'a> {
                 };
 
                 // Collect non-rest elements and rest element
-                let mut non_rest_elems: Vec<(String, String)> = Vec::new(); // (export_name, prop_name)
+                // (export_name, prop_name, leading_comment_pos)
+                let mut non_rest_elems: Vec<(String, String, u32)> = Vec::new();
                 let mut rest_elem: Option<String> = None;
                 let mut excluded_props: Vec<String> = Vec::new();
 
@@ -976,8 +978,16 @@ impl<'a> Printer<'a> {
                         var_name.clone()
                     };
 
+                    let leading_comment_pos = if elem.property_name.is_some() {
+                        self.arena
+                            .get(elem.name)
+                            .map_or(elem_node.pos, |name_node| name_node.pos)
+                    } else {
+                        elem_node.pos
+                    };
+
                     excluded_props.push(prop_name.clone());
-                    non_rest_elems.push((var_name, prop_name));
+                    non_rest_elems.push((var_name, prop_name, leading_comment_pos));
                 }
 
                 let is_empty = non_rest_elems.is_empty() && rest_elem.is_none();
@@ -985,7 +995,7 @@ impl<'a> Printer<'a> {
                 // Optimization: when there's exactly one binding (no rest), skip the
                 // temp variable and emit `exports.x = (rhs).x` directly. tsc does this.
                 if non_rest_elems.len() == 1 && rest_elem.is_none() {
-                    let (export_name, prop_name) = &non_rest_elems[0];
+                    let (export_name, prop_name, leading_comment_pos) = &non_rest_elems[0];
                     // Check if RHS is a numeric literal — needs special formatting
                     // because `1.toString` is a JS parse error (`.` is decimal point).
                     // tsc emits `1..toString` (trailing dot on number, then prop access).
@@ -994,6 +1004,7 @@ impl<'a> Printer<'a> {
                             .arena
                             .get(decl.initializer)
                             .is_some_and(|n| n.is_numeric_literal());
+                    self.emit_comments_before_pos(*leading_comment_pos);
                     self.write("exports.");
                     self.write(export_name);
                     self.write(" = ");
@@ -1035,7 +1046,7 @@ impl<'a> Printer<'a> {
                 } else if self.ctx.target_es5 {
                     // es5 non-empty: exports.x = (_a = expr, _a).x, exports.rest = __rest(_a, ["x"]);
                     let mut first = true;
-                    for (export_name, prop_name) in &non_rest_elems {
+                    for (export_name, prop_name, _) in &non_rest_elems {
                         if !first {
                             self.write(", ");
                         }
@@ -1092,7 +1103,7 @@ impl<'a> Printer<'a> {
                     self.write(" = ");
                     self.emit(decl.initializer);
 
-                    for (export_name, prop_name) in &non_rest_elems {
+                    for (export_name, prop_name, _) in &non_rest_elems {
                         self.write(", ");
                         self.write("exports.");
                         self.write(export_name);

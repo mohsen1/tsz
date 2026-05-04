@@ -23,6 +23,7 @@ mod constructors;
 mod core;
 mod cross_file_query;
 mod def_mapping;
+mod import_conflicts;
 mod parse_health;
 pub use parse_health::ParseHealth;
 mod import_extension_flags;

@@ -186,6 +186,10 @@ name = "control_flow_type_guard_tests"
 path = "tests/control_flow_type_guard_tests.rs"
 
 [[test]]
+name = "typeof_function_like_flow_tests"
+path = "tests/typeof_function_like_flow_tests.rs"
+
+[[test]]
 name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
 
@@ -546,6 +550,10 @@ name = "jsdoc_class_property_target_display"
 path = "tests/jsdoc_class_property_target_display.rs"
 
 [[test]]
+name = "jsdoc_prototype_assignment_target_display"
+path = "tests/jsdoc_prototype_assignment_target_display.rs"
+
+[[test]]
 name = "elaboration_wrapper_init_tests"
 path = "tests/elaboration_wrapper_init_tests.rs"
 
@@ -656,6 +664,10 @@ path = "tests/union_index_access_function_application_param_tests.rs"
 [[test]]
 name = "js_exports_surface_fallback_for_named_imports_tests"
 path = "tests/js_exports_surface_fallback_for_named_imports_tests.rs"
+
+[[test]]
+name = "jsx_pragma_factory_marks_imports_referenced_tests"
+path = "tests/jsx_pragma_factory_marks_imports_referenced_tests.rs"
 
 [lints]
 workspace = true

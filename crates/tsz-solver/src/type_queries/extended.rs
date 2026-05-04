@@ -1017,7 +1017,11 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
                 .flags
                 .contains(crate::types::ObjectFlags::HAS_LATE_BOUND_MEMBERS);
             ElementIndexableKind::ObjectWithIndex {
-                has_string: shape.string_index.is_some() || has_late_bound,
+                has_string: shape
+                    .string_index
+                    .as_ref()
+                    .is_some_and(|idx| idx.key_type != TypeId::SYMBOL)
+                    || has_late_bound,
                 has_number: shape.number_index.is_some(),
             }
         }
@@ -1033,7 +1037,10 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
         }
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
-            let has_string = shape.string_index.is_some();
+            let has_string = shape
+                .string_index
+                .as_ref()
+                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL);
             let has_number = shape.number_index.is_some();
             if has_string || has_number {
                 ElementIndexableKind::ObjectWithIndex {

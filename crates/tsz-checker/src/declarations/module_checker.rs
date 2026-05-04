@@ -156,6 +156,15 @@ impl<'a> CheckerState<'a> {
             .ctx
             .declared_modules_contains(self.ctx.binder, module_name)
         {
+            let wrong_context_allows_module_semantics = self
+                .is_in_non_module_element_context(stmt_idx)
+                && !self.is_inside_function_body(stmt_idx)
+                && !self.is_inside_namespace_declaration(stmt_idx);
+            if !self.is_in_non_module_element_context(stmt_idx)
+                || wrong_context_allows_module_semantics
+            {
+                self.validate_reexported_members(export_decl, module_name, resolution_mode);
+            }
             self.ctx.import_resolution_stack.pop();
             return;
         }
@@ -361,7 +370,8 @@ impl<'a> CheckerState<'a> {
 
     /// Check whether a target module uses `export =`, by examining both the
     /// binder's export tables and the target file's AST for any export assignment
-    /// with `is_export_equals: true`.
+    /// with `is_export_equals: true`. Also detects the JS-equivalent
+    /// `module.exports = ...` top-level assignment.
     ///
     /// This is more comprehensive than `module_has_export_equals` which only
     /// detects `export = <identifier>` patterns. This also handles
@@ -390,8 +400,54 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
+            // Detect JS-style `module.exports = <expr>` top-level assignment.
+            // tsc treats this as `export =` for namespace-display purposes
+            // (TS2694 message uses the `.export=` qualifier).
+            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT
+                && let Some(expr_stmt) = target_arena.get_expression_statement(stmt_node)
+                && let Some(expr_node) = target_arena.get(expr_stmt.expression)
+                && expr_node.kind == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = target_arena.get_binary_expr(expr_node)
+                && binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
+                && Self::is_module_dot_exports_target(target_arena, binary.left)
+            {
+                return true;
+            }
         }
         false
+    }
+
+    /// Detect a `module.exports` property-access expression. Used to recognise
+    /// JS-style export-assignment patterns when scanning a target file's AST.
+    fn is_module_dot_exports_target(
+        arena: &tsz_parser::NodeArena,
+        idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(expr_node) = arena.get(access.expression) else {
+            return false;
+        };
+        let Some(expr_id) = arena.get_identifier(expr_node) else {
+            return false;
+        };
+        if expr_id.escaped_text != "module" {
+            return false;
+        }
+        let Some(name_node) = arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let Some(name_id) = arena.get_identifier(name_node) else {
+            return false;
+        };
+        name_id.escaped_text == "exports"
     }
 
     /// Validate that named re-exports exist in the target module.
@@ -429,8 +485,19 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get the module's canonical export surface.
-        let module_exports =
-            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode);
+        let module_exports = self
+            .resolve_effective_module_exports_with_mode(module_name, resolution_mode)
+            .or_else(|| {
+                (self
+                    .ctx
+                    .declared_modules_contains(self.ctx.binder, module_name)
+                    && !self
+                        .ctx
+                        .binder
+                        .shorthand_ambient_modules
+                        .contains(module_name))
+                .then(tsz_binder::SymbolTable::new)
+            });
         // TSC includes source-level quotes in module diagnostic messages
         let quoted_module = format!("\"{module_name}\"");
         let has_json_default_export =

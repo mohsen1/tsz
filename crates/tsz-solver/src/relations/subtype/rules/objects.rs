@@ -664,7 +664,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &ObjectShape,
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
-        let Some(ref t_string_idx) = target.string_index else {
+        let Some(t_string_idx) = target
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL)
+        else {
             return SubtypeResult::True; // Target has no string index constraint
         };
 
@@ -678,7 +682,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        match &source.string_index {
+        match source
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL)
+        {
             Some(s_string_idx) => {
                 // Note: tsc does NOT enforce readonly on index signatures during
                 // assignability. A readonly source index IS assignable to a writable
@@ -741,6 +749,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 for prop in &source.properties {
+                    if self.is_symbol_named_property(prop.name) {
+                        continue;
+                    }
                     // Note: We do NOT check property readonly vs target index readonly
                     // here. A source with readonly properties (e.g., enum namespaces)
                     // IS assignable to a target with a writable index signature. The
@@ -806,7 +817,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //   would incorrectly succeed.
         if !self.disable_method_bivariance
             && t_number_idx.value_type.is_any()
-            && target.string_index.is_some()
+            && target
+                .string_index
+                .as_ref()
+                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL)
             && target.symbol.is_some()
         {
             return SubtypeResult::True;
@@ -825,9 +839,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 SubtypeResult::True
             }
-            None if source.string_index.is_some() => {
+            None if source
+                .string_index
+                .as_ref()
+                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL) =>
+            {
                 // A compatible string index can satisfy numeric index access.
-                let Some(s_string_idx) = source.string_index.as_ref() else {
+                let Some(s_string_idx) = source
+                    .string_index
+                    .as_ref()
+                    .filter(|idx| idx.key_type != TypeId::SYMBOL)
+                else {
                     return SubtypeResult::False;
                 };
                 // Note: tsc does NOT enforce readonly on index signatures during
@@ -977,11 +999,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // type. Fresh object literals can transiently infer different string/number
         // index value unions during generic contextual typing, and tsc does not reject
         // assignment on that basis when the target index type already accepts both.
-        if let (Some(s_string_idx), Some(s_number_idx)) =
-            (&source.string_index, &source.number_index)
-            && !source
-                .flags
-                .contains(crate::types::ObjectFlags::FRESH_LITERAL)
+        if let (Some(s_string_idx), Some(s_number_idx)) = (
+            source
+                .string_index
+                .as_ref()
+                .filter(|idx| idx.key_type != TypeId::SYMBOL),
+            &source.number_index,
+        ) && !source
+            .flags
+            .contains(crate::types::ObjectFlags::FRESH_LITERAL)
             && !self
                 .check_subtype(
                     self.bind_property_receiver_this(source_receiver, s_number_idx.value_type),
@@ -1138,7 +1164,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        if let Some(string_idx) = &source.string_index {
+        if let Some(string_idx) = source
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL)
+        {
             if string_idx.readonly && !target_prop.readonly {
                 return SubtypeResult::False;
             }
@@ -1167,6 +1197,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    fn is_symbol_named_property(&self, name: Atom) -> bool {
+        let text = self.interner.resolve_atom(name);
+        text.starts_with("__unique_") || text.starts_with("[Symbol.")
+    }
+
     /// Check that source properties are compatible with target index signatures.
     ///
     /// When a target has an index signature, all source properties must satisfy it:
@@ -1179,10 +1214,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &ObjectShape,
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
-        let string_index = target.string_index.as_ref();
+        let string_index = target
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL);
+        let symbol_index = target
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type == TypeId::SYMBOL);
         let number_index = target.number_index.as_ref();
 
-        if string_index.is_none() && number_index.is_none() {
+        if string_index.is_none() && number_index.is_none() && symbol_index.is_none() {
             return SubtypeResult::True;
         }
 
@@ -1238,6 +1280,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if let Some(string_idx) = string_index {
+                if self.is_symbol_named_property(prop.name) {
+                    continue;
+                }
                 // Note: We do NOT reject readonly source properties against writable
                 // string index targets. A source with readonly properties (e.g., enum
                 // namespaces, frozen objects) IS assignable to a target with a writable
@@ -1246,6 +1291,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // value type compatibility. tsc allows this pattern.
                 let target_value =
                     self.bind_property_receiver_this(target_receiver, string_idx.value_type);
+                if !self
+                    .check_subtype_with_method_variance(
+                        string_prop_type,
+                        target_value,
+                        allow_bivariant,
+                    )
+                    .is_true()
+                {
+                    return SubtypeResult::False;
+                }
+            }
+
+            if let Some(symbol_idx) = symbol_index
+                && self.is_symbol_named_property(prop.name)
+            {
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, symbol_idx.value_type);
                 if !self
                     .check_subtype_with_method_variance(
                         string_prop_type,

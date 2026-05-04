@@ -663,25 +663,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        for target_sig in target_signatures {
-            if target_sig.type_params.is_empty() {
-                let target_fn = self.function_type_from_signature(target_sig, is_constructor);
-                if let Some(index) = self.select_signature_for_target(
-                    source_signatures,
-                    target_fn,
-                    var_map,
-                    is_constructor,
-                ) {
-                    self.constrain_signature_erasing_source_type_params(
-                        ctx,
-                        var_map,
-                        &source_signatures[index],
-                        target_sig,
-                        priority,
-                        is_constructor,
-                    );
-                }
-            }
+        // Match tsc's `inferFromSignatures`: filter target signatures down to
+        // the non-generic ones, then pair overloads from the bottom up with
+        // `len = min(sourceLen, filteredTargetLen)`. Excess leading entries on
+        // either side are skipped — tsc does not reuse the first source for
+        // unmatched leading targets.
+        let filtered_targets: Vec<&CallSignature> = target_signatures
+            .iter()
+            .filter(|sig| sig.type_params.is_empty())
+            .collect();
+        let source_len = source_signatures.len();
+        let filtered_target_len = filtered_targets.len();
+        let len = source_len.min(filtered_target_len);
+        let source_skip = source_len - len;
+        let target_skip = filtered_target_len - len;
+        for i in 0..len {
+            let source_sig = &source_signatures[source_skip + i];
+            let target_sig = filtered_targets[target_skip + i];
+            self.constrain_signature_erasing_source_type_params(
+                ctx,
+                var_map,
+                source_sig,
+                target_sig,
+                priority,
+                is_constructor,
+            );
         }
     }
 

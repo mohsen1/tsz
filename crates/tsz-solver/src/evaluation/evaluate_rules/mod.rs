@@ -11,6 +11,7 @@
 //! - `string_intrinsic`: String manipulation intrinsics (Uppercase, etc.)
 //! - `infer_pattern`: Pattern matching for infer types
 //! - `apparent`: Apparent type utilities for primitives
+//! - `substitute`: Exact-type substitution used by distributive conditionals
 
 pub mod apparent;
 pub mod conditional;
@@ -21,4 +22,5 @@ pub mod infer_substitutor;
 pub mod keyof;
 pub mod mapped;
 pub mod string_intrinsic;
+mod substitute;
 pub mod template_literal;

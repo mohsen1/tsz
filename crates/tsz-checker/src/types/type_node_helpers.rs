@@ -59,6 +59,52 @@ pub(super) fn is_typeof_global_this_type_node(
     }
 }
 
+pub(crate) fn is_type_query_in_non_flow_sensitive_signature_parameter(
+    arena: &tsz_parser::parser::NodeArena,
+    idx: NodeIndex,
+) -> bool {
+    let mut current = idx;
+    let mut saw_parameter = false;
+
+    while let Some(ext) = arena.get_extended(current) {
+        let parent = ext.parent;
+        if parent.is_none() {
+            break;
+        }
+
+        let Some(parent_node) = arena.get(parent) else {
+            break;
+        };
+
+        match parent_node.kind {
+            syntax_kind_ext::PARAMETER => saw_parameter = true,
+            k if k == syntax_kind_ext::CALL_SIGNATURE
+                || k == syntax_kind_ext::CONSTRUCT_SIGNATURE
+                || k == syntax_kind_ext::METHOD_SIGNATURE
+                || k == syntax_kind_ext::FUNCTION_TYPE
+                || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+            {
+                return saw_parameter;
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::METHOD_DECLARATION
+                || k == syntax_kind_ext::CONSTRUCTOR
+                || k == syntax_kind_ext::GET_ACCESSOR
+                || k == syntax_kind_ext::SET_ACCESSOR =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+
+        current = parent;
+    }
+
+    false
+}
+
 // Check duplicate parameters from a TypeNodeChecker context.
 pub(crate) fn check_duplicate_parameters_in_type(
     ctx: &mut crate::CheckerContext,
@@ -138,6 +184,16 @@ fn collect_names_in_type(
 }
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    pub(super) fn emit_rest_element_type_must_be_array(&mut self, pos: u32, end: u32) {
+        self.ctx.error(
+            pos,
+            end.saturating_sub(pos),
+            crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_TYPE_MUST_BE_AN_ARRAY_TYPE
+                .to_string(),
+            crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_TYPE_MUST_BE_AN_ARRAY_TYPE,
+        );
+    }
+
     /// Check if a type node is enclosed in parentheses by examining the source text.
     ///
     /// Our parser strips `ParenthesizedType` wrappers and returns the inner type
@@ -501,6 +557,72 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         false
+    }
+
+    /// Conservative AST-only check for "this rest-tuple element type is
+    /// obviously not an array type" (TS2574).
+    ///
+    /// Returns true only when the AST shape is unambiguously a non-array
+    /// primitive: `string`/`number`/`boolean`/`bigint`/`symbol`/`object`/
+    /// `null`/`undefined`/`void`/`never`/`unknown` keyword (parsed either
+    /// as a bare keyword node or as a `TYPE_REFERENCE` to one of those names),
+    /// or a literal type. Type parameters, conditional types, mapped types,
+    /// type applications, index access, infer, type aliases, and
+    /// unions/intersections all bypass this check because they may resolve
+    /// to array/tuple at solver time and we don't want to false-flag
+    /// variadic-tuple usage.
+    pub(super) fn ast_kind_is_obviously_non_array(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::StringKeyword as u16 => true,
+            k if k == SyntaxKind::NumberKeyword as u16 => true,
+            k if k == SyntaxKind::BooleanKeyword as u16 => true,
+            k if k == SyntaxKind::BigIntKeyword as u16 => true,
+            k if k == SyntaxKind::SymbolKeyword as u16 => true,
+            k if k == SyntaxKind::ObjectKeyword as u16 => true,
+            k if k == SyntaxKind::NullKeyword as u16 => true,
+            k if k == SyntaxKind::UndefinedKeyword as u16 => true,
+            k if k == SyntaxKind::VoidKeyword as u16 => true,
+            k if k == SyntaxKind::NeverKeyword as u16 => true,
+            k if k == SyntaxKind::UnknownKeyword as u16 => true,
+            k if k == syntax_kind_ext::LITERAL_TYPE => true,
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                // Detect bare-keyword forms parsed as TYPE_REFERENCE (the
+                // common path in our parser): `string`, `number`, etc.
+                if let Some(type_ref) = arena.get_type_ref(node)
+                    && let Some(name_node) = arena.get(type_ref.type_name)
+                    && let Some(ident) = arena.get_identifier(name_node)
+                {
+                    let has_type_args = type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_some_and(|a| !a.nodes.is_empty());
+                    if !has_type_args {
+                        return matches!(
+                            ident.escaped_text.as_str(),
+                            "string"
+                                | "number"
+                                | "boolean"
+                                | "bigint"
+                                | "symbol"
+                                | "object"
+                                | "null"
+                                | "undefined"
+                                | "void"
+                                | "never"
+                                | "unknown"
+                        );
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     /// Check if a resolved type is an array or tuple type (concrete, not a type parameter).

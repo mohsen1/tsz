@@ -104,6 +104,12 @@ fn signature_combining_rest_parameters_3_minimized_emits_ts2345() {
     // function union must intersect its parameter to `Mark<any> & Node<any>`,
     // producing TS2345 on the call.
     let source = r#"
+type Record<K extends keyof any, T> = { [P in K]: T };
+type Parameters<T extends (...args: any) => any> =
+  T extends (...args: infer P) => any ? P : never;
+type ReturnType<T extends (...args: any) => any> =
+  T extends (...args: any) => infer R ? R : any;
+
 interface ExtensionConfig<Options = any> {
   extendMarkSchema?:
     | ((this: { name: string; options: Options; }, extension: Mark) => Record<string, any>)

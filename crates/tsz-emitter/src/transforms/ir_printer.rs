@@ -173,13 +173,20 @@ impl<'a> IRPrinter<'a> {
         }
         let mut trailing = None;
         for (offset, &byte) in bytes[start..end].iter().enumerate() {
-            if byte == b'}'
-                && let Some(comment) =
-                    crate::emitter::get_trailing_comment_ranges(source_text, start + offset + 1)
-                        .first()
-            {
-                trailing =
-                    Some(source_text[comment.pos as usize..comment.end as usize].to_string());
+            if byte == b'}' {
+                let comments =
+                    crate::emitter::get_trailing_comment_ranges(source_text, start + offset + 1);
+                if !comments.is_empty() {
+                    trailing = Some(
+                        comments
+                            .iter()
+                            .map(|comment| {
+                                source_text[comment.pos as usize..comment.end as usize].to_string()
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    );
+                }
             }
         }
         trailing
@@ -1335,6 +1342,13 @@ impl<'a> IRPrinter<'a> {
                 }
 
                 if let Some(get) = &descriptor.get {
+                    if !self.remove_comments
+                        && let Some(comment) = &descriptor.get_leading_comment
+                    {
+                        self.write_indent();
+                        self.emit_multiline_comment(comment);
+                        self.write_line();
+                    }
                     self.write_indent();
                     self.write("get: ");
                     self.emit_node(get);
@@ -1349,15 +1363,26 @@ impl<'a> IRPrinter<'a> {
                     if let Some(comment) = trailing_comment.as_deref() {
                         self.write(" ");
                         self.write(comment);
-                        self.write_line();
-                        self.write_indent();
-                        self.write(",");
+                        if comment.trim_start().starts_with("/*") {
+                            self.write(",");
+                        } else {
+                            self.write_line();
+                            self.write_indent();
+                            self.write(",");
+                        }
                     } else {
                         self.write(",");
                     }
                     self.write_line();
                 }
                 if let Some(set) = &descriptor.set {
+                    if !self.remove_comments
+                        && let Some(comment) = &descriptor.set_leading_comment
+                    {
+                        self.write_indent();
+                        self.emit_multiline_comment(comment);
+                        self.write_line();
+                    }
                     self.write_indent();
                     self.write("set: ");
                     self.emit_node(set);
@@ -1365,9 +1390,13 @@ impl<'a> IRPrinter<'a> {
                         if let Some(comment) = self.extract_trailing_comment_from_function(set) {
                             self.write(" ");
                             self.write(&comment);
-                            self.write_line();
-                            self.write_indent();
-                            self.write(",");
+                            if comment.trim_start().starts_with("/*") {
+                                self.write(",");
+                            } else {
+                                self.write_line();
+                                self.write_indent();
+                                self.write(",");
+                            }
                         } else {
                             self.write(",");
                         }

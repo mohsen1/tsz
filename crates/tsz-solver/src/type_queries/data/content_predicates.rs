@@ -53,6 +53,41 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     })
 }
 
+/// Check if a type contains an indexed access whose object is a type parameter.
+pub fn contains_index_access_with_type_parameter_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    contains_type_matching(
+        db,
+        type_id,
+        |key| matches!(key, TypeData::IndexAccess(object, _) if crate::type_queries::is_type_parameter_like(db, *object)),
+    )
+}
+
+/// Check if a type contains an indexed access whose object is a variadic tuple
+/// rest element containing a type parameter.
+pub fn contains_index_access_with_variadic_tuple_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    contains_type_matching(db, type_id, |key| {
+        matches!(
+            key,
+            TypeData::IndexAccess(object, _)
+                if variadic_tuple_object_contains_type_parameter(db, *object)
+        )
+    })
+}
+
+fn variadic_tuple_object_contains_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    get_tuple_elements(db, type_id).is_some_and(|elems| {
+        elems
+            .iter()
+            .any(|elem| elem.rest && contains_type_parameters_db(db, elem.type_id))
+    })
+}
+
 /// Check if a type contains *free* type parameters — type parameters that are
 /// not bound by an enclosing function/callable signature's own type parameter list.
 ///

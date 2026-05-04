@@ -390,12 +390,14 @@ impl<'a> Printer<'a> {
                     emitted_prefix = true;
                 } else {
                     source_name = self.get_temp_var_name();
-                    // Emit: { nonRest } = temp = initializer
-                    self.emit_object_pattern_without_rest(&non_rest_elements);
-                    self.write(" = ");
-                    self.write(&source_name.clone());
+                    // Emit: temp = initializer, { nonRest } = temp
+                    self.write(&source_name);
                     self.write(" = ");
                     self.emit_expression(initializer_idx);
+                    self.write(", ");
+                    self.emit_object_pattern_without_rest(&non_rest_elements);
+                    self.write(" = ");
+                    self.write(&source_name);
                     emitted_prefix = true;
                 }
             }
@@ -670,6 +672,17 @@ impl<'a> Printer<'a> {
                     self.write(", ");
                 }
 
+                if self
+                    .arena
+                    .get(elem.name)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                {
+                    let source = format!("{source_name}.{prop_name}");
+                    self.emit_array_object_rest_var_decl_from_pattern(elem.name, &source);
+                    first_extra = false;
+                    continue;
+                }
+
                 // Create a temp for the nested source
                 let nested_temp = self.get_temp_var_name();
                 self.write(&nested_temp.clone());
@@ -715,6 +728,54 @@ impl<'a> Printer<'a> {
             self.emit_decl_name(pattern_idx);
             self.write(" = ");
             self.write(source_temp);
+        }
+    }
+
+    /// Emit an array binding pattern that contains nested object rest.
+    /// `[{ ...rest }, ...tail] = source` -> `[_a, ...tail] = source, rest = __rest(_a, [])`.
+    fn emit_array_object_rest_var_decl_from_pattern(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source: &str,
+    ) {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern) = self.arena.get_binding_pattern(node) else {
+            return;
+        };
+
+        let elements = pattern.elements.nodes.clone();
+        let mut nested_patterns = Vec::new();
+
+        self.write("[");
+        for (i, &elem_idx) in elements.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                self.emit(elem_idx);
+                continue;
+            };
+
+            if self.pattern_has_object_rest(elem.name) {
+                let temp = self.get_temp_var_name();
+                self.write(&temp);
+                nested_patterns.push((elem.name, temp));
+            } else {
+                self.emit(elem_idx);
+            }
+        }
+        self.write("] = ");
+        self.write(source);
+
+        for (nested_idx, temp) in nested_patterns {
+            self.write(", ");
+            self.emit_object_rest_var_decl_from_pattern(nested_idx, &temp);
         }
     }
 

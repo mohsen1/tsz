@@ -98,6 +98,22 @@ fn cli_style_computed_string_field_preserves_source_quotes_with_crlf() {
 }
 
 #[test]
+fn constructor_recovered_return_type_survives_arrow_parameter_syntax() {
+    let output = print_with_printer_options(
+        "class C {\n    constructor(fn: (x: number) => void, value = () => 1): Result {}\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("constructor(fn, value = () => 1): Result"),
+        "Constructor recovery should preserve the return type after arrow syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn downlevel_define_type_only_computed_property_does_not_allocate_temp() {
     let output = print_with_printer_options(
         "class C {\n    [side.effect]: string;\n}\n",

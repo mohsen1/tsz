@@ -582,6 +582,42 @@ fn ts2322_deterministic_message_text() {
     );
 }
 
+#[test]
+fn ts2322_related_generic_indexed_access_source_uses_short_namespace_member() {
+    let source = r#"
+declare namespace Foo {
+    interface Elements {
+        a: { a: string };
+        b: { b: number };
+    }
+}
+
+class I<T1 extends keyof Foo.Elements, T2 extends keyof Foo.Elements> {
+    M() {
+        let c1: Foo.Elements[T1] = {} as any;
+        const c2: Foo.Elements[T2] = c1;
+    }
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("Expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        ts2322
+            .message_text
+            .contains("Type 'Elements[T1]' is not assignable to type 'Elements[T2]'"),
+        "TS2322 should use the short namespace member name for related generic indexed access source, got: {:?}",
+        ts2322.message_text
+    );
+    assert!(
+        !ts2322.message_text.contains("Foo.Elements[T1]"),
+        "TS2322 source display should not keep the namespace qualifier, got: {:?}",
+        ts2322.message_text
+    );
+}
+
 /// Verify that TS2339 on a generic mapped-type typed identifier includes
 /// `| undefined` for optional properties in the message.
 ///

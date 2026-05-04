@@ -1124,6 +1124,363 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn assignment_pattern_has_object_rest(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                match elem_node.kind {
+                    k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => true,
+                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                        .arena
+                        .get_property_assignment(elem_node)
+                        .is_some_and(|prop| {
+                            self.assignment_pattern_has_object_rest(prop.initializer)
+                        }),
+                    _ => false,
+                }
+            });
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                    && let Some(spread) = self.arena.get_spread(elem_node)
+                {
+                    return self.assignment_pattern_has_object_rest(spread.expression);
+                }
+                self.assignment_pattern_has_object_rest(elem_idx)
+            });
+        }
+
+        false
+    }
+
+    fn assignment_object_literal_is_rest_only(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        self.arena.get_literal_expr(node).is_some_and(|lit| {
+            lit.elements.nodes.len() == 1
+                && lit
+                    .elements
+                    .nodes
+                    .first()
+                    .copied()
+                    .and_then(|idx| self.arena.get(idx))
+                    .is_some_and(|elem| elem.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+        })
+    }
+
+    /// Lower object-rest assignment for targets that do not support ES2018.
+    /// `({ a, ...rest } = source)` -> `{ a } = source, rest = __rest(source, ["a"])`.
+    pub(in crate::emitter) fn emit_assignment_object_rest_destructuring(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) {
+        let Some(left_node) = self.arena.get(left_idx) else {
+            return;
+        };
+
+        if !self.assignment_pattern_has_object_rest(left_idx) {
+            self.emit_node_default(left_node, right_idx);
+            return;
+        };
+
+        let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
+        let is_simple = self
+            .arena
+            .get(effective_right_idx)
+            .is_some_and(|n| n.is_identifier());
+        if !is_simple && self.assignment_object_literal_is_rest_only(left_idx) {
+            self.emit_assignment_rest_only_object(left_idx, right_idx);
+            return;
+        }
+
+        let mut first = true;
+        let source_name = if is_simple {
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, effective_right_idx)
+        } else {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.emit_assignment_separator(&mut first);
+            self.write(&temp);
+            self.write(" = ");
+            self.emit(right_idx);
+            temp
+        };
+
+        self.emit_assignment_pattern_with_object_rest(left_idx, &source_name, true, &mut first);
+    }
+
+    fn emit_assignment_rest_only_object(&mut self, left_idx: NodeIndex, right_idx: NodeIndex) {
+        let Some(node) = self.arena.get(left_idx) else {
+            return;
+        };
+        let Some(elements) = self.get_binding_or_literal_elements(node) else {
+            return;
+        };
+        let Some(spread_idx) = elements.first().copied() else {
+            return;
+        };
+        let Some(spread_node) = self.arena.get(spread_idx) else {
+            return;
+        };
+        let Some(spread) = self.arena.get_spread(spread_node) else {
+            return;
+        };
+
+        self.emit(spread.expression);
+        self.write(" = ");
+        self.write_helper("__rest");
+        self.write("(");
+        self.emit(right_idx);
+        self.write(", [])");
+    }
+
+    fn emit_assignment_pattern_with_object_rest(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source: &str,
+        source_simple: bool,
+        first: &mut bool,
+    ) {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                self.emit_assignment_object_rest_pattern(pattern_idx, source, source_simple, first);
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                self.emit_assignment_array_pattern_with_object_rest(pattern_idx, source, first);
+            }
+            _ => {}
+        }
+    }
+
+    fn emit_assignment_object_rest_pattern(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source: &str,
+        source_simple: bool,
+        first: &mut bool,
+    ) {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(lit) = self.arena.get_literal_expr(node) else {
+            return;
+        };
+        let elements = lit.elements.nodes.clone();
+        let has_own_rest = elements.iter().any(|&elem_idx| {
+            self.arena
+                .get(elem_idx)
+                .is_some_and(|elem| elem.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+        });
+
+        let source_name;
+        let source = if has_own_rest && !source_simple {
+            source_name = self.make_unique_name_hoisted_assignment();
+            self.emit_assignment_separator(first);
+            self.write(&source_name);
+            self.write(" = ");
+            self.write(source);
+            source_name.as_str()
+        } else {
+            source
+        };
+
+        let mut simple_elements = Vec::new();
+        let mut excluded_props = Vec::new();
+        let mut rest_element = None;
+
+        for &elem_idx in &elements {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+
+            match elem_node.kind {
+                k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                    rest_element = Some(elem_idx);
+                }
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.arena.get_property_assignment(elem_node) else {
+                        continue;
+                    };
+                    let key = self.get_property_key_text(prop.name).unwrap_or_default();
+                    if !key.is_empty() {
+                        excluded_props.push(key.clone());
+                    }
+
+                    if self.assignment_pattern_has_object_rest(prop.initializer) {
+                        self.emit_assignment_object_pattern_without_rest(
+                            &simple_elements,
+                            source,
+                            first,
+                        );
+                        simple_elements.clear();
+
+                        let nested_source = self.object_key_access_text(source, &key);
+                        let nested_simple = self
+                            .arena
+                            .get(prop.initializer)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
+                        self.emit_assignment_pattern_with_object_rest(
+                            prop.initializer,
+                            &nested_source,
+                            nested_simple,
+                            first,
+                        );
+                    } else {
+                        simple_elements.push(elem_idx);
+                    }
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    if let Some(shorthand) = self.arena.get_shorthand_property(elem_node) {
+                        let key = crate::transforms::emit_utils::identifier_text_or_empty(
+                            self.arena,
+                            shorthand.name,
+                        );
+                        if !key.is_empty() {
+                            excluded_props.push(key);
+                        }
+                    }
+                    simple_elements.push(elem_idx);
+                }
+                _ => {}
+            }
+        }
+
+        self.emit_assignment_object_pattern_without_rest(&simple_elements, source, first);
+
+        if let Some(rest_idx) = rest_element
+            && let Some(rest_node) = self.arena.get(rest_idx)
+            && let Some(spread) = self.arena.get_spread(rest_node)
+        {
+            self.emit_assignment_separator(first);
+            self.emit(spread.expression);
+            self.write(" = ");
+            self.write_helper("__rest");
+            self.write("(");
+            self.write(source);
+            self.write(", [");
+            for (i, key) in excluded_props.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write("\"");
+                self.write(key);
+                self.write("\"");
+            }
+            self.write("])");
+        }
+    }
+
+    fn emit_assignment_object_pattern_without_rest(
+        &mut self,
+        elements: &[NodeIndex],
+        source: &str,
+        first: &mut bool,
+    ) {
+        if elements.is_empty() {
+            return;
+        }
+
+        self.emit_assignment_separator(first);
+        self.write("{ ");
+        for (i, &elem_idx) in elements.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.emit(elem_idx);
+        }
+        self.write(" } = ");
+        self.write(source);
+    }
+
+    fn emit_assignment_array_pattern_with_object_rest(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source: &str,
+        first: &mut bool,
+    ) {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(lit) = self.arena.get_literal_expr(node) else {
+            return;
+        };
+        let elements = lit.elements.nodes.clone();
+        let mut nested_patterns = Vec::new();
+
+        self.emit_assignment_separator(first);
+        self.write("[");
+        for (i, &elem_idx) in elements.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            if elem_idx.is_none() {
+                continue;
+            }
+
+            if self.assignment_pattern_has_object_rest(elem_idx) {
+                let temp = self.make_unique_name_hoisted_assignment();
+                self.write(&temp);
+                nested_patterns.push((elem_idx, temp));
+            } else {
+                self.emit(elem_idx);
+            }
+        }
+        self.write("] = ");
+        self.write(source);
+
+        for (nested_idx, temp) in nested_patterns {
+            let nested_pattern = self
+                .arena
+                .get(nested_idx)
+                .and_then(|node| {
+                    if node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                        self.arena.get_spread(node).map(|spread| spread.expression)
+                    } else {
+                        Some(nested_idx)
+                    }
+                })
+                .unwrap_or(nested_idx);
+            self.emit_assignment_pattern_with_object_rest(nested_pattern, &temp, true, first);
+        }
+    }
+
+    fn object_key_access_text(&self, source: &str, key: &str) -> String {
+        if is_valid_identifier_name(key) {
+            format!("{source}.{key}")
+        } else {
+            format!(
+                "{}[\"{}\"]",
+                source,
+                key.replace('\\', "\\\\").replace('"', "\\\"")
+            )
+        }
+    }
+
     /// Emit lowered array assignment destructuring.
     /// `[, nameA, [primaryB, secondaryB]] = source` →
     /// `nameA = source[1], _a = source[2], primaryB = _a[0], secondaryB = _a[1]`

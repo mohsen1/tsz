@@ -6,6 +6,7 @@ use crate::state::CheckerState;
 use crate::test_utils::{check_source_code_messages, check_source_diagnostics};
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
+use tsz_solver::{PropertyInfo, TupleElement, TypeId, TypeParamInfo};
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     check_source_code_messages(source)
@@ -405,5 +406,57 @@ type Example = Paths<{ a: { b: string } }>;
     assert!(
         !diags.iter().any(|d| d.0 == 2589),
         "Should NOT emit TS2589 while resolving recursive alias args that still reference scoped type parameters. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn recursive_mapped_tuple_spread_depth_shape_is_detected() {
+    let types = TypeInterner::new();
+    let elements = types.type_param(TypeParamInfo {
+        name: types.intern_string("Elements"),
+        constraint: Some(types.array(TypeId::UNKNOWN)),
+        default: None,
+        is_const: false,
+    });
+    let bar = types.intern_string("bar");
+
+    let source_bar = types.index_access(elements, TypeId::NUMBER);
+    let source_elem = types.object(vec![PropertyInfo {
+        name: bar,
+        type_id: source_bar,
+        write_type: source_bar,
+        ..PropertyInfo::default()
+    }]);
+    let spread_type = types.array(source_elem);
+
+    let tuple = types.tuple(vec![
+        TupleElement {
+            type_id: elements,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: types.literal_string("abc"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let expected_bar = types.index_access(tuple, types.literal_string("0"));
+    let expected_type = types.object(vec![PropertyInfo {
+        name: bar,
+        type_id: expected_bar,
+        write_type: expected_bar,
+        ..PropertyInfo::default()
+    }]);
+
+    assert!(
+        CheckerState::recursive_mapped_tuple_spread_may_exceed_depth_in_types(
+            &types,
+            spread_type,
+            expected_type,
+        ),
+        "Should detect the collapsed mapped tuple spread shape that needs TS2589 recovery"
     );
 }

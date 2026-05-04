@@ -118,6 +118,7 @@ pub(super) fn convert_function_parameters(arena: &NodeArena, params: &NodeList) 
                 name: name.into(),
                 rest,
                 default_value,
+                leading_comment: None,
             })
         })
         .collect()

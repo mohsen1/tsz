@@ -13,7 +13,10 @@ use tsz_parser::syntax::transform_utils::{
 };
 use tsz_scanner::SyntaxKind;
 
-use super::{ES5ClassTransformer, PropertyNameIR, collect_accessor_pairs, get_identifier_text};
+use super::{
+    ES5ClassTransformer, PropertyNameIR, collect_accessor_pairs, get_identifier_text,
+    has_effective_static_modifier,
+};
 
 impl<'a> ES5ClassTransformer<'a> {
     /// Emit prototype methods as IR (superseded by `emit_all_members_ir`)
@@ -136,6 +139,8 @@ impl<'a> ES5ClassTransformer<'a> {
                             get: None,
                             set: None,
                             value: Some(Box::new(function)),
+                            get_leading_comment: None,
+                            set_leading_comment: None,
                             enumerable: false,
                             configurable: true,
                             writable: true,
@@ -194,9 +199,6 @@ impl<'a> ES5ClassTransformer<'a> {
                             None
                         };
 
-                        // Extract leading comment from the first accessor (getter or setter)
-                        let leading_comment = self.extract_leading_comment(member_node);
-
                         body.push(IRNode::DefineProperty {
                             target: Box::new(IRNode::prop(
                                 IRNode::id(self.class_name.clone()),
@@ -207,12 +209,18 @@ impl<'a> ES5ClassTransformer<'a> {
                                 get: get_fn.map(Box::new),
                                 set: set_fn.map(Box::new),
                                 value: None,
+                                get_leading_comment: getter_idx
+                                    .and_then(|idx| self.arena.get(idx))
+                                    .and_then(|node| self.extract_leading_comment(node)),
+                                set_leading_comment: setter_idx
+                                    .and_then(|idx| self.arena.get(idx))
+                                    .and_then(|node| self.extract_leading_comment(node)),
                                 enumerable: false,
                                 configurable: true,
                                 writable: false,
                                 trailing_comment: None,
                             },
-                            leading_comment,
+                            leading_comment: None,
                         });
 
                         let has_explicit_semicolon_member = class_data
@@ -284,6 +292,8 @@ impl<'a> ES5ClassTransformer<'a> {
                             self.build_auto_accessor_setter_function(&accessor.weakmap_name),
                         )),
                         value: None,
+                        get_leading_comment: None,
+                        set_leading_comment: None,
                         enumerable: false,
                         configurable: true,
                         writable: false,
@@ -501,9 +511,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 || m_node.kind == syntax_kind_ext::SET_ACCESSOR)
                 && let Some(acc_data) = self.arena.get_accessor(m_node)
             {
-                return self
-                    .arena
-                    .has_modifier(&acc_data.modifiers, SyntaxKind::StaticKeyword)
+                return has_effective_static_modifier(self.arena, &acc_data.modifiers)
                     && !(self
                         .arena
                         .has_modifier(&acc_data.modifiers, SyntaxKind::AbstractKeyword)
@@ -807,8 +815,6 @@ impl<'a> ES5ClassTransformer<'a> {
                             None
                         };
 
-                        let leading_comment = self.extract_leading_comment(member_node);
-
                         body.push(IRNode::DefineProperty {
                             target: Box::new(IRNode::id(self.class_name.clone())),
                             property_name: self.get_method_name_ir(accessor_data.name),
@@ -816,12 +822,18 @@ impl<'a> ES5ClassTransformer<'a> {
                                 get: get_fn.map(Box::new),
                                 set: set_fn.map(Box::new),
                                 value: None,
+                                get_leading_comment: getter_idx
+                                    .and_then(|idx| self.arena.get(idx))
+                                    .and_then(|node| self.extract_leading_comment(node)),
+                                set_leading_comment: setter_idx
+                                    .and_then(|idx| self.arena.get(idx))
+                                    .and_then(|node| self.extract_leading_comment(node)),
                                 enumerable: false,
                                 configurable: true,
                                 writable: false,
                                 trailing_comment: None,
                             },
-                            leading_comment,
+                            leading_comment: None,
                         });
 
                         emitted_static_accessors.insert(accessor_name);
@@ -1029,6 +1041,8 @@ impl<'a> ES5ClassTransformer<'a> {
                                 get: None,
                                 set: None,
                                 value: Some(Box::new(function)),
+                                get_leading_comment: None,
+                                set_leading_comment: None,
                                 enumerable: false,
                                 configurable: true,
                                 writable: true,
@@ -1115,6 +1129,8 @@ impl<'a> ES5ClassTransformer<'a> {
                                 get: None,
                                 set: None,
                                 value: Some(Box::new(function)),
+                                get_leading_comment: None,
+                                set_leading_comment: None,
                                 enumerable: false,
                                 configurable: true,
                                 writable: true,
@@ -1136,9 +1152,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
                 if let Some(accessor_data) = self.arena.get_accessor(member_node) {
-                    let is_static = self
-                        .arena
-                        .has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword);
+                    let is_static =
+                        has_effective_static_modifier(self.arena, &accessor_data.modifiers);
                     let is_abstract = self
                         .arena
                         .has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword);
@@ -1172,7 +1187,6 @@ impl<'a> ES5ClassTransformer<'a> {
                             } else {
                                 None
                             };
-                            let leading_comment = self.extract_leading_comment(member_node);
                             body.push(IRNode::DefineProperty {
                                 target: Box::new(IRNode::id(self.class_name.clone())),
                                 property_name: self.get_method_name_ir(accessor_data.name),
@@ -1180,12 +1194,18 @@ impl<'a> ES5ClassTransformer<'a> {
                                     get: get_fn.map(Box::new),
                                     set: set_fn.map(Box::new),
                                     value: None,
+                                    get_leading_comment: getter_idx
+                                        .and_then(|idx| self.arena.get(idx))
+                                        .and_then(|node| self.extract_leading_comment(node)),
+                                    set_leading_comment: setter_idx
+                                        .and_then(|idx| self.arena.get(idx))
+                                        .and_then(|node| self.extract_leading_comment(node)),
                                     enumerable: false,
                                     configurable: true,
                                     writable: false,
                                     trailing_comment: None,
                                 },
-                                leading_comment,
+                                leading_comment: None,
                             });
                             emitted_static_accessors.insert(accessor_name);
                         }
@@ -1208,7 +1228,6 @@ impl<'a> ES5ClassTransformer<'a> {
                             } else {
                                 None
                             };
-                            let leading_comment = self.extract_leading_comment(member_node);
                             body.push(IRNode::DefineProperty {
                                 target: Box::new(IRNode::prop(
                                     IRNode::id(self.class_name.clone()),
@@ -1219,12 +1238,18 @@ impl<'a> ES5ClassTransformer<'a> {
                                     get: get_fn.map(Box::new),
                                     set: set_fn.map(Box::new),
                                     value: None,
+                                    get_leading_comment: getter_idx
+                                        .and_then(|idx| self.arena.get(idx))
+                                        .and_then(|node| self.extract_leading_comment(node)),
+                                    set_leading_comment: setter_idx
+                                        .and_then(|idx| self.arena.get(idx))
+                                        .and_then(|node| self.extract_leading_comment(node)),
                                     enumerable: false,
                                     configurable: true,
                                     writable: false,
                                     trailing_comment: None,
                                 },
-                                leading_comment,
+                                leading_comment: None,
                             });
 
                             let has_explicit_semicolon_member = class_data
@@ -1352,6 +1377,8 @@ impl<'a> ES5ClassTransformer<'a> {
                                     get: None,
                                     set: None,
                                     value: Some(Box::new(value)),
+                                    get_leading_comment: None,
+                                    set_leading_comment: None,
                                     enumerable: true,
                                     configurable: true,
                                     writable: true,
@@ -1388,6 +1415,8 @@ impl<'a> ES5ClassTransformer<'a> {
                                 self.build_auto_accessor_setter_function(&accessor.weakmap_name),
                             )),
                             value: None,
+                            get_leading_comment: None,
+                            set_leading_comment: None,
                             enumerable: false,
                             configurable: true,
                             writable: false,

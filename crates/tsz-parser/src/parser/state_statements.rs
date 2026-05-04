@@ -1910,6 +1910,34 @@ impl ParserState {
             let diag_count_before_decl = self.parse_diagnostics.len();
             let decl = self.parse_variable_declaration_with_flags(flags);
             let decl_had_error = self.parse_diagnostics.len() > diag_count_before_decl;
+            // A declarator with ONLY numeric-literal-value errors (TS1121
+            // legacy octal, TS1352/TS1353 bigint form, TS1489 leading-zero
+            // decimal, etc.) is structurally complete — only the literal's
+            // value is illegal. The next token can still kick off a missing
+            // -comma recovery for the declaration list. Track this so the
+            // post-decl loop can distinguish from genuine declarator-shape
+            // errors (malformed name, malformed initializer expression).
+            let decl_only_literal_value_errors = decl_had_error
+                && {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_diagnostics[diag_count_before_decl..]
+                    .iter()
+                    .all(|d| {
+                        matches!(
+                            d.code,
+                            diagnostic_codes::OCTAL_LITERALS_ARE_NOT_ALLOWED_USE_THE_SYNTAX
+                                | diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED
+                                | diagnostic_codes::BINARY_DIGIT_EXPECTED
+                                | diagnostic_codes::OCTAL_DIGIT_EXPECTED
+                                | diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL
+                                | diagnostic_codes::A_BIGINT_LITERAL_CANNOT_USE_EXPONENTIAL_NOTATION
+                                | diagnostic_codes::A_BIGINT_LITERAL_MUST_BE_AN_INTEGER
+                                | diagnostic_codes::DECIMALS_WITH_LEADING_ZEROS_ARE_NOT_ALLOWED
+                                | diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE
+                                | diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED
+                        )
+                    })
+                };
             declarations.push(decl);
 
             let comma_pos = self.token_pos();
@@ -2016,26 +2044,22 @@ impl ParserState {
                 // reserved word like `const export`), stop this declaration list so
                 // the statement loop can reparse the keyword in the tsc-shaped way.
                 //
-                // Exception: if the most recent diagnostic from the declarator was
-                // TS1121 (legacy-octal scanned inside the initializer) AND the next
-                // token can start a new declarator (identifier-or-keyword not
-                // reserved, or a binding pattern), prefer the "missing comma between
-                // declarations" recovery below. tsc scans `0123n` as a legacy-octal
-                // literal (TS1121) plus a stray identifier `n` that starts a second
-                // declarator, so it emits `,' expected.` rather than `;' expected.`.
-                let last_diag_was_legacy_octal = self
-                    .parse_diagnostics
-                    .last()
-                    .is_some_and(|d| d.code == 1121);
-                let next_can_start_decl = (self.is_identifier_or_keyword()
-                    && !self.is_reserved_word())
-                    || self.is_token(SyntaxKind::OpenBraceToken)
-                    || self.is_token(SyntaxKind::OpenBracketToken);
-                if decl_had_error
-                    && !self.is_token(SyntaxKind::CloseBracketToken)
-                    && !(last_diag_was_legacy_octal && next_can_start_decl)
-                {
-                    break;
+                // Carve-out: when the only error came from the initializer's
+                // value (e.g. TS1121 on legacy octal `0123n` — the scanner
+                // returns `0123` as a complete numeric literal and leaves `n`
+                // as a separate identifier token), the declarator itself is
+                // structurally complete. Let the missing-comma recovery below
+                // (the can_continue branch) treat the next token as the start
+                // of a new declarator so the `n` produces TS1005 "',' expected"
+                // at the right position, matching tsc.
+                if decl_had_error && !self.is_token(SyntaxKind::CloseBracketToken) {
+                    let next_starts_declarator = (self.is_identifier_or_keyword()
+                        && !self.is_reserved_word())
+                        || self.is_token(SyntaxKind::OpenBraceToken)
+                        || self.is_token(SyntaxKind::OpenBracketToken);
+                    if !(decl_only_literal_value_errors && next_starts_declarator) {
+                        break;
+                    }
                 }
 
                 // `var v: void.x;` parses `void` as the type, then tsc reports

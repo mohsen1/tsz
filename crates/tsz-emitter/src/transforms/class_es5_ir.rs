@@ -1465,12 +1465,20 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut stmts = if let Some(block_node) = self.arena.get(block_idx)
             && let Some(block) = self.arena.get_block(block_node)
         {
-            block
-                .statements
-                .nodes
-                .iter()
-                .map(|&s| self.convert_statement_with_context(s, is_static, class_alias.as_deref()))
-                .collect()
+            let mut converted = Vec::new();
+            for &stmt_idx in &block.statements.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx)
+                    && let Some(comment) = self.extract_leading_comment(stmt_node)
+                {
+                    converted.push(IRNode::Raw(comment.into()));
+                }
+                converted.push(self.convert_statement_with_context(
+                    stmt_idx,
+                    is_static,
+                    class_alias.as_deref(),
+                ));
+            }
+            converted
         } else {
             vec![]
         };
@@ -2501,6 +2509,8 @@ impl<'a> ES5ClassTransformer<'a> {
                     get: None,
                     set: None,
                     value: Some(Box::new(value)),
+                    get_leading_comment: None,
+                    set_leading_comment: None,
                     enumerable: true,
                     configurable: true,
                     writable: true,
@@ -2611,6 +2621,11 @@ impl<'a> ES5ClassTransformer<'a> {
             // Convert default value if present
             if param.initializer.is_some() {
                 ir_param.default_value = Some(Box::new(self.convert_expression(param.initializer)));
+            }
+            if let Some(name_node) = self.arena.get(param.name)
+                && let Some(comment) = self.extract_leading_comment(name_node)
+            {
+                ir_param.leading_comment = Some(comment.into());
             }
 
             result.push(ir_param);
@@ -2963,6 +2978,23 @@ fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
 
 /// Collect accessor pairs (getter/setter) from class members.
 /// When `collect_static` is true, collects static accessors; otherwise collects instance accessors.
+pub(super) fn has_effective_static_modifier(
+    arena: &NodeArena,
+    modifiers: &Option<NodeList>,
+) -> bool {
+    modifiers.as_ref().is_some_and(|mods| {
+        mods.nodes
+            .iter()
+            .filter(|&&idx| {
+                arena
+                    .get(idx)
+                    .is_some_and(|node| node.kind == SyntaxKind::StaticKeyword as u16)
+            })
+            .count()
+            == 1
+    })
+}
+
 fn collect_accessor_pairs(
     arena: &NodeArena,
     members: &NodeList,
@@ -2981,7 +3013,7 @@ fn collect_accessor_pairs(
             && let Some(accessor_data) = arena.get_accessor(member_node)
         {
             // Check static modifier matches what we're collecting
-            let is_static = arena.is_static(&accessor_data.modifiers);
+            let is_static = has_effective_static_modifier(arena, &accessor_data.modifiers);
             if is_static != collect_static {
                 continue;
             }

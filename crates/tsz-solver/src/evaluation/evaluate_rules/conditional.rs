@@ -193,8 +193,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let members = self.interner().type_list(members);
                 return self.distribute_conditional(
                     members.as_ref(),
-                    check_type, // Pass original check_type for substitution
-                    extends_type,
+                    cond.check_type,
+                    cond.extends_type,
                     cond.true_type,
                     cond.false_type,
                 );
@@ -946,21 +946,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Substitute the specific member if true_type or false_type references the original check_type
             // This handles cases like: NonNullable<T> = T extends null ? never : T
             // When T = A | B, we need (A extends null ? never : A) | (B extends null ? never : B)
-            let substituted_true_type = if true_type == original_check_type {
-                member
-            } else {
-                true_type
-            };
-            let substituted_false_type = if false_type == original_check_type {
-                member
-            } else {
-                false_type
-            };
+            let mut memo = FxHashMap::default();
+            let substituted_extends_type =
+                self.substitute_exact_type(extends_type, original_check_type, member, &mut memo);
+            memo.clear();
+            let substituted_true_type =
+                self.substitute_exact_type(true_type, original_check_type, member, &mut memo);
+            memo.clear();
+            let substituted_false_type =
+                self.substitute_exact_type(false_type, original_check_type, member, &mut memo);
 
             // Create conditional for this union member
             let member_cond = ConditionalType {
                 check_type: member,
-                extends_type,
+                extends_type: substituted_extends_type,
                 true_type: substituted_true_type,
                 false_type: substituted_false_type,
                 is_distributive: false,

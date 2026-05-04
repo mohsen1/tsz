@@ -17,7 +17,7 @@ on:
   schedule:
     - cron: '0 6 * * *'  # Daily at 6am UTC
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "Bench"]
     types: [completed]
   workflow_dispatch:
 
@@ -64,16 +64,22 @@ jobs:
 
       - name: Check for changes since last deploy
         id: diff
+        env:
+          WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WORKFLOW_RUN_NAME: ${{ github.event.workflow_run.name }}
         run: |
           if [ "${{ steps.in_flight.outputs.in_flight }}" = "true" ]; then
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            if [ "${{ github.event.workflow_run.conclusion }}" = "success" ] && [ "${{ github.event.workflow_run.head_branch }}" = "main" ]; then
+            if [ "$WORKFLOW_RUN_CONCLUSION" = "success" ] && \
+              [ "$WORKFLOW_RUN_HEAD_BRANCH" = "main" ] && \
+              { [ "$WORKFLOW_RUN_NAME" = "CI" ] || [ "$WORKFLOW_RUN_NAME" = "Bench" ]; }; then
               echo "should_deploy=true" >> "$GITHUB_OUTPUT"
             else
-              echo "workflow_run was not successful main CI, skipping"
+              echo "workflow_run was not successful main CI/Bench, skipping"
               echo "should_deploy=false" >> "$GITHUB_OUTPUT"
             fi
             exit 0

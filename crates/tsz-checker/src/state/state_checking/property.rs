@@ -891,11 +891,20 @@ impl<'a> CheckerState<'a> {
         // so index-based lookup into original_members would cause misalignment between
         // display names and shapes. Using `member` preserves the Lazy reference if the
         // union member is a type alias, giving proper display names like "Int" vs "{ type: ... }".
+        //
+        // When a union member is an intersection of object types
+        // (e.g. `Common & A` or `BaseAttribute<string> & { type: 'string' }`),
+        // `query::object_shape` returns None because intersections are not
+        // backed by a single shape. Fall back to a solver-flattened apparent
+        // shape so the discriminant narrowing and excess-property check can
+        // see the merged property set, matching tsc's apparent-type behavior.
         let mut member_shapes: Vec<(TypeId, std::sync::Arc<tsz_solver::ObjectShape>)> = Vec::new();
         for &member in members.iter() {
             let resolved = self.resolve_type_for_property_access(member);
             if let Some(shape) = query::object_shape(self.ctx.types, resolved) {
                 // Use member directly - it preserves Lazy wrappers for named types
+                member_shapes.push((member, shape));
+            } else if let Some(shape) = self.apparent_intersection_object_shape(resolved) {
                 member_shapes.push((member, shape));
             }
         }
@@ -1052,14 +1061,27 @@ impl<'a> CheckerState<'a> {
             // shape only happened to differ in non-discriminator slots (for
             // example `{ a: 1, first: string } | { a: 2, second: string }` where
             // `first` is not a discriminant, only `a` is).
-            let any_unit = full_members_with_prop
+            // Evaluate target property types so intersections like
+            // `(string | undefined) & 'string'` simplify to the unit literal
+            // before the discriminator decision. Without this, a target type
+            // like `BaseAttribute<string> & { type: 'string' }` keeps the raw
+            // intersection shape on its `type` property and `is_unit_type`
+            // returns false, even though the property is in fact a unit
+            // literal — matching tsc's apparent-type behavior on intersections.
+            let evaluated_full_members_with_prop: Vec<(usize, TypeId)> = full_members_with_prop
+                .iter()
+                .map(|&(i, ty)| (i, self.evaluate_type_with_env(ty)))
+                .collect();
+            let any_unit = evaluated_full_members_with_prop
                 .iter()
                 .any(|(_, ty)| query::is_unit_type(self.ctx.types, *ty));
             if !any_unit {
                 continue;
             }
-            let first_ty = full_members_with_prop[0].1;
-            let non_uniform = full_members_with_prop.iter().any(|(_, ty)| *ty != first_ty);
+            let first_ty = evaluated_full_members_with_prop[0].1;
+            let non_uniform = evaluated_full_members_with_prop
+                .iter()
+                .any(|(_, ty)| *ty != first_ty);
             if !non_uniform {
                 continue;
             }
@@ -1080,7 +1102,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .copied()
                 .filter(|&i| {
-                    full_members_with_prop
+                    evaluated_full_members_with_prop
                         .iter()
                         .find(|(idx, _)| *idx == i)
                         .is_none_or(|(_, target_ty)| self.is_subtype_of(prop_type, *target_ty))
@@ -1111,6 +1133,37 @@ impl<'a> CheckerState<'a> {
             Some(active_indices)
         } else {
             None
+        }
+    }
+
+    /// Build a flat object shape for an intersection of object types by
+    /// collecting all member properties via the solver's intersection
+    /// property collector. Returns `None` for non-intersection types or
+    /// when no object-like properties can be collected.
+    ///
+    /// This is the boundary that lets discriminated-union excess-property
+    /// checking see intersection union members (e.g. `Common & A`,
+    /// `BaseAttribute<string> & { type: 'string' }`) as if they were
+    /// flat object shapes, matching tsc's apparent-type behavior.
+    fn apparent_intersection_object_shape(
+        &self,
+        type_id: TypeId,
+    ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
+        // Only fall back for intersections; other shapes are handled by the
+        // direct `query::object_shape` path on the call site.
+        query::intersection_members(self.ctx.types, type_id)?;
+        match tsz_solver::objects::collect_properties(type_id, self.ctx.types, &self.ctx) {
+            tsz_solver::objects::PropertyCollectionResult::Properties {
+                properties,
+                string_index,
+                number_index,
+            } => Some(std::sync::Arc::new(tsz_solver::ObjectShape {
+                properties,
+                string_index,
+                number_index,
+                ..tsz_solver::ObjectShape::default()
+            })),
+            _ => None,
         }
     }
 
@@ -2046,6 +2099,51 @@ accept({
             ts7006.len(),
             0,
             "Expected accessor contextual retry during excess-property checking to keep setter parameter context, got: {diags:?}"
+        );
+    }
+
+    /// Regression test: when a discriminated-union target has members whose
+    /// discriminant property is an unsimplified intersection (e.g. the merged
+    /// shape of `BaseAttribute<string> & { type: 'string' }` exposes
+    /// `type: (string | undefined) & 'string'`), tsz must evaluate that
+    /// property type before applying the `is_unit_type` discriminant test.
+    /// Without evaluation, `is_unit_type(intersection)` returns false and the
+    /// excess-property check silently bails, missing the TS2353 that tsc
+    /// emits.
+    #[test]
+    fn ts2353_discriminated_union_with_intersected_member_property_types() {
+        let diags = check_source_diagnostics(
+            r#"
+type BaseAttribute<T> = {
+    type?: string | undefined;
+    required?: boolean | undefined;
+    defaultsTo?: T | undefined;
+};
+type StringAttribute = BaseAttribute<string> & { type: 'string'; };
+type NumberAttribute = BaseAttribute<number> & {
+    type: 'number';
+    autoIncrement?: boolean | undefined;
+};
+type Attribute = string | StringAttribute | NumberAttribute;
+
+const a: Attribute = {
+    type: 'string',
+    autoIncrement: true,
+    required: true,
+};
+"#,
+        );
+
+        let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+        assert_eq!(
+            ts2353.len(),
+            1,
+            "expected one TS2353 for 'autoIncrement' against StringAttribute, got: {diags:?}"
+        );
+        assert!(
+            ts2353[0].message_text.contains("'autoIncrement'"),
+            "TS2353 should mention 'autoIncrement', got: {}",
+            ts2353[0].message_text
         );
     }
 }

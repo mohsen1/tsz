@@ -1612,6 +1612,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let has_ambient_value_default_export =
+            self.ambient_external_module_default_export_has_value_sibling_named(name);
+
         let sym_id = self.ctx.binder.file_locals.get(name).or_else(|| {
             self.ctx
                 .binder
@@ -1620,7 +1623,7 @@ impl<'a> CheckerState<'a> {
                 .find_map(|exports| exports.get(name))
         });
         let Some(sym_id) = sym_id else {
-            return false;
+            return has_ambient_value_default_export;
         };
 
         if self.symbol_is_type_only(sym_id, Some(name))
@@ -1637,7 +1640,7 @@ impl<'a> CheckerState<'a> {
             | symbol_flags::CLASS
             | symbol_flags::ENUM;
         if (symbol.flags & concrete_value) != 0 {
-            return false;
+            return has_ambient_value_default_export;
         }
 
         (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
@@ -2195,10 +2198,25 @@ impl<'a> CheckerState<'a> {
             code,
             message,
         );
+        let default_export_alias_anchor = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+            let name = &symbol.escaped_name;
+            let has_remote_default_import_alias_conflict = code
+                == crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER
+                && declarations.iter().any(|(_, flags, is_local, _, origin)| {
+                    !*is_local
+                        && *origin == DuplicateDeclarationOrigin::GlobalScopeConflict
+                        && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                        && (flags & symbol_flags::ALIAS) != 0
+                });
+            (has_remote_default_import_alias_conflict
+                && self.ambient_external_module_default_export_has_value_sibling_named(name))
+            .then(|| self.current_file_default_export_identifier_named(name))
+            .flatten()
+        });
         for (decl_idx, _decl_flags, is_local, _, _) in declarations {
             if *is_local && conflicts.contains(decl_idx) {
-                let error_node = self
-                    .get_declaration_name_node(*decl_idx)
+                let error_node = default_export_alias_anchor
+                    .or_else(|| self.get_declaration_name_node(*decl_idx))
                     .unwrap_or(*decl_idx);
                 self.error_at_node(error_node, message, code);
             }
