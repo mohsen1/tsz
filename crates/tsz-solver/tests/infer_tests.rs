@@ -15923,3 +15923,119 @@ fn test_callback_plus_value_arg_does_not_leak_any_into_direct_param() {
         interner.lookup(result)
     );
 }
+
+#[test]
+fn test_reverse_mapped_inference_preserves_source_declaration_order() {
+    // Reverse-mapped homomorphic inference (from `{ [K in keyof T]: T[K] }`
+    // matched against a source object) builds an object candidate for T from
+    // accumulated (key, source_property_type) pairs. tsc preserves the source
+    // object's declared member order on the candidate so diagnostic output
+    // (e.g. `Argument of type ... is not assignable to parameter of type
+    // 'Deep<{ <props in source order> }>'`) matches the source's declaration
+    // order rather than a name-hash order.
+    //
+    // Property names are picked so atom-id/alphabetical order DIFFERS from the
+    // source's declared order. Without the fix the candidate's declaration_order
+    // defaults to 0 and the interner reassigns it from the alphabetically-sorted
+    // insertion index — flipping the printed order to alpha < mid < zalpha.
+    use crate::types::{MappedType, TypeParamInfo, Visibility};
+    use tsz_common::interner::Atom;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let t_type = interner.type_param(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // Intern names in an order that makes atom-id order DIFFER from the
+    // intended declaration order. The interner assigns atom ids sequentially,
+    // and shape.properties is stored sorted by atom id for hash consistency,
+    // so the bug only manifests when those two orders disagree.
+    // Atom-id order: alpha < mid < zalpha. Declaration order: zalpha, alpha, mid.
+    let alpha = interner.intern_string("alpha");
+    let mid = interner.intern_string("mid");
+    let zalpha = interner.intern_string("zalpha");
+    let wrap = interner.intern_string("wrap");
+    let make_prop = |name, type_id, decl_order| PropertyInfo {
+        name,
+        type_id,
+        write_type: type_id,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: decl_order,
+        is_string_named: false,
+        single_quoted_name: false,
+    };
+
+    // Mapped target: `{ [K in keyof T]: { wrap: T[K] } }`. Wrapping T[K] in
+    // a single-property object makes the inferred candidate (a plain `{ z:
+    // number; a: string; m: boolean; }`) intern to a different shape than the
+    // wrapped source — preventing the interner from silently de-duplicating
+    // the candidate against the source and bypassing the assertion.
+    let k_param = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.type_param(k_param);
+    let inner_index = interner.index_access(t_type, k_type);
+    let template = interner.object(vec![PropertyInfo::new(wrap, inner_index)]);
+    let target = interner.mapped(MappedType {
+        type_param: k_param,
+        constraint: interner.keyof(t_type),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Source matching the mapped pattern. Declaration order intentionally
+    // disagrees with alphabetical/atom-id order: zalpha (1), alpha (2), mid (3).
+    let wrap_num = interner.object(vec![PropertyInfo::new(wrap, TypeId::NUMBER)]);
+    let wrap_str = interner.object(vec![PropertyInfo::new(wrap, TypeId::STRING)]);
+    let wrap_bool = interner.object(vec![PropertyInfo::new(wrap, TypeId::BOOLEAN)]);
+    let source = interner.object(vec![
+        make_prop(zalpha, wrap_num, 1),
+        make_prop(alpha, wrap_str, 2),
+        make_prop(mid, wrap_bool, 3),
+    ]);
+
+    ctx.infer_from_types(source, target, InferencePriority::HomomorphicMappedType)
+        .unwrap();
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+
+    let shape_id = match interner.lookup(result) {
+        Some(TypeData::Object(s) | TypeData::ObjectWithIndex(s)) => s,
+        other => panic!("Expected Object candidate, got {other:?}"),
+    };
+    let shape = interner.object_shape(shape_id);
+
+    let order_of = |name: Atom| {
+        shape
+            .properties
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.declaration_order)
+            .unwrap_or_else(|| panic!("missing property {name:?}"))
+    };
+    let z_order = order_of(zalpha);
+    let a_order = order_of(alpha);
+    let m_order = order_of(mid);
+    assert!(
+        z_order < a_order && a_order < m_order,
+        "candidate must preserve source declaration order \
+         (zalpha < alpha < mid); got zalpha={z_order} alpha={a_order} mid={m_order}"
+    );
+}
