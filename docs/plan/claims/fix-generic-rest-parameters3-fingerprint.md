@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-04
 - **Branch**: `fix/generic-rest-parameters3-fingerprint`
-- **PR**: TBD
+- **PR**: #2732
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
