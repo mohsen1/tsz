@@ -63,11 +63,7 @@ def detail_path(root: Path) -> Path:
 
 def ensure_inputs(root: Path, *, ensure_submodule: bool) -> Path:
     if ensure_submodule and not (root / "TypeScript" / "tests").is_dir():
-        print("TypeScript submodule missing - initializing...", file=sys.stderr)
-        subprocess.run(
-            ["git", "-C", str(root), "submodule", "update", "--init", "--depth", "1", "TypeScript"],
-            check=True,
-        )
+        init_typescript_submodule(root)
 
     detail = detail_path(root)
     if not detail.is_file():
@@ -75,6 +71,43 @@ def ensure_inputs(root: Path, *, ensure_submodule: bool) -> Path:
         print("  run: scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot", file=sys.stderr)
         sys.exit(1)
     return detail
+
+
+def init_typescript_submodule(root: Path) -> None:
+    """Initialize the TypeScript submodule, falling back to a full clone.
+
+    The shallow `--depth 1` clone is fast but only works when the pinned
+    commit is reachable from the default-branch tip. Pinned commits often
+    drift behind upstream `main`, leaving the shallow clone with no way to
+    fetch the recorded SHA. When that happens, fall back to a full
+    (non-shallow) clone so contributors aren't left with a half-cloned
+    submodule that subsequent commands silently treat as missing tests.
+    """
+    print("TypeScript submodule missing - initializing...", file=sys.stderr)
+    shallow = subprocess.run(
+        ["git", "-C", str(root), "submodule", "update", "--init", "--depth", "1", "TypeScript"],
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if shallow.returncode == 0 and (root / "TypeScript" / "tests").is_dir():
+        return
+
+    if shallow.stderr:
+        sys.stderr.write(shallow.stderr)
+    print(
+        "Shallow submodule clone did not produce a usable working tree; retrying with full clone...",
+        file=sys.stderr,
+    )
+    # Drop partial state so the retry isn't poisoned by a half-fetched pack.
+    subprocess.run(
+        ["git", "-C", str(root), "submodule", "deinit", "-f", "--", "TypeScript"],
+        check=False,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "submodule", "update", "--init", "--recursive", "TypeScript"],
+        check=True,
+    )
 
 
 def load_failures(detail: Path) -> list[Failure]:

@@ -186,7 +186,10 @@ impl CompilerOptions {
             .unwrap_or(crate::common::ModuleKind::None)
     }
 
-    fn apply_strict_option(options: &mut crate::checker::context::CheckerOptions, strict: bool) {
+    const fn apply_strict_option(
+        options: &mut crate::checker::context::CheckerOptions,
+        strict: bool,
+    ) {
         options.strict = strict;
         if strict {
             options.no_implicit_any = true;
