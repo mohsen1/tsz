@@ -210,6 +210,50 @@ impl<'a> CheckerState<'a> {
                     || table.has("export=")
                     || (has_module_exports_binding && table.has("module.exports"))
             });
+        let named_imports_resolve_via_export_equals_target =
+            exports_table.as_ref().is_some_and(|table| {
+                if !has_non_default_named_imports {
+                    return false;
+                }
+                let Some(bindings_node) = bindings_node else {
+                    return false;
+                };
+                let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node) else {
+                    return false;
+                };
+
+                let mut saw_non_default = false;
+                for element_idx in &named_imports.elements.nodes {
+                    let Some(element_node) = self.ctx.arena.get(*element_idx) else {
+                        return false;
+                    };
+                    let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
+                        return false;
+                    };
+                    let Some(name_node) = self.ctx.arena.get(specifier.name) else {
+                        return false;
+                    };
+                    let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+                        return false;
+                    };
+
+                    let name = name_ident.escaped_text.as_str();
+                    if name == "default" {
+                        continue;
+                    }
+                    saw_non_default = true;
+                    if !self.has_named_export_via_export_equals(table, name)
+                        && self
+                            .resolve_named_export_via_export_equals(module_name, name)
+                            .is_none()
+                        && !self.has_named_export_via_export_equals_type(table, name)
+                    {
+                        return false;
+                    }
+                }
+
+                saw_non_default
+            });
 
         // TS2497: Module with `export =` targeting a non-module/non-variable symbol
         // can only be referenced via default import. Applies to namespace imports
@@ -223,6 +267,7 @@ impl<'a> CheckerState<'a> {
             && let Some(ref table) = exports_table
             && table.has("export=")
             && self.export_equals_target_is_not_module_or_variable(table)
+            && !named_imports_resolve_via_export_equals_target
         {
             let flag_name = if (self.ctx.compiler_options.module as u32)
                 >= (tsz_common::ModuleKind::ES2015 as u32)

@@ -179,6 +179,66 @@ j + k;
     );
 }
 
+#[test]
+fn test_declared_export_equals_module_named_import_is_not_rejected_by_js_surface() {
+    let files = [
+        (
+            "/demoModule.d.ts",
+            r#"
+declare namespace demoNS {
+    function f(): void;
+}
+declare module "demoModule" {
+    import alias = demoNS;
+    export = alias;
+}
+"#,
+        ),
+        (
+            "/user.ts",
+            r#"
+import { f } from "demoModule";
+f();
+"#,
+        ),
+    ];
+    let diagnostics = check_named_files_entry(
+        &files,
+        "/user.ts",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| !matches!(*code, 2305 | 2497 | 2616 | 2595)),
+        "Did not expect JS export-surface or export= mismatch diagnostics for declared member `f`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_import_declaration_inside_js_function_skips_module_resolution() {
+    let diagnostics = check_commonjs_single_file(
+        "check.js",
+        r#"
+function container() {
+    import "fs";
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2882),
+        "Did not expect TS2882 for import declaration in function body, got: {diagnostics:#?}"
+    );
+}
+
 fn check_named_files_entry(
     files: &[(&str, &str)],
     entry_file: &str,

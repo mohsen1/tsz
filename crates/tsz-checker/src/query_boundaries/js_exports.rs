@@ -13,7 +13,7 @@
 //!
 //! The result is cached per target file index to avoid redundant computation.
 
-use crate::state::CheckerState;
+use crate::{context::is_js_file_name, state::CheckerState};
 use rustc_hash::FxHashMap;
 use tsz_solver::{CallableShape, ObjectShape, PropertyInfo, TypeId, Visibility};
 
@@ -560,11 +560,27 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         source_file_idx: Option<usize>,
     ) -> bool {
-        self.resolve_js_export_surface_for_module(module_name, source_file_idx)
-            .is_some_and(|surface| {
-                surface.has_commonjs_exports
-                    && !surface.has_named_export(export_name, self.ctx.types)
+        let Some(target_file_idx) = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
             })
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_is_js = target_arena
+            .source_files
+            .first()
+            .is_some_and(|source_file| is_js_file_name(&source_file.file_name));
+        if !target_is_js {
+            return false;
+        }
+
+        let surface = self.resolve_js_export_surface(target_file_idx);
+        surface.has_commonjs_exports && !surface.has_named_export(export_name, self.ctx.types)
     }
 
     /// Build the namespace type for a CommonJS file from its export surface.
