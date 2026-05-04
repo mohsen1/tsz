@@ -25,6 +25,15 @@ fn diag_codes_js(source: &str) -> Vec<u32> {
         .collect()
 }
 
+fn diagnostics_js(source: &str) -> Vec<tsz_common::diagnostics::Diagnostic> {
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        ..CheckerOptions::default()
+    };
+    check_source(source, "test.js", options)
+}
+
 #[test]
 fn ts2565_suppressed_for_jsdoc_typed_prototype_on_function_constructor() {
     let codes = diag_codes_js(
@@ -72,5 +81,48 @@ MyThing.prototype.label;
     assert!(
         !codes.contains(&2565),
         "TS2565 suppression must work for any function-constructor name. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsdoc_typed_prototype_checks_constructor_this_assignment() {
+    let source =
+        "function C() { this.x = false; };\n/** @type {number} */\nC.prototype.x;\nnew C().x;\n";
+    let diagnostics = diagnostics_js(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected one TS2322 for constructor `this.x` conflicting with prototype JSDoc; got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322[0].message_text,
+        "Type 'boolean' is not assignable to type 'number'."
+    );
+    assert_eq!(
+        ts2322[0].start as usize,
+        source
+            .find("this.x")
+            .expect("test source should contain this.x"),
+        "TS2322 should be anchored on the constructor assignment target"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2565),
+        "the JSDoc prototype declaration should still suppress TS2565; got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn matching_jsdoc_typed_prototype_constructor_assignment_has_no_ts2322() {
+    let codes = diag_codes_js(
+        r#"
+function C() { this.x = 1; };
+/** @type {number} */
+C.prototype.x;
+"#,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "matching constructor assignment and prototype JSDoc type must not emit TS2322; got: {codes:?}"
     );
 }
