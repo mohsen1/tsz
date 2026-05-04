@@ -2608,6 +2608,42 @@ const recur = (n: number) => recur(n);
 }
 
 #[test]
+fn ts7022_ts7023_do_not_fire_for_void_expression_return_operand() {
+    let diags = check_source_diagnostics(
+        r#"
+type HowlErrorCallback = (soundId: number, error: unknown) => void;
+
+interface HowlOptions {
+  onplayerror?: HowlErrorCallback | undefined;
+}
+
+class Howl {
+  constructor(public readonly options: HowlOptions) {}
+  once(name: "unlock", fn: () => void) {
+    console.log(name, fn);
+  }
+}
+
+const instance = new Howl({
+  onplayerror: () => void instance.once("unlock", () => {}),
+});
+"#,
+    );
+    let circularity: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7022 | 7023))
+        .collect();
+    assert!(
+        circularity.is_empty(),
+        "Expected no TS7022/TS7023 for self-reference under void return expression, got: {:?}",
+        circularity
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ts7023_no_false_positive_when_property_key_matches_outer_var() {
     // The key in an object literal (also a non-value name position) must not
     // be treated as a lexical reference to a same-named outer variable.

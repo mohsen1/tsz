@@ -667,6 +667,10 @@ impl<'a> CheckerState<'a> {
         function_sym: tsz_binder::SymbolId,
         require_wrapped_call: bool,
     ) -> bool {
+        if self.expression_is_void_prefix_unary(expr_idx) {
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return false;
         };
@@ -776,6 +780,10 @@ impl<'a> CheckerState<'a> {
         resolving_vars: &FxHashSet<tsz_binder::SymbolId>,
         found: &mut FxHashSet<tsz_binder::SymbolId>,
     ) {
+        if self.expression_is_void_prefix_unary(expr_idx) {
+            return;
+        }
+
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return;
         };
@@ -941,6 +949,10 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         resolving_vars: &FxHashSet<tsz_binder::SymbolId>,
     ) -> bool {
+        if self.expression_is_void_prefix_unary(expr_idx) {
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return false;
         };
@@ -1014,5 +1026,17 @@ impl<'a> CheckerState<'a> {
             }
             current = parent_idx;
         }
+    }
+
+    fn expression_is_void_prefix_unary(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                && self
+                    .ctx
+                    .arena
+                    .get_unary_expr(node)
+                    .is_some_and(|unary| unary.operator == SyntaxKind::VoidKeyword as u16)
+        })
     }
 }
