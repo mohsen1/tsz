@@ -4591,7 +4591,7 @@ impl<'a> DeclarationEmitter<'a> {
             let computed_value_types: Vec<String> = computed_members
                 .iter()
                 .filter_map(|(name_text, member_text)| {
-                    Self::is_symbol_computed_property_name_text(name_text)
+                    Self::is_symbol_observer_computed_property_name_text(name_text)
                         .then(|| Self::object_literal_property_value_type(member_text))
                         .flatten()
                         .map(str::to_string)
@@ -4727,8 +4727,8 @@ impl<'a> DeclarationEmitter<'a> {
         without_readonly.get(colon_idx + 1..).map(str::trim)
     }
 
-    fn is_symbol_computed_property_name_text(name_text: &str) -> bool {
-        name_text.trim_start().starts_with("[Symbol.")
+    fn is_symbol_observer_computed_property_name_text(name_text: &str) -> bool {
+        name_text.trim_start().starts_with("[Symbol.observer]")
     }
 
     pub(in crate::declaration_emitter) fn object_literal_line_matches_any_name(
