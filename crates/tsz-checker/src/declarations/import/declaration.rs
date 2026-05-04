@@ -727,9 +727,8 @@ impl<'a> CheckerState<'a> {
         let wrong_context_allows_module_semantics = in_wrong_context
             && !self.is_inside_function_body(stmt_idx)
             && !self.is_inside_namespace_declaration(stmt_idx);
-        let has_parse_errors = (node.this_or_subtree_has_error()
-            || self.ctx.has_real_syntax_errors)
-            && !wrong_context_allows_module_semantics;
+        let has_parse_errors = node.this_or_subtree_has_error()
+            || (self.ctx.has_real_syntax_errors && !wrong_context_allows_module_semantics);
 
         // TS18058/TS18059: Validate deferred import binding restrictions.
         // Deferred imports only allow namespace imports: `import defer * as ns from "..."`
