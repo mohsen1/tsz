@@ -345,7 +345,13 @@ fn widen_type_cached(
                         )
                     })
                     .collect();
+                // Preserve source order for diagnostic display: the canonical
+                // union sort uses anonymous shape allocation order, which can
+                // disagree with source order when normalization allocates new
+                // shapes for some members but reuses existing ones for others.
+                let origin_members = widened_members.clone();
                 let widened = db.union(widened_members);
+                db.store_union_origin(widened, origin_members);
                 propagate_display_alias(db, type_id, widened);
                 widened
             } else {

@@ -217,9 +217,17 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
         return None;
     }
 
+    // Collect property names in source order. shape.properties is Atom-sorted
+    // (canonical form for hashing), so iterating it directly leaks Atom-allocation
+    // order into `names`, producing non-source-order display strings on the
+    // resulting normalized objects. Sort by `declaration_order` so the first
+    // missing-property fill-in for an empty `{}` literal stays in the order tsc
+    // reports.
     let mut names: Vec<Atom> = Vec::new();
     for (_, shape) in &object_members {
-        for prop in &shape.properties {
+        let mut props_by_decl: Vec<&PropertyInfo> = shape.properties.iter().collect();
+        props_by_decl.sort_by_key(|p| p.declaration_order);
+        for prop in props_by_decl {
             if !names.contains(&prop.name) {
                 names.push(prop.name);
             }
@@ -236,7 +244,17 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
         let completed = add_missing_optional_properties(&shape.properties, &names);
         if completed != shape.properties {
             changed = true;
-            normalized.push(interner.object_with_flags(completed, shape.flags));
+            // Capture source-order display properties before interning sorts the
+            // canonical shape by Atom. Without this, the canonical shape may
+            // dedupe to a previously-interned twin whose `declaration_order` is
+            // zero, and the diagnostic printer falls back to Atom order — which
+            // is non-deterministic across compilations and rarely matches the
+            // source-written property order tsc preserves.
+            let mut display_props = completed.clone();
+            crate::types::normalize_display_property_order(&mut display_props);
+            let new_type_id = interner.object_with_flags(completed, shape.flags);
+            interner.store_display_properties(new_type_id, display_props);
+            normalized.push(new_type_id);
         } else {
             normalized.push(original_type);
         }
@@ -497,7 +515,10 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
     // collapses to `{ a: number }`, losing optionalized properties and causing
     // downstream TS2339/TS2353 drift.
     if let Some(normalized) = normalize_fresh_object_literal_union_members(interner, &widened) {
-        return interner.union(normalized);
+        let origin_members = normalized.clone();
+        let result = interner.union(normalized);
+        interner.store_union_origin(result, origin_members);
+        return result;
     }
 
     // Constructor-valued arrays should preserve member unions. Collapsing
