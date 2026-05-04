@@ -2512,18 +2512,26 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else {
-                            // Suppress TS2339 for index access types (like T[keyof T])
-                            // or for unknown/error types that result from unresolved generics.
-                            //
-                            // Do not suppress bare type parameters here: tsc reports property
-                            // misses on generic receivers and formats constrained type parameters
-                            // through their constraint.
-                            let should_suppress =
+                            // Suppress TS2339 for IndexAccess display (T[keyof T]) when the
+                            // evaluated receiver still contains type parameters; tsc emits
+                            // TS2339 once the access resolves to a concrete shape (e.g. E[K]
+                            // → A | B). Also suppress for unknown/error fallbacks. Bare type
+                            // parameters are NOT suppressed — tsc reports property misses on
+                            // generic receivers via their constraint.
+                            let display_is_index_access =
                                 crate::query_boundaries::common::is_index_access_type(
                                     self.ctx.types,
                                     display_object_type,
-                                ) || display_object_type == TypeId::UNKNOWN
-                                    || display_object_type == TypeId::ERROR;
+                                );
+                            let evaluated_receiver_is_resolved =
+                                !crate::query_boundaries::common::contains_type_parameters(
+                                    self.ctx.types,
+                                    object_type_for_access,
+                                );
+                            let should_suppress = (display_is_index_access
+                                && !evaluated_receiver_is_resolved)
+                                || display_object_type == TypeId::UNKNOWN
+                                || display_object_type == TypeId::ERROR;
                             if !should_suppress {
                                 self.error_property_not_exist_at(
                                     property_name,
