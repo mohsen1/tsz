@@ -4,6 +4,66 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(in crate::error_reporter::core) fn format_intersection_union_for_excess_display(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<String> {
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
+        let member_displays = members
+            .iter()
+            .map(|&member| self.format_excess_union_member(member))
+            .collect::<Vec<_>>();
+        if !member_displays
+            .iter()
+            .any(|display| display.contains(" & "))
+        {
+            return None;
+        }
+        Some(
+            member_displays
+                .into_iter()
+                .map(|display| {
+                    if display.contains(" & ") {
+                        format!("({display})")
+                    } else {
+                        display
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" | "),
+        )
+    }
+
+    fn format_excess_union_member(&mut self, ty: TypeId) -> String {
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, ty)
+        {
+            return members
+                .iter()
+                .map(|&member| self.format_excess_union_member(member))
+                .collect::<Vec<_>>()
+                .join(" & ");
+        }
+
+        if crate::query_boundaries::common::is_lazy_type(self.ctx.types, ty) {
+            return self.format_type_diagnostic_widened(ty);
+        }
+
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+            && let Some(def_id) = self
+                .ctx
+                .definition_store
+                .find_def_for_type(ty)
+                .or_else(|| self.ctx.definition_store.find_def_by_shape(&shape))
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+        {
+            return self.ctx.types.resolve_atom_ref(def.name).to_string();
+        }
+
+        self.format_type_diagnostic_widened(ty)
+    }
+
     pub(in crate::error_reporter::core) fn normalize_excess_display_object_type(
         &self,
         ty: TypeId,

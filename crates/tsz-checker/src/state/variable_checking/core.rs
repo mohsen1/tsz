@@ -1006,10 +1006,19 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else {
+                            let excess_property_target = if var_decl.type_annotation.is_some() {
+                                checker
+                                    .excess_property_target_from_type_annotation(
+                                        var_decl.type_annotation,
+                                    )
+                                    .unwrap_or(declared_type)
+                            } else {
+                                declared_type
+                            };
                             let handled_discriminated = checker
                                 .try_discriminated_union_excess_check(
                                     checked_init_type,
-                                    declared_type,
+                                    excess_property_target,
                                     var_decl.initializer,
                                 );
                             if handled_discriminated {
@@ -1059,7 +1068,7 @@ impl<'a> CheckerState<'a> {
                                     let diags_before = checker.ctx.diagnostics.len();
                                     checker.check_object_literal_excess_properties(
                                         checked_init_type,
-                                        declared_type,
+                                        excess_property_target,
                                         var_decl.initializer,
                                     );
                                     if checker.ctx.diagnostics.len() == diags_before {

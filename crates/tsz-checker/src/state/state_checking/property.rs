@@ -1,6 +1,7 @@
 use crate::context::TypingRequest;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
+use crate::symbol_resolver::TypeSymbolResolution;
 use std::collections::HashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -168,6 +169,7 @@ impl<'a> CheckerState<'a> {
         let source_props = source_shape.properties.as_slice();
         let effective_target = self.normalized_target_for_excess_properties(target);
         let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
+        let union_check_target = self.excess_property_union_target(target, resolved_target);
 
         if [target, effective_target, resolved_target, evaluated_target]
             .into_iter()
@@ -219,8 +221,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Handle union targets first using type_queries
-        if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
+        // Handle union targets first using type_queries. For named type aliases,
+        // EPC needs the alias body before property-access resolution collapses
+        // redundant union members (for example `Common | Common & A`).
+        if let Some(members) = query::union_members(self.ctx.types, union_check_target) {
             let mut target_shapes = Vec::new();
             let mut any_member_has_string_index = false;
             let mut any_member_has_number_index = false;
@@ -307,7 +311,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            if self.try_discriminated_union_excess_check(source, target, idx) {
+            if self.try_discriminated_union_excess_check(source, union_check_target, idx) {
                 return;
             }
 
@@ -854,6 +858,198 @@ impl<'a> CheckerState<'a> {
         // Note: Missing property checks are handled by solver's explain_failure
     }
 
+    fn excess_property_union_target(&self, target: TypeId, resolved_target: TypeId) -> TypeId {
+        if query::union_members(self.ctx.types, resolved_target).is_some() {
+            return resolved_target;
+        }
+
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target)
+        else {
+            return resolved_target;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return resolved_target;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
+            return resolved_target;
+        }
+        let Some(body) = def.body else {
+            return resolved_target;
+        };
+        if query::union_members(self.ctx.types, body).is_some() {
+            body
+        } else {
+            resolved_target
+        }
+    }
+
+    pub(crate) fn excess_property_target_from_type_annotation(
+        &mut self,
+        type_node: NodeIndex,
+    ) -> Option<TypeId> {
+        let mut visited = HashSet::new();
+        self.excess_property_annotation_union_type(type_node, &mut visited)
+            .filter(|&ty| query::union_members(self.ctx.types, ty).is_some())
+    }
+
+    fn excess_property_annotation_union_type(
+        &mut self,
+        type_node: NodeIndex,
+        visited: &mut HashSet<NodeIndex>,
+    ) -> Option<TypeId> {
+        if !visited.insert(type_node) {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(type_node)?;
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+            let wrapped = self.ctx.arena.get_wrapped_type(node)?;
+            return self.excess_property_annotation_union_type(wrapped.type_node, visited);
+        }
+
+        if node.kind == syntax_kind_ext::UNION_TYPE {
+            let composite = self.ctx.arena.get_composite_type(node)?;
+            let contains_intersection_member = composite
+                .types
+                .nodes
+                .iter()
+                .any(|&member| self.annotation_node_contains_intersection(member));
+            if !contains_intersection_member {
+                return None;
+            }
+            let member_types = composite
+                .types
+                .nodes
+                .iter()
+                .map(|&member| self.excess_property_annotation_component_type(member, visited))
+                .collect::<Vec<_>>();
+            return Some(tsz_solver::utils::union_or_single_literal_reduce(
+                self.ctx.types,
+                member_types,
+            ));
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let alias_body = self.local_non_generic_type_alias_body_for_reference(type_node)?;
+            return self.excess_property_annotation_union_type(alias_body, visited);
+        }
+
+        None
+    }
+
+    fn excess_property_annotation_component_type(
+        &mut self,
+        type_node: NodeIndex,
+        visited: &mut HashSet<NodeIndex>,
+    ) -> TypeId {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return TypeId::ERROR;
+        };
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.excess_property_annotation_component_type(wrapped.type_node, visited);
+        }
+
+        if node.kind == syntax_kind_ext::INTERSECTION_TYPE
+            && let Some(composite) = self.ctx.arena.get_composite_type(node)
+        {
+            let member_types = composite
+                .types
+                .nodes
+                .iter()
+                .map(|&member| self.excess_property_annotation_component_type(member, visited))
+                .collect::<Vec<_>>();
+            return self.raw_intersection_or_single(member_types);
+        }
+
+        if let Some(union_type) = self.excess_property_annotation_union_type(type_node, visited) {
+            return union_type;
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(lazy_type) = self.named_type_reference_lazy_type(type_node)
+        {
+            return lazy_type;
+        }
+
+        self.get_type_from_type_node(type_node)
+    }
+
+    fn annotation_node_contains_intersection(&self, type_node: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::INTERSECTION_TYPE {
+            return true;
+        }
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.annotation_node_contains_intersection(wrapped.type_node);
+        }
+        false
+    }
+
+    fn raw_intersection_or_single(&self, members: Vec<TypeId>) -> TypeId {
+        let mut iter = members.into_iter();
+        let Some(mut result) = iter.next() else {
+            return TypeId::UNKNOWN;
+        };
+        for member in iter {
+            result = self.ctx.types.intersect_types_raw2(result, member);
+        }
+        result
+    }
+
+    fn named_type_reference_lazy_type(&mut self, type_node: NodeIndex) -> Option<TypeId> {
+        let node = self.ctx.arena.get(type_node)?;
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return None;
+        };
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        let _ = self.get_type_from_type_node(type_node);
+        Some(self.ctx.types.lazy(def_id))
+    }
+
+    fn local_non_generic_type_alias_body_for_reference(
+        &self,
+        type_node: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(type_node)?;
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return None;
+        };
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+            return None;
+        }
+        symbol.declarations.iter().copied().find_map(|decl_idx| {
+            let decl_node = self.ctx.arena.get(decl_idx)?;
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return None;
+            }
+            let type_alias = self.ctx.arena.get_type_alias(decl_node)?;
+            if type_alias.type_parameters.is_some() {
+                return None;
+            }
+            Some(type_alias.type_node)
+        })
+    }
+
     /// Boolean query: does a fresh source have any excess properties relative to
     /// the target?
     ///
@@ -890,6 +1086,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let resolved_target = self.resolve_type_for_property_access(target);
+        let resolved_target = self.excess_property_union_target(target, resolved_target);
         let Some(members) = query::union_members(self.ctx.types, resolved_target) else {
             return false;
         };
@@ -955,7 +1152,10 @@ impl<'a> CheckerState<'a> {
         let display_target = if narrowed_member_types.len() == 1 {
             narrowed_member_types[0]
         } else {
-            tsz_solver::utils::union_or_single(self.ctx.types, narrowed_member_types.clone())
+            tsz_solver::utils::union_or_single_literal_reduce(
+                self.ctx.types,
+                narrowed_member_types.clone(),
+            )
         };
         let narrowed_shapes: Vec<&std::sync::Arc<tsz_solver::ObjectShape>> = matching_indices
             .iter()

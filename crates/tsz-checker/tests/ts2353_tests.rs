@@ -702,6 +702,51 @@ function test<T extends IFoo>() {
 }
 
 #[test]
+fn overlapping_discriminant_optionals_report_later_excess_property() {
+    let source = r#"
+interface Common {
+    type: "A" | "B" | "C" | "D";
+    n: number;
+}
+interface A {
+    type: "A";
+    a?: number;
+}
+interface B {
+    type: "B";
+    b?: number;
+}
+
+type CommonWithOverlappingOptionals = Common | (Common & A) | (Common & B);
+
+const c1: CommonWithOverlappingOptionals = {
+    type: "A",
+    n: 1,
+    a: 1,
+    b: 1,
+};
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "expected one TS2353 for 'b', got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("'b'"),
+        "TS2353 should mention 'b', got: {}",
+        ts2353[0].1
+    );
+    assert!(
+        ts2353[0].1.contains("Common | (Common & A)"),
+        "TS2353 should use narrowed Common | (Common & A), got: {}",
+        ts2353[0].1
+    );
+}
+
+#[test]
 fn function_argument_contextual_typed_object_literal_reports_property_token_excesses() {
     let source = r#"
 interface I {

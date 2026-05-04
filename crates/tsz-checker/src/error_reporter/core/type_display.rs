@@ -1293,19 +1293,16 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_excess_property_target_type(&mut self, ty: TypeId) -> String {
-        // If the type is a named alias (e.g., `type ExoticAnimal = CatDog | ManBearPig`),
-        // tsc shows the alias name in excess property messages. Check for Lazy(DefId)
-        // references before evaluation strips the name. The formatter handles Lazy types
-        // by resolving to the definition name.
+        // Preserve named aliases before evaluation strips the Lazy(DefId).
         if crate::query_boundaries::common::is_lazy_type(self.ctx.types, ty) {
             return self.format_type_diagnostic_widened(ty);
         }
 
-        // Generic Application target (e.g., `Record<Keys, unknown>`): tsc shows
-        // the Application form in excess-property messages. Either the type is
-        // an Application directly, or it's the evaluated result carrying a
-        // display_alias back to the Application. In both cases, route through
-        // the standard diagnostic formatter so the Application syntax is used.
+        if let Some(display) = self.format_intersection_union_for_excess_display(ty) {
+            return display;
+        }
+
+        // Preserve generic Application syntax in excess-property messages.
         let is_application =
             crate::query_boundaries::common::type_application(self.ctx.types, ty).is_some();
         let evaluated_application = if is_application {
