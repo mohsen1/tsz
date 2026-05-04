@@ -85,22 +85,42 @@ impl<'a> CheckerState<'a> {
         };
 
         // Determine the base class display name from the instance type.
-        let type_base_name = self
-            .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
-            .or_else(|| self.collect_class_names_from_instance_type(instance_type))
-            .or_else(|| self.intersection_instance_display_name(h_expr_idx, type_arguments))
-            .or_else(|| {
-                heritage_sym_id.and_then(|sym_id| {
-                    self.format_symbol_reference_with_type_arguments(sym_id, type_arguments)
-                })
-            })
-            .unwrap_or_else(|| {
-                if base_class_name.is_empty() {
-                    self.format_type(instance_type)
-                } else {
-                    base_class_name.to_string()
-                }
-            });
+        // `collect_class_names_from_instance_type` ahead of
+        // `format_symbol_reference_with_type_arguments` handles mixin
+        // intersections like `AbstractBase & Mixin`, but it strips type
+        // arguments from lib classes like `Iterator<number>`. When the
+        // heritage clause carries explicit type arguments, run the
+        // symbol-with-type-arguments formatter first so those render as
+        // `Iterator<number, undefined, unknown>` instead of bare `Iterator`.
+        let prefer_symbol_type_args = type_arguments.is_some_and(|ta| !ta.nodes.is_empty());
+        let mut type_base_name =
+            self.format_heritage_class_symbol_reference(heritage_sym_id, type_arguments);
+        if type_base_name.is_none()
+            && prefer_symbol_type_args
+            && let Some(sym_id) = heritage_sym_id
+        {
+            type_base_name =
+                self.format_symbol_reference_with_type_arguments(sym_id, type_arguments);
+        }
+        if type_base_name.is_none() {
+            type_base_name = self.collect_class_names_from_instance_type(instance_type);
+        }
+        if type_base_name.is_none() {
+            type_base_name = self.intersection_instance_display_name(h_expr_idx, type_arguments);
+        }
+        if type_base_name.is_none()
+            && let Some(sym_id) = heritage_sym_id
+        {
+            type_base_name =
+                self.format_symbol_reference_with_type_arguments(sym_id, type_arguments);
+        }
+        let type_base_name = type_base_name.unwrap_or_else(|| {
+            if base_class_name.is_empty() {
+                self.format_type(instance_type)
+            } else {
+                base_class_name.to_string()
+            }
+        });
 
         let is_class_expression = self
             .ctx
