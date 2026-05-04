@@ -970,7 +970,9 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        let resolved = if let Some(jsx_sym) = self.resolve_jsx_namespace_from_factory() {
+        let resolved = if let Some(jsx_sym) = self.resolve_jsx_namespace_from_import_source() {
+            Some(jsx_sym)
+        } else if let Some(jsx_sym) = self.resolve_jsx_namespace_from_factory() {
             Some(jsx_sym)
         } else if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
             if self.ctx.binder.global_augmentations.contains_key("JSX")
@@ -1019,6 +1021,41 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.jsx_namespace_symbol_cache = Some(resolved);
         resolved
+    }
+
+    fn resolve_jsx_namespace_from_import_source(&mut self) -> Option<SymbolId> {
+        use tsz_common::checker_options::JsxMode;
+
+        let pragma_source = self.extract_jsx_import_source_pragma();
+        let jsx_mode = self.effective_jsx_mode();
+        let runtime_suffix = match jsx_mode {
+            JsxMode::ReactJsx => "jsx-runtime",
+            JsxMode::ReactJsxDev => "jsx-dev-runtime",
+            _ if pragma_source.is_some()
+                || !self.ctx.compiler_options.jsx_import_source.is_empty() =>
+            {
+                "jsx-runtime"
+            }
+            _ => return None,
+        };
+        let source = pragma_source.unwrap_or_else(|| {
+            if self.ctx.compiler_options.jsx_import_source.is_empty() {
+                "react".to_string()
+            } else {
+                self.ctx.compiler_options.jsx_import_source.clone()
+            }
+        });
+        if source.starts_with('/') {
+            return None;
+        }
+
+        let runtime_path = format!("{source}/{runtime_suffix}");
+        self.resolve_cross_file_export_from_file(
+            &runtime_path,
+            "JSX",
+            Some(self.ctx.current_file_idx),
+        )
+        .or_else(|| self.resolve_jsx_runtime_export_fallback(&runtime_path))
     }
 
     pub(in crate::checkers_domain::jsx) fn should_suppress_ts7026_for_import_source(

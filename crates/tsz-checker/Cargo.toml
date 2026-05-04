@@ -134,6 +134,10 @@ name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
 
 [[test]]
+name = "jsx_import_source_namespace_tests"
+path = "tests/jsx_import_source_namespace_tests.rs"
+
+[[test]]
 name = "type_alias_namespace_merge_tests"
 path = "tests/type_alias_namespace_merge_tests.rs"
 
