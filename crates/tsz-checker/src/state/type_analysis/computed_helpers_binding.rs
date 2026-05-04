@@ -32,11 +32,50 @@ impl<'a> CheckerState<'a> {
         // For relative imports, use the module specifier directly as the display
         // name rather than the resolved file path. This matches tsc, which shows
         // `typeof import("aliasAssignments_moduleA")` not the full resolved path.
-        // For non-relative (bare) imports — package names like `"shortid"` —
-        // tsc also uses the original specifier in `typeof import("...")` output,
-        // not the resolved `node_modules/<pkg>/index` path. Treat both kinds
-        // uniformly: the display name is the original specifier with `./` and
-        // any known extension stripped.
+        //
+        // For non-relative (bare) imports whose resolved file is a `.d.ts`
+        // typings file under `node_modules/`, tsc renders the resolved-path
+        // form (`typeof import("node_modules/<pkg>/<path>")`). This applies
+        // when the package's TypeScript-visible surface comes from typings
+        // shipped with the package itself — the typings file path is the
+        // stable cross-host name tsc uses in diagnostics.
+        //
+        // Bare imports that resolve to a JS package source (`.js`/`.cjs`/
+        // `.mjs`) — even when the file lives under `node_modules/` — keep
+        // the original specifier, because the type information comes from
+        // a separate `declare module "name"` ambient declaration whose
+        // identity is the specifier, not the JS file path.
+        //
+        // Imports without a `node_modules/` resolution (ambient declarations
+        // anywhere, mapped paths) also keep the original specifier.
+        let is_relative = module_name.starts_with("./")
+            || module_name.starts_with("../")
+            || module_name.starts_with(".\\")
+            || module_name.starts_with("..\\")
+            || module_name == "."
+            || module_name == "..";
+        if !is_relative
+            && let Some(target_file_idx) = self
+                .ctx
+                .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+                .or_else(|| self.ctx.resolve_import_target(module_name))
+        {
+            let arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+            if let Some(sf) = arena.source_files.first() {
+                let resolved = sf.file_name.replace('\\', "/");
+                if resolved.contains("/node_modules/") || resolved.starts_with("node_modules/") {
+                    let trimmed_path = trim_namespace_display_path(&resolved);
+                    let stripped =
+                        tsz_common::file_extensions::strip_known_extension(&trimmed_path);
+                    let resolves_to_dts = resolved.ends_with(".d.ts")
+                        || resolved.ends_with(".d.cts")
+                        || resolved.ends_with(".d.mts");
+                    if resolves_to_dts {
+                        return stripped.to_string();
+                    }
+                }
+            }
+        }
         let trimmed = trim_namespace_display_path(module_name);
         tsz_common::file_extensions::strip_known_extension(&trimmed).to_string()
     }
