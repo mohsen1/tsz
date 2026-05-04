@@ -147,6 +147,9 @@ mod index_sig_param_intersection_validity_tests;
 #[path = "../tests/jsdoc_postfix_nullable_type_tests.rs"]
 mod jsdoc_postfix_nullable_type_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_prototype_assignment_literal_display.rs"]
+mod jsdoc_prototype_assignment_literal_display;
+#[cfg(test)]
 #[path = "../tests/jsdoc_prototype_assignment_target_display.rs"]
 mod jsdoc_prototype_assignment_target_display;
 #[cfg(test)]

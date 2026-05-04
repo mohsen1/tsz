@@ -134,6 +134,10 @@ impl<'a> CheckerState<'a> {
     ) -> Option<NodeIndex> {
         let owner_text = self.expression_text(owner_expr)?;
 
+        // Resolve the owner identifier in its lexical scope so JS prototype
+        // assignments inside an IIFE or any other nested function still find
+        // the local constructor declaration. `file_locals` only covers
+        // top-level declarations.
         if !owner_text.contains('.')
             && let Some(sym_id) = self
                 .resolve_identifier_symbol(owner_expr)
@@ -141,13 +145,14 @@ impl<'a> CheckerState<'a> {
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
             let value_decl = symbol.value_declaration;
-            let value_node = self.ctx.arena.get(value_decl)?;
-            if value_node.is_function_like() {
-                return Some(value_decl);
-            }
-            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(value_node) {
-                let init_node = self.ctx.arena.get(var_decl.initializer)?;
-                if init_node.is_function_like() {
+            if let Some(value_node) = self.ctx.arena.get(value_decl) {
+                if value_node.is_function_like() {
+                    return Some(value_decl);
+                }
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(value_node)
+                    && let Some(init_node) = self.ctx.arena.get(var_decl.initializer)
+                    && init_node.is_function_like()
+                {
                     return Some(var_decl.initializer);
                 }
             }

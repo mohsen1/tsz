@@ -92,6 +92,19 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// Format a type without following `display_alias` for `Object` /
+    /// `ObjectWithIndex` types. Used by diagnostic paths (e.g. JS prototype
+    /// `Foo.prototype.X = ...` writes) that must show the literal's
+    /// structural shape regardless of any constructor-prototype symbol
+    /// aliasing recorded by the type system.
+    pub fn format_type_skip_object_display_alias(&self, type_id: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_type_formatter()
+            .with_skip_object_display_alias();
+        formatter.format(type_id).into_owned()
+    }
+
     /// Format a type for use in diagnostic error messages.
     /// Unlike `format_type`, this skips union optionalization (synthetic `?: undefined`)
     /// that tsc only uses in hover/quickinfo, not in error messages.
