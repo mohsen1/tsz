@@ -73,7 +73,10 @@ impl<'a> CheckerState<'a> {
         Some(factory.application(factory.lazy(def_id), resolved_args))
     }
 
-    fn shallow_object_literal_callable_type(&mut self, callable_idx: NodeIndex) -> TypeId {
+    pub(crate) fn shallow_object_literal_callable_type(
+        &mut self,
+        callable_idx: NodeIndex,
+    ) -> TypeId {
         use tsz_solver::{CallSignature, CallableShape, ParamInfo};
 
         let Some(callable_node) = self.ctx.arena.get(callable_idx) else {
@@ -772,12 +775,16 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(method_name_str) = resolved_property_name {
                 let method_name_atom = self.ctx.types.intern_string(&method_name_str);
-                let rhs_type = self.get_type_of_node(binary.right);
                 let is_method_like = self
                     .ctx
                     .arena
                     .get(binary.right)
                     .is_some_and(|rhs| rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION);
+                let rhs_type = if is_method_like {
+                    self.shallow_object_literal_callable_type(binary.right)
+                } else {
+                    self.get_type_of_node(binary.right)
+                };
                 method_bindings.push((
                     method_name_atom,
                     tsz_solver::PropertyInfo {

@@ -24,6 +24,9 @@ fn diagnostics_for_js(source: &str) -> Vec<(u32, String)> {
     let options = CheckerOptions {
         allow_js: true,
         check_js: true,
+        strict: true,
+        no_implicit_this: true,
+        strict_null_checks: true,
         no_implicit_any: false,
         ..CheckerOptions::default()
     };
@@ -42,6 +45,146 @@ fn diagnostics_for_js(source: &str) -> Vec<(u32, String)> {
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+/// A checked-JS constructor assigned to a variable can acquire instance
+/// members from both `this.x = ...` in the constructor body and sibling
+/// `Ctor.prototype.x = ...` / `Ctor.prototype = { ... }` declarations.
+/// Collecting the prototype function types must not emit provisional TS2339
+/// diagnostics against the constructor instance before the complete shape
+/// exists.
+#[test]
+fn checked_js_constructor_variable_prototype_methods_share_complete_this_shape() {
+    let diags = diagnostics_for_js(
+        r#"
+/** @constructor */
+var Multimap = function() {
+    this._map = {};
+    this._map
+    this.set
+    this.get
+    this.addon
+};
+
+Multimap.prototype = {
+    set: function() {
+        this._map
+        this.set
+        this.get
+        this.addon
+    },
+    get() {
+        this._map
+        this.set
+        this.get
+        this.addon
+    }
+}
+
+Multimap.prototype.addon = function () {
+    this._map
+    this.set
+    this.get
+    this.addon
+}
+
+var mm = new Multimap();
+mm._map
+mm.set
+mm.get
+mm.addon
+"#,
+    );
+    let instance_member_ts2339: Vec<_> = diags
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2339
+                && message.contains("does not exist on type 'Multimap'")
+                && (message.contains("'set'")
+                    || message.contains("'get'")
+                    || message.contains("'addon'"))
+        })
+        .collect();
+    assert!(
+        instance_member_ts2339.is_empty(),
+        "prototype-derived constructor members should not produce provisional TS2339s against Multimap; got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2339
+                && message
+                    == "Property 'addon' does not exist on type '{ set: () => void; get(): void; }'."
+        }),
+        "prototype assignment target should display the prior object-literal prototype shape; got: {diags:?}"
+    );
+}
+
+#[test]
+fn checked_js_constructor_variable_prototype_methods_work_in_local_scope() {
+    let diags = diagnostics_for_js(
+        r#"
+(function container() {
+    /** @constructor */
+    var Multimap = function() {
+        this._map = {};
+        this._map
+        this.set
+        this.get
+        this.addon
+    };
+
+    Multimap.prototype = {
+        set: function() {
+            this._map
+            this.set
+            this.get
+            this.addon
+        },
+        get() {
+            this._map
+            this.set
+            this.get
+            this.addon
+        }
+    }
+
+    Multimap.prototype.addon = function () {
+        this._map
+        this.set
+        this.get
+        this.addon
+    }
+
+    var mm = new Multimap();
+    mm._map
+    mm.set
+    mm.get
+    mm.addon
+});
+"#,
+    );
+    let instance_member_ts2339: Vec<_> = diags
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2339
+                && message.contains("does not exist on type 'Multimap'")
+                && (message.contains("'set'")
+                    || message.contains("'get'")
+                    || message.contains("'addon'"))
+        })
+        .collect();
+    assert!(
+        instance_member_ts2339.is_empty(),
+        "prototype-derived local constructor members should not produce provisional TS2339s against Multimap; got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2339
+                && message
+                    == "Property 'addon' does not exist on type '{ set: () => void; get(): void; }'."
+        }),
+        "local prototype assignment target should display the prior object-literal prototype shape; got: {diags:?}"
+    );
 }
 
 /// `/** @type {string} */ C.prototype = 12` must emit

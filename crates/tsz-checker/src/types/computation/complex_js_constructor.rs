@@ -8,6 +8,8 @@
 //! - `extract_generic_this_assignment` — extracts name/type from `this.prop = rhs`
 
 use super::complex_constructors::PrototypeMembers;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
+use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -86,6 +88,24 @@ impl<'a> CheckerState<'a> {
                                 .binder
                                 .resolve_identifier(self.ctx.arena, analysis_expr_idx)
                         })
+                        .or_else(|| {
+                            self.ctx
+                                .arena
+                                .parent_of(analysis_expr_idx)
+                                .and_then(|parent_idx| {
+                                    let parent_node = self.ctx.arena.get(parent_idx)?;
+                                    let var_decl =
+                                        self.ctx.arena.get_variable_declaration(parent_node)?;
+                                    if var_decl.initializer != analysis_expr_idx {
+                                        return None;
+                                    }
+                                    self.ctx
+                                        .binder
+                                        .resolve_identifier(self.ctx.arena, var_decl.name)
+                                        .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name))
+                                        .or_else(|| self.ctx.binder.get_node_symbol(parent_idx))
+                                })
+                        })
                 }
             });
 
@@ -106,7 +126,7 @@ impl<'a> CheckerState<'a> {
         let (func, func_name_str, _func_node_idx) = if direct_func_kind
             && let Some(func) = self.ctx.arena.get_function(expr_node)
         {
-            let func_name = func
+            let mut func_name = func
                 .name
                 .into_option()
                 .and_then(|name_idx| {
@@ -121,6 +141,19 @@ impl<'a> CheckerState<'a> {
                         .as_ref()
                         .map(|(_, _, key)| key.clone())
                 });
+            if func_name.is_none()
+                && let Some(parent_idx) = self.ctx.arena.parent_of(analysis_expr_idx)
+                && let Some(parent_node) = self.ctx.arena.get(parent_idx)
+                && let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent_node)
+                && var_decl.initializer == analysis_expr_idx
+            {
+                func_name = self
+                    .ctx
+                    .arena
+                    .get(var_decl.name)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|ident| ident.escaped_text.clone());
+            }
             (func, func_name, analysis_expr_idx)
         } else if let Some(sym_id) = sym_id {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
@@ -270,6 +303,7 @@ impl<'a> CheckerState<'a> {
         let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> =
             FxHashMap::default();
         let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
+        let synthesis_diag_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
 
         if is_generic {
             // We cannot use collect_js_constructor_this_properties here because
@@ -461,6 +495,9 @@ impl<'a> CheckerState<'a> {
                     },
                 );
             } else {
+                synthesis_diag_snap.rollback_filtered(&mut self.ctx, |diag| {
+                    diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                });
                 return None;
             }
         }
@@ -498,9 +535,15 @@ impl<'a> CheckerState<'a> {
                 &effective_type_params,
                 &type_args,
             );
+            synthesis_diag_snap.rollback_filtered(&mut self.ctx, |diag| {
+                diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+            });
             return Some(instantiated);
         }
 
+        synthesis_diag_snap.rollback_filtered(&mut self.ctx, |diag| {
+            diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+        });
         Some(instance_type)
     }
 
