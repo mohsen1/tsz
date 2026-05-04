@@ -12618,6 +12618,46 @@ void exact;
 }
 
 #[test]
+fn cts_json_namespace_import_default_property_is_json_object() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "node16",
+            "moduleResolution": "node16",
+            "resolveJsonModule": true,
+            "noEmit": true
+          },
+          "files": ["index.cts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.cts"),
+        r#"import * as pkg from "./package.json";
+
+export const name = pkg.default.name;
+"#,
+    );
+    write_file(
+        &base.join("package.json"),
+        r#"{ "name": "pkg", "default": "misedirection" }"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().all(|d| d.code != 2339),
+        "Did not expect TS2339 for JSON namespace default property, got diagnostics: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn js_checkjs_define_property_module_exports_preserve_augmented_shape() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
