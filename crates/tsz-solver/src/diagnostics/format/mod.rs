@@ -129,6 +129,12 @@ pub struct TypeFormatter<'a> {
     /// `string`, `Boolean` instead of `boolean`. tsc always uses the capitalized
     /// forms for primitive members in intersection type display.
     capitalize_primitive_intersection_members: bool,
+    /// When true, do not follow `display_alias` when the current type is an
+    /// `Object` / `ObjectWithIndex`. Used for diagnostics like the JS
+    /// prototype "property does not exist on type `{...}`" message where tsc
+    /// shows the literal's structural shape regardless of any
+    /// constructor-prototype symbol aliasing recorded by the type system.
+    skip_object_display_alias: bool,
     /// When true, preserve a longer generic alias prefix while eliding nested
     /// structural object branches. Used for long property receiver diagnostics.
     long_property_receiver_display: bool,
@@ -194,6 +200,7 @@ impl<'a> TypeFormatter<'a> {
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
+            skip_object_display_alias: false,
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
         }
@@ -380,6 +387,7 @@ impl<'a> TypeFormatter<'a> {
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
+            skip_object_display_alias: false,
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
         }
@@ -512,6 +520,15 @@ impl<'a> TypeFormatter<'a> {
     /// display for branded primitives in error messages.
     pub const fn with_capitalize_primitive_intersection_members(mut self) -> Self {
         self.capitalize_primitive_intersection_members = true;
+        self
+    }
+
+    /// Don't follow `display_alias` when the current type is an `Object` or
+    /// `ObjectWithIndex`. Used for diagnostics where the structural literal
+    /// shape is the desired display, even if the type system recorded an
+    /// alias to a named symbol (e.g. a JS constructor's `prototype` property).
+    pub const fn with_skip_object_display_alias(mut self) -> Self {
+        self.skip_object_display_alias = true;
         self
     }
 
@@ -708,20 +725,28 @@ impl<'a> TypeFormatter<'a> {
         // Restricted to composite shapes to avoid false positives where a primitive
         // or literal type coincidentally matches an alias body (e.g. `type U = 1`).
         // Nested-if reads more cleanly than a long &&-chained let-chain here.
+        // When `skip_object_display_alias` is set, do not redirect Object/
+        // ObjectWithIndex types to a named definition (e.g. a JS constructor's
+        // `prototype` property def whose body is this literal). Diagnostics
+        // that opt into this mode want the literal's structural shape.
+        let skip_object_def_lookup = self.skip_object_display_alias
+            && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
         #[allow(clippy::collapsible_if)]
-        if matches!(
-            &key,
-            TypeData::Object(_)
-                | TypeData::ObjectWithIndex(_)
-                | TypeData::Union(_)
-                | TypeData::Intersection(_)
-                | TypeData::Tuple(_)
-                | TypeData::Callable(_)
-                | TypeData::Function(_)
-                | TypeData::Mapped(_)
-                | TypeData::Conditional(_)
-                | TypeData::IndexAccess(_, _)
-        ) && let Some(def_store) = self.def_store
+        if !skip_object_def_lookup
+            && matches!(
+                &key,
+                TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Union(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Callable(_)
+                    | TypeData::Function(_)
+                    | TypeData::Mapped(_)
+                    | TypeData::Conditional(_)
+                    | TypeData::IndexAccess(_, _)
+            )
+            && let Some(def_store) = self.def_store
         {
             if let Some(def_id) = def_store.find_def_for_type(type_id)
                 && let Some(def) = def_store.get(def_id)
@@ -936,8 +961,11 @@ impl<'a> TypeFormatter<'a> {
             // reductions can point many unrelated annotations at the same TypeId.
             // Named generic interfaces/classes with empty bodies still need their
             // application display (e.g. `AsyncGenerator<number, void, unknown>`).
+            let skip_object_alias = self.skip_object_display_alias
+                && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
             let skip_alias_chase = skip_intersection_alias
                 || skip_distributive_alias
+                || skip_object_alias
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
             if (!is_simple_type || use_keyof_alias || use_application_alias)

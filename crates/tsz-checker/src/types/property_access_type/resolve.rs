@@ -927,7 +927,12 @@ impl<'a> CheckerState<'a> {
                         read_pos,
                     ) {
                     let obj_lit_type = self.get_type_of_node(obj_lit_idx);
-                    self.format_type(obj_lit_type)
+                    // Format structurally even if `display_alias` aims this
+                    // anonymous prototype literal at the constructor's
+                    // `prototype` symbol.  tsc displays the literal's shape
+                    // (e.g. `{ set: () => void; get(): void; }`) at the
+                    // assignment site, never the symbol name.
+                    self.format_type_skip_object_display_alias(obj_lit_type)
                 } else {
                     self.format_type(display_object_type)
                 };
