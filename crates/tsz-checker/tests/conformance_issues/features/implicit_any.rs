@@ -285,6 +285,83 @@ const value = box({
 }
 
 #[test]
+fn test_ts7022_and_ts7023_emitted_for_nested_call_in_contextual_return() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type ObjectType<Source> = {
+  kind: "object";
+  __source: (source: Source) => void;
+};
+
+type Field<Source, Key extends string> = {
+  __key: (key: Key) => void;
+  __source: (source: Source) => void;
+};
+
+declare const object: <Source>() => <
+  Fields extends {
+    [Key in keyof Fields]: Field<Source, Key & string>;
+  }
+>(config: {
+  name: string;
+  fields: Fields | (() => Fields);
+}) => ObjectType<Source>;
+
+type InferValueFromObjectType<Type extends ObjectType<any>> =
+  Type extends ObjectType<infer Source> ? Source : never;
+
+type FieldResolver<Source, TType extends ObjectType<any>> = (
+  source: Source
+) => InferValueFromObjectType<TType>;
+
+type FieldFuncArgs<Source, Type extends ObjectType<any>> = {
+  type: Type;
+  resolve: FieldResolver<Source, Type>;
+};
+
+declare const field: <Source, Type extends ObjectType<any>, Key extends string>(
+  field: FieldFuncArgs<Source, Type>
+) => Field<Source, Key>;
+
+type Something = { foo: number };
+
+const A = object<Something>()({
+  name: "A",
+  fields: () => ({
+    a: field({
+      type: A,
+      resolve() {
+        return {
+          foo: 100,
+        };
+      },
+    }),
+  }),
+});
+        "#,
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7022),
+        "Should emit TS7022 for the callback-driven circular initializer.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7023),
+        "Should emit TS7023 on the contextual fields callback.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Should suppress downstream TS2322 once circularity recovers to any.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts7022_not_emitted_for_stored_arrow_property_returning_self() {
     let opts = CheckerOptions {
         no_implicit_any: true,
