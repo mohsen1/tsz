@@ -639,6 +639,14 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(""),
                 return_type,
             );
+            self.maybe_report_exported_function_anonymous_class_return_private_members(
+                func_idx,
+                func.name,
+                self.get_function_name_from_node(func_idx)
+                    .as_deref()
+                    .unwrap_or(""),
+                return_type,
+            );
         }
 
         // TS7010/TS7011 (implicit any return) for function declarations.
