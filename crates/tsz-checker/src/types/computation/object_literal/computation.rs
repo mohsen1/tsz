@@ -179,6 +179,51 @@ impl<'a> CheckerState<'a> {
         Some(format!("[{expr_text}]"))
     }
 
+    fn is_this_options_property_access(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+
+        let base_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(access.expression);
+        let Some(base_node) = self.ctx.arena.get(base_idx) else {
+            return false;
+        };
+        if base_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(base_access) = self.ctx.arena.get_access_expr(base_node) else {
+            return false;
+        };
+        let base_name_is_options = self
+            .ctx
+            .arena
+            .get(base_access.name_or_argument)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .is_some_and(|ident| ident.escaped_text == "options");
+        if !base_name_is_options {
+            return false;
+        }
+
+        let receiver_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(base_access.expression);
+        self.ctx
+            .arena
+            .get(receiver_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+    }
+
     pub(crate) fn get_type_of_object_literal_with_request(
         &mut self,
         idx: NodeIndex,
@@ -1414,7 +1459,6 @@ impl<'a> CheckerState<'a> {
                                 .or(define_property_context_type),
                         ),
                     );
-
                     // If no explicit ThisType marker exists, use the object literal's
                     // contextual type as `this` inside method bodies.
                     let mut pushed_contextual_this = false;
@@ -2492,11 +2536,25 @@ impl<'a> CheckerState<'a> {
                             generic_spread_types.push(spread_type);
                         }
 
-                        let spread_props = self.collect_object_spread_properties(spread_type);
                         let resolved_spread = self.resolve_lazy_type(spread_type);
                         let resolved_spread = self.evaluate_type_with_env(resolved_spread);
                         let resolved_spread =
                             self.resolve_type_for_property_access(resolved_spread);
+                        let spread_props = self.collect_object_spread_properties(resolved_spread);
+                        // In thisless generic option patterns, `this.options.foo` can
+                        // temporarily resolve to `any` even though the containing call
+                        // gives this literal a concrete contextual target. Use that
+                        // target only for TS2783 overwrite diagnostics; keep type
+                        // construction based on the actual spread source.
+                        let spread_props_for_overwrite = if spread_props.is_empty()
+                            && spread_type == TypeId::ANY
+                            && self.is_this_options_property_access(spread_expr)
+                            && let Some(ctx_type) = contextual_type
+                        {
+                            self.collect_object_spread_properties(ctx_type)
+                        } else {
+                            spread_props.clone()
+                        };
                         let idx_resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
                         if let Some(value_type) = idx_resolver.resolve_string_index(resolved_spread)
                         {
@@ -2534,7 +2592,7 @@ impl<'a> CheckerState<'a> {
                         // TSC checks constraint properties even for generic spreads,
                         // so we do too (unlike type construction, approximations are fine here).
                         if self.ctx.strict_null_checks() {
-                            for sp in &spread_props {
+                            for sp in &spread_props_for_overwrite {
                                 if !sp.optional
                                     && let Some((prop_node, prop_name)) =
                                         named_property_nodes.get(&sp.name)
@@ -2556,7 +2614,7 @@ impl<'a> CheckerState<'a> {
                         // for properties that the spread overwrites (so only the
                         // first occurrence can trigger the diagnostic, not later
                         // spreads which are spread-vs-spread and exempt).
-                        for prop in &spread_props {
+                        for prop in &spread_props_for_overwrite {
                             named_property_nodes.remove(&prop.name);
                         }
 

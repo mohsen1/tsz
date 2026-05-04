@@ -1378,6 +1378,116 @@ create({
     );
 }
 
+#[test]
+fn test_ts2783_spread_overwrites_from_inferred_this_options_member() {
+    // Regression for thislessFunctionsNotContextSensitive3.ts: the spread source
+    // type is a lazily evaluated member of the contextual `this.options` type.
+    let source = r#"
+declare class Editor {
+  private _editor;
+}
+
+declare class Plugin {
+  private _plugin;
+}
+
+type Partial<T> = {
+  [P in keyof T]?: T[P];
+};
+type Required<T> = {
+  [P in keyof T]-?: T[P];
+};
+type Parameters<T> = T extends (...args: infer P) => any ? P : never;
+type ReturnType<T> = T extends (...args: any) => infer R ? R : any;
+
+type ParentConfig<T> = Partial<{
+  [P in keyof T]: Required<T>[P] extends (...args: any) => any
+    ? (...args: Parameters<Required<T>[P]>) => ReturnType<Required<T>[P]>
+    : T[P];
+}>;
+
+interface ExtendableConfig<
+  Options = any,
+  Config extends
+    | ExtensionConfig<Options>
+    | ExtendableConfig<Options> = ExtendableConfig<Options, any>,
+> {
+  name: string;
+  addOptions?: (this: {
+    name: string;
+    parent: ParentConfig<Config>["addOptions"];
+  }) => Options;
+  addProseMirrorPlugins?: (this: {
+    options: Options;
+    editor: Editor;
+  }) => Plugin[];
+}
+
+interface ExtensionConfig<Options = any>
+  extends ExtendableConfig<Options, ExtensionConfig<Options>> {}
+
+declare class Extension<Options = any> {
+  static create<O = any>(config: Partial<ExtensionConfig<O>>): Extension<O>;
+}
+
+interface SuggestionOptions {
+  editor: Editor;
+  char?: string;
+}
+
+declare function Suggestion(options: SuggestionOptions): Plugin;
+
+Extension.create({
+  name: "slash-command",
+  addOptions() {
+    return {
+      suggestion: {
+        char: "/",
+      } as SuggestionOptions,
+    };
+  },
+  addProseMirrorPlugins() {
+    return [
+      Suggestion({
+        editor: this.editor,
+        ...this.options.suggestion,
+      }),
+    ];
+  },
+});
+
+Extension.create({
+  name: "slash-command",
+  addOptions: () => {
+    return {
+      suggestion: {
+        char: "/",
+      } as SuggestionOptions,
+    };
+  },
+  addProseMirrorPlugins() {
+    return [
+      Suggestion({
+        editor: this.editor,
+        ...this.options.suggestion,
+      }),
+    ];
+  },
+});
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    assert_eq!(
+        ts2783_count,
+        2,
+        "Expected one TS2783 for each overwritten `editor` property, got {ts2783_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Confirm TS2698 still fires in expression context (spreading a non-object).
 #[test]
 fn test_object_spread_of_non_object_in_expression_emits_ts2698() {
