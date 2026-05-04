@@ -368,6 +368,7 @@ pub struct Completions<'a> {
     pub(super) file_name: Option<String>,
     pub(super) strict: bool,
     pub(super) sound_mode: bool,
+    pub(super) checker_options: Option<tsz_checker::context::CheckerOptions>,
     pub(super) lib_contexts: &'a [tsz_checker::context::LibContext],
 }
 

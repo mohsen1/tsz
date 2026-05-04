@@ -54,22 +54,24 @@ impl<'a> Completions<'a> {
         Some(checker)
     }
 
-    /// Build the `CheckerOptions` corresponding to this provider's strict-mode
+    /// Build the `CheckerOptions` corresponding to this provider's type-checking
     /// configuration.
-    fn checker_options(&self) -> tsz_checker::context::CheckerOptions {
-        tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        }
+    pub(super) fn checker_options(&self) -> tsz_checker::context::CheckerOptions {
+        self.checker_options
+            .clone()
+            .unwrap_or_else(|| tsz_checker::context::CheckerOptions {
+                strict: self.strict,
+                no_implicit_any: self.strict,
+                no_implicit_returns: false,
+                no_implicit_this: self.strict,
+                strict_null_checks: self.strict,
+                strict_function_types: self.strict,
+                strict_property_initialization: self.strict,
+                use_unknown_in_catch_variables: self.strict,
+                sound_mode: self.sound_mode,
+                isolated_modules: false,
+                ..Default::default()
+            })
     }
 
     pub(super) fn get_member_completions(

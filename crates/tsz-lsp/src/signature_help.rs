@@ -266,19 +266,7 @@ impl<'a> SignatureHelpProvider<'a> {
         };
 
         // 6. Create checker with persistent cache if available
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = type_cache.take() {
             CheckerState::with_cache(
                 self.arena,
@@ -863,19 +851,7 @@ impl<'a> SignatureHelpProvider<'a> {
             })
             .unwrap_or_else(|| var_name.clone());
 
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = type_cache.take() {
             CheckerState::with_cache(
                 self.arena,
@@ -2086,19 +2062,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut walker = crate::resolver::ScopeWalker::new(self.arena, self.binder);
         let symbol_id = walker.resolve_node(root, callee_expr)?;
 
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = type_cache.take() {
             CheckerState::with_cache(
                 self.arena,
@@ -2233,19 +2197,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut walker = crate::resolver::ScopeWalker::new(self.arena, self.binder);
         let symbol_id = walker.resolve_node(root, callee_expr)?;
 
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = type_cache.take() {
             CheckerState::with_cache(
                 self.arena,

@@ -22,6 +22,10 @@ pub(crate) struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     strict_function_types: Option<bool>,
 
+    /// Enable strict checking of `bind`, `call`, and `apply` methods.
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    strict_bind_call_apply: Option<bool>,
+
     /// Enable strict property initialization checks in classes.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     strict_property_initialization: Option<bool>,
@@ -33,6 +37,14 @@ pub(crate) struct CompilerOptions {
     /// Raise error on 'this' expressions with an implied 'any' type.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     no_implicit_this: Option<bool>,
+
+    /// Default catch clause variables as `unknown` instead of `any`.
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    use_unknown_in_catch_variables: Option<bool>,
+
+    /// Enable strict built-in iterator return types.
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    strict_builtin_iterator_return: Option<bool>,
 
     /// Specify ECMAScript target version (accepts string like "ES5" or numeric).
     #[serde(default, deserialize_with = "deserialize_target")]
@@ -218,11 +230,20 @@ impl CompilerOptions {
         if let Some(v) = self.strict_function_types {
             options.strict_function_types = v;
         }
+        if let Some(v) = self.strict_bind_call_apply {
+            options.strict_bind_call_apply = v;
+        }
         if let Some(v) = self.strict_property_initialization {
             options.strict_property_initialization = v;
         }
         if let Some(v) = self.no_implicit_this {
             options.no_implicit_this = v;
+        }
+        if let Some(v) = self.use_unknown_in_catch_variables {
+            options.use_unknown_in_catch_variables = v;
+        }
+        if let Some(v) = self.strict_builtin_iterator_return {
+            options.strict_builtin_iterator_return = v;
         }
         if let Some(v) = self.no_unchecked_indexed_access {
             options.no_unchecked_indexed_access = v;
@@ -329,13 +350,25 @@ mod tests {
 
     #[test]
     fn to_checker_options_individual_flags_override_strict() {
-        let options = parse_compiler_options_json(r#"{"strict":false,"noImplicitAny":true}"#)
-            .unwrap()
-            .to_checker_options();
+        let options = parse_compiler_options_json(
+            r#"{
+                "strict": true,
+                "noImplicitAny": false,
+                "strictNullChecks": false,
+                "strictBindCallApply": false,
+                "strictBuiltinIteratorReturn": false,
+                "useUnknownInCatchVariables": false
+            }"#,
+        )
+        .unwrap()
+        .to_checker_options();
 
-        assert!(!options.strict);
-        assert!(options.no_implicit_any);
+        assert!(options.strict);
+        assert!(!options.no_implicit_any);
         assert!(!options.strict_null_checks);
+        assert!(!options.strict_bind_call_apply);
+        assert!(!options.strict_builtin_iterator_return);
+        assert!(!options.use_unknown_in_catch_variables);
     }
 
     #[test]

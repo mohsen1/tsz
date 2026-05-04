@@ -6,10 +6,11 @@
 //! - `full`: arena, binder, `line_map`, interner, `source_text`, `file_name`, strict, `sound_mode`, lib contexts
 
 /// Shared configuration for type-aware LSP providers.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct FullProviderOptions<'a> {
     pub strict: bool,
     pub sound_mode: bool,
+    pub checker_options: Option<tsz_checker::context::CheckerOptions>,
     pub lib_contexts: &'a [tsz_checker::context::LibContext],
 }
 
@@ -119,6 +120,7 @@ macro_rules! define_lsp_provider {
             file_name: String,
             strict: bool,
             sound_mode: bool,
+            checker_options: Option<tsz_checker::context::CheckerOptions>,
             lib_contexts: &'a [tsz_checker::context::LibContext],
         }
 
@@ -140,6 +142,7 @@ macro_rules! define_lsp_provider {
                     file_name,
                     strict: false,
                     sound_mode: false,
+                    checker_options: None,
                     lib_contexts: &[],
                 }
             }
@@ -162,6 +165,7 @@ macro_rules! define_lsp_provider {
                     file_name,
                     strict,
                     sound_mode: false,
+                    checker_options: None,
                     lib_contexts: &[],
                 }
             }
@@ -185,11 +189,12 @@ macro_rules! define_lsp_provider {
                     file_name,
                     strict,
                     sound_mode,
+                    checker_options: None,
                     lib_contexts: &[],
                 }
             }
 
-            pub const fn with_options_and_lib_contexts(
+            pub fn with_options_and_lib_contexts(
                 arena: &'a tsz_parser::parser::node::NodeArena,
                 binder: &'a tsz_binder::BinderState,
                 line_map: &'a tsz_common::position::LineMap,
@@ -207,8 +212,27 @@ macro_rules! define_lsp_provider {
                     file_name,
                     strict: options.strict,
                     sound_mode: options.sound_mode,
+                    checker_options: options.checker_options,
                     lib_contexts: options.lib_contexts,
                 }
+            }
+
+            fn checker_options(&self) -> tsz_checker::context::CheckerOptions {
+                self.checker_options.clone().unwrap_or_else(|| {
+                    tsz_checker::context::CheckerOptions {
+                        strict: self.strict,
+                        no_implicit_any: self.strict,
+                        no_implicit_returns: false,
+                        no_implicit_this: self.strict,
+                        strict_null_checks: self.strict,
+                        strict_function_types: self.strict,
+                        strict_property_initialization: self.strict,
+                        use_unknown_in_catch_variables: self.strict,
+                        sound_mode: self.sound_mode,
+                        isolated_modules: false,
+                        ..Default::default()
+                    }
+                })
             }
 
             fn apply_lib_contexts(&self, checker: &mut tsz_checker::CheckerState<'_>) {

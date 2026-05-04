@@ -49,19 +49,7 @@ impl<'a> HoverProvider<'a> {
             .get_identifier_text(prop_assign.name)
             .map(std::string::ToString::to_string)?;
 
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = type_cache.take() {
             CheckerState::with_cache(
                 self.arena,
@@ -910,19 +898,7 @@ impl<'a> HoverProvider<'a> {
             .get_identifier_text(access.name_or_argument)
             .map(str::to_string)?;
 
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = CheckerState::new(
             self.arena,
             self.binder,
@@ -988,19 +964,7 @@ impl<'a> HoverProvider<'a> {
                 .iter()
                 .position(|&idx| idx == fn_expr_idx)?;
 
-            let compiler_options = tsz_checker::context::CheckerOptions {
-                strict: self.strict,
-                no_implicit_any: self.strict,
-                no_implicit_returns: false,
-                no_implicit_this: self.strict,
-                strict_null_checks: self.strict,
-                strict_function_types: self.strict,
-                strict_property_initialization: self.strict,
-                use_unknown_in_catch_variables: self.strict,
-                sound_mode: self.sound_mode,
-                isolated_modules: false,
-                ..Default::default()
-            };
+            let compiler_options = self.checker_options();
             let mut checker = CheckerState::new(
                 self.arena,
                 self.binder,
