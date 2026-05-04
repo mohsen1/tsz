@@ -4481,6 +4481,7 @@ impl<'a> DeclarationEmitter<'a> {
         let mut only_numeric_like = true;
         let mut has_non_emittable_computed_members = false;
         let mut synthetic_number_index_member = None;
+        let mut negative_numeric_computed_names = Vec::new();
 
         for &member_idx in &object.elements.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -4507,7 +4508,16 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            let Some(name_text) = self.object_literal_member_name_text(name_idx) else {
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(source_name_text) = self.get_source_slice(name_node.pos, name_node.end)
+                && let Some(key_text) =
+                    Self::negative_numeric_computed_property_key_text(&source_name_text)
+            {
+                negative_numeric_computed_names
+                    .push((key_text.to_string(), source_name_text.trim().to_string()));
+            }
+
+            let Some(mut name_text) = self.object_literal_member_name_text(name_idx) else {
                 if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                     has_non_emittable_computed_members = true;
                     if synthetic_number_index_member.is_none() {
@@ -4523,12 +4533,18 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 continue;
             };
-            concrete_member_names.push(name_text.clone());
             let preserve_computed_syntax = name_node.kind
                 == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                 && self
                     .resolved_computed_property_name_text(name_idx)
                     .is_none();
+            if preserve_computed_syntax
+                && let Some(source_name_text) = self.get_source_slice(name_node.pos, name_node.end)
+                && Self::is_negative_numeric_computed_property_name_text(&source_name_text)
+            {
+                name_text = source_name_text.trim().to_string();
+            }
+            concrete_member_names.push(name_text.clone());
             let Some(member_text) = self.infer_object_member_type_text_named_at(
                 member_idx,
                 &name_text,
@@ -4677,6 +4693,20 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        if !negative_numeric_computed_names.is_empty() {
+            for line in &mut lines {
+                for (key_text, source_name_text) in &negative_numeric_computed_names {
+                    if Self::replace_object_literal_property_line_name(
+                        line,
+                        key_text,
+                        source_name_text,
+                    ) {
+                        break;
+                    }
+                }
+            }
+        }
+
         Some(lines.join("\n"))
     }
 
@@ -4729,6 +4759,42 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn is_symbol_observer_computed_property_name_text(name_text: &str) -> bool {
         name_text.trim_start().starts_with("[Symbol.observer]")
+    }
+
+    fn is_negative_numeric_computed_property_name_text(name_text: &str) -> bool {
+        Self::negative_numeric_computed_property_key_text(name_text).is_some()
+    }
+
+    fn negative_numeric_computed_property_key_text(name_text: &str) -> Option<&str> {
+        let inner = name_text
+            .trim()
+            .strip_prefix("[-")
+            .and_then(|name| name.strip_suffix(']'))?;
+
+        inner.parse::<f64>().ok()?;
+        name_text.trim().strip_prefix('[')?.strip_suffix(']')
+    }
+
+    fn replace_object_literal_property_line_name(
+        line: &mut String,
+        key_text: &str,
+        replacement_name: &str,
+    ) -> bool {
+        let leading_len = line.len() - line.trim_start().len();
+        let trimmed = &line[leading_len..];
+        let candidates = [
+            format!("\"{key_text}\":"),
+            format!("'{key_text}':"),
+            format!("{key_text}:"),
+        ];
+        for candidate in candidates {
+            if trimmed.starts_with(&candidate) {
+                let replacement = format!("{replacement_name}:");
+                line.replace_range(leading_len..leading_len + candidate.len(), &replacement);
+                return true;
+            }
+        }
+        false
     }
 
     pub(in crate::declaration_emitter) fn object_literal_line_matches_any_name(

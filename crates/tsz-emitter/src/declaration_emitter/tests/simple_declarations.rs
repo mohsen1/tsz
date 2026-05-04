@@ -2659,6 +2659,33 @@ const obj = {
 }
 
 #[test]
+fn negative_numeric_computed_member_preserves_computed_syntax() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+var v = {
+    [-1]: {},
+    [+1]: {},
+    [~1]: {},
+    [!1]: {}
+};
+"#,
+    );
+
+    assert!(
+        output.contains("[-1]: {};"),
+        "Expected negative numeric computed syntax to be preserved: {output}"
+    );
+    assert!(
+        !output.contains("\"-1\": {};"),
+        "Did not expect negative numeric computed property to be quoted: {output}"
+    );
+    assert!(
+        !output.contains("[-2]: {};"),
+        "Expected non-literal negative numeric key to be covered by the numeric index signature: {output}"
+    );
+}
+
+#[test]
 fn test_object_literal_computed_literal_key_reuses_resolved_property_name() {
     let source = r#"
 const Foo = {

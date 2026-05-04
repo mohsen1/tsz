@@ -35,6 +35,9 @@ impl<'a> TypePrinter<'a> {
         }
 
         let name = self.resolve_atom(property.name);
+        if !property.is_string_named && name.starts_with('-') && name.parse::<f64>().is_ok() {
+            return format!("[{name}]");
+        }
         if needs_property_name_quoting_with_flag(&name, property.is_string_named) {
             if property.single_quoted_name {
                 quote_property_name_single(&name)
