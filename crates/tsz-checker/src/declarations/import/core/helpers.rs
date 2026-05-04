@@ -177,6 +177,59 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn current_file_is_commonjs_for_node16_or_node18(&self) -> bool {
+        if !self.ctx.compiler_options.module.is_node16_or_node18() {
+            return false;
+        }
+
+        let file_name = self
+            .ctx
+            .all_arenas
+            .as_ref()
+            .and_then(|arenas| arenas.get(self.ctx.current_file_idx))
+            .and_then(|arena| arena.source_files.first())
+            .map(|source_file| source_file.file_name.as_str())
+            .unwrap_or(self.ctx.file_name.as_str());
+
+        if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
+            return true;
+        }
+        if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
+            return false;
+        }
+        if let Some(is_esm) = self.lookup_file_is_esm(file_name) {
+            return !is_esm;
+        }
+        if let Some(is_esm) = self.ctx.file_is_esm {
+            return !is_esm;
+        }
+        !self.ctx.compiler_options.module.is_es_module()
+    }
+
+    pub(crate) fn file_idx_is_esm_for_node_cjs_boundary(&self, file_idx: usize) -> bool {
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        let file_name = source_file.file_name.as_str();
+        if file_name.ends_with(".json") {
+            return false;
+        }
+        file_name.ends_with(".mts")
+            || file_name.ends_with(".mjs")
+            || self.lookup_file_is_esm(file_name).unwrap_or(false)
+    }
+
+    pub(crate) fn type_only_cjs_esm_resolution_mode_is_missing(
+        &self,
+        target_idx: usize,
+        has_resolution_mode_override: bool,
+    ) -> bool {
+        !has_resolution_mode_override
+            && self.current_file_is_commonjs_for_node16_or_node18()
+            && self.file_idx_is_esm_for_node_cjs_boundary(target_idx)
+    }
+
     pub(crate) fn requested_resolution_mode(
         &self,
         attributes_idx: NodeIndex,

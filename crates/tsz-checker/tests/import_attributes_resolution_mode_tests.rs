@@ -319,6 +319,60 @@ fn node18_cts_import_attributes_report_ts2856() {
 }
 
 #[test]
+fn node18_cts_type_only_import_from_esm_requires_resolution_mode() {
+    let diagnostics = check_resolution_mode_with_targets(
+        "main.cts",
+        r#"import type { ImportInterface } from "pkg";"#,
+        1,
+        ModuleKind::Node18,
+        Some(false),
+        ("pkg-import.mts", "export interface ImportInterface {}"),
+        ("pkg-require.mts", "export interface RequireInterface {}"),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1541),
+        "Expected TS1541 for type-only import from ESM in a CJS file, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn node18_cts_typeof_import_from_esm_requires_resolution_mode() {
+    let diagnostics = check_resolution_mode_with_targets(
+        "main.cts",
+        r#"type T = typeof import("pkg");"#,
+        1,
+        ModuleKind::Node18,
+        Some(false),
+        ("pkg-import.mts", "export const value = 1;"),
+        ("pkg-require.mts", "export const value = 1;"),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1542),
+        "Expected TS1542 for typeof import from ESM in a CJS file, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn node18_cts_type_import_with_resolution_mode_suppresses_ts1542() {
+    let diagnostics = check_resolution_mode_with_targets(
+        "main.cts",
+        r#"type T = typeof import("pkg", { with: { "resolution-mode": "import" } });"#,
+        1,
+        ModuleKind::Node18,
+        Some(false),
+        ("pkg-import.mts", "export const value = 1;"),
+        ("pkg-require.cts", "export const value = 1;"),
+    );
+
+    assert!(
+        diagnostics.iter().all(|d| d.code != 1542),
+        "Did not expect TS1542 when resolution-mode is present, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn node18_esm_default_json_import_without_attribute_reports_ts1543() {
     let diagnostics = check_json_module_import(
         "main.mts",
