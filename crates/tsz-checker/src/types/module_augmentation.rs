@@ -446,6 +446,44 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    pub(crate) fn module_augmentation_value_type(
+        &mut self,
+        module_spec: &str,
+        name: &str,
+    ) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for augmentation in self.get_module_augmentation_declarations(module_spec, name) {
+            let arena = augmentation.arena.as_deref().unwrap_or(self.ctx.arena);
+            let Some(node) = arena.get(augmentation.node) else {
+                continue;
+            };
+
+            match node.kind {
+                syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let Some(decl) = arena.get_variable_declaration(node) else {
+                        continue;
+                    };
+                    if decl.type_annotation.is_some() && std::ptr::eq(arena, self.ctx.arena) {
+                        let type_id = self.get_type_of_node(decl.type_annotation);
+                        if type_id != TypeId::ERROR && type_id != TypeId::UNKNOWN {
+                            return Some(type_id);
+                        }
+                    }
+                    return Some(TypeId::ANY);
+                }
+                syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION => {
+                    return Some(TypeId::ANY);
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
     /// Search inside namespace augmentation bodies for nested interface declarations.
     ///
     /// For an augmentation like:

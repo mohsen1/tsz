@@ -327,11 +327,16 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                self.error_at_node_msg(
-                    error_node,
-                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                    &[&export_name],
-                );
+                let code = if self
+                    .declaration_symbol_flags(self.ctx.arena, decl_idx)
+                    .is_some_and(|flags| {
+                        (flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                    }) {
+                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE
+                } else {
+                    diagnostic_codes::DUPLICATE_IDENTIFIER
+                };
+                self.error_at_node_msg(error_node, code, &[&export_name]);
             }
         }
 
@@ -408,11 +413,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                self.error_at_node_msg(
-                    spec_idx,
-                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                    &[&export_name],
-                );
+                let code = if conflict_decls.iter().any(|(_, flags, _, _, _)| {
+                    (*flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                }) {
+                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE
+                } else {
+                    diagnostic_codes::DUPLICATE_IDENTIFIER
+                };
+                self.error_at_node_msg(spec_idx, code, &[&export_name]);
             }
         }
 

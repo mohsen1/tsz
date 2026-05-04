@@ -535,6 +535,27 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.alias_resolves_to_type_only(sym_id) {
+                let augmentation_lookup = self
+                    .get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                    .and_then(|symbol| {
+                        symbol.import_module.as_ref().map(|module_spec| {
+                            (
+                                module_spec.clone(),
+                                symbol
+                                    .import_name
+                                    .clone()
+                                    .unwrap_or_else(|| name.to_string()),
+                            )
+                        })
+                    });
+                if let Some((module_spec, import_name)) = augmentation_lookup
+                    && let Some(value_type) =
+                        self.module_augmentation_value_type(&module_spec, &import_name)
+                {
+                    return self.instantiate_callable_result_from_request(idx, value_type, request);
+                }
+
                 // Duplicate import-equals aliases may merge type-only and value targets
                 // under one symbol. If a value import binding with the same local name
                 // exists in the current source/module block, don't treat this as type-only.

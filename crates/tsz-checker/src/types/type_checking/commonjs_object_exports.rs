@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 if member_name == name {
-                    declarations.push((name_idx, symbol_flags::FUNCTION_SCOPED_VARIABLE, true));
+                    declarations.push((name_idx, symbol_flags::PROPERTY, true));
                 }
             }
         }
