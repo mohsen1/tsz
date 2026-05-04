@@ -599,7 +599,6 @@ impl<'a> CheckerState<'a> {
 
         let factory = if is_fragment {
             pragma_fragment_factory
-                
                 .unwrap_or_else(|| self.ctx.compiler_options.jsx_fragment_factory.clone())
         } else {
             pragma_factory
@@ -618,9 +617,8 @@ impl<'a> CheckerState<'a> {
         // is still conceptually used (fragments compile to `factory(null, …)`),
         // so mark its import as referenced before returning.
         if is_fragment && matches!(root_ident, "null" | "undefined" | "true" | "false") {
-            let jsx_factory = pragma_factory
-                
-                .unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
+            let jsx_factory =
+                pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
             let jsx_root = jsx_factory.split('.').next().unwrap_or(&jsx_factory);
             if !jsx_root.is_empty() {
                 let lib_binders2 = self.get_lib_binders();
