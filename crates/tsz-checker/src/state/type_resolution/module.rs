@@ -580,10 +580,9 @@ impl<'a> CheckerState<'a> {
             .module_exports_for_module(target_binder, &target_file_name)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
+            && !is_reexport_alias(sym_id)
         {
-            if !is_reexport_alias(sym_id) {
-                return record_and_return(sym_id);
-            }
+            return record_and_return(sym_id);
         }
 
         if let Some(exports_table) = self
@@ -591,10 +590,9 @@ impl<'a> CheckerState<'a> {
             .module_exports_for_module(target_binder, module_specifier)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
+            && !is_reexport_alias(sym_id)
         {
-            if !is_reexport_alias(sym_id) {
-                return record_and_return(sym_id);
-            }
+            return record_and_return(sym_id);
         }
 
         let augmentation_export =
