@@ -23,23 +23,26 @@ use crate::test_utils::check_source_codes;
 /// contextual types for the `map` callback. The body's actual return is then
 /// checked against `Unwrap<O>` and a TS2322 fires when they differ.
 ///
-/// `tsz` currently fails to keep the Round 1 inferences for `I` / `O` when
-/// the sensitive callback also references those parameters through a
-/// mapped + conditional + `infer` type: both fall back to the constraint
-/// (`Record<string, Wrapper>`), so `Unwrap<O>` widens to `Record<string,
-/// any>` and the callback body becomes vacuously assignable. The
-/// partial-Round-1 extraction in `extract_inference_contributing_object_type`
-/// correctly skips the sensitive `map` property (`params_are_concrete=false`),
-/// but the downstream Round 2 substitution refinement re-derives `O` from
-/// the callback body and overwrites the Round 1 binding even when the new
-/// value is incompatible with the existing concrete inference.
+/// The checker's Round 1 / Round 2 two-pass logic correctly infers
+/// `I = { num: Wrapper<number> }` and `O = { str: Wrapper<string> }` from
+/// `setup`'s concrete return value, but the solver's single-pass
+/// `resolve_call` (run after Round 2 with the refined arg types) cannot
+/// recover the binding for `O`: reverse inference through
+/// `Unwrap<O>` (a homomorphic mapped + conditional + `infer` type)
+/// from the callback body's return position fails, and `O` falls back to
+/// its constraint. The recheck against `MappingComponent<I, WrappedMap>`
+/// then accepts `{ map(): { str: 42 } }` vacuously.
 ///
-/// Until the Round 1 / Round 2 precedence and the homomorphic mapped-type
-/// reverse inference are wired through `query_boundaries`, this test
-/// documents the desired behaviour. Marked `#[ignore]` so the suite stays
-/// green; remove the attribute once the precedence fix lands.
+/// Fix: after the solver returns its `instantiated_params`, the checker
+/// overlays its Round 1 substitution (the bindings derived from
+/// non-sensitive contributors like `setup`) where the solver effectively
+/// defaulted to the type parameter's constraint and the checker's binding
+/// is strictly more specific (a fresh subtype). Gated on at least one
+/// argument having a Round 1 partial extraction so calls without a
+/// non-sensitive contributor (e.g., `p.then(() => x, () => 1)`) leave the
+/// solver's inference untouched. See
+/// `refine_instantiated_params_with_checker_substitution`.
 #[test]
-#[ignore = "intra-expression precedence: sensitive callback overrides Round 1 (intraExpressionInferences:131,5)"]
 fn intra_expression_inference_homomorphic_mapped_return_type() {
     // Lib-independent reproduction: replace `Record<string, Wrapper>` with an
     // equivalent index-signature constraint so the test environment (which
@@ -78,5 +81,52 @@ createMappingComponent({
         "Round 1 should infer `O = {{ str: Wrapper<string> }}` from setup so `Unwrap<O>` resolves \
          to `{{ str: string }}` and the map body's `{{ str: 42 }}` must produce TS2322; \
          got: {semantic_errors:?}"
+    );
+}
+
+/// Same structural rule as `intra_expression_inference_homomorphic_mapped_return_type`
+/// but with different identifier names for the type parameters and the
+/// mapped type's iteration variable. The fix must be expressible as a
+/// structural rule over types/symbols, not a name-match — per the
+/// anti-hardcoding directive in `.claude/CLAUDE.md` §25, every
+/// substitution-refinement test ships with a sibling that proves the rule
+/// survives renaming. If the previous test passes but this one fails, the
+/// fix is hardcoded against `I` / `O` / `K` / `T`.
+#[test]
+fn intra_expression_inference_homomorphic_mapped_return_type_renamed() {
+    let source = r#"
+class Box<X = any> { public value?: X; }
+type BoxMap = { [k: string]: Box };
+type Open<R extends BoxMap> = {
+    [P in keyof R]: R[P] extends Box<infer V> ? V : never;
+};
+type Comp<In extends BoxMap, Out extends BoxMap> = {
+    init(): { src: In; dst: Out };
+    proc?: (src: Open<In>) => Open<Out>;
+};
+declare function buildComp<In extends BoxMap, Out extends BoxMap>(
+    spec: Comp<In, Out>,
+): void;
+buildComp({
+    init() {
+        return {
+            src: { n: new Box<number>() },
+            dst: { s: new Box<string>() },
+        };
+    },
+    proc(src) {
+        return {
+            s: 42,
+        };
+    },
+});
+"#;
+    let errors = check_source_codes(source);
+    let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
+    assert!(
+        semantic_errors.contains(&2322),
+        "Renamed structural reproduction must still emit TS2322; \
+         if this regresses while the original test passes, the fix is \
+         hardcoded against the original identifier names. got: {semantic_errors:?}"
     );
 }

@@ -4163,6 +4163,230 @@ pub struct FileCheckResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+fn resolve_export_in_program_file(
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+    file_idx: usize,
+    export_name: &str,
+    visited: &mut FxHashSet<usize>,
+) -> Option<(SymbolId, usize)> {
+    if !visited.insert(file_idx) {
+        return None;
+    }
+
+    let file_name = program.files.get(file_idx)?.file_name.as_str();
+
+    if let Some(exports) = program.module_exports.get(file_name)
+        && let Some(sym_id) = exports.get(export_name)
+    {
+        return Some((sym_id, file_idx));
+    }
+
+    if let Some(reexports) = program.reexports.get(file_name)
+        && let Some((source_module, original_name)) = reexports.get(export_name)
+    {
+        let name = original_name.as_deref().unwrap_or(export_name);
+        if let Some(&source_idx) = resolved_module_paths.get(&(file_idx, source_module.clone()))
+            && let Some(result) = resolve_export_in_program_file(
+                program,
+                resolved_module_paths,
+                source_idx,
+                name,
+                visited,
+            )
+        {
+            return Some(result);
+        }
+    }
+
+    if let Some(source_modules) = program.wildcard_reexports.get(file_name) {
+        for source_module in source_modules {
+            if let Some(&source_idx) = resolved_module_paths.get(&(file_idx, source_module.clone()))
+                && let Some(result) = resolve_export_in_program_file(
+                    program,
+                    resolved_module_paths,
+                    source_idx,
+                    export_name,
+                    visited,
+                )
+            {
+                return Some(result);
+            }
+        }
+    }
+
+    None
+}
+
+fn declaration_name_span_for_ts2567(arena: &NodeArena, decl_idx: NodeIndex) -> Option<(u32, u32)> {
+    let node = arena.get(decl_idx)?;
+    let name_idx = if node.kind == syntax_kind_ext::CLASS_DECLARATION {
+        arena.get_class(node).map(|class| class.name)
+    } else if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+        arena.get_interface(node).map(|interface| interface.name)
+    } else if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+        arena.get_function(node).map(|function| function.name)
+    } else {
+        None
+    }?;
+    let name_node = arena.get(name_idx)?;
+    Some((name_node.pos, name_node.end - name_node.pos))
+}
+
+pub fn collect_reexported_module_augmentation_enum_conflict_diagnostics(
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+) -> Vec<Diagnostic> {
+    use crate::checker::diagnostics::{diagnostic_codes, diagnostic_messages};
+    use tsz_binder::symbol_flags;
+
+    let mut diagnostics = Vec::new();
+
+    for (augment_file_idx, file) in program.files.iter().enumerate() {
+        for (module_specifier, augmentations) in file.module_augmentations.iter() {
+            let Some(&target_file_idx) =
+                resolved_module_paths.get(&(augment_file_idx, module_specifier.clone()))
+            else {
+                continue;
+            };
+
+            for augmentation in augmentations {
+                let arena = augmentation.arena.as_deref().unwrap_or(file.arena.as_ref());
+                let Some(enum_node) = arena.get(augmentation.node) else {
+                    continue;
+                };
+                if enum_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+                    continue;
+                }
+                let Some(enum_decl) = arena.get_enum(enum_node) else {
+                    continue;
+                };
+
+                let Some((existing_sym_id, owner_idx)) = resolve_export_in_program_file(
+                    program,
+                    resolved_module_paths,
+                    target_file_idx,
+                    augmentation.name.as_str(),
+                    &mut FxHashSet::default(),
+                ) else {
+                    continue;
+                };
+                let Some(existing_symbol) = program.symbols.get(existing_sym_id) else {
+                    continue;
+                };
+                let allowed = (existing_symbol.flags
+                    & (symbol_flags::REGULAR_ENUM
+                        | symbol_flags::CONST_ENUM
+                        | symbol_flags::MODULE))
+                    != 0;
+                if allowed {
+                    continue;
+                }
+
+                let Some(enum_name_node) = arena.get(enum_decl.name) else {
+                    continue;
+                };
+                let message = diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string();
+                diagnostics.push(Diagnostic::error(
+                    file.file_name.clone(),
+                    enum_name_node.pos,
+                    enum_name_node.end - enum_name_node.pos,
+                    message.clone(),
+                    diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                ));
+
+                let decl_file_idx = if existing_symbol.decl_file_idx != u32::MAX {
+                    existing_symbol.decl_file_idx as usize
+                } else {
+                    owner_idx
+                };
+                let Some(decl_file) = program.files.get(decl_file_idx) else {
+                    continue;
+                };
+                let Some((pos, len)) = existing_symbol.declarations.iter().find_map(|&decl_idx| {
+                    declaration_name_span_for_ts2567(&decl_file.arena, decl_idx)
+                }) else {
+                    continue;
+                };
+                diagnostics.push(Diagnostic::error(
+                    decl_file.file_name.clone(),
+                    pos,
+                    len,
+                    message,
+                    diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                ));
+            }
+        }
+    }
+
+    diagnostics
+}
+
+fn add_reexported_module_augmentation_enum_conflict_diagnostics(
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+    file_results: &mut [FileCheckResult],
+) {
+    use crate::checker::diagnostics::diagnostic_codes;
+
+    let file_result_by_name: FxHashMap<String, usize> = file_results
+        .iter()
+        .enumerate()
+        .map(|(idx, result)| (result.file_name.clone(), idx))
+        .collect();
+
+    let mut rerouted = Vec::new();
+    for result in file_results.iter_mut() {
+        let current_file = result.file_name.clone();
+        result.diagnostics.retain(|diag| {
+            if diag.code
+                == diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS
+                && diag.file != current_file
+                && let Some(&target_idx) = file_result_by_name.get(&diag.file)
+            {
+                rerouted.push((target_idx, diag.clone()));
+                return false;
+            }
+            true
+        });
+    }
+    for (target_idx, diag) in rerouted {
+        file_results[target_idx].diagnostics.push(diag);
+    }
+
+    let mut seen: FxHashSet<(String, u32, u32)> = file_results
+        .iter()
+        .flat_map(|result| {
+            result
+                .diagnostics
+                .iter()
+                .map(|diag| (result.file_name.clone(), diag.start, diag.code))
+        })
+        .collect();
+
+    for diag in collect_reexported_module_augmentation_enum_conflict_diagnostics(
+        program,
+        resolved_module_paths,
+    ) {
+        if let Some(&result_idx) = file_result_by_name.get(&diag.file) {
+            let key = (
+                diag.file.clone(),
+                diag.start,
+                diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+            );
+            if seen.insert(key) {
+                file_results[result_idx].diagnostics.push(diag);
+            }
+        }
+    }
+
+    for result in file_results {
+        result
+            .diagnostics
+            .sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+    }
+}
+
 fn collect_lib_interface_node_symbols(
     arena: &NodeArena,
     statements: &[NodeIndex],
@@ -5474,6 +5698,12 @@ pub fn check_files_parallel(
                 }),
         );
     }
+
+    add_reexported_module_augmentation_enum_conflict_diagnostics(
+        program,
+        resolved_module_paths.as_ref(),
+        &mut file_results,
+    );
 
     let diagnostic_count: usize = file_results.iter().map(|r| r.diagnostics.len()).sum();
 

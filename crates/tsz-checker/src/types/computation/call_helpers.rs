@@ -563,6 +563,13 @@ impl<'a> CheckerState<'a> {
             {
                 return jsdoc_type;
             }
+            if self.ctx.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
+                && let Some(init_expr) =
+                    Self::checked_js_constructor_initializer_expression(self.ctx.arena, decl_idx)
+            {
+                return self.get_type_of_node(init_expr);
+            }
             let root_name = self
                 .ctx
                 .arena
@@ -595,6 +602,14 @@ impl<'a> CheckerState<'a> {
                 return init_type;
             }
             return TypeId::ANY;
+        }
+
+        if self.ctx.is_js_file()
+            && self.ctx.should_resolve_jsdoc()
+            && let Some(init_expr) =
+                Self::checked_js_constructor_initializer_expression(self.ctx.arena, decl_idx)
+        {
+            return self.get_type_of_node(init_expr);
         }
 
         if self.ctx.arena.get_function(node).is_some() {

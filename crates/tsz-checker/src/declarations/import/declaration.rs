@@ -462,6 +462,212 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn check_import_attributes_commonjs_or_type_only(
+        &mut self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) {
+        if attributes_idx.is_none() {
+            return;
+        }
+
+        if self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only) {
+            return;
+        }
+
+        use crate::query_boundaries::capabilities::FeatureGate;
+        if self
+            .ctx
+            .capabilities
+            .check_feature_gate(FeatureGate::ImportAttributes)
+            .is_some()
+        {
+            return;
+        }
+
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+
+        if declaration_is_type_only {
+            self.error_at_position(
+                attr_node.pos,
+                attr_node.end.saturating_sub(attr_node.pos),
+                diagnostic_messages::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                diagnostic_codes::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+            );
+            return;
+        }
+
+        if self.import_declaration_emits_commonjs() {
+            self.error_at_position(
+                attr_node.pos,
+                attr_node.end.saturating_sub(attr_node.pos),
+                diagnostic_messages::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+                diagnostic_codes::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+            );
+        }
+    }
+
+    fn import_declaration_emits_commonjs(&self) -> bool {
+        use tsz_common::common::ModuleKind;
+
+        match self.ctx.compiler_options.module {
+            ModuleKind::Node16 | ModuleKind::Node18 | ModuleKind::Node20 | ModuleKind::NodeNext => {
+                let current_file = self.ctx.file_name.as_str();
+                if current_file.ends_with(".cts") || current_file.ends_with(".cjs") {
+                    return true;
+                }
+                if current_file.ends_with(".mts") || current_file.ends_with(".mjs") {
+                    return false;
+                }
+                self.ctx.file_is_esm.is_some_and(|is_esm| !is_esm)
+            }
+            ModuleKind::CommonJS => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn current_file_uses_esm_import_syntax(&self) -> bool {
+        match self.ctx.compiler_options.module {
+            tsz_common::common::ModuleKind::Node16
+            | tsz_common::common::ModuleKind::Node18
+            | tsz_common::common::ModuleKind::Node20
+            | tsz_common::common::ModuleKind::NodeNext => {
+                let current_file = self.ctx.file_name.as_str();
+                if current_file.ends_with(".cts") || current_file.ends_with(".cjs") {
+                    return false;
+                }
+                if current_file.ends_with(".mts") || current_file.ends_with(".mjs") {
+                    return true;
+                }
+                self.ctx.file_is_esm.unwrap_or(false)
+            }
+            module => module.is_es_module(),
+        }
+    }
+
+    pub(crate) const fn module_kind_display_name(&self) -> &'static str {
+        match self.ctx.compiler_options.module {
+            tsz_common::common::ModuleKind::Node16 => "Node16",
+            tsz_common::common::ModuleKind::Node18 => "Node18",
+            tsz_common::common::ModuleKind::Node20 => "Node20",
+            tsz_common::common::ModuleKind::NodeNext => "NodeNext",
+            tsz_common::common::ModuleKind::ESNext => "ESNext",
+            tsz_common::common::ModuleKind::Preserve => "Preserve",
+            tsz_common::common::ModuleKind::CommonJS => "CommonJS",
+            tsz_common::common::ModuleKind::AMD => "AMD",
+            tsz_common::common::ModuleKind::UMD => "UMD",
+            tsz_common::common::ModuleKind::System => "System",
+            tsz_common::common::ModuleKind::ES2015 => "ES2015",
+            tsz_common::common::ModuleKind::ES2020 => "ES2020",
+            tsz_common::common::ModuleKind::ES2022 => "ES2022",
+            tsz_common::common::ModuleKind::None => "None",
+        }
+    }
+
+    fn import_has_type_json_attribute(&self, attributes_idx: NodeIndex) -> bool {
+        if attributes_idx.is_none() {
+            return false;
+        }
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return false;
+        };
+        let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return false;
+        };
+
+        attrs_data.elements.nodes.iter().any(|&elem_idx| {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                return false;
+            };
+            let Some(attr_data) = self.ctx.arena.get_import_attribute_data(elem_node) else {
+                return false;
+            };
+            let name_is_type = self
+                .ctx
+                .arena
+                .get_literal_text(attr_data.name)
+                .map(|name| name.trim_matches('"').trim_matches('\'') == "type")
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get(attr_data.name)
+                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                        .map(|ident| ident.escaped_text.as_str() == "type")
+                })
+                .unwrap_or(false);
+            let value_is_json = self
+                .ctx
+                .arena
+                .get_literal_text(attr_data.value)
+                .is_some_and(|value| value.trim_matches('"').trim_matches('\'') == "json");
+            name_is_type && value_is_json
+        })
+    }
+
+    fn maybe_emit_json_esm_import_attribute_required(
+        &mut self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+        target_idx: usize,
+        spec_start: u32,
+        spec_length: u32,
+        is_type_only_import: bool,
+    ) {
+        if is_type_only_import
+            || !matches!(
+                self.ctx.compiler_options.module,
+                tsz_common::common::ModuleKind::Node18
+                    | tsz_common::common::ModuleKind::Node20
+                    | tsz_common::common::ModuleKind::NodeNext
+            )
+            || !self.current_file_uses_esm_import_syntax()
+            || self.import_has_type_json_attribute(import.attributes)
+        {
+            return;
+        }
+
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = target_arena.source_files.first() else {
+            return;
+        };
+        let file_name = source_file.file_name.as_str();
+        if !file_name.ends_with(".json") && !file_name.ends_with(".d.json.ts") {
+            return;
+        }
+
+        let Some(clause_node) = self.ctx.arena.get(import.import_clause) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+        // Emit TS1543 for default imports (`import x from "./f.json"`) and namespace imports
+        // (`import * as x from "./f.json"`). Named imports are handled separately by TS1544
+        // in import_members.rs, and side-effect imports have no import clause.
+        let has_default_binding = clause.name.is_some();
+        let has_namespace_binding = self
+            .ctx
+            .arena
+            .get(clause.named_bindings)
+            .is_some_and(|bindings_node| bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT);
+        if !has_default_binding && !has_namespace_binding {
+            return;
+        }
+
+        let module_kind = self.module_kind_display_name();
+        let message = crate::diagnostics::format_message(
+            diagnostic_messages::IMPORTING_A_JSON_FILE_INTO_AN_ECMASCRIPT_MODULE_REQUIRES_A_TYPE_JSON_IMPORT_ATTR,
+            &[module_kind],
+        );
+        self.error_at_position(
+            spec_start,
+            spec_length,
+            &message,
+            diagnostic_codes::IMPORTING_A_JSON_FILE_INTO_AN_ECMASCRIPT_MODULE_REQUIRES_A_TYPE_JSON_IMPORT_ATTR,
+        );
+    }
+
     /// TS2322: Check that import attribute values are assignable to the global `ImportAttributes`
     /// interface.
     ///
@@ -682,6 +888,15 @@ impl<'a> CheckerState<'a> {
         };
 
         if name != Some("resolution-mode") {
+            let is_json_type_attribute = name == Some("type")
+                && self
+                    .ctx
+                    .arena
+                    .get_literal_text(attr_data.value)
+                    .is_some_and(|value| value.trim_matches('"').trim_matches('\'') == "json");
+            if is_json_type_attribute {
+                return;
+            }
             self.error_at_node(attr_data.name, invalid_key_message, invalid_key_code);
             return;
         }
@@ -755,6 +970,11 @@ impl<'a> CheckerState<'a> {
 
             // TS2322: Check import attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(import.attributes);
+
+            self.check_import_attributes_commonjs_or_type_only(
+                import.attributes,
+                is_type_only_import,
+            );
         }
 
         // TS1214/TS1212: Check import binding names for strict mode reserved words.
@@ -1344,6 +1564,14 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
+
+                self.maybe_emit_json_esm_import_attribute_required(
+                    import,
+                    target_idx,
+                    spec_start,
+                    spec_length,
+                    is_type_only_import,
+                );
 
                 // TS2846 for resolved .d.ts files is only emitted when the import
                 // specifier explicitly uses a .d.ts extension (handled above at the

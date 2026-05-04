@@ -673,6 +673,14 @@
       "references": [],
       "size": 1155
     },
+    "es2025.collection": {
+      "fileName": "es2025.collection.d.ts",
+      "canonicalFileName": "lib.es2025.collection.d.ts",
+      "references": [
+        "es2024.collection"
+      ],
+      "size": 3839
+    },
     "es5": {
       "fileName": "es5.d.ts",
       "canonicalFileName": "lib.es5.d.ts",
@@ -704,9 +712,9 @@
       "fileName": "esnext.collection.d.ts",
       "canonicalFileName": "lib.esnext.collection.d.ts",
       "references": [
-        "es2024.collection"
+        "es2025.collection"
       ],
-      "size": 3839
+      "size": 2598
     },
     "esnext": {
       "fileName": "esnext.d.ts",

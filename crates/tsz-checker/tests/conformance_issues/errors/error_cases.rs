@@ -947,6 +947,27 @@ class Result<T, E> {
 }
 
 #[test]
+fn test_static_property_arrow_type_params_shadow_class_type_params() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+class Observable<T> {
+    static create: (...args: any[]) => any = <T>(value: T): T => value;
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Static property arrow type parameters should shadow class type parameters.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_static_method_type_params_still_check_constructor_argument_nullability() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",

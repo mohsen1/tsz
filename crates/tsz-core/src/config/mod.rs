@@ -188,6 +188,8 @@ pub struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_check: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_resolve: Option<bool>,
     /// Do not resolve symlinks to their real path.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
@@ -951,6 +953,9 @@ pub fn resolve_compiler_options(
 
     if let Some(no_emit) = options.no_emit {
         resolved.no_emit = no_emit;
+    }
+    if let Some(no_check) = options.no_check {
+        resolved.no_check = no_check;
     }
     if let Some(no_resolve) = options.no_resolve {
         resolved.no_resolve = no_resolve;
@@ -3277,6 +3282,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             strict,
             sound,
             no_emit,
+            no_check,
             no_emit_on_error,
             isolated_modules,
             isolated_declarations,
@@ -5851,6 +5857,14 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_compiler_options_propagates_no_check() {
+        let json = r#"{"compilerOptions":{"noCheck":true}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(resolved.no_check, "noCheck should be read from tsconfig");
+    }
+
+    #[test]
     fn test_strict_false_keeps_always_strict_default() {
         // In TS 6.0, strict:false still leaves alwaysStrict on by default unless it
         // is explicitly set to false.
@@ -6235,6 +6249,24 @@ mod tests {
         assert!(
             names.iter().any(|n| n.contains("es2018.asynciterable")),
             "expected es2018.asynciterable in resolved set, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn embedded_esnext_collection_follows_es2025_collection() {
+        let paths = resolve_lib_files_from_embedded(&["esnext.collection".to_string()], true)
+            .expect("embedded esnext.collection should resolve");
+        let names: Vec<String> = paths
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|s| s.to_str()).map(String::from))
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "es2025.collection.d.ts"),
+            "expected es2025.collection in resolved set, got {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "esnext.collection.d.ts"),
+            "expected esnext.collection in resolved set, got {names:?}"
         );
     }
 }

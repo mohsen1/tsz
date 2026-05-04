@@ -6260,3 +6260,90 @@ fn test_explain_tuple_arity_takes_priority_over_element_mismatch() {
         ),
     }
 }
+
+// ===========================================================================
+// Tests for unknown -> unknown-like union assignability
+// (tsc's `isUnknownLikeUnionType`: a union containing `{}`, `null`, AND
+// `undefined` is semantically equivalent to `unknown`, even if it has extra
+// non-nullish members like `{ x: string }` that are absorbed by `{}`.)
+// ===========================================================================
+
+#[test]
+fn test_unknown_assignable_to_canonical_unknown_like_union() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty_obj = interner.object(vec![]);
+    let union = interner.union(vec![empty_obj, TypeId::NULL, TypeId::UNDEFINED]);
+
+    assert!(
+        checker.is_assignable(TypeId::UNKNOWN, union),
+        "unknown should be assignable to `{{}} | null | undefined`"
+    );
+}
+
+#[test]
+fn test_unknown_assignable_to_unknown_like_union_with_extra_object_member() {
+    // Repro: `let x3: {} | { x: string } | null | undefined = u;` where u: unknown.
+    // tsc accepts this because `{} | { x: string } | null | undefined` is unknown-like
+    // — `{ x: string }` is a subtype of `{}`, so the union still covers the entire
+    // unknown space (`{}` + `null` + `undefined`).
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty_obj = interner.object(vec![]);
+    let obj_with_x = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
+    let union = interner.union(vec![empty_obj, obj_with_x, TypeId::NULL, TypeId::UNDEFINED]);
+
+    assert!(
+        checker.is_assignable(TypeId::UNKNOWN, union),
+        "unknown should be assignable to `{{}} | {{ x: string }} | null | undefined`"
+    );
+}
+
+#[test]
+fn test_unknown_not_assignable_to_union_missing_null() {
+    // `{} | undefined` is NOT unknown-like (no null constituent), so unknown is
+    // not assignable to it.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty_obj = interner.object(vec![]);
+    let union = interner.union(vec![empty_obj, TypeId::UNDEFINED]);
+
+    assert!(
+        !checker.is_assignable(TypeId::UNKNOWN, union),
+        "unknown should not be assignable to `{{}} | undefined` (missing null)"
+    );
+}
+
+#[test]
+fn test_unknown_not_assignable_to_union_missing_undefined() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty_obj = interner.object(vec![]);
+    let union = interner.union(vec![empty_obj, TypeId::NULL]);
+
+    assert!(
+        !checker.is_assignable(TypeId::UNKNOWN, union),
+        "unknown should not be assignable to `{{}} | null` (missing undefined)"
+    );
+}
+
+#[test]
+fn test_unknown_not_assignable_to_union_missing_empty_object() {
+    // `string | null | undefined` does not contain `{}`, so unknown is not assignable.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+
+    assert!(
+        !checker.is_assignable(TypeId::UNKNOWN, union),
+        "unknown should not be assignable to `string | null | undefined` (no `{{}}` member)"
+    );
+}
