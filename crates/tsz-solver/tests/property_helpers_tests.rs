@@ -104,6 +104,130 @@ fn test_object_multiple_properties() {
     assert_property_not_found(&evaluator.resolve_property_access(obj, "d"));
 }
 
+/// `Pick<T, Exclude<keyof T, 'field'>>` (which is what `Omit<T, 'field'>` reduces to)
+/// produces a mapped type whose constraint is the unevaluated Application
+/// `Exclude<Union<"field" | "anotherField">, "field">`. When the resolver in this
+/// context cannot reduce that Application, `is_key_in_mapped_constraint` falls
+/// back to a structural inspection: a two-arg Application whose second arg is a
+/// string literal matching the looked-up property AND whose first arg is a finite
+/// union of >=2 string literals containing the same property is the canonical
+/// Exclude/Omit shape and the property must be reported as not in the constraint.
+///
+/// The test is intentionally agnostic to the application's `base` (we use a
+/// synthetic Lazy DefId) — the rule is structural over the args, not driven by
+/// the alias's name.
+#[test]
+fn test_mapped_application_constraint_excludes_literal_filter_key() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let key_atom = interner.intern_string("K");
+    let lit_field = interner.literal_string("field");
+    let lit_other = interner.literal_string("anotherField");
+    let union_keys = interner.union(vec![lit_field, lit_other]);
+
+    let synthetic_base = interner.lazy(crate::def::DefId(99_999));
+    let exclude_app = interner.application(synthetic_base, vec![union_keys, lit_field]);
+
+    let key_param = TypeParamInfo {
+        name: key_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let key_param_type = interner.intern(TypeData::TypeParameter(key_param));
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: exclude_app,
+        name_type: None,
+        template: key_param_type,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    // 'field' matches the filter literal — must be reported as not in the constraint.
+    assert_property_not_found(&evaluator.resolve_property_access(mapped, "field"));
+}
+
+/// Inverse of the previous test. When the second arg's literal does not equal
+/// the looked-up property name, the heuristic must NOT exclude — the mapped
+/// type stays permissive.
+#[test]
+fn test_mapped_application_constraint_does_not_exclude_unrelated_key() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let key_atom = interner.intern_string("K");
+    let lit_field = interner.literal_string("field");
+    let lit_other = interner.literal_string("anotherField");
+    let union_keys = interner.union(vec![lit_field, lit_other]);
+
+    let synthetic_base = interner.lazy(crate::def::DefId(99_998));
+    let exclude_app = interner.application(synthetic_base, vec![union_keys, lit_field]);
+
+    let key_param = TypeParamInfo {
+        name: key_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let key_param_type = interner.intern(TypeData::TypeParameter(key_param));
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: exclude_app,
+        name_type: None,
+        template: key_param_type,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    // 'anotherField' does not match the filter literal — should resolve through.
+    let result = evaluator.resolve_property_access(mapped, "anotherField");
+    assert!(
+        matches!(result, PropertyAccessResult::Success { .. }),
+        "Expected Success for non-excluded key, got {result:?}"
+    );
+}
+
+/// When the first arg of the application is a *single* literal (not a union),
+/// the heuristic must NOT exclude — the args resemble the Exclude shape but
+/// the single-literal first arg is consistent with non-Exclude utility shapes
+/// (e.g. degenerate distributive conditionals over a primitive). The two-keys
+/// floor in `application_first_arg_excludes_key` is what protects this case.
+#[test]
+fn test_mapped_application_single_literal_arg_stays_permissive() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let key_atom = interner.intern_string("K");
+    let lit_field = interner.literal_string("field");
+
+    let synthetic_base = interner.lazy(crate::def::DefId(99_997));
+    let single_arg_app = interner.application(synthetic_base, vec![lit_field, lit_field]);
+
+    let key_param = TypeParamInfo {
+        name: key_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let key_param_type = interner.intern(TypeData::TypeParameter(key_param));
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: single_arg_app,
+        name_type: None,
+        template: key_param_type,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let result = evaluator.resolve_property_access(mapped, "field");
+    assert!(
+        matches!(result, PropertyAccessResult::Success { .. }),
+        "Single-literal first arg must not trigger exclusion; got {result:?}"
+    );
+}
+
 #[test]
 fn test_validate_slice_case_reducers_keeps_plain_reducer_property_type() {
     let interner = TypeInterner::new();

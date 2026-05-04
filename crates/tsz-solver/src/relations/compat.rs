@@ -2151,26 +2151,33 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         is_empty_object_type_through_type_constraints(self.interner, target)
     }
 
+    /// Match TSC's `isUnknownLikeUnionType`: a union that contains `{}`,
+    /// `null`, AND `undefined` is semantically equivalent to `unknown`,
+    /// because every other constituent is necessarily a subtype of `{}`
+    /// (or otherwise absorbed by it). Extra union members do not disqualify
+    /// the target — e.g. `{} | { x: string } | null | undefined` is still
+    /// unknown-like.
     fn empty_object_with_nullish_target(&self, target: TypeId) -> Option<(bool, bool)> {
         let TypeData::Union(members) = self.interner.lookup(target)? else {
             return None;
         };
         let members = self.interner.type_list(members);
+        if members.len() < 3 {
+            return None;
+        }
         let mut saw_empty_object = false;
-        let mut allow_null = false;
-        let mut allow_undefined = false;
+        let mut saw_null = false;
+        let mut saw_undefined = false;
         for &member in members.iter() {
-            if self.is_empty_object_target(member) {
+            if member == TypeId::NULL {
+                saw_null = true;
+            } else if member == TypeId::UNDEFINED {
+                saw_undefined = true;
+            } else if self.is_empty_object_target(member) {
                 saw_empty_object = true;
-                continue;
-            }
-            match member {
-                TypeId::NULL => allow_null = true,
-                TypeId::UNDEFINED => allow_undefined = true,
-                _ => return None,
             }
         }
-        (saw_empty_object && allow_null && allow_undefined).then_some((allow_null, allow_undefined))
+        (saw_empty_object && saw_null && saw_undefined).then_some((saw_null, saw_undefined))
     }
 
     fn is_assignable_to_empty_object_or_nullish(

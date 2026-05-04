@@ -6,9 +6,6 @@ use std::sync::Arc;
 use tsz_binder::{BinderState, symbol_flags};
 use tsz_parser::parser::ParserState;
 
-// TODO: module augmentation should take precedence over named reexport,
-// but currently resolves to the reexport source file index instead of the
-// augmentation file index. Blocked on augmentation merge priority fix.
 #[test]
 fn module_augmentation_export_resolution_prefers_local_alias_over_named_reexport() {
     let files = [
@@ -61,7 +58,7 @@ export interface Row2 { b: string }
         .iter()
         .position(|name| name == "/main.ts")
         .expect("entry file should exist");
-    let _augmentation_idx = file_names
+    let augmentation_idx = file_names
         .iter()
         .position(|name| name == "/a.d.ts")
         .expect("augmentation file should exist");
@@ -94,20 +91,108 @@ export interface Row2 { b: string }
         .resolve_cross_file_export("./index", "Row2")
         .expect("Row2 should resolve through the module augmentation export");
 
-    // TODO: tsc prefers module augmentation declarations over re-export chains.
-    // Currently, resolve_ambient_module_export only checks module_exports (not
-    // module_augmentations), so the re-export chain from index.d.ts -> common.d.ts
-    // is found first (file index 2).  When module augmentation symbols are
-    // integrated into the export resolution, change this to expect
-    // Some(augmentation_idx) = Some(1).
-    let index_dts_idx = file_names
-        .iter()
-        .position(|name| name == "/index.d.ts")
-        .expect("index.d.ts should exist");
     assert_eq!(
         checker.ctx.resolve_symbol_file_index(sym_id),
-        Some(index_dts_idx),
-        "Row2 currently resolves through the re-export chain (index.d.ts), not the augmentation"
+        Some(augmentation_idx),
+        "Row2 should resolve through the module augmentation declaration before the named re-export"
+    );
+}
+
+#[test]
+fn module_augmentation_export_resolution_follows_reexport_for_interface_merge() {
+    let files = [
+        (
+            "/augment.ts",
+            r#"
+import * as ns from "./reexport";
+
+declare module "./reexport" {
+    export interface Foo {
+        self: Foo;
+    }
+}
+
+type Use = ns.Foo;
+"#,
+        ),
+        (
+            "/file.ts",
+            r#"
+export interface Foo {
+    x: number;
+}
+"#,
+        ),
+        (
+            "/reexport.ts",
+            r#"
+export * from "./file";
+"#,
+        ),
+    ];
+
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in &files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == "/augment.ts")
+        .expect("entry file should exist");
+    let file_idx = file_names
+        .iter()
+        .position(|name| name == "/file.ts")
+        .expect("exported file should exist");
+    let augmentation_idx = entry_idx;
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker.check_source_file(roots[entry_idx]);
+
+    let sym_id = checker
+        .resolve_cross_file_export("./reexport", "Foo")
+        .expect("Foo should resolve through the re-export chain");
+
+    assert_eq!(
+        checker.ctx.resolve_symbol_file_index(sym_id),
+        Some(file_idx),
+        "interface augmentations of a re-export should preserve the original interface merge"
+    );
+    assert_ne!(
+        checker.ctx.resolve_symbol_file_index(sym_id),
+        Some(augmentation_idx),
+        "interface augmentations should not shadow the re-exported interface"
     );
 }
 

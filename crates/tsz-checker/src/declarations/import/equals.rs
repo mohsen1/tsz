@@ -362,7 +362,7 @@ impl<'a> CheckerState<'a> {
             // `declare module "..."` in any file), the import is valid — it's a reference
             // to a global ambient module, not an external file. tsc 6.0 does not emit
             // TS1147 in this case (e.g. privacyImportParseErrors.ts).
-            if inside_namespace {
+            if inside_namespace && !in_wrong_context {
                 let module_is_ambient = require_module_specifier.as_deref().is_some_and(|spec| {
                     // Check current file's declared ambient modules
                     self.ctx.declared_modules_contains(self.ctx.binder, spec)
@@ -826,6 +826,7 @@ impl<'a> CheckerState<'a> {
             && !import.is_type_only
             && !inside_namespace
             && !in_function
+            && !in_wrong_context
         {
             // tsc anchors TS1202 at the outer `export` modifier when the
             // import-equals declaration is the clause of an `export import X =

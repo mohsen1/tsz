@@ -641,6 +641,28 @@ test.K.prototype = {
 }
 
 #[test]
+fn test_js_self_defaulting_expando_constructor_is_constructable() {
+    let source = r#"
+var test = {};
+test.K = test.K ||
+    function () {};
+test.K.prototype = {
+    add() {}
+};
+
+new test.K().add;
+"#;
+
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| !matches!(*code, 2351 | 7009 | 2339)),
+        "Expected self-defaulting expando constructor to stay constructable with prototype members, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts_expando_reads_remain_any_typed() {
     let source = r#"
 function fn() {}

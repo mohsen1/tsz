@@ -461,6 +461,10 @@ impl<'a> CheckerContext<'a> {
         self.global_module_binder_index = parent.global_module_binder_index.clone();
         self.global_arena_index = parent.global_arena_index.clone();
         self.global_file_name_index = parent.global_file_name_index.clone();
+        self.lib_contexts = parent.lib_contexts.clone();
+        self.lib_binders_cached = parent.lib_binders_cached.clone();
+        self.set_actual_lib_file_count(parent.actual_lib_file_count);
+        self.shared_lib_type_cache = parent.shared_lib_type_cache.clone();
         self.program_reexports = parent.program_reexports.clone();
         self.program_wildcard_reexports = parent.program_wildcard_reexports.clone();
         self.program_wildcard_reexports_type_only =

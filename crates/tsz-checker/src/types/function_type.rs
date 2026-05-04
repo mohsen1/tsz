@@ -463,7 +463,7 @@ impl<'a> CheckerState<'a> {
             self.synthesize_js_constructor_instance_type(target_idx, TypeId::ANY, &[])
         });
         let js_prototype_owner_instance_type = prototype_owner_target.and_then(|owner_target| {
-            self.js_constructor_body_instance_type_for_function(owner_target)
+            self.synthesize_js_constructor_instance_type(owner_target, TypeId::ANY, &[])
         });
 
         // Check if this closure is inside a decorator expression.
