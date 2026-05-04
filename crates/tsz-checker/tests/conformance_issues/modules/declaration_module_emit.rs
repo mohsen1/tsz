@@ -1,6 +1,51 @@
 use super::super::core::*;
 
 #[test]
+fn test_import_equals_export_equals_function_namespace_overloads_report_no_match() {
+    let files = [
+        (
+            "/file.d.ts",
+            r#"
+declare namespace Foo {
+    interface Whatever {
+        prop: any;
+    }
+}
+
+declare function Foo(opts?: Foo.Whatever): void;
+declare function Foo(cb: Function, opts?: Foo.Whatever): void;
+
+export = Foo;
+"#,
+        ),
+        (
+            "/index.ts",
+            r#"
+import X = require("./file");
+
+X(0);
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_lib_and_options(
+        &files,
+        "/index.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        codes.contains(&2769),
+        "Expected TS2769 for overloaded export= function mismatch. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_named_default_import_from_export_equals_class_uses_default_import_rules() {
     let files = [
         (
