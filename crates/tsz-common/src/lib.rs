@@ -53,3 +53,6 @@ pub mod perf_counters;
 
 // Centralized file-extension constants and helpers.
 pub mod file_extensions;
+
+// Centralized TypeScript lib symbol capability metadata.
+pub mod lib_capabilities;
