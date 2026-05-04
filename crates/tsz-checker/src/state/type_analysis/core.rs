@@ -1018,6 +1018,12 @@ impl<'a> CheckerState<'a> {
         // If not found in direct exports, check for re-exports
         // The member might be re-exported from another module
         if let Some(ref module_specifier) = symbol.import_module {
+            if self
+                .ctx
+                .namespace_import_alias_has_local_namespace_conflict(symbol)
+            {
+                return None;
+            }
             if symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx
