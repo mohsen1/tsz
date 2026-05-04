@@ -1003,21 +1003,19 @@ impl<'a> CheckerState<'a> {
         instance_type: TypeId,
         visited: &mut FxHashSet<TypeId>,
     ) -> bool {
-        if !visited.insert(instance_type) {
+        let resolved = self.resolve_lazy_type(instance_type);
+        if !visited.insert(resolved) {
             return false;
         }
         let db = self.ctx.types.as_type_database();
-        if let Some(members) = crate::query_boundaries::common::intersection_members(
-            db,
-            self.resolve_lazy_type(instance_type),
-        ) {
+        if let Some(members) = crate::query_boundaries::common::intersection_members(db, resolved) {
             return members
                 .into_iter()
                 .any(|member| self.instance_type_is_from_anonymous_class_inner(member, visited));
         }
 
         let Some(shape) =
-            crate::query_boundaries::checkers::generic::get_object_shape(db, instance_type)
+            crate::query_boundaries::checkers::generic::get_object_shape(db, resolved)
         else {
             return false;
         };
@@ -1026,9 +1024,7 @@ impl<'a> CheckerState<'a> {
             // a merged object shape without preserving the original class symbol.
             // The formatter still carries that provenance for declaration-emit
             // display, so use it as a narrow TS4094 fallback.
-            return self
-                .format_type(instance_type)
-                .contains("(Anonymous class)");
+            return self.format_type(resolved).contains("(Anonymous class)");
         };
         let Some(symbol) = self.get_symbol_globally(sym_id) else {
             return false;
