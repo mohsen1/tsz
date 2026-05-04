@@ -11,4 +11,5 @@ mod assignability_type_param_helpers;
 pub mod assignment_checker;
 pub(crate) mod compound_assignment;
 mod nullish_error_targets;
+mod readonly_tuple_diagnostics;
 pub mod subtype_identity_checker;
