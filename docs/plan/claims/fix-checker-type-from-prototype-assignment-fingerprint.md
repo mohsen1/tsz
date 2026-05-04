@@ -1,9 +1,9 @@
-# [WIP] fix(checker): align prototype assignment TS2339 fingerprint
+# fix(checker): align prototype assignment TS2339 fingerprint
 
 - **Date**: 2026-05-01
 - **Branch**: `fix/checker-type-from-prototype-assignment-fingerprint`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2710
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -16,9 +16,23 @@ owning-crate regression test for the structural rule behind the mismatch.
 ## Files Touched
 
 - `docs/plan/claims/fix-checker-type-from-prototype-assignment-fingerprint.md`
-- Implementation files TBD after reproducing and localizing the mismatch.
+- `crates/tsz-checker/Cargo.toml`
+- `crates/tsz-checker/src/state/state_checking_members/ambient_signature_checks.rs`
+- `crates/tsz-checker/src/types/computation/complex_constructors.rs`
+- `crates/tsz-checker/src/types/computation/complex_js_constructor.rs`
+- `crates/tsz-checker/src/types/computation/object_literal/computation.rs`
+- `crates/tsz-checker/src/types/function_type.rs`
+- `crates/tsz-checker/src/types/function_type/js_prototype.rs`
+- `crates/tsz-checker/tests/jsdoc_prototype_assignment_target_display.rs`
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter "typeFromPrototypeAssignment" --verbose`
-- Planned: targeted `cargo nextest run` for the owning crate test.
+- `cargo fmt`
+- `cargo check --package tsz-checker`
+- `cargo check --package tsz-solver`
+- `cargo nextest run -p tsz-checker --test jsdoc_prototype_assignment_target_display`
+- `./scripts/conformance/conformance.sh run --filter "typeFromPrototypeAssignment" --verbose`
+  - The targeted `typeFromPrototypeAssignment.ts` file now passes.
+  - The broader filter still reports the existing nested
+    `typeFromPrototypeAssignment2.ts` fingerprint-only mismatch.
+- `./scripts/conformance/conformance.sh run --max 200` (200/200)
