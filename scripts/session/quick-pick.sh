@@ -11,6 +11,7 @@
 #   scripts/session/quick-pick.sh              # any failure
 #   scripts/session/quick-pick.sh --seed 42    # reproducible
 #   scripts/session/quick-pick.sh --code TS2322  # filter by error code
+#   scripts/session/quick-pick.sh --show-source # print test source after the pick
 #   scripts/session/quick-pick.sh --run        # also run conformance --verbose
 #
 # This is the canonical random-failure picker for the conformance agent workflow.

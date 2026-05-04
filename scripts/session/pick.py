@@ -175,6 +175,46 @@ def print_human_pick(
         )
 
 
+def resolve_test_source(root: Path, failure: Failure) -> Path | None:
+    """Locate the test source on disk.
+
+    The detail snapshot stores absolute paths from the machine that produced
+    the snapshot (e.g. `/tmp/tsz-snap-refresh/TypeScript/tests/...`), so a
+    naive `root / failure.path` resolves to a non-existent path on other
+    machines. Fall back to the local TypeScript submodule by anchoring the
+    path on the `TypeScript/tests/` segment.
+    """
+    direct = Path(failure.path)
+    if direct.is_absolute() and direct.is_file():
+        return direct
+    candidate = root / failure.path.lstrip("/")
+    if candidate.is_file():
+        return candidate
+    parts = Path(failure.path).parts
+    for marker in ("TypeScript", "tests"):
+        if marker in parts:
+            idx = parts.index(marker)
+            candidate = root.joinpath(*parts[idx:])
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def print_test_source(root: Path, failure: Failure, *, max_lines: int = 80) -> None:
+    """Print the test source body, truncated to `max_lines` to keep terminals readable."""
+    print()
+    print("-------------------- test source --------------------")
+    source = resolve_test_source(root, failure)
+    if source is None:
+        print(f"(source file missing: {failure.path})")
+        return
+    lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
+    for line in lines[:max_lines]:
+        print(line)
+    if len(lines) > max_lines:
+        print(f"... (truncated at {max_lines} lines; total {len(lines)})")
+
+
 def run_verbose(root: Path, failure: Failure) -> None:
     print()
     print(f'Running: ./scripts/conformance/conformance.sh run --filter "{failure.filter_name}" --verbose')
@@ -196,6 +236,8 @@ def command_quick(args: argparse.Namespace) -> int:
     picks, pool = select_failures(failures, code=args.code, seed=args.seed)
     pick = picks[0]
     print_human_pick(pick, pool=pool)
+    if args.show_source:
+        print_test_source(root, pick)
     if args.run:
         run_verbose(root, pick)
     return 0
@@ -213,6 +255,8 @@ def command_category(args: argparse.Namespace) -> int:
     )
     pick = picks[0]
     print_human_pick(pick, pool=pool, requested_category=args.category)
+    if args.show_source:
+        print_test_source(root, pick)
     if args.run:
         run_verbose(root, pick)
     return 0
@@ -289,17 +333,7 @@ def command_show(args: argparse.Namespace) -> int:
 
     print("==================== random pick ====================")
     print_human_pick(pick, pool=pool, include_verbose_command=False)
-    print()
-    print("==================== test source ====================")
-    source = root / pick.path
-    if source.is_file():
-        lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
-        for line in lines[:80]:
-            print(line)
-        if len(lines) > 80:
-            print(f"... (truncated at 80 lines; total {len(lines)})")
-    else:
-        print(f"(source file missing: {pick.path})")
+    print_test_source(root, pick)
     print()
     print("==================== verbose run ====================")
     run_verbose(root, pick)
@@ -311,6 +345,11 @@ def add_common_pick_args(parser: argparse.ArgumentParser, *, run: bool = False) 
     parser.add_argument("--code", default="")
     if run:
         parser.add_argument("--run", action="store_true")
+        parser.add_argument(
+            "--show-source",
+            action="store_true",
+            help="print the test source after the pick metadata (truncated to 80 lines)",
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
