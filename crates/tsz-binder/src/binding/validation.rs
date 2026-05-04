@@ -61,49 +61,13 @@ impl BinderState {
     // Lib Symbol Validation (P0 Task - Improve Test Runner Lib Injection)
     // ========================================================================
 
-    /// Expected global symbols that should be available from lib.d.ts.
-    /// These are core ECMAScript globals that should always be present.
-    const EXPECTED_GLOBAL_SYMBOLS: &'static [&'static str] = &[
-        // Core types
-        "Object",
-        "Function",
-        "Array",
-        "String",
-        "Number",
-        "Boolean",
-        "Symbol",
-        "BigInt",
-        // Error types
-        "Error",
-        "EvalError",
-        "RangeError",
-        "ReferenceError",
-        "SyntaxError",
-        "TypeError",
-        "URIError",
-        // Collections
-        "Map",
-        "Set",
-        "WeakMap",
-        "WeakSet",
-        // Promises and async
-        "Promise",
-        // Object reflection
-        "Reflect",
-        "Proxy",
-        // Global functions
-        "eval",
-        "isNaN",
-        "isFinite",
-        "parseFloat",
-        "parseInt",
-        // Global values
-        "Infinity",
-        "NaN",
-        "undefined",
-        // Console (if DOM lib is loaded)
-        "console",
-    ];
+    fn expected_global_symbols() -> impl Iterator<Item = &'static str> {
+        tsz_common::lib_capabilities::baseline_global_symbols()
+    }
+
+    fn expected_global_symbol_count() -> usize {
+        Self::expected_global_symbols().count()
+    }
 
     /// Validate that expected global symbols are present after binding.
     ///
@@ -117,13 +81,13 @@ impl BinderState {
     /// binder.bind_source_file_with_libs(arena, root, &lib_files);
     /// let missing = binder.validate_global_symbols();
     /// if !missing.is_empty() {
-    ///     eprintln!("WARNING: Missing global symbols: {:?}", missing);
+    ///     tracing::warn!("Missing global symbols: {:?}", missing);
     /// }
     /// ```
     pub fn validate_global_symbols(&self) -> Vec<String> {
         let mut missing = Vec::new();
 
-        for &symbol_name in Self::EXPECTED_GLOBAL_SYMBOLS {
+        for symbol_name in Self::expected_global_symbols() {
             // Check if the symbol is available via resolve_identifier
             // (which checks both file_locals and lib_binders)
             let is_available = self.file_locals.has(symbol_name)
@@ -167,7 +131,7 @@ impl BinderState {
         let mut present = Vec::new();
         let mut missing = Vec::new();
 
-        for &symbol_name in Self::EXPECTED_GLOBAL_SYMBOLS {
+        for symbol_name in Self::expected_global_symbols() {
             let is_available = self.file_locals.has(symbol_name)
                 || self
                     .lib_binders
@@ -185,7 +149,7 @@ impl BinderState {
             report,
             "Expected symbols present: {}/{}",
             present.len(),
-            Self::EXPECTED_GLOBAL_SYMBOLS.len()
+            Self::expected_global_symbol_count()
         );
         if !missing.is_empty() {
             report.push_str("\nMissing symbols:\n");
@@ -222,7 +186,7 @@ impl BinderState {
         if missing.is_empty() {
             debug!(
                 "[LIB_SYMBOL_INFO] All {} expected global symbols are present.",
-                Self::EXPECTED_GLOBAL_SYMBOLS.len()
+                Self::expected_global_symbol_count()
             );
             false
         } else {
@@ -232,9 +196,7 @@ impl BinderState {
                 missing
             );
             warn!("[LIB_SYMBOL_WARNING] This may cause test failures due to unresolved symbols.");
-            warn!(
-                "[LIB_SYMBOL_WARNING] Ensure lib.d.ts is loaded via addLibFile() before binding."
-            );
+            warn!("[LIB_SYMBOL_WARNING] Ensure lib files are loaded before binding.");
             true
         }
     }
@@ -323,7 +285,7 @@ impl BinderState {
             stats.lib_binder_hits,
             self.lib_binders.len(),
             stats.scope_hits + stats.file_local_hits + stats.lib_binder_hits,
-            Self::EXPECTED_GLOBAL_SYMBOLS.len()
+            Self::expected_global_symbol_count()
         )
     }
 }

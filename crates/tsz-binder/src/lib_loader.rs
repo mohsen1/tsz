@@ -10,6 +10,7 @@ use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tsz_common::diagnostics::Diagnostic;
+use tsz_common::lib_capabilities;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::state::ParserState;
@@ -229,91 +230,10 @@ pub fn emit_error_lib_target_mismatch(
     )
 }
 
-// =============================================================================
-// ES2015+ Type Detection
-// =============================================================================
-
-/// ES2015+ global types that may not be available in all lib versions.
-const ES2015_PLUS_TYPES: &[&str] = &[
-    "Promise",
-    "PromiseLike",
-    "PromiseConstructor",
-    "PromiseConstructorLike",
-    "PromiseSettledResult",
-    "PromiseFulfilledResult",
-    "PromiseRejectedResult",
-    "Map",
-    "MapConstructor",
-    "Set",
-    "SetConstructor",
-    "WeakMap",
-    "WeakMapConstructor",
-    "WeakSet",
-    "WeakSetConstructor",
-    "Proxy",
-    "ProxyHandler",
-    "ProxyConstructor",
-    "Reflect",
-    "Symbol",
-    "SymbolConstructor",
-    "Iterator",
-    "IterableIterator",
-    "IteratorResult",
-    "IteratorYieldResult",
-    "IteratorReturnResult",
-    "AsyncIterator",
-    "AsyncIterable",
-    "AsyncIterableIterator",
-    "Generator",
-    "GeneratorFunction",
-    "GeneratorFunctionConstructor",
-    "ArrayLike",
-    "ReadonlyMap",
-    "ReadonlySet",
-    "TemplateStringsArray",
-    "TypedPropertyDescriptor",
-    "CallableFunction",
-    "NewableFunction",
-    "PropertyKey",
-    "AsyncFunction",
-    "AsyncFunctionConstructor",
-    "SharedArrayBuffer",
-    "SharedArrayBufferConstructor",
-    "Atomics",
-    "AsyncGenerator",
-    "AsyncGeneratorFunction",
-    "AsyncGeneratorFunctionConstructor",
-    "ObjectEntries",
-    "ObjectValues",
-    "BigInt",
-    "BigIntConstructor",
-    "BigInt64Array",
-    "BigInt64ArrayConstructor",
-    "BigUint64Array",
-    "BigUint64ArrayConstructor",
-    "FinalizationRegistry",
-    "FinalizationRegistryConstructor",
-    "WeakRef",
-    "WeakRefConstructor",
-    "AggregateError",
-    "AggregateErrorConstructor",
-    "Awaited",
-    "ErrorOptions",
-    "Disposable",
-    "AsyncDisposable",
-    // Note: DataView, Int8Array, Uint8Array, etc. are NOT here because they
-    // are defined in ES5 lib (typed arrays were introduced in ES5.1).
-    // Only their iterator methods and Uint8ClampedArray are ES2015+.
-];
-
 /// Check if a type name is an ES2015+ feature that requires specific lib support.
 #[must_use]
 pub fn is_es2015_plus_type(name: &str) -> bool {
-    // PromiseLike should follow regular unresolved-name behavior (TS2304) in noLib tests.
-    if name == "PromiseLike" {
-        return false;
-    }
-    ES2015_PLUS_TYPES.contains(&name)
+    lib_capabilities::is_known_es_type(name)
 }
 
 /// Check if a value-position name should emit TS2583 ("change your target
@@ -325,27 +245,7 @@ pub fn is_es2015_plus_type(name: &str) -> bool {
 /// `Generator`, `IterableIterator`, `WeakRef`) fall through to TS2304.
 #[must_use]
 pub fn is_es2015_plus_value_lib_suggestion(name: &str) -> bool {
-    matches!(
-        name,
-        "Map"
-            | "Set"
-            | "Promise"
-            | "Symbol"
-            | "WeakMap"
-            | "WeakSet"
-            | "Iterator"
-            | "AsyncIterator"
-            | "SharedArrayBuffer"
-            | "Atomics"
-            | "AsyncIterable"
-            | "AsyncIterableIterator"
-            | "AsyncGenerator"
-            | "AsyncGeneratorFunction"
-            | "BigInt"
-            | "Reflect"
-            | "BigInt64Array"
-            | "BigUint64Array"
-    )
+    lib_capabilities::is_known_value_lib_suggestion(name)
 }
 
 /// Get the minimum lib version required for an ES2015+ type name.
@@ -354,27 +254,7 @@ pub fn is_es2015_plus_value_lib_suggestion(name: &str) -> bool {
 /// the given type. Returns "es2015" as default for most types.
 #[must_use]
 pub fn get_suggested_lib_for_type(name: &str) -> &'static str {
-    match name {
-        "SharedArrayBuffer" | "SharedArrayBufferConstructor" | "Atomics" => "es2017",
-        "AsyncGenerator" | "AsyncGeneratorFunction" | "AsyncGeneratorFunctionConstructor" => {
-            "es2018"
-        }
-        "BigInt"
-        | "BigIntConstructor"
-        | "BigInt64Array"
-        | "BigInt64ArrayConstructor"
-        | "BigUint64Array"
-        | "BigUint64ArrayConstructor" => "es2020",
-        "FinalizationRegistry"
-        | "FinalizationRegistryConstructor"
-        | "WeakRef"
-        | "WeakRefConstructor"
-        | "AggregateError"
-        | "AggregateErrorConstructor"
-        | "ErrorOptions" => "es2021",
-        "Disposable" | "AsyncDisposable" => "esnext",
-        _ => "es2015",
-    }
+    lib_capabilities::suggested_lib_for_type(name).map_or("es2015", |lib| lib.as_str())
 }
 
 #[cfg(test)]
