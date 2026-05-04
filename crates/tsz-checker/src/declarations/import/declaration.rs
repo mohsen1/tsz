@@ -1464,6 +1464,24 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_WHOSE_IMPORTS_WILL_PRODUCE_REQUIRE_CALLS_H,
                         );
                     }
+
+                    // TS1541: type-only imports that cross a Node16/Node18
+                    // CJS -> ESM boundary need an explicit resolution-mode.
+                    if is_type_only_import
+                        && self.type_only_cjs_esm_resolution_mode_is_missing(
+                            target_idx,
+                            self.get_resolution_mode_override(import.attributes)
+                                .is_some(),
+                        )
+                    {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_position(
+                            spec_start,
+                            spec_length,
+                            diagnostic_messages::TYPE_ONLY_IMPORT_OF_AN_ECMASCRIPT_MODULE_FROM_A_COMMONJS_MODULE_MUST_HAVE_A_RESO,
+                            diagnostic_codes::TYPE_ONLY_IMPORT_OF_AN_ECMASCRIPT_MODULE_FROM_A_COMMONJS_MODULE_MUST_HAVE_A_RESO,
+                        );
+                    }
                 }
 
                 self.maybe_emit_json_esm_import_attribute_required(

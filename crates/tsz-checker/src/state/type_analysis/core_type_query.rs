@@ -958,6 +958,11 @@ impl<'a> CheckerState<'a> {
         let (call_idx, segments) = self.decompose_typeof_import_query(expr_name)?;
         let (module_name, specifier_node) = self.get_import_type_module_specifier(call_idx)?;
         let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
+        self.maybe_emit_import_type_cjs_esm_resolution_mode_missing(
+            &module_name,
+            specifier_node,
+            resolution_mode_override,
+        );
 
         let Some(mut current) =
             self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)
