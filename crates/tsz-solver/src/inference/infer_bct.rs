@@ -93,7 +93,10 @@ impl<'a> InferenceContext<'a> {
         if let Some(normalized) =
             normalize_fresh_object_literal_union_members(self.interner, &unique)
         {
-            return self.interner.union(normalized);
+            let origin_members = normalized.clone();
+            let result = self.interner.union(normalized);
+            self.interner.store_union_origin(result, origin_members);
+            return result;
         }
 
         // Step 2: Tournament reduction — O(N) to find potential supertype candidate.
@@ -251,7 +254,9 @@ impl<'a> InferenceContext<'a> {
         if let Some(normalized) =
             normalize_fresh_object_literal_union_members(self.interner, &primary_types)
         {
+            let origin_members = normalized.clone();
             let result = self.interner.union(normalized);
+            self.interner.store_union_origin(result, origin_members);
             return self.add_nullable_to_result(result, has_undefined, has_null);
         }
 
