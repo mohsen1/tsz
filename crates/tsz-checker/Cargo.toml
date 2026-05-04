@@ -657,5 +657,9 @@ path = "tests/strict_mode_reserved_word_in_qualified_type_tests.rs"
 name = "union_index_access_function_application_param_tests"
 path = "tests/union_index_access_function_application_param_tests.rs"
 
+[[test]]
+name = "jsx_pragma_factory_marks_imports_referenced_tests"
+path = "tests/jsx_pragma_factory_marks_imports_referenced_tests.rs"
+
 [lints]
 workspace = true
