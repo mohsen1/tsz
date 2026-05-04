@@ -470,6 +470,71 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn js_new_target_has_prototype_evidence(&mut self, expr_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(func_name) = self.expression_text(expr_idx) else {
+            return false;
+        };
+        let Some(read_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        let Some(source_file) = self
+            .ctx
+            .arena
+            .source_files
+            .get(self.ctx.current_file_idx)
+            .or_else(|| self.ctx.arena.source_files.first())
+        else {
+            return false;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.pos >= read_node.pos {
+                break;
+            }
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            if self.access_matches_function_prototype(binary.left, &func_name) {
+                return true;
+            }
+            let Some(lhs_node) = self.ctx.arena.get(binary.left) else {
+                continue;
+            };
+            if !Self::is_property_like_access_kind(lhs_node.kind) {
+                continue;
+            }
+            let Some(lhs_access) = self.ctx.arena.get_access_expr(lhs_node) else {
+                continue;
+            };
+            if self.access_matches_function_prototype(lhs_access.expression, &func_name) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn js_prototype_binding_literal_name(&self, name_idx: NodeIndex) -> Option<String> {
         use tsz_scanner::SyntaxKind;
 

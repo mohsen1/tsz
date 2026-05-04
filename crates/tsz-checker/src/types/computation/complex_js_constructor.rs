@@ -168,6 +168,39 @@ impl<'a> CheckerState<'a> {
                             .map(|ident| ident.escaped_text.clone())
                     });
                 (func, func_name, var_decl.initializer)
+            } else if let Some(init_expr) =
+                Self::checked_js_constructor_initializer_expression(self.ctx.arena, value_decl)
+            {
+                let init_node = self.ctx.arena.get(init_expr)?;
+                if init_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION {
+                    return None;
+                }
+                let func = self.ctx.arena.get_function(init_node)?;
+                let owner_idx = self
+                    .ctx
+                    .arena
+                    .get_extended(value_decl)
+                    .map(|ext| ext.parent)
+                    .and_then(|assignment_idx| {
+                        self.ctx
+                            .arena
+                            .get_extended(assignment_idx)
+                            .map(|ext| ext.parent)
+                    })
+                    .filter(|idx| {
+                        self.ctx.arena.get(*idx).is_some_and(|node| {
+                            node.kind == tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT
+                        })
+                    })
+                    .unwrap_or(value_decl);
+                let func_name = self
+                    .ctx
+                    .arena
+                    .get(func.name)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|ident| ident.escaped_text.clone())
+                    .or_else(|| self.expression_text(value_decl));
+                (func, func_name, owner_idx)
             } else {
                 return None;
             }

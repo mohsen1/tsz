@@ -218,7 +218,20 @@ impl<'a> CheckerState<'a> {
         // type-only/abstract constructor errors for this `new` target.
         let mut constructor_type = if let Some(expr_node) = self.ctx.arena.get(new_expr.expression)
         {
-            if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            if self.ctx.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
+                && expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+                && let Some(name) = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.clone())
+                && let Some(expando_type) =
+                    self.expando_property_read_type(new_expr.expression, access.expression, &name)
+            {
+                expando_type
+            } else if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
                 let identifier_text = self
                     .ctx
                     .arena
@@ -1302,6 +1315,11 @@ impl<'a> CheckerState<'a> {
                 // implicitly has an 'any' type (only under noImplicitAny).
                 // In JS/checkJs, suppress only when we successfully recognized the
                 // target as a JS constructor via `this`-property synthesis above.
+                if self.ctx.is_js_file()
+                    && self.js_new_target_has_prototype_evidence(new_expr.expression)
+                {
+                    return TypeId::ANY;
+                }
                 if self.ctx.no_implicit_any() {
                     self.error_at_node(
                         idx,
