@@ -74,23 +74,6 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| {
                             self.ctx
                                 .arena
-                                .get_variable_declaration(expr_node)
-                                .and_then(|decl| {
-                                    self.ctx
-                                        .binder
-                                        .resolve_identifier(self.ctx.arena, decl.name)
-                                        .or_else(|| self.ctx.binder.get_node_symbol(decl.name))
-                                })
-                        })
-                        .or(callable_symbol)
-                        .or_else(|| {
-                            self.ctx
-                                .binder
-                                .resolve_identifier(self.ctx.arena, analysis_expr_idx)
-                        })
-                        .or_else(|| {
-                            self.ctx
-                                .arena
                                 .parent_of(analysis_expr_idx)
                                 .and_then(|parent_idx| {
                                     let parent_node = self.ctx.arena.get(parent_idx)?;
@@ -105,6 +88,23 @@ impl<'a> CheckerState<'a> {
                                         .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name))
                                         .or_else(|| self.ctx.binder.get_node_symbol(parent_idx))
                                 })
+                        })
+                        .or_else(|| {
+                            self.ctx
+                                .arena
+                                .get_variable_declaration(expr_node)
+                                .and_then(|decl| {
+                                    self.ctx
+                                        .binder
+                                        .resolve_identifier(self.ctx.arena, decl.name)
+                                        .or_else(|| self.ctx.binder.get_node_symbol(decl.name))
+                                })
+                        })
+                        .or(callable_symbol)
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .resolve_identifier(self.ctx.arena, analysis_expr_idx)
                         })
                 }
             });
