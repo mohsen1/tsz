@@ -1,3 +1,4 @@
+FAIL TypeScript/tests/cases/compiler/computedPropertiesNarrowed.ts | expected:[TS9010,TS9038] actual:[TS9010,TS9038]
 FAIL TypeScript/tests/cases/compiler/conditionalTypeAssignabilityWhenDeferred.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts | expected:[TS1002,TS1005,TS1011,TS1068,TS1109,TS1110,TS1127,TS1128,TS1135] actual:[TS1002,TS1005,TS1011,TS1068,TS1109,TS1128,TS1135,TS1435,TS1472]
 FAIL TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts | expected:[TS2353,TS7006] actual:[TS2353,TS7006]
@@ -1175,7 +1176,6 @@ PASS TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1.ts
 PASS TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1_ES6.ts
 PASS TypeScript/tests/cases/compiler/computedPropertiesInDestructuring2.ts
 PASS TypeScript/tests/cases/compiler/computedPropertiesInDestructuring2_ES6.ts
-PASS TypeScript/tests/cases/compiler/computedPropertiesNarrowed.ts
 PASS TypeScript/tests/cases/compiler/computedPropertiesTransformedInOtherwiseNonTSClasses.ts
 PASS TypeScript/tests/cases/compiler/computedPropertiesWithSetterAssignment.ts
 PASS TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash1.ts
@@ -3739,6 +3739,7 @@ PASS TypeScript/tests/cases/compiler/isolatedDeclarationErrorsEnums.ts
 PASS TypeScript/tests/cases/compiler/isolatedDeclarationErrorsExpandoFunctions.ts
 PASS TypeScript/tests/cases/compiler/isolatedDeclarationErrorsExpressions.ts
 PASS TypeScript/tests/cases/compiler/isolatedDeclarationErrorsFunctionDeclarations.ts
+PASS TypeScript/tests/cases/compiler/isolatedDeclarationErrorsObjects.ts
 PASS TypeScript/tests/cases/compiler/isolatedDeclarationErrorsReturnTypes.ts
 PASS TypeScript/tests/cases/compiler/isolatedDeclarationLazySymbols.ts
 PASS TypeScript/tests/cases/compiler/isolatedDeclarationOutFile.ts
@@ -12574,7 +12575,6 @@ XFAIL TypeScript/tests/cases/compiler/expandoFunctionSymbolPropertyJs.ts | expec
 XFAIL TypeScript/tests/cases/compiler/inferTypePredicates.ts | expected:[TS2322,TS2345,TS2740,TS2741,TS18048] actual:[TS2322,TS2345,TS2740,TS2741,TS18048]
 XFAIL TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts | expected:[TS2344,TS2635] actual:[TS2344,TS2635]
 XFAIL TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts | expected:[TS2300,TS2430,TS2536] actual:[TS2300,TS2536]
-XFAIL TypeScript/tests/cases/compiler/isolatedDeclarationErrorsObjects.ts | expected:[TS7006,TS7032] actual:[TS7006,TS7032,TS9038]
 XFAIL TypeScript/tests/cases/compiler/jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne.tsx | expected:[TS2300] actual:[TS2300,TS2456]
 XFAIL TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts | expected:[TS2322,TS2345,TS2589] actual:[TS2322,TS2339,TS2345,TS2589]
 XFAIL TypeScript/tests/cases/compiler/spellingSuggestionJSXAttribute.tsx | expected:[TS2322,TS2769] actual:[TS2322,TS2769]
