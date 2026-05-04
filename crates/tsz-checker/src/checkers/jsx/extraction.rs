@@ -13,11 +13,8 @@ use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     fn effective_jsx_factory_name(&self) -> String {
         let pragma_factory = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .and_then(|sf| runtime::extract_jsx_pragma(&sf.text));
+            .current_jsx_source_text()
+            .and_then(runtime::extract_jsx_pragma);
         pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone())
     }
 

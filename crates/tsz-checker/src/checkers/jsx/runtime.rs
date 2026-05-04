@@ -3,6 +3,8 @@
 //! pragma extraction, and factory symbol referencing.
 
 use crate::state::CheckerState;
+use std::sync::Arc;
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 
 /// Extract the `@jsx` pragma factory name from a source file's leading comments.
@@ -153,16 +155,22 @@ pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<&'static str> {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn current_jsx_source_text(&self) -> Option<&str> {
+        self.ctx
+            .get_arena_for_file(self.ctx.current_file_idx as u32)
+            .source_files
+            .first()
+            .or_else(|| self.ctx.arena.source_files.first())
+            .map(|sf| sf.text.as_ref())
+    }
+
     /// Return the effective JSX mode for the current file, taking the
     /// `@jsxRuntime` pragma into account.
     pub(crate) fn effective_jsx_mode(&self) -> tsz_common::checker_options::JsxMode {
         use tsz_common::checker_options::JsxMode;
         let pragma = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .and_then(|sf| extract_jsx_runtime_pragma(&sf.text));
+            .current_jsx_source_text()
+            .and_then(extract_jsx_runtime_pragma);
         match pragma {
             Some("classic") => JsxMode::React,
             Some("automatic") => {
@@ -293,8 +301,7 @@ impl<'a> CheckerState<'a> {
     /// Extract `@jsxImportSource <package>` pragma from the current file's
     /// leading comments. Returns the package name or None.
     pub(crate) fn extract_jsx_import_source_pragma(&self) -> Option<String> {
-        let sf = self.ctx.arena.source_files.first()?;
-        let text = &sf.text;
+        let text = self.current_jsx_source_text()?;
         let scan_limit = text.len().min(4096);
         let scan_text = &text[..scan_limit];
         let bytes = scan_text.as_bytes();
@@ -405,16 +412,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let (pragma_factory, pragma_fragment_factory) = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .map(|sf| {
-                (
-                    extract_jsx_pragma(&sf.text),
-                    extract_jsx_frag_pragma(&sf.text),
-                )
-            })
+            .current_jsx_source_text()
+            .map(|source| (extract_jsx_pragma(source), extract_jsx_frag_pragma(source)))
             .unwrap_or_default();
 
         if pragma_factory.is_some() {
@@ -470,28 +469,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let lib_binders = self.get_lib_binders();
-        let found = self.ctx.binder.resolve_name_with_filter(
-            &root_ident_owned,
-            self.ctx.arena,
-            node_idx,
-            &lib_binders,
-            |_| true,
-        );
+        let found = self.resolve_jsx_factory_symbol_in_scope(&root_ident_owned, node_idx);
         if found.is_some() {
             // Mark the fragment factory's import as referenced so subsequent
             // unused-import checks (TS6133 / TS6192) don't flag it.
             self.mark_jsx_name_as_referenced(&fragment_factory, node_idx);
             return;
         }
-        if self
-            .resolve_global_value_symbol(&root_ident_owned)
-            .is_some()
-        {
-            self.mark_jsx_name_as_referenced(&fragment_factory, node_idx);
-            return;
-        }
-
         use crate::diagnostics::diagnostic_codes;
         self.error_at_node_msg(
             node_idx,
@@ -514,10 +498,53 @@ impl<'a> CheckerState<'a> {
             self.ctx.arena,
             node_idx,
             &lib_binders,
-            |_| true,
+            |sym_id| self.is_jsx_factory_symbol_visible(sym_id, &lib_binders),
         ) {
             self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
         }
+    }
+
+    fn resolve_jsx_factory_symbol_in_scope(
+        &self,
+        root_ident: &str,
+        node_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .resolve_name_with_filter(
+                root_ident,
+                self.ctx.arena,
+                node_idx,
+                &lib_binders,
+                |sym_id| self.is_jsx_factory_symbol_visible(sym_id, &lib_binders),
+            )
+            .or_else(|| {
+                self.resolve_global_value_symbol(root_ident)
+                    .filter(|sym_id| self.is_jsx_factory_symbol_visible(*sym_id, &lib_binders))
+            })
+    }
+
+    fn is_jsx_factory_symbol_visible(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[Arc<BinderState>],
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, lib_binders) else {
+            return false;
+        };
+        if symbol.is_type_only || !symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS) {
+            return false;
+        }
+        if symbol.decl_file_idx == u32::MAX
+            || symbol.decl_file_idx == self.ctx.current_file_idx as u32
+        {
+            return true;
+        }
+        if symbol.is_umd_export {
+            return true;
+        }
+        !(symbol.is_exported || symbol.import_module.is_some())
     }
 
     /// Check that the JSX factory is in scope (TS2874).
@@ -584,18 +611,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for per-file /** @jsx factory */ pragma
-        let pragma_factory = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .and_then(|sf| extract_jsx_pragma(&sf.text));
+        let pragma_factory = self.current_jsx_source_text().and_then(extract_jsx_pragma);
         let pragma_fragment_factory = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .and_then(|sf| extract_jsx_frag_pragma(&sf.text));
+            .current_jsx_source_text()
+            .and_then(extract_jsx_frag_pragma);
 
         let factory = if is_fragment {
             pragma_fragment_factory
@@ -621,16 +640,9 @@ impl<'a> CheckerState<'a> {
                 pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
             let jsx_root = jsx_factory.split('.').next().unwrap_or(&jsx_factory);
             if !jsx_root.is_empty() {
-                let lib_binders2 = self.get_lib_binders();
-                let found_jsx = self.ctx.binder.resolve_name_with_filter(
-                    jsx_root,
-                    self.ctx.arena,
-                    node_idx,
-                    &lib_binders2,
-                    |_| true,
-                );
-                let jsx_in_scope =
-                    found_jsx.is_some() || self.resolve_global_value_symbol(jsx_root).is_some();
+                let jsx_in_scope = self
+                    .resolve_jsx_factory_symbol_in_scope(jsx_root, node_idx)
+                    .is_some();
                 if jsx_in_scope {
                     self.mark_jsx_name_as_referenced(&jsx_factory, node_idx);
                 } else {
@@ -658,17 +670,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check full scope chain (accept-all filter to include class members)
-        let lib_binders = self.get_lib_binders();
-        let found = self.ctx.binder.resolve_name_with_filter(
-            root_ident,
-            self.ctx.arena,
-            node_idx,
-            &lib_binders,
-            |_| true, // Accept any symbol, including class members
-        );
-        let resolved_in_scope =
-            found.is_some() || self.resolve_global_value_symbol(root_ident).is_some();
+        let resolved_in_scope = self
+            .resolve_jsx_factory_symbol_in_scope(root_ident, node_idx)
+            .is_some();
 
         if resolved_in_scope {
             // tsc treats a pragma-driven `@jsx` / `@jsxFrag` factory as a use
@@ -683,16 +687,9 @@ impl<'a> CheckerState<'a> {
                     pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
                 let jsx_root = jsx_factory.split('.').next().unwrap_or(&jsx_factory);
                 if !jsx_root.is_empty() {
-                    let lib_binders2 = self.get_lib_binders();
-                    let found_jsx = self.ctx.binder.resolve_name_with_filter(
-                        jsx_root,
-                        self.ctx.arena,
-                        node_idx,
-                        &lib_binders2,
-                        |_| true,
-                    );
-                    let jsx_in_scope =
-                        found_jsx.is_some() || self.resolve_global_value_symbol(jsx_root).is_some();
+                    let jsx_in_scope = self
+                        .resolve_jsx_factory_symbol_in_scope(jsx_root, node_idx)
+                        .is_some();
                     if jsx_in_scope {
                         self.mark_jsx_name_as_referenced(&jsx_factory, node_idx);
                     } else {
@@ -740,12 +737,7 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
 
         // Get the effective factory name (pragma overrides config)
-        let pragma_factory = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .and_then(|sf| extract_jsx_pragma(&sf.text));
+        let pragma_factory = self.current_jsx_source_text().and_then(extract_jsx_pragma);
         let factory = pragma_factory.or_else(|| {
             if self.ctx.compiler_options.jsx_factory_from_config {
                 Some(self.ctx.compiler_options.jsx_factory.clone())
