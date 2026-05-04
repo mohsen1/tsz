@@ -1762,6 +1762,156 @@ fn format_index_access_type() {
     assert_eq!(fmt.format(idx), "string[number]");
 }
 
+/// Helper for the homomorphic-mapped indexed-access tests below: builds a
+/// homomorphic identity Mapped type `{ readonly? [bound in keyof source]?: source[bound] }`
+/// using `bound_name` as the iteration variable name. Switching `bound_name`
+/// across tests guards against any name-hardcoded simplification logic.
+fn make_homomorphic_mapped(
+    db: &TypeInterner,
+    source: TypeId,
+    bound_name: &str,
+    optional: Option<MappedModifier>,
+    readonly: Option<MappedModifier>,
+) -> TypeId {
+    let bound = db.type_param(TypeParamInfo {
+        name: db.intern_string(bound_name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let template = db.index_access(source, bound);
+    db.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: db.intern_string(bound_name),
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: db.keyof(source),
+        template,
+        name_type: None,
+        readonly_modifier: readonly,
+        optional_modifier: optional,
+    })
+}
+
+#[test]
+fn homomorphic_mapped_index_access_partial_simplifies() {
+    // `Partial<U>[K]` — homomorphic identity Mapped with `optional_modifier = Add` —
+    // displays as `U[K] | undefined`, matching tsc, instead of the structural
+    // `{ [P in keyof U]?: U[P] | undefined; }[K]` form.
+    let db = TypeInterner::new();
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let partial_u = make_homomorphic_mapped(&db, u, "P", Some(MappedModifier::Add), None);
+    let access = db.index_access(partial_u, k);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(access), "U[K] | undefined");
+}
+
+#[test]
+fn homomorphic_mapped_index_access_readonly_simplifies() {
+    // `Readonly<U>[K]` — homomorphic identity Mapped with `readonly_modifier = Add` —
+    // displays as `U[K]` (readonly is a property-level modifier and does not
+    // appear in indexed-access value types).
+    let db = TypeInterner::new();
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let readonly_u = make_homomorphic_mapped(&db, u, "P", None, Some(MappedModifier::Add));
+    let access = db.index_access(readonly_u, k);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(access), "U[K]");
+}
+
+#[test]
+fn homomorphic_mapped_index_access_independent_of_bound_name() {
+    // The simplification is structural: it must hold for any iteration
+    // variable name (P, X, Q, ...). A name-hardcoded check (e.g. `name == "P"`)
+    // would silently fall back to the structural form for non-`P` aliases.
+    let db = TypeInterner::new();
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let key_index = db.keyof(u);
+    let partial_u_q = make_homomorphic_mapped(&db, u, "Q", Some(MappedModifier::Add), None);
+    let partial_u_x = make_homomorphic_mapped(&db, u, "X", Some(MappedModifier::Add), None);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(
+        fmt.format(db.index_access(partial_u_q, key_index)),
+        "U[keyof U] | undefined"
+    );
+    assert_eq!(
+        fmt.format(db.index_access(partial_u_x, key_index)),
+        "U[keyof U] | undefined"
+    );
+}
+
+#[test]
+fn homomorphic_mapped_index_access_skips_non_identity_template() {
+    // A non-homomorphic mapped (template body is not `source[P]`) must keep
+    // the structural display, since `M[K]` no longer reduces to `source[K]`.
+    let db = TypeInterner::new();
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let mapped = db.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: db.intern_string("P"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: db.keyof(u),
+        template: TypeId::NUMBER, // not `U[P]`
+        name_type: None,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let access = db.index_access(mapped, k);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let formatted = fmt.format(access);
+    assert!(
+        formatted.contains("[P in keyof U]"),
+        "expected structural mapped form for non-homomorphic template, got: {formatted}"
+    );
+}
+
 #[test]
 fn format_this_type() {
     let db = TypeInterner::new();

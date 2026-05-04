@@ -22,7 +22,7 @@ use crate::diagnostics::{
     get_message_template,
 };
 use crate::types::{
-    IntrinsicKind, StringIntrinsicKind, TypeData, TypeId, TypeListId, TypeParamInfo,
+    IntrinsicKind, MappedModifier, StringIntrinsicKind, TypeData, TypeId, TypeListId, TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -168,6 +168,76 @@ impl<'a> TypeFormatter<'a> {
             return arg;
         }
         resolved
+    }
+
+    /// If `obj` is a homomorphic identity mapped type
+    /// (`{ [P in keyof X]: X[P] }`, with optional/readonly modifier variants)
+    /// then `obj[idx]` displays as `X[idx]`, plus `| undefined` when the
+    /// mapped's optional modifier is `+`. Returns `None` for any other
+    /// mapped shape so non-homomorphic mapped types continue to print
+    /// with their full structural form.
+    ///
+    /// This mirrors tsc's display: `Partial<U>[K]` shows as `U[K] | undefined`,
+    /// `Readonly<U>[K]` shows as `U[K]`, regardless of the user-chosen
+    /// iteration variable name in the alias body.
+    fn try_format_homomorphic_mapped_index_access(
+        &mut self,
+        obj: TypeId,
+        idx: TypeId,
+    ) -> Option<String> {
+        let mapped_id = match self.interner.lookup(obj) {
+            Some(TypeData::Mapped(id)) => id,
+            _ => return None,
+        };
+        let mapped = self.interner.mapped_type(mapped_id);
+
+        // `as` clauses (name remapping) change the key relationship; bail.
+        if mapped.name_type.is_some() {
+            return None;
+        }
+
+        // Constraint must be `keyof <source>`.
+        let source = match self.interner.lookup(mapped.constraint) {
+            Some(TypeData::KeyOf(operand)) => operand,
+            _ => return None,
+        };
+
+        // Template body must be `IndexAccess(source, P)` where P is the
+        // mapped's own iteration parameter — i.e. the homomorphic-identity
+        // shape that tsc treats as `Partial<source>` / `Readonly<source>`.
+        let (template_obj, template_idx) = match self.interner.lookup(mapped.template) {
+            Some(TypeData::IndexAccess(o, i)) => (o, i),
+            _ => return None,
+        };
+        if template_obj != source {
+            return None;
+        }
+        match self.interner.lookup(template_idx) {
+            Some(TypeData::TypeParameter(tp)) if tp.name == mapped.type_param.name => {}
+            _ => return None,
+        }
+
+        // Format `source[idx]`, parenthesizing source only when needed for
+        // unions / intersections that actually render with operators.
+        let source_str = self.format(source);
+        let needs_parens = matches!(
+            self.interner.lookup(source),
+            Some(TypeData::Union(_) | TypeData::Intersection(_))
+        ) && (source_str.contains(" & ") || source_str.contains(" | "));
+        let idx_str = self.format(idx);
+        let core = if needs_parens {
+            format!("({source_str})[{idx_str}]")
+        } else {
+            format!("{source_str}[{idx_str}]")
+        };
+
+        // Optional + adds `| undefined`; readonly is a property-level
+        // modifier and does not change the value type at an index access.
+        if mapped.optional_modifier == Some(MappedModifier::Add) {
+            Some(format!("{core} | undefined"))
+        } else {
+            Some(core)
+        }
     }
 
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
@@ -1348,6 +1418,19 @@ impl<'a> TypeFormatter<'a> {
                 self.format_mapped(mapped.as_ref()).into()
             }
             TypeData::IndexAccess(obj, idx) => {
+                // Homomorphic mapped indexed access simplification:
+                // tsc displays `M[K]` for a homomorphic identity Mapped
+                // `M = { [P in keyof X]: X[P] }` (e.g. `Partial<X>`,
+                // `Readonly<X>`) as `X[K]`, with `| undefined` appended when
+                // the mapped's optional modifier is `+`. The structural
+                // mapped form still appears when M is formatted directly,
+                // but in indexed-access position tsc collapses to the
+                // simpler X[K] form.
+                if let Some(simplified) =
+                    self.try_format_homomorphic_mapped_index_access(*obj, *idx)
+                {
+                    return simplified.into();
+                }
                 let obj_str = self.format(*obj);
                 // Parenthesize the object when it's a union or intersection AND
                 // the formatted string actually shows the compound form (contains
