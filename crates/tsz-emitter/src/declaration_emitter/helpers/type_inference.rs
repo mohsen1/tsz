@@ -4481,6 +4481,7 @@ impl<'a> DeclarationEmitter<'a> {
         let mut only_numeric_like = true;
         let mut has_non_emittable_computed_members = false;
         let mut synthetic_number_index_member = None;
+        let mut negative_numeric_computed_names = Vec::new();
 
         for &member_idx in &object.elements.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -4507,7 +4508,16 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            let Some(name_text) = self.object_literal_member_name_text(name_idx) else {
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(source_name_text) = self.get_source_slice(name_node.pos, name_node.end)
+                && let Some(key_text) =
+                    Self::negative_numeric_computed_property_key_text(&source_name_text)
+            {
+                negative_numeric_computed_names
+                    .push((key_text.to_string(), source_name_text.trim().to_string()));
+            }
+
+            let Some(mut name_text) = self.object_literal_member_name_text(name_idx) else {
                 if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                     has_non_emittable_computed_members = true;
                     if synthetic_number_index_member.is_none() {
@@ -4523,12 +4533,18 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 continue;
             };
-            concrete_member_names.push(name_text.clone());
             let preserve_computed_syntax = name_node.kind
                 == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                 && self
                     .resolved_computed_property_name_text(name_idx)
                     .is_none();
+            if preserve_computed_syntax
+                && let Some(source_name_text) = self.get_source_slice(name_node.pos, name_node.end)
+                && Self::is_negative_numeric_computed_property_name_text(&source_name_text)
+            {
+                name_text = source_name_text.trim().to_string();
+            }
+            concrete_member_names.push(name_text.clone());
             let Some(member_text) = self.infer_object_member_type_text_named_at(
                 member_idx,
                 &name_text,
@@ -4567,6 +4583,48 @@ impl<'a> DeclarationEmitter<'a> {
         let mut lines: Vec<String> = printed.lines().map(str::to_string).collect();
         if lines.len() < 2 {
             return Some(printed);
+        }
+
+        if has_non_emittable_computed_members {
+            let index_signature_value_types: Vec<String> = lines
+                .iter()
+                .filter_map(|line| {
+                    Self::broad_object_index_signature_value_type(line).map(str::to_string)
+                })
+                .collect();
+            if !index_signature_value_types.is_empty() {
+                computed_members.retain(|(_, member_text)| {
+                    Self::object_literal_property_value_type(member_text).is_none_or(
+                        |member_value_type| {
+                            !index_signature_value_types
+                                .iter()
+                                .any(|index_value_type| index_value_type == member_value_type)
+                        },
+                    )
+                });
+            }
+        } else {
+            let computed_value_types: Vec<String> = computed_members
+                .iter()
+                .filter_map(|(name_text, member_text)| {
+                    Self::is_symbol_observer_computed_property_name_text(name_text)
+                        .then(|| Self::object_literal_property_value_type(member_text))
+                        .flatten()
+                        .map(str::to_string)
+                })
+                .collect();
+            if !computed_value_types.is_empty() {
+                lines.retain(|line| {
+                    let Some(index_value_type) =
+                        Self::broad_object_index_signature_value_type(line)
+                    else {
+                        return true;
+                    };
+                    !computed_value_types
+                        .iter()
+                        .any(|member_value_type| member_value_type == index_value_type)
+                });
+            }
         }
 
         if only_numeric_like {
@@ -4635,6 +4693,20 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        if !negative_numeric_computed_names.is_empty() {
+            for line in &mut lines {
+                for (key_text, source_name_text) in &negative_numeric_computed_names {
+                    if Self::replace_object_literal_property_line_name(
+                        line,
+                        key_text,
+                        source_name_text,
+                    ) {
+                        break;
+                    }
+                }
+            }
+        }
+
         Some(lines.join("\n"))
     }
 
@@ -4654,6 +4726,74 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        false
+    }
+
+    fn broad_object_index_signature_value_type(line: &str) -> Option<&str> {
+        let trimmed = line.trim_start();
+        let without_readonly = trimmed
+            .strip_prefix("readonly ")
+            .unwrap_or(trimmed)
+            .trim_start();
+        (without_readonly.starts_with("[x: string]:")
+            || without_readonly.starts_with("[x: number]:")
+            || without_readonly.starts_with("[x: symbol]:"))
+        .then(|| Self::object_literal_property_value_type(without_readonly))
+        .flatten()
+    }
+
+    fn object_literal_property_value_type(line: &str) -> Option<&str> {
+        let trimmed = line.trim().trim_end_matches(';').trim();
+        let without_readonly = trimmed
+            .strip_prefix("readonly ")
+            .unwrap_or(trimmed)
+            .trim_start();
+        let colon_idx = if without_readonly.starts_with('[') {
+            let bracket_end = without_readonly.find(']')?;
+            without_readonly.get(bracket_end + 1..)?.find(':')? + bracket_end + 1
+        } else {
+            without_readonly.find(':')?
+        };
+        without_readonly.get(colon_idx + 1..).map(str::trim)
+    }
+
+    fn is_symbol_observer_computed_property_name_text(name_text: &str) -> bool {
+        name_text.trim_start().starts_with("[Symbol.observer]")
+    }
+
+    fn is_negative_numeric_computed_property_name_text(name_text: &str) -> bool {
+        Self::negative_numeric_computed_property_key_text(name_text).is_some()
+    }
+
+    fn negative_numeric_computed_property_key_text(name_text: &str) -> Option<&str> {
+        let inner = name_text
+            .trim()
+            .strip_prefix("[-")
+            .and_then(|name| name.strip_suffix(']'))?;
+
+        inner.parse::<f64>().ok()?;
+        name_text.trim().strip_prefix('[')?.strip_suffix(']')
+    }
+
+    fn replace_object_literal_property_line_name(
+        line: &mut String,
+        key_text: &str,
+        replacement_name: &str,
+    ) -> bool {
+        let leading_len = line.len() - line.trim_start().len();
+        let trimmed = &line[leading_len..];
+        let candidates = [
+            format!("\"{key_text}\":"),
+            format!("'{key_text}':"),
+            format!("{key_text}:"),
+        ];
+        for candidate in candidates {
+            if trimmed.starts_with(&candidate) {
+                let replacement = format!("{replacement_name}:");
+                line.replace_range(leading_len..leading_len + candidate.len(), &replacement);
+                return true;
+            }
+        }
         false
     }
 

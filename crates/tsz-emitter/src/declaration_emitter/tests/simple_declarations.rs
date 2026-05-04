@@ -2439,6 +2439,253 @@ var obj = {
 }
 
 #[test]
+fn symbol_observer_computed_member_drops_redundant_index_signature() {
+    let source = r#"
+interface SymbolConstructor {
+    readonly observer: symbol;
+}
+interface SymbolConstructor {
+    readonly observer: unique symbol;
+}
+
+const obj = {
+    [Symbol.observer]: 0
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let obj_decl = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| parser.arena.get_identifier_text(decl.name) == Some("obj"))
+                .map(|decl| (NodeIndex(idx as u32), decl))
+        })
+        .map(|(_, decl)| decl)
+        .expect("missing obj declaration");
+    let object_literal = parser
+        .arena
+        .get(obj_decl.initializer)
+        .and_then(|node| parser.arena.get_literal_expr(node))
+        .expect("missing obj object literal");
+    let prop_assignment = parser
+        .arena
+        .get(object_literal.elements.nodes[0])
+        .and_then(|node| parser.arena.get_property_assignment(node))
+        .expect("missing computed property assignment");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let object_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: Some(interner.intern_string("x")),
+        }),
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(obj_decl.initializer.0, object_type);
+    type_cache
+        .node_types
+        .insert(prop_assignment.initializer.0, TypeId::NUMBER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("[Symbol.observer]: number;"),
+        "Expected computed symbol property to survive: {output}"
+    );
+    assert!(
+        !output.contains("[x: number]: number;"),
+        "Did not expect redundant synthetic numeric index signature: {output}"
+    );
+}
+
+#[test]
+fn non_symbol_computed_member_preserves_matching_index_signature() {
+    let source = r#"
+const key = "x";
+const obj = {
+    [key]: 0
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let obj_decl = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| parser.arena.get_identifier_text(decl.name) == Some("obj"))
+        })
+        .expect("missing obj declaration");
+    let object_literal = parser
+        .arena
+        .get(obj_decl.initializer)
+        .and_then(|node| parser.arena.get_literal_expr(node))
+        .expect("missing obj object literal");
+    let prop_assignment = parser
+        .arena
+        .get(object_literal.elements.nodes[0])
+        .and_then(|node| parser.arena.get_property_assignment(node))
+        .expect("missing computed property assignment");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let object_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: Some(interner.intern_string("x")),
+        }),
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(obj_decl.initializer.0, object_type);
+    type_cache
+        .node_types
+        .insert(prop_assignment.initializer.0, TypeId::NUMBER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("[x: number]: number;"),
+        "Expected non-Symbol computed property to preserve matching index signature: {output}"
+    );
+}
+
+#[test]
+fn well_known_symbol_computed_member_preserves_matching_index_signature() {
+    let source = r#"
+const obj = {
+    [Symbol.iterator]: 0
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let obj_decl = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| parser.arena.get_identifier_text(decl.name) == Some("obj"))
+        })
+        .expect("missing obj declaration");
+    let object_literal = parser
+        .arena
+        .get(obj_decl.initializer)
+        .and_then(|node| parser.arena.get_literal_expr(node))
+        .expect("missing obj object literal");
+    let prop_assignment = parser
+        .arena
+        .get(object_literal.elements.nodes[0])
+        .and_then(|node| parser.arena.get_property_assignment(node))
+        .expect("missing computed property assignment");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let object_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: Some(interner.intern_string("x")),
+        }),
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(obj_decl.initializer.0, object_type);
+    type_cache
+        .node_types
+        .insert(prop_assignment.initializer.0, TypeId::NUMBER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("[Symbol.iterator]: number;"),
+        "Expected computed symbol property to survive: {output}"
+    );
+    assert!(
+        output.contains("[x: number]: number;"),
+        "Expected non-observer Symbol computed property to preserve matching index signature: {output}"
+    );
+}
+
+#[test]
+fn negative_numeric_computed_member_preserves_computed_syntax() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+var v = {
+    [-1]: {},
+    [+1]: {},
+    [~1]: {},
+    [!1]: {}
+};
+"#,
+    );
+
+    assert!(
+        output.contains("[-1]: {};"),
+        "Expected negative numeric computed syntax to be preserved: {output}"
+    );
+    assert!(
+        !output.contains("\"-1\": {};"),
+        "Did not expect negative numeric computed property to be quoted: {output}"
+    );
+    assert!(
+        !output.contains("[-2]: {};"),
+        "Expected non-literal negative numeric key to be covered by the numeric index signature: {output}"
+    );
+}
+
+#[test]
 fn test_object_literal_computed_literal_key_reuses_resolved_property_name() {
     let source = r#"
 const Foo = {

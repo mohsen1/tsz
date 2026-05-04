@@ -813,8 +813,23 @@ impl<'a> TypePrinter<'a> {
         }
 
         let should_skip_property = |prop: &tsz_solver::types::PropertyInfo| {
+            let name = self.resolve_atom(prop.name);
+            let redundant_negative_numeric_index_type = shape
+                .number_index
+                .as_ref()
+                .map(|idx| idx.value_type)
+                .or_else(|| shape.string_index.as_ref().map(|idx| idx.value_type));
+            let redundant_negative_numeric =
+                redundant_negative_numeric_index_type.is_some_and(|index_value_type| {
+                    !prop.is_string_named
+                        && name != "-1"
+                        && name.starts_with('-')
+                        && name.parse::<f64>().is_ok()
+                        && self.print_type(index_value_type) == self.print_type(prop.type_id)
+                });
             self.property_is_hidden_in_declaration_shape(prop)
-                || matches!(self.resolve_atom(prop.name).as_str(), "" | ":")
+                || redundant_negative_numeric
+                || matches!(name.as_str(), "" | ":")
                 || self
                     .declaration_property_name_text(prop)
                     .trim_start()
