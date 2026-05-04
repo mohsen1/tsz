@@ -133,11 +133,15 @@ impl<'a> CheckerState<'a> {
 
         let evaluated_target = self.evaluate_type_with_env(target);
 
-        // Run named-property value checks for the side effect of emitting
-        // diagnostics on mapped/string-index targets. The returned flag is
-        // unused after the dead-conditional cleanup below; keeping the call
-        // (vs. let `_ = …`) makes the side-effect intent explicit.
-        let _ = self.check_object_literal_named_property_values_against_target(idx, target);
+        // Run named-property value checks before excess-property reporting. When
+        // a known property is already invalid, tsc reports that assignability
+        // error instead of additionally reporting an excess property from the
+        // same object literal.
+        let emitted_named_property_value_error =
+            self.check_object_literal_named_property_values_against_target(idx, target);
+        if emitted_named_property_value_error {
+            return;
+        }
 
         // Excess property checks do not apply to type parameters (even with constraints).
         if query::is_type_parameter_like(self.ctx.types, target) {
@@ -153,12 +157,6 @@ impl<'a> CheckerState<'a> {
         };
         // Non-fresh object literals should be exempt from excess-property checks
         // unless they use spread, in which case we still check explicit properties.
-        // (The previous `if emitted_named_property_value_error { return; }` inner
-        //  guard was dead code — both branches returned — so collapse to a single
-        //  unconditional return here. If a future change wants non-fresh sources
-        //  with no spread to fall through, drop the surrounding return entirely
-        //  rather than gating on the named-property-error flag, which is unset by
-        //  the time we arrive here.)
         if !is_fresh_source && explicit_property_names.is_none() {
             return;
         }
@@ -442,11 +440,13 @@ impl<'a> CheckerState<'a> {
                         return;
                     }
 
-                    self.check_nested_object_literal_excess_properties(
+                    if self.check_nested_object_literal_excess_properties(
                         source_prop.name,
                         Some(nested_target),
                         idx,
-                    );
+                    ) {
+                        return;
+                    }
                 }
             }
             self.emit_tracked_excess_property(first_excess, target);
@@ -584,11 +584,13 @@ impl<'a> CheckerState<'a> {
                             source_prop.name,
                             nested_target,
                         );
-                        self.check_nested_object_literal_excess_properties(
+                        if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),
                             idx,
-                        );
+                        ) {
+                            return;
+                        }
                     }
                 }
             }
@@ -630,18 +632,20 @@ impl<'a> CheckerState<'a> {
                             source_prop.type_id,
                             type_id,
                         ) {
-                            continue;
+                            return;
                         }
                         let nested_target = self.nested_property_target_type(
                             effective_target,
                             source_prop.name,
                             type_id,
                         );
-                        self.check_nested_object_literal_excess_properties(
+                        if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),
                             idx,
-                        );
+                        ) {
+                            return;
+                        }
                     }
                     tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                         ..
@@ -667,7 +671,10 @@ impl<'a> CheckerState<'a> {
             let target_props = target_shape.properties.as_slice();
             let should_check_named_values = [target, effective_target, resolved_target]
                 .into_iter()
-                .any(|candidate| self.target_is_mapped_or_mapped_application(candidate));
+                .any(|candidate| {
+                    self.target_is_mapped_or_mapped_application(candidate)
+                        || self.target_is_or_displays_type_application(candidate)
+                });
 
             // When the target has a string index signature, outer property names are
             // all valid (any string key is accepted). But we still need to check
@@ -704,7 +711,7 @@ impl<'a> CheckerState<'a> {
                             source_prop.type_id,
                             target_prop.type_id,
                         ) {
-                            continue;
+                            return;
                         }
                         nested_types.push(target_prop.type_id);
                     }
@@ -715,11 +722,13 @@ impl<'a> CheckerState<'a> {
                         source_prop.name,
                         nested_target,
                     );
-                    self.check_nested_object_literal_excess_properties(
+                    if self.check_nested_object_literal_excess_properties(
                         source_prop.name,
                         Some(nested_target),
                         idx,
-                    );
+                    ) {
+                        return;
+                    }
                 }
                 return;
             }
@@ -816,18 +825,20 @@ impl<'a> CheckerState<'a> {
                                 target_prop_type,
                             )
                         {
-                            continue;
+                            return;
                         }
                         let nested_target = self.nested_property_target_type(
                             effective_target,
                             source_prop.name,
                             target_prop_type,
                         );
-                        self.check_nested_object_literal_excess_properties(
+                        if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),
                             idx,
-                        );
+                        ) {
+                            return;
+                        }
                     }
                 }
             }
@@ -1245,6 +1256,29 @@ impl<'a> CheckerState<'a> {
             let report_idx = self
                 .find_object_literal_property_element(obj_literal_idx, source_prop.name)
                 .unwrap_or(obj_literal_idx);
+            if let Some(nested_idx) = self.object_literal_property_initializer(report_idx) {
+                let nested_idx = self.ctx.arena.skip_parenthesized(nested_idx);
+                if self
+                    .ctx
+                    .arena
+                    .get(nested_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                {
+                    let nested_request =
+                        crate::context::TypingRequest::with_contextual_type(target_value_type);
+                    let nested_source =
+                        self.get_type_of_node_with_request(nested_idx, &nested_request);
+                    let before_nested = self.ctx.diagnostics.len();
+                    self.check_object_literal_excess_properties(
+                        nested_source,
+                        target_value_type,
+                        nested_idx,
+                    );
+                    if self.ctx.diagnostics.len() > before_nested {
+                        continue;
+                    }
+                }
+            }
             self.error_type_not_assignable_at_with_anchor(
                 source_prop.type_id,
                 target_value_type,
@@ -1611,14 +1645,15 @@ impl<'a> CheckerState<'a> {
         prop_name: tsz_common::interner::Atom,
         target_prop_type: Option<TypeId>,
         obj_literal_idx: NodeIndex,
-    ) {
+    ) -> bool {
+        let diagnostics_before = self.ctx.diagnostics.len();
         // Get the AST node for the object literal
         let Some(obj_node) = self.ctx.arena.get(obj_literal_idx) else {
-            return;
+            return false;
         };
 
         let Some(obj_lit) = self.ctx.arena.get_literal_expr(obj_node) else {
-            return;
+            return false;
         };
 
         // =============================================================
@@ -1708,9 +1743,10 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                return; // Found the property, stop searching
+                return self.ctx.diagnostics.len() > diagnostics_before;
             }
         }
+        false
     }
 
     /// Find the property element node in an object literal by interned property name.
@@ -1743,6 +1779,23 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    fn object_literal_property_initializer(&self, prop_idx: NodeIndex) -> Option<NodeIndex> {
+        let prop_node = self.ctx.arena.get(prop_idx)?;
+        match prop_node.kind {
+            syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .ctx
+                .arena
+                .get_property_assignment(prop_node)
+                .map(|prop| prop.initializer),
+            syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                .ctx
+                .arena
+                .get_shorthand_property(prop_node)
+                .map(|prop| prop.name),
+            _ => None,
+        }
     }
 
     pub(crate) fn object_literal_property_display_name(

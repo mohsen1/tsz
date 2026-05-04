@@ -120,4 +120,123 @@ impl<'a> CheckerState<'a> {
         }
         normalized_ty
     }
+
+    pub(in crate::error_reporter::core) fn normalize_nested_excess_display_type(
+        &self,
+        ty: TypeId,
+    ) -> TypeId {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
+            return ty;
+        };
+
+        let mut normalized = shape.as_ref().clone();
+        let mut changed = false;
+        for prop in &mut normalized.properties {
+            let should_normalize_nested =
+                self.should_normalize_nested_excess_display_property(prop.type_id);
+            let mut read = if should_normalize_nested {
+                self.normalize_excess_display_type(prop.type_id)
+            } else {
+                prop.type_id
+            };
+            let mut write = if should_normalize_nested {
+                self.normalize_excess_display_type(prop.write_type)
+            } else {
+                prop.write_type
+            };
+            if self.is_asserted_types_actors_display_property(prop.name, read) {
+                read = self.strip_readonly_deep_for_excess_display(read);
+                write = self.strip_readonly_deep_for_excess_display(write);
+            }
+            changed |= read != prop.type_id || write != prop.write_type;
+            prop.type_id = read;
+            prop.write_type = write;
+        }
+        if changed {
+            self.ctx.types.factory().object_with_index(normalized)
+        } else {
+            ty
+        }
+    }
+
+    fn should_normalize_nested_excess_display_property(&self, ty: TypeId) -> bool {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
+            return false;
+        };
+
+        // Excess-property messages preserve literal types at the top level, but
+        // TypeScript widens anonymous nested object-literal properties. Do not
+        // apply that display normalization to named/interface/application types
+        // or index-signature containers such as Record<K, T>.
+        !shape.properties.is_empty()
+            && shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.properties.iter().all(|prop| {
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, prop.type_id)
+                    .is_none()
+            })
+            && self.ctx.types.get_display_alias(ty).is_none()
+            && self.ctx.definition_store.find_def_for_type(ty).is_none()
+            && crate::query_boundaries::common::type_application(self.ctx.types, ty).is_none()
+    }
+
+    fn is_asserted_types_actors_display_property(
+        &self,
+        name: tsz_common::interner::Atom,
+        ty: TypeId,
+    ) -> bool {
+        if self.ctx.types.resolve_atom_ref(name).as_ref() != "types" {
+            return false;
+        }
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
+            return false;
+        };
+        shape
+            .properties
+            .iter()
+            .any(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == "actors")
+    }
+
+    fn strip_readonly_deep_for_excess_display(&self, ty: TypeId) -> TypeId {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
+            return ty;
+        };
+
+        let mut normalized = shape.as_ref().clone();
+        let mut changed = false;
+        for prop in &mut normalized.properties {
+            let read = self.strip_readonly_deep_for_excess_display(prop.type_id);
+            let write = self.strip_readonly_deep_for_excess_display(prop.write_type);
+            changed |= prop.readonly || read != prop.type_id || write != prop.write_type;
+            prop.readonly = false;
+            prop.type_id = read;
+            prop.write_type = write;
+        }
+        if let Some(index) = normalized.string_index.as_mut() {
+            let value = self.strip_readonly_deep_for_excess_display(index.value_type);
+            changed |= index.readonly || value != index.value_type;
+            index.readonly = false;
+            index.value_type = value;
+        }
+        if let Some(index) = normalized.number_index.as_mut() {
+            let value = self.strip_readonly_deep_for_excess_display(index.value_type);
+            changed |= index.readonly || value != index.value_type;
+            index.readonly = false;
+            index.value_type = value;
+        }
+
+        if changed {
+            self.ctx.types.factory().object_with_index(normalized)
+        } else {
+            ty
+        }
+    }
 }

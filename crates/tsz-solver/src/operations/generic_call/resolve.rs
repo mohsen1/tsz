@@ -1468,6 +1468,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // parameters like `T` must still count as usable evidence.
             let has_constraints = matches!(&constraints, Some(c) if !c.is_empty())
                 || infer_ctx.has_usable_contra_candidates(var, self.interner.as_type_database());
+            let has_only_declared_upper_bounds = tp.default.is_some()
+                && !infer_ctx.has_usable_contra_candidates(var, self.interner.as_type_database())
+                && constraints
+                    .as_ref()
+                    .is_some_and(|c| c.lower_bounds.is_empty() && !c.upper_bounds.is_empty());
             let lower_bounds = constraints
                 .as_ref()
                 .map(|c| c.lower_bounds.clone())
@@ -1482,7 +1487,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 constraint = ?tp.constraint,
                 "Resolving type parameter"
             );
-            let ty = if has_constraints {
+            let ty = if has_constraints && !has_only_declared_upper_bounds {
                 let mut resolved_direct = None;
                 let contra_only = infer_ctx.has_only_contra_candidates(var);
                 let has_usable_contra_candidates =

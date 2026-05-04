@@ -1171,6 +1171,17 @@ impl<'a> CheckerState<'a> {
             return false; // Don't suppress - let the actual assignability check run
         }
 
+        let evaluated_source = self.ctx.types.evaluate_type(source);
+        let evaluated_target = self.ctx.types.evaluate_type(target);
+        if let (Some(source_elem), Some(target_elem)) = (
+            crate::query_boundaries::common::array_element_type(self.ctx.types, evaluated_source),
+            crate::query_boundaries::common::array_element_type(self.ctx.types, evaluated_target),
+        ) && crate::query_boundaries::common::is_mapped_type(self.ctx.types, source_elem)
+            && is_type_parameter_like(self.ctx.types, target_elem)
+        {
+            return false;
+        }
+
         matches!(source, TypeId::ERROR)
             || source_is_intersection_with_indexed_access()
             || matches!(target, TypeId::ERROR | TypeId::ANY)
@@ -2059,6 +2070,14 @@ impl<'a> CheckerState<'a> {
         } else {
             target_eval
         };
+
+        if let (Some(s_elem), Some(t_elem)) = (
+            crate::query_boundaries::common::array_element_type(self.ctx.types, source),
+            crate::query_boundaries::common::array_element_type(self.ctx.types, target),
+        ) && !self.is_assignable_to(s_elem, t_elem)
+        {
+            return false;
+        }
 
         let result = self.check_assignability_cached(source, target, 0, "is_assignable_to");
 

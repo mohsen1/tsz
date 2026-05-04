@@ -15,7 +15,8 @@ use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
 use crate::types::{IntrinsicKind, TypeApplicationId, TypeData, TypeId};
 use crate::visitor::{
-    application_id, contains_this_type, enum_components, lazy_def_id, literal_value, union_list_id,
+    application_id, array_element_type, contains_this_type, enum_components, lazy_def_id,
+    literal_value, union_list_id,
 };
 
 // Global thread-local fuel counter for cross-instance subtype check termination.
@@ -675,6 +676,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 leave_global!();
                 return result;
             }
+        }
+
+        // Arrays must compare their element types before evaluation turns them into
+        // structural Array interface objects. Otherwise a generic mapped element type
+        // can be accepted through the recursive Array shape even when the direct
+        // element relation fails.
+        if let (Some(s_elem), Some(t_elem)) = (
+            array_element_type(self.interner, source),
+            array_element_type(self.interner, target),
+        ) {
+            let result = self.check_subtype(s_elem, t_elem);
+            if let Some(dp) = def_entered {
+                self.def_guard.leave(dp);
+            }
+            self.guard.leave(pair);
+            if !has_this_type && let Some(db) = self.query_db {
+                let key = self.make_cache_key(source, target);
+                match result {
+                    SubtypeResult::True => db.insert_subtype_cache(key, true),
+                    SubtypeResult::False => db.insert_subtype_cache(key, false),
+                    SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
+                }
+            }
+            leave_global!();
+            return result;
         }
 
         // =========================================================================
