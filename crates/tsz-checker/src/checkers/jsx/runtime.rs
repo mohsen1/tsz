@@ -479,12 +479,16 @@ impl<'a> CheckerState<'a> {
             |_| true,
         );
         if found.is_some() {
+            // Mark the fragment factory's import as referenced so subsequent
+            // unused-import checks (TS6133 / TS6192) don't flag it.
+            self.mark_jsx_name_as_referenced(&fragment_factory, node_idx);
             return;
         }
         if self
             .resolve_global_value_symbol(&root_ident_owned)
             .is_some()
         {
+            self.mark_jsx_name_as_referenced(&fragment_factory, node_idx);
             return;
         }
 
@@ -595,9 +599,12 @@ impl<'a> CheckerState<'a> {
 
         let factory = if is_fragment {
             pragma_fragment_factory
+                
                 .unwrap_or_else(|| self.ctx.compiler_options.jsx_fragment_factory.clone())
         } else {
-            pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone())
+            pragma_factory
+                .clone()
+                .unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone())
         };
         let root_ident = factory.split('.').next().unwrap_or(&factory);
 
@@ -607,8 +614,43 @@ impl<'a> CheckerState<'a> {
         // Literal-keyword sentinels (`null`, `undefined`, `true`, `false`) in
         // a `@jsxfrag`/`@jsx` pragma are user-driven opt-outs. tsc does not
         // emit TS2874 for them — other diagnostics (TS17016/TS17017/TS2879)
-        // cover the invalid-identifier case when appropriate.
+        // cover the invalid-identifier case when appropriate. The JSX factory
+        // is still conceptually used (fragments compile to `factory(null, …)`),
+        // so mark its import as referenced before returning.
         if is_fragment && matches!(root_ident, "null" | "undefined" | "true" | "false") {
+            let jsx_factory = pragma_factory
+                
+                .unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
+            let jsx_root = jsx_factory.split('.').next().unwrap_or(&jsx_factory);
+            if !jsx_root.is_empty() {
+                let lib_binders2 = self.get_lib_binders();
+                let found_jsx = self.ctx.binder.resolve_name_with_filter(
+                    jsx_root,
+                    self.ctx.arena,
+                    node_idx,
+                    &lib_binders2,
+                    |_| true,
+                );
+                let jsx_in_scope =
+                    found_jsx.is_some() || self.resolve_global_value_symbol(jsx_root).is_some();
+                if jsx_in_scope {
+                    self.mark_jsx_name_as_referenced(&jsx_factory, node_idx);
+                } else {
+                    let error_node = self
+                        .ctx
+                        .arena
+                        .get(node_idx)
+                        .and_then(|node| self.ctx.arena.get_jsx_opening(node))
+                        .map(|jsx| jsx.tag_name)
+                        .unwrap_or(node_idx);
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        error_node,
+                        diagnostic_codes::THIS_JSX_TAG_REQUIRES_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE_FOUND,
+                        &[jsx_root],
+                    );
+                }
+            }
             return;
         }
 
@@ -627,12 +669,51 @@ impl<'a> CheckerState<'a> {
             &lib_binders,
             |_| true, // Accept any symbol, including class members
         );
-        if found.is_some() {
-            return;
-        }
+        let resolved_in_scope =
+            found.is_some() || self.resolve_global_value_symbol(root_ident).is_some();
 
-        // Also check global scope as fallback (for lib-loaded symbols)
-        if self.resolve_global_value_symbol(root_ident).is_some() {
+        if resolved_in_scope {
+            // tsc treats a pragma-driven `@jsx` / `@jsxFrag` factory as a use
+            // of the imported identifier — suppress TS6133 / TS6192 on the
+            // import that brought the factory into scope.
+            self.mark_jsx_name_as_referenced(&factory, node_idx);
+            // Fragments compile to `<jsx-factory>(<fragment-factory>, …)`, so the
+            // JSX factory itself is also conceptually used by every fragment.
+            // Mark its import too (and emit TS2874 if it isn't in scope).
+            if is_fragment {
+                let jsx_factory =
+                    pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
+                let jsx_root = jsx_factory.split('.').next().unwrap_or(&jsx_factory);
+                if !jsx_root.is_empty() {
+                    let lib_binders2 = self.get_lib_binders();
+                    let found_jsx = self.ctx.binder.resolve_name_with_filter(
+                        jsx_root,
+                        self.ctx.arena,
+                        node_idx,
+                        &lib_binders2,
+                        |_| true,
+                    );
+                    let jsx_in_scope =
+                        found_jsx.is_some() || self.resolve_global_value_symbol(jsx_root).is_some();
+                    if jsx_in_scope {
+                        self.mark_jsx_name_as_referenced(&jsx_factory, node_idx);
+                    } else {
+                        let error_node = self
+                            .ctx
+                            .arena
+                            .get(node_idx)
+                            .and_then(|node| self.ctx.arena.get_jsx_opening(node))
+                            .map(|jsx| jsx.tag_name)
+                            .unwrap_or(node_idx);
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            error_node,
+                            diagnostic_codes::THIS_JSX_TAG_REQUIRES_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE_FOUND,
+                            &[jsx_root],
+                        );
+                    }
+                }
+            }
             return;
         }
 
