@@ -99,7 +99,10 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn source_file_has_jsdoc_typedef_named(source_file: &SourceFileData, name: &str) -> bool {
+    pub(crate) fn source_file_has_jsdoc_typedef_named(
+        source_file: &SourceFileData,
+        name: &str,
+    ) -> bool {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
         if source_file.comments.is_empty() {
@@ -126,6 +129,50 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .any(|(typedef_name, _)| typedef_name == name)
         })
+    }
+
+    /// Whether the JS module resolved from `module_name` declares a top-level
+    /// JSDoc `@typedef Name` matching `typedef_name`.
+    ///
+    /// tsc treats a JSDoc `@typedef` in a `.js` / `.mjs` / `.cjs` module as a
+    /// type-only exported member of that module. Use this helper to suppress
+    /// false-positive TS2305 / TS2694 diagnostics when an importer references
+    /// a typedef name that does not appear in the binder's exports table.
+    pub(crate) fn module_has_jsdoc_typedef_export(
+        &mut self,
+        module_name: &str,
+        typedef_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> bool {
+        use crate::context::is_js_file_name;
+
+        if typedef_name.is_empty() {
+            return false;
+        }
+
+        let Some(target_file_idx) = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_is_js = target_arena
+            .source_files
+            .first()
+            .is_some_and(|source_file| is_js_file_name(&source_file.file_name));
+        if !target_is_js {
+            return false;
+        }
+
+        target_arena
+            .source_files
+            .iter()
+            .any(|sf| Self::source_file_has_jsdoc_typedef_named(sf, typedef_name))
     }
 
     pub(crate) fn jsdoc_callable_type_annotation_for_node(

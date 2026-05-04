@@ -520,6 +520,17 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
+                        // tsc treats a JSDoc `@typedef Name` in a `.js`/`.mjs`/`.cjs`
+                        // module as a type-only exported member. Suppress TS2305 when
+                        // the importer references such a typedef.
+                        if self.module_has_jsdoc_typedef_export(
+                            module_name,
+                            import_name,
+                            Some(self.ctx.current_file_idx),
+                        ) {
+                            continue;
+                        }
+
                         // Check if the symbol exists locally in the target module
                         // to distinguish between TS2459, TS2460, and TS2305
                         let (mut exists_locally, exported_as) = self
@@ -649,6 +660,17 @@ impl<'a> CheckerState<'a> {
                                 Some(self.ctx.current_file_idx),
                             )
                         {
+                            continue;
+                        }
+
+                        // tsc treats a JSDoc `@typedef Name` in a `.js`/`.mjs`/`.cjs`
+                        // module as a type-only exported member. Suppress TS2305 when
+                        // the importer references such a typedef.
+                        if self.module_has_jsdoc_typedef_export(
+                            module_name,
+                            import_name,
+                            Some(self.ctx.current_file_idx),
+                        ) {
                             continue;
                         }
 
