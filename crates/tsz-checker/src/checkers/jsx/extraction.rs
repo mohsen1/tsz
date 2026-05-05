@@ -223,9 +223,6 @@ impl<'a> CheckerState<'a> {
             if evaluated_is_callable && !props_is_callable {
                 return props_type;
             }
-            if self.format_type(evaluated).contains("Factory<") {
-                return props_type;
-            }
             if crate::computation::call_inference::should_preserve_contextual_application_shape(
                 self.ctx.types,
                 evaluated,
