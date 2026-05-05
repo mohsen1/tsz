@@ -507,16 +507,86 @@ impl<'a> Printer<'a> {
             // decisions and emit incorrectly. Surface span errors instead of
             // returning a false-negative; fall back to false only when source
             // text is literally unavailable.
+            let declare_ranges = self.collect_declare_statement_ranges(body_node);
             return match crate::safe_slice::slice(
                 text,
                 body_node.pos as usize,
                 body_node.end as usize,
             ) {
-                Ok(body_text) => Self::text_has_binding_named(body_text, ns_name),
+                Ok(body_text) => {
+                    let body_pos = body_node.pos as usize;
+                    let masked = Self::mask_ranges_static(body_text, body_pos, &declare_ranges);
+                    Self::text_has_binding_named(&masked, ns_name)
+                }
                 Err(_) => false,
             };
         }
         false
+    }
+
+    /// Collect (pos, end) byte ranges of every statement inside a namespace
+    /// body that is type-only (`declare`). Their bodies are erased at emit
+    /// time, so identifiers introduced inside them — including a same-named
+    /// inner namespace — must not be counted when deciding whether to rename
+    /// the IIFE parameter.
+    fn collect_declare_statement_ranges(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> Vec<(usize, usize)> {
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return ranges;
+        };
+        let Some(stmts) = &block.statements else {
+            return ranges;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            // Resolve the inner declaration. `export declare ...` parses as an
+            // EXPORT_DECLARATION wrapping the real decl, whose modifier list
+            // carries `declare`.
+            let (decl_node, decl_pos, decl_end) = if stmt_node.kind
+                == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export) = self.arena.get_export_decl(stmt_node)
+                && let Some(inner) = self.arena.get(export.export_clause)
+            {
+                (inner, stmt_node.pos as usize, stmt_node.end as usize)
+            } else {
+                (stmt_node, stmt_node.pos as usize, stmt_node.end as usize)
+            };
+            let modifiers = match decl_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
+                    .arena
+                    .get_variable(decl_node)
+                    .and_then(|v| v.modifiers.clone()),
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .arena
+                    .get_function(decl_node)
+                    .and_then(|f| f.modifiers.clone()),
+                k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                    .arena
+                    .get_class(decl_node)
+                    .and_then(|c| c.modifiers.clone()),
+                k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                    .arena
+                    .get_enum(decl_node)
+                    .and_then(|e| e.modifiers.clone()),
+                k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                    .arena
+                    .get_module(decl_node)
+                    .and_then(|m| m.modifiers.clone()),
+                _ => None,
+            };
+            if self
+                .arena
+                .has_modifier(&modifiers, SyntaxKind::DeclareKeyword)
+            {
+                ranges.push((decl_pos, decl_end));
+            }
+        }
+        ranges
     }
 
     fn namespace_statement_conflicts_iife_param(&self, stmt_idx: NodeIndex, ns_name: &str) -> bool {
@@ -535,9 +605,48 @@ impl<'a> Printer<'a> {
             if inner_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                 return false;
             }
+            // `export declare ...` is type-only and erased at emit, so it
+            // cannot shadow the IIFE parameter — even if the inner declaration
+            // shares a name with the namespace.
+            if self.declaration_is_declare(export.export_clause) {
+                return false;
+            }
             return self.declaration_conflicts_iife_param(export.export_clause, ns_name);
         }
+        // Same rule for non-exported `declare` declarations.
+        if self.declaration_is_declare(stmt_idx) {
+            return false;
+        }
         self.declaration_conflicts_iife_param(stmt_idx, ns_name)
+    }
+
+    fn declaration_is_declare(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let modifiers = match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
+                .arena
+                .get_variable(node)
+                .and_then(|v| v.modifiers.clone()),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(node)
+                .and_then(|f| f.modifiers.clone()),
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.arena.get_class(node).and_then(|c| c.modifiers.clone())
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(node).and_then(|e| e.modifiers.clone())
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                .arena
+                .get_module(node)
+                .and_then(|m| m.modifiers.clone()),
+            _ => None,
+        };
+        self.arena
+            .has_modifier(&modifiers, SyntaxKind::DeclareKeyword)
     }
 
     fn declaration_conflicts_iife_param(&self, decl_idx: NodeIndex, ns_name: &str) -> bool {
@@ -659,6 +768,30 @@ impl<'a> Printer<'a> {
             }
         }
         false
+    }
+
+    /// Replace bytes inside `ranges` (absolute source positions) with spaces in
+    /// `body_text`, where `body_text` starts at absolute offset `body_pos`.
+    /// Used to neutralize identifiers that come from `declare` (ambient)
+    /// declarations before running the source-text binding scan.
+    fn mask_ranges_static(body_text: &str, body_pos: usize, ranges: &[(usize, usize)]) -> String {
+        if ranges.is_empty() {
+            return body_text.to_string();
+        }
+        let mut bytes = body_text.as_bytes().to_vec();
+        for &(start, end) in ranges {
+            let local_start = start.saturating_sub(body_pos);
+            let local_end = end.saturating_sub(body_pos).min(bytes.len());
+            if local_start >= bytes.len() {
+                continue;
+            }
+            for b in &mut bytes[local_start..local_end] {
+                if !b.is_ascii_whitespace() {
+                    *b = b' ';
+                }
+            }
+        }
+        String::from_utf8(bytes).unwrap_or_else(|_| body_text.to_string())
     }
 
     /// Strip single-line and block comments from text, replacing them with spaces.
