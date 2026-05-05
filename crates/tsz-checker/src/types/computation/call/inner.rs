@@ -1137,7 +1137,10 @@ impl<'a> CheckerState<'a> {
                     if let Some(ctx_type) = generic_inference_contextual_type {
                         let mut return_context_substitution = self
                             .compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
-                        let return_param_names = self.return_context_type_params_to_filter(&shape);
+                        let return_param_names: FxHashSet<_> = self
+                            .function_like_return_parameter_type_params(&shape)
+                            .into_iter()
+                            .collect();
                         let same_return_context_application =
                             common::application_info(self.ctx.types, shape.return_type)
                                 .zip(common::application_info(self.ctx.types, ctx_type))
@@ -2501,7 +2504,10 @@ impl<'a> CheckerState<'a> {
         {
             let mut return_context_substitution =
                 self.compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
-            let return_param_names = self.return_context_type_params_to_filter(&shape);
+            let return_param_names: FxHashSet<_> = self
+                .function_like_return_parameter_type_params(&shape)
+                .into_iter()
+                .collect();
             let same_return_context_application =
                 common::application_info(self.ctx.types, return_type)
                     .zip(common::application_info(self.ctx.types, ctx_type))
