@@ -369,16 +369,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         spans: &[TemplateSpan],
         span_idx: usize,
     ) -> bool {
-        let is_last_span = span_idx == spans.len() - 1;
-
         // Find the longest valid number at the start of remaining
         let num_len = find_number_length(remaining);
 
         if num_len == 0 {
-            // No valid number found, but empty match might be valid for last span
-            if is_last_span {
-                return remaining.is_empty();
-            }
             return false;
         }
 
@@ -424,15 +418,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         spans: &[TemplateSpan],
         span_idx: usize,
     ) -> bool {
-        let is_last_span = span_idx == spans.len() - 1;
-
         // Find the longest valid bigint at the start of remaining
         let int_len = find_integer_length(remaining);
 
         if int_len == 0 {
-            if is_last_span {
-                return remaining.is_empty();
-            }
             return false;
         }
 

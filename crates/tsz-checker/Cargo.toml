@@ -741,5 +741,9 @@ path = "tests/unused_catch_binding_tests.rs"
 name = "template_literal_bigint_placeholder_tests"
 path = "tests/template_literal_bigint_placeholder_tests.rs"
 
+[[test]]
+name = "template_literal_empty_placeholder_tests"
+path = "tests/template_literal_empty_placeholder_tests.rs"
+
 [lints]
 workspace = true
