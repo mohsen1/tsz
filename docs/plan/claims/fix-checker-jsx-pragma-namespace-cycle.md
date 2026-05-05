@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-jsx-pragma-namespace-cycle`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: https://github.com/mohsen1/tsz/pull/3398
+- **Status**: draft
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
