@@ -172,6 +172,15 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Allow conformance-harness source comments such as `// @strict: false`
+    /// to override checker options for this state.
+    ///
+    /// Normal project checking leaves this disabled so source comments cannot
+    /// mutate real compiler options.
+    pub const fn enable_source_file_test_pragmas(&mut self) {
+        self.ctx.allow_source_file_test_pragmas = true;
+    }
+
     /// Create a new `CheckerState` with a shared `DefinitionStore`.
     ///
     /// This ensures that all type definitions (interfaces, type aliases, etc.) across

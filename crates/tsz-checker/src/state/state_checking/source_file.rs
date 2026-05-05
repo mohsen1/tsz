@@ -31,7 +31,9 @@ impl<'a> CheckerState<'a> {
 
         let node = self.ctx.arena.get(root_idx)?;
         let sf = self.ctx.arena.get_source_file(node)?;
-        self.resolve_compiler_options_from_source(&sf.text);
+        if self.ctx.allow_source_file_test_pragmas {
+            self.resolve_compiler_options_from_source(&sf.text);
+        }
         if self.has_ts_nocheck_pragma(&sf.text) {
             return None;
         }

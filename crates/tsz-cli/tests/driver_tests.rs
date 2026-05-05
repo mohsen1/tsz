@@ -66,6 +66,57 @@ fn default_args() -> CliArgs {
     CliArgs::try_parse_from(["tsz"]).expect("default args should parse")
 }
 
+#[test]
+fn source_file_test_pragmas_do_not_override_project_options() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "allowJs": true,
+            "checkJs": true,
+            "noUnusedLocals": true
+          },
+          "files": ["strict-off.js", "unused-off.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("strict-off.js"),
+        r#"// @strict: false
+function takesAny(value) {
+  return value;
+}
+
+takesAny(1);
+"#,
+    );
+    write_file(
+        &base.join("unused-off.ts"),
+        r#"// @noUnusedLocals: false
+export {};
+
+const unused = 1;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&7006),
+        "source @strict pragma should not suppress project strict/noImplicitAny, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&6133),
+        "source @noUnusedLocals pragma should not suppress project noUnusedLocals, got: {codes:?}"
+    );
+}
+
 fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_loader::LibFile>> {
     let lib_paths = crate::config::resolve_default_lib_files(target).expect("default libs");
     let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
