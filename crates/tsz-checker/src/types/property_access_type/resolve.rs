@@ -73,6 +73,11 @@ impl<'a> CheckerState<'a> {
         if let Some(literal_type) = self.const_array_to_enum_member_literal_type_query(idx) {
             return literal_type;
         }
+        if let Some(literal_type) = self
+            .imported_array_to_enum_member_literal_type(access.expression, access.name_or_argument)
+        {
+            return literal_type;
+        }
 
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
@@ -1027,7 +1032,9 @@ impl<'a> CheckerState<'a> {
                 // The earlier blanket suppression hid the diagnostic for type-
                 // predicate / typeof narrowing chains that exhaust a union to
                 // never (e.g. `instanceofWithStructurallyIdenticalTypes`).
-                if !property_name.starts_with('#') {
+                let suppress_declared_intersection_access = self
+                    .declared_intersection_receiver_has_property(access.expression, property_name);
+                if !property_name.starts_with('#') && !suppress_declared_intersection_access {
                     self.error_property_not_exist_at(
                         property_name,
                         TypeId::NEVER,

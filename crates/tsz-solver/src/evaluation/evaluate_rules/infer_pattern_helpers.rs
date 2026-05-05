@@ -787,52 +787,145 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let Some(pattern_this) = pattern_fn.this_type else {
             return checker.is_subtype_of(source, pattern);
         };
-        if !self.type_contains_infer(pattern_this) {
+        let has_this_infer = self.type_contains_infer(pattern_this);
+        if !has_this_infer && !has_param_infer && !has_return_infer {
             return checker.is_subtype_of(source, pattern);
         }
 
-        if has_param_infer || has_return_infer {
-            return false;
-        }
-
-        let mut match_function_this = |_source_type: TypeId,
-                                       source_fn_id: FunctionShapeId,
-                                       bindings: &mut FxHashMap<Atom, TypeId>|
+        let mut match_signature_with_this = |source_params: &[ParamInfo],
+                                             source_return: TypeId,
+                                             source_this: Option<TypeId>,
+                                             bindings: &mut FxHashMap<Atom, TypeId>|
          -> bool {
-            let source_fn = self.interner().function_shape(source_fn_id);
             // Use Unknown instead of Any for stricter type checking
             // When this parameter type is not specified, use Unknown
-            let source_this = source_fn.this_type.unwrap_or(TypeId::UNKNOWN);
-            let mut local_visited = FxHashSet::default();
-            if !self.match_infer_pattern(
-                source_this,
-                pattern_this,
-                bindings,
-                &mut local_visited,
-                checker,
-            ) {
+            let source_this = source_this.unwrap_or(TypeId::UNKNOWN);
+            if has_this_infer {
+                let mut local_visited = FxHashSet::default();
+                if !self.match_infer_pattern(
+                    source_this,
+                    pattern_this,
+                    bindings,
+                    &mut local_visited,
+                    checker,
+                ) {
+                    return false;
+                }
+            } else if !checker.is_subtype_of(source_this, pattern_this) {
                 return false;
             }
-            // For this-type infer patterns, the this type match is sufficient.
-            // Skipping the final subtype check avoids contravariance issues.
+
+            if has_param_infer {
+                if has_single_rest_infer {
+                    if !self.match_rest_infer_tuple(
+                        source_params,
+                        pattern_fn.params[0].type_id,
+                        bindings,
+                        checker,
+                    ) {
+                        return false;
+                    }
+                } else if !self.match_signature_params_for_infer(
+                    source_params,
+                    &pattern_fn.params,
+                    bindings,
+                    checker,
+                ) {
+                    return false;
+                }
+            }
+
+            if has_return_infer {
+                let mut local_visited = FxHashSet::default();
+                if !self.match_infer_pattern(
+                    source_return,
+                    pattern_fn.return_type,
+                    bindings,
+                    &mut local_visited,
+                    checker,
+                ) {
+                    return false;
+                }
+            }
+
+            // For explicit-this infer patterns, matched signature components are
+            // sufficient. The final function subtype check can fail on parameter
+            // contravariance even after successful infer binding.
             true
         };
 
         match self.interner().lookup(source) {
             Some(TypeData::Function(source_fn_id)) => {
-                match_function_this(source, source_fn_id, bindings)
+                let source_fn = self.interner().function_shape(source_fn_id);
+                let (params, return_type) = self.instantiate_signature_for_infer(
+                    &source_fn.params,
+                    source_fn.return_type,
+                    &source_fn.type_params,
+                );
+                match_signature_with_this(&params, return_type, source_fn.this_type, bindings)
+            }
+            Some(TypeData::Callable(source_shape_id)) => {
+                let source_shape = self.interner().callable_shape(source_shape_id);
+                if source_shape.call_signatures.is_empty() {
+                    return false;
+                }
+                let source_sig = source_shape
+                    .call_signatures
+                    .last()
+                    .expect("call_signatures checked non-empty above");
+                let (params, return_type) = self.instantiate_signature_for_infer(
+                    &source_sig.params,
+                    source_sig.return_type,
+                    &source_sig.type_params,
+                );
+                match_signature_with_this(&params, return_type, source_sig.this_type, bindings)
             }
             Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 let mut combined = FxHashMap::default();
                 for &member in members.iter() {
-                    let Some(TypeData::Function(source_fn_id)) = self.interner().lookup(member)
-                    else {
-                        return false;
-                    };
                     let mut member_bindings = FxHashMap::default();
-                    if !match_function_this(member, source_fn_id, &mut member_bindings) {
-                        return false;
+                    match self.interner().lookup(member) {
+                        Some(TypeData::Function(source_fn_id)) => {
+                            let source_fn = self.interner().function_shape(source_fn_id);
+                            let (params, return_type) = self.instantiate_signature_for_infer(
+                                &source_fn.params,
+                                source_fn.return_type,
+                                &source_fn.type_params,
+                            );
+                            if !match_signature_with_this(
+                                &params,
+                                return_type,
+                                source_fn.this_type,
+                                &mut member_bindings,
+                            ) {
+                                return false;
+                            }
+                        }
+                        Some(TypeData::Callable(source_shape_id)) => {
+                            let source_shape = self.interner().callable_shape(source_shape_id);
+                            if source_shape.call_signatures.is_empty() {
+                                return false;
+                            }
+                            let source_sig = source_shape
+                                .call_signatures
+                                .last()
+                                .expect("call_signatures checked non-empty above");
+                            let (params, return_type) = self.instantiate_signature_for_infer(
+                                &source_sig.params,
+                                source_sig.return_type,
+                                &source_sig.type_params,
+                            );
+                            if !match_signature_with_this(
+                                &params,
+                                return_type,
+                                source_sig.this_type,
+                                &mut member_bindings,
+                            ) {
+                                return false;
+                            }
+                        }
+                        _ => return false,
                     }
                     for (name, ty) in member_bindings {
                         combined

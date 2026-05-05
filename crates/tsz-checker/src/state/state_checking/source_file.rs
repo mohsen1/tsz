@@ -558,11 +558,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
-        // tsc only treats `@ts-nocheck` as a directive when it appears at the
-        // start of a comment; raw substrings inside string/regex/code are
-        // ignored. The shared helper handles comment detection (skipping
-        // string/regex/template literals) so e.g. `const m = "@ts-nocheck"`
-        // no longer suppresses checking for the file.
         tsz_common::comments::source_has_ts_nocheck_directive(source)
     }
 
