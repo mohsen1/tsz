@@ -55,6 +55,7 @@ impl<'a> CommonJsTransformContext<'a> {
             self.arena,
             statements,
             self.preserve_const_enums,
+            &rustc_hash::FxHashSet::default(),
         )
         .other_exports;
 
