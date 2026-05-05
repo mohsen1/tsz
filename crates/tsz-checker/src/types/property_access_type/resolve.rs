@@ -2428,6 +2428,14 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
 
+                        if self.known_declared_receiver_has_property(
+                            access.expression,
+                            display_object_type,
+                            property_name,
+                        ) {
+                            return TypeId::ANY;
+                        }
+
                         if enum_instance_like_access {
                             let enum_display: Option<String> =
                                 access_query::type_parameter_constraint(

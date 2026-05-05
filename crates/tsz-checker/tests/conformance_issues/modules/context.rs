@@ -1,6 +1,41 @@
 use crate::core::*;
 
 #[test]
+fn project_forward_generic_class_computed_name_no_false_ts2339() {
+    let diagnostics = compile_named_project_get_diagnostics_with_options(
+        &[
+            (
+                "module.ts",
+                r#"
+export const marker = 0;
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+import { marker } from "./module";
+
+declare const rC: RC<"a">;
+rC.x;
+declare class RC<T extends "a" | "b"> {
+    x: T;
+    [rC.x]: "b";
+}
+
+marker;
+"#,
+            ),
+        ],
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "Forward generic class declarations in modules should expose declared instance properties before computed-name evaluation. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn module_augmentation_of_reexported_interface_applies_to_original_import() {
     for index_source in [
         r#"export * from "./eventList";"#,
