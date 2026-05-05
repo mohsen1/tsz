@@ -586,6 +586,7 @@ impl<'a> CheckerState<'a> {
         // Snapshot of the original shape (pre-solver), used to re-instantiate params
         // when overriding the solver with `checker_round2_substitution`.
         let mut checker_round2_shape: Option<common::FunctionShape> = None;
+        let mut direct_literal_conflict_substitution: Option<common::TypeSubstitution> = None;
         let mut arg_types = if is_generic_call {
             if let Some(shape) = callee_shape {
                 // Pre-compute which parameter positions should skip excess property
@@ -731,6 +732,11 @@ impl<'a> CheckerState<'a> {
                             &round1_arg_types,
                             &sensitive_args,
                         );
+                    if !direct_literal_conflict_type_params.is_empty() {
+                        direct_literal_conflict_substitution =
+                            Some(direct_literal_conflict_type_params.clone());
+                        checker_round2_shape = Some(shape.clone());
+                    }
 
                     // Seed inference from non-sensitive object-literal properties.
                     let mut extracted_round1_partials = vec![false; args.len()];
@@ -2157,6 +2163,16 @@ impl<'a> CheckerState<'a> {
                 checker_sub,
             );
         }
+        if is_generic_call
+            && !is_super_call
+            && let Some(conflicts) = direct_literal_conflict_substitution.as_ref()
+            && let Some(orig_shape) = checker_round2_shape.as_ref()
+            && let Some(params) = generic_instantiated_params.as_mut()
+        {
+            self.refine_bare_instantiated_params_with_direct_literal_conflicts(
+                orig_shape, params, conflicts,
+            );
+        }
         let needs_real_type_recheck = is_generic_call
             && (!is_super_call
                 || args.iter().enumerate().any(|(i, &arg_idx)| {
@@ -2319,6 +2335,16 @@ impl<'a> CheckerState<'a> {
                     orig_shape,
                     retry_params,
                     checker_sub,
+                );
+            }
+            if let Some(conflicts) = direct_literal_conflict_substitution.as_ref()
+                && let Some(orig_shape) = checker_round2_shape.as_ref()
+                && let Some(retry_params) = retry.2.as_mut()
+            {
+                self.refine_bare_instantiated_params_with_direct_literal_conflicts(
+                    orig_shape,
+                    retry_params,
+                    conflicts,
                 );
             }
             result = if retry_sanitized || needs_real_type_recheck {

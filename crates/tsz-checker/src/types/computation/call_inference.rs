@@ -1597,6 +1597,44 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn refine_bare_instantiated_params_with_direct_literal_conflicts(
+        &mut self,
+        orig_shape: &FunctionShape,
+        params: &mut [tsz_solver::ParamInfo],
+        conflicts: &common::TypeSubstitution,
+    ) {
+        if conflicts.is_empty() {
+            return;
+        }
+
+        for (i, orig_param) in orig_shape.params.iter().enumerate() {
+            if i >= params.len() || orig_param.rest {
+                break;
+            }
+            let Some(tp_info) = common::type_param_info(self.ctx.types, orig_param.type_id) else {
+                continue;
+            };
+            let Some(literal_type) = conflicts.get(tp_info.name) else {
+                continue;
+            };
+            if literal_type == TypeId::UNKNOWN
+                || literal_type == TypeId::ERROR
+                || common::contains_infer_types(self.ctx.types, literal_type)
+                || common::contains_type_parameters(self.ctx.types, literal_type)
+            {
+                continue;
+            }
+
+            let current = params[i].type_id;
+            if current == literal_type {
+                continue;
+            }
+            if self.is_assignable_to_with_env(literal_type, current) {
+                params[i].type_id = literal_type;
+            }
+        }
+    }
+
     pub(crate) fn recheck_generic_call_arguments_with_real_types(
         &mut self,
         result: CallResult,
