@@ -1592,6 +1592,11 @@ impl<'a> DeclarationEmitter<'a> {
                                 keyword,
                                 is_exported,
                             );
+                            let skip_end = self
+                                .arena
+                                .get(decl.initializer)
+                                .map_or(decl_node.end, |n| n.end);
+                            self.skip_comments_in_node(decl_node.pos, skip_end);
                         } else {
                             let is_exported =
                                 has_export_modifier || self.is_js_named_exported_name(decl.name);
@@ -1745,6 +1750,16 @@ impl<'a> DeclarationEmitter<'a> {
                                 && let Some(dn) = self.arena.get(*decl_idx)
                             {
                                 self.skip_comments_in_node(dn.pos, skip_end);
+                            }
+                            if let Some(init_node) = self.arena.get(decl.initializer)
+                                && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                    || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                                && let Some(func) = self.arena.get_function(init_node)
+                                && func.body.is_some()
+                            {
+                                let function_decl_end =
+                                    self.arena.get(*decl_idx).map_or(init_node.end, |n| n.end);
+                                self.skip_comments_before_raw(function_decl_end);
                             }
                         }
                         i += 1;
