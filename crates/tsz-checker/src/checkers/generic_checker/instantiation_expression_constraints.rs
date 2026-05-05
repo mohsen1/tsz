@@ -61,6 +61,37 @@ impl<'a> CheckerState<'a> {
                 .any(|s| s.type_params.len() == num_args)
     }
 
+    /// Skip TS2344 when a `typeof` / instantiation-expression type argument is
+    /// applied to a constraint shaped like a constructor (`new ...`) or callable.
+    pub(crate) fn skip_constraint_for_typeof_instantiation(
+        &mut self,
+        type_arg: TypeId,
+        constraint: TypeId,
+        arg_node: Option<tsz_parser::parser::NodeIndex>,
+    ) -> bool {
+        if self.is_successful_typeof_instantiation_arg(type_arg)
+            && self.constraint_is_callable_or_constructable(constraint)
+        {
+            return true;
+        }
+        let constraint_resolved = self.resolve_lazy_type(constraint);
+        if !self
+            .format_type_diagnostic(constraint_resolved)
+            .contains("new ")
+        {
+            return false;
+        }
+        if self.format_type_diagnostic(type_arg).starts_with("typeof ") {
+            return true;
+        }
+        arg_node.is_some_and(|arg_idx| {
+            self.ctx
+                .arena
+                .get(arg_idx)
+                .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY)
+        })
+    }
+
     pub(crate) fn constraint_is_callable_or_constructable(&mut self, constraint: TypeId) -> bool {
         let constraint = self.resolve_lazy_type(constraint);
         crate::query_boundaries::common::function_shape_for_type(self.ctx.types, constraint)

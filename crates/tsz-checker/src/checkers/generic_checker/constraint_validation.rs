@@ -1,8 +1,4 @@
 //! Generic type argument constraint validation (TS2344).
-//!
-//! Contains `validate_type_args_against_params` and its helper methods for
-//! constraint checking, callable detection, heritage-chain coinductive checks,
-//! and array-like constraint satisfaction.
 
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
@@ -10,10 +6,9 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Validate each type argument against its corresponding type parameter constraint.
-    /// Reports TS2344 when a type argument doesn't satisfy its constraint.
-    ///
-    /// Shared implementation used by call expressions, new expressions, and type references.
+    /// Validate each type argument against its corresponding type parameter
+    /// constraint. Reports TS2344 when a type argument doesn't satisfy its
+    /// constraint. Shared by call expressions, new expressions, and type refs.
     pub(crate) fn validate_type_args_against_params(
         &mut self,
         type_params: &[tsz_solver::TypeParamInfo],
@@ -124,27 +119,11 @@ impl<'a> CheckerState<'a> {
                     }
                     continue;
                 }
-                if self.is_successful_typeof_instantiation_arg(type_arg)
-                    && self.constraint_is_callable_or_constructable(constraint)
-                {
-                    continue;
-                }
-                let constraint_resolved_for_display = self.resolve_lazy_type(constraint);
-                if self.format_type_diagnostic(type_arg).starts_with("typeof ")
-                    && self
-                        .format_type_diagnostic(constraint_resolved_for_display)
-                        .contains("new ")
-                {
-                    continue;
-                }
-                if let Some(&arg_idx) = type_args_list.nodes.get(i)
-                    && self.ctx.arena.get(arg_idx).is_some_and(|node| {
-                        node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY
-                    })
-                    && self
-                        .format_type_diagnostic(constraint_resolved_for_display)
-                        .contains("new ")
-                {
+                if self.skip_constraint_for_typeof_instantiation(
+                    type_arg,
+                    constraint,
+                    type_args_list.nodes.get(i).copied(),
+                ) {
                     continue;
                 }
 
