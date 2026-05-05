@@ -52,15 +52,16 @@ pub(crate) fn emit_outputs(
     let mut declaration_bundle_chunks = Vec::new();
     let mut declaration_bundle_blocked = false;
 
-    // When --outFile is set and there are multiple source files, collect JS
-    // chunks and concatenate at the end instead of emitting individual files.
-    // Single-file tests emit normally (bundle would just wrap the same content).
-    let has_multiple_files = context.program.files.len() > 1;
-    let js_bundle_path: Option<PathBuf> = if has_multiple_files {
-        context.options.out_file.clone()
-    } else {
-        None
-    };
+    // When --outFile is set, collect JS chunks and concatenate at the end
+    // instead of emitting individual files. TypeScript honors outFile even for
+    // a single source file.
+    let js_bundle_path = context.options.out_file.as_ref().map(|out_file| {
+        if out_file.is_absolute() {
+            out_file.to_path_buf()
+        } else {
+            context.base_dir.join(out_file)
+        }
+    });
     let mut js_bundle_chunks: Vec<String> = Vec::new();
 
     // Build mapping from arena address to file path for module resolution
@@ -249,6 +250,13 @@ pub(crate) fn emit_outputs(
             if is_mts_or_mjs && !printer_options.module.is_es_module() {
                 // .mts/.mjs files always emit as ESM regardless of --module setting.
                 printer_options.module = ModuleKind::ESNext;
+            }
+
+            if js_bundle_path.is_some()
+                && matches!(printer_options.module, ModuleKind::AMD | ModuleKind::System)
+            {
+                printer_options.bundled_module_name =
+                    bundled_module_name(context.base_dir, context.root_dir, &input_path);
             }
 
             // tsc's isFileForcedToBeModuleByFormat: .cjs/.cts/.mjs/.mts files are
@@ -1316,6 +1324,17 @@ fn output_relative_path(base_dir: &Path, root_dir: Option<&Path>, input_path: &P
         .strip_prefix(base_dir)
         .unwrap_or(input_path)
         .to_path_buf()
+}
+
+fn bundled_module_name(
+    base_dir: &Path,
+    root_dir: Option<&Path>,
+    input_path: &Path,
+) -> Option<String> {
+    let mut relative = output_relative_path(base_dir, root_dir, input_path);
+    relative.set_extension("");
+    let module_name = relative.to_string_lossy().replace('\\', "/");
+    (!module_name.is_empty()).then_some(module_name)
 }
 
 fn declaration_file_name(file_name: &str) -> Option<String> {
