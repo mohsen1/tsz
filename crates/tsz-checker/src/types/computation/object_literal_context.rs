@@ -1193,13 +1193,31 @@ impl<'a> CheckerState<'a> {
         if self.is_assignable_to(key_type, constraint_resolved)
             || self.is_assignable_to(key_type, constraint_evaluated)
         {
-            return Some(template);
+            let mut substitution = tsz_solver::TypeSubstitution::new();
+            substitution.insert(mapped.type_param.name, key_type);
+            let instantiated = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                template,
+                &substitution,
+            );
+            let evaluated = self.evaluate_type_with_env(instantiated);
+            let evaluated = self.resolve_lazy_type(evaluated);
+            return Some(self.evaluate_application_type(evaluated));
         }
 
         if numeric_key.is_some()
             && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, constraint)
         {
-            return Some(template);
+            let mut substitution = tsz_solver::TypeSubstitution::new();
+            substitution.insert(mapped.type_param.name, key_type);
+            let instantiated = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                template,
+                &substitution,
+            );
+            let evaluated = self.evaluate_type_with_env(instantiated);
+            let evaluated = self.resolve_lazy_type(evaluated);
+            return Some(self.evaluate_application_type(evaluated));
         }
 
         None

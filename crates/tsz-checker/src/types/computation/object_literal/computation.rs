@@ -4,8 +4,8 @@
 //! over object literal elements and builds the resulting object type.
 
 use super::super::object_literal_context::ContextualPropertyPresence;
-use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
+use crate::context::{PartialObjectLiteralInitializer, TypingRequest};
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::{
     is_zero_arg_call_like_expr_in_arena, simple_computed_name_expr_text_in_arena,
@@ -123,6 +123,68 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn object_literal_variable_initializer_symbol(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let parent_idx = self.ctx.arena.get_extended(idx)?.parent;
+        let parent_node = self.ctx.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+        if var_decl.initializer != idx {
+            return None;
+        }
+        self.ctx
+            .binder
+            .get_node_symbol(var_decl.name)
+            .or_else(|| self.resolve_identifier_symbol_without_tracking(var_decl.name))
+    }
+
+    fn record_partial_object_literal_property(
+        &mut self,
+        stack_index: Option<usize>,
+        prop: &PropertyInfo,
+    ) {
+        let Some(stack_index) = stack_index else {
+            return;
+        };
+        if let Some(active) = self
+            .ctx
+            .object_literal_tracking
+            .partial_initializers
+            .get_mut(stack_index)
+        {
+            active.properties.insert(prop.name, prop.clone());
+        }
+    }
+
+    fn pop_partial_object_literal_initializer(&mut self, stack_index: Option<usize>) {
+        let Some(stack_index) = stack_index else {
+            return;
+        };
+        if stack_index + 1 == self.ctx.object_literal_tracking.partial_initializers.len() {
+            self.ctx.object_literal_tracking.partial_initializers.pop();
+        } else if stack_index < self.ctx.object_literal_tracking.partial_initializers.len() {
+            self.ctx
+                .object_literal_tracking
+                .partial_initializers
+                .remove(stack_index);
+        }
+    }
+
+    fn pop_object_literal_contexts(
+        &mut self,
+        marker_this_type: Option<TypeId>,
+        partial_initializer_stack_index: Option<usize>,
+    ) {
+        if marker_this_type.is_some() {
+            self.ctx.this_type_stack.pop();
+        }
+        self.pop_partial_object_literal_initializer(partial_initializer_stack_index);
     }
 
     fn function_like_has_explicit_signature_annotations(&self, expr_idx: NodeIndex) -> bool {
@@ -271,7 +333,8 @@ impl<'a> CheckerState<'a> {
             // diagnostic elaboration, and clearing the side table there loses the
             // richer surface we want to report.
             self.ctx
-                .object_literal_contextual_targets
+                .object_literal_tracking
+                .contextual_targets
                 .insert(idx, ctx_ty);
         }
 
@@ -450,6 +513,15 @@ impl<'a> CheckerState<'a> {
             self.contextual_object_receiver_this_type(contextual_type, marker_this_type)
         });
         let base_request = request.contextual_opt(contextual_type);
+        let partial_initializer_stack_index = self
+            .object_literal_variable_initializer_symbol(idx)
+            .map(|variable_symbol| {
+                self.ctx
+                    .object_literal_tracking
+                    .partial_initializers
+                    .push(PartialObjectLiteralInitializer::new(variable_symbol, idx));
+                self.ctx.object_literal_tracking.partial_initializers.len() - 1
+            });
 
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -651,7 +723,8 @@ impl<'a> CheckerState<'a> {
                         .or(resolved_prop_ctx)
                     {
                         self.ctx
-                            .object_literal_property_diag_targets
+                            .object_literal_tracking
+                            .property_diag_targets
                             .insert(elem_idx, diag_target);
                     }
                     let property_request = base_request.contextual_opt(
@@ -968,22 +1041,24 @@ impl<'a> CheckerState<'a> {
                         ) || self.is_computed_string_property_name(prop.name);
                     let single_quoted_name =
                         is_single_quoted_string_property_name_node(self.ctx.arena, prop.name);
-                    properties.insert(
-                        name_atom,
-                        PropertyInfo {
-                            name: name_atom,
-                            type_id: value_type,
-                            write_type: value_type,
-                            optional: is_optional_destructuring,
-                            readonly: false,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: order,
-                            is_string_named,
-                            single_quoted_name,
-                        },
+                    let prop_info = PropertyInfo {
+                        name: name_atom,
+                        type_id: value_type,
+                        write_type: value_type,
+                        optional: is_optional_destructuring,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: order,
+                        is_string_named,
+                        single_quoted_name,
+                    };
+                    properties.insert(name_atom, prop_info.clone());
+                    self.record_partial_object_literal_property(
+                        partial_initializer_stack_index,
+                        &prop_info,
                     );
                 } else {
                     // Computed property name that can't be statically resolved (e.g., { [expr]: value })
@@ -1177,7 +1252,8 @@ impl<'a> CheckerState<'a> {
                         contextual_type.is_some_and(|ct| !is_literal_permissive_context(ct));
                     if let Some(diag_target) = jsdoc_declared_type.or(property_context_type) {
                         self.ctx
-                            .object_literal_property_diag_targets
+                            .object_literal_tracking
+                            .property_diag_targets
                             .insert(elem_idx, diag_target);
                     }
                     let shorthand_request =
@@ -1396,22 +1472,24 @@ impl<'a> CheckerState<'a> {
 
                     let order = prop_order;
                     prop_order += 1;
-                    properties.insert(
-                        name_atom,
-                        PropertyInfo {
-                            name: name_atom,
-                            type_id: value_type,
-                            write_type: value_type,
-                            optional: is_optional_shorthand,
-                            readonly: false,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: order,
-                            is_string_named: false,
-                            single_quoted_name: false,
-                        },
+                    let prop_info = PropertyInfo {
+                        name: name_atom,
+                        type_id: value_type,
+                        write_type: value_type,
+                        optional: is_optional_shorthand,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: order,
+                        is_string_named: false,
+                        single_quoted_name: false,
+                    };
+                    properties.insert(name_atom, prop_info.clone());
+                    self.record_partial_object_literal_property(
+                        partial_initializer_stack_index,
+                        &prop_info,
                     );
                 } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
                     self.check_computed_property_name(shorthand.name);
@@ -1713,25 +1791,27 @@ impl<'a> CheckerState<'a> {
 
                     let order = prop_order;
                     prop_order += 1;
-                    properties.insert(
-                        name_atom,
-                        PropertyInfo {
-                            name: name_atom,
-                            type_id: method_type,
-                            write_type: method_type,
-                            // A method shorthand may carry `?` — `{ a?() {} }` —
-                            // in which case the inferred property type must be
-                            // optional so the .d.ts emits `a?(): void`.
-                            optional: method.question_token,
-                            readonly: false,
-                            is_method: true, // Object literal methods should be bivariant
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: order,
-                            is_string_named: false,
-                            single_quoted_name: false,
-                        },
+                    let prop_info = PropertyInfo {
+                        name: name_atom,
+                        type_id: method_type,
+                        write_type: method_type,
+                        // A method shorthand may carry `?` — `{ a?() {} }` —
+                        // in which case the inferred property type must be
+                        // optional so the .d.ts emits `a?(): void`.
+                        optional: method.question_token,
+                        readonly: false,
+                        is_method: true, // Object literal methods should be bivariant
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: order,
+                        is_string_named: false,
+                        single_quoted_name: false,
+                    };
+                    properties.insert(name_atom, prop_info.clone());
+                    self.record_partial_object_literal_property(
+                        partial_initializer_stack_index,
+                        &prop_info,
                     );
                 } else {
                     // Computed method name - still type-check the expression and function body.
@@ -2090,22 +2170,24 @@ impl<'a> CheckerState<'a> {
                             (existing.type_id, accessor_type)
                         };
                         // Both getter and setter exist → not readonly
-                        properties.insert(
-                            name_atom,
-                            PropertyInfo {
-                                name: name_atom,
-                                type_id: read_type,
-                                write_type,
-                                optional: false,
-                                readonly: false,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: existing_order,
-                                is_string_named: false,
-                                single_quoted_name: false,
-                            },
+                        let prop_info = PropertyInfo {
+                            name: name_atom,
+                            type_id: read_type,
+                            write_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                            declaration_order: existing_order,
+                            is_string_named: false,
+                            single_quoted_name: false,
+                        };
+                        properties.insert(name_atom, prop_info.clone());
+                        self.record_partial_object_literal_property(
+                            partial_initializer_stack_index,
+                            &prop_info,
                         );
                     } else {
                         // Single accessor so far: getter-only is readonly.
@@ -2118,22 +2200,24 @@ impl<'a> CheckerState<'a> {
                         };
                         let order = prop_order;
                         prop_order += 1;
-                        properties.insert(
-                            name_atom,
-                            PropertyInfo {
-                                name: name_atom,
-                                type_id: read_type,
-                                write_type,
-                                optional: false,
-                                readonly,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: order,
-                                is_string_named: false,
-                                single_quoted_name: false,
-                            },
+                        let prop_info = PropertyInfo {
+                            name: name_atom,
+                            type_id: read_type,
+                            write_type,
+                            optional: false,
+                            readonly,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                            declaration_order: order,
+                            is_string_named: false,
+                            single_quoted_name: false,
+                        };
+                        properties.insert(name_atom, prop_info.clone());
+                        self.record_partial_object_literal_property(
+                            partial_initializer_stack_index,
+                            &prop_info,
                         );
                     }
                 } else {
@@ -2339,10 +2423,10 @@ impl<'a> CheckerState<'a> {
                                 spread_type,
                             ))
                     {
-                        // Pop this type from stack if we pushed it earlier
-                        if marker_this_type.is_some() {
-                            self.ctx.this_type_stack.pop();
-                        }
+                        self.pop_object_literal_contexts(
+                            marker_this_type,
+                            partial_initializer_stack_index,
+                        );
                         return spread_type;
                     }
 
@@ -2665,10 +2749,7 @@ impl<'a> CheckerState<'a> {
         // This matches tsc behavior for object literals with accessor pairs.
         self.check_object_literal_accessor_type_compatibility(&obj.elements.nodes);
 
-        // Pop this type from stack if we pushed it earlier
-        if marker_this_type.is_some() {
-            self.ctx.this_type_stack.pop();
-        }
+        self.pop_object_literal_contexts(marker_this_type, partial_initializer_stack_index);
 
         object_type
     }

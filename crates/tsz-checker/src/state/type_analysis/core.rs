@@ -1710,6 +1710,7 @@ impl<'a> CheckerState<'a> {
                         );
                         Some(TypeId::UNKNOWN)
                     } else {
+                        self.ensure_application_symbols_resolved(constraint_type);
                         Some(constraint_type)
                     }
                 } else {
@@ -1718,6 +1719,7 @@ impl<'a> CheckerState<'a> {
 
                 let default = if data.default != NodeIndex::NONE {
                     let default_type = self.get_type_from_type_node(data.default);
+                    self.ensure_application_symbols_resolved(default_type);
                     (default_type != TypeId::ERROR).then_some(default_type)
                 } else {
                     None
@@ -1995,38 +1997,53 @@ impl<'a> CheckerState<'a> {
 
         // Check cache first
         if let Some(&cached) = self.ctx.symbol_types.get(&sym_id) {
-            if cached == TypeId::ERROR && self.ctx.symbol_resolution_set.contains(&sym_id) {
-                // Pre-cache ANY sentinel to prevent re-entrancy: provisional_circular_function_symbol_type
-                // processes type annotations which may call get_type_of_symbol for the same symbol
-                // (e.g., `typeof foo<T>` in foo's own return type). Without this sentinel, the re-entrant
-                // call finds ERROR, detects circularity, and calls provisional again → stack overflow.
-                self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
-                if let Some(provisional) = self.provisional_circular_function_symbol_type(sym_id) {
-                    self.ctx.symbol_types.insert(sym_id, provisional);
-                    trace!(
-                        sym_id = sym_id.0,
-                        type_id = provisional.0,
-                        file = self.ctx.file_name.as_str(),
-                        "(cached provisional) get_type_of_symbol"
-                    );
-                    return provisional;
+            let cached_is_stale_alias_placeholder =
+                !self.ctx.symbol_resolution_set.contains(&sym_id)
+                    && crate::query_boundaries::common::lazy_def_id(self.ctx.types, cached)
+                        == self.ctx.get_existing_def_id(sym_id)
+                    && self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS));
+            if cached_is_stale_alias_placeholder {
+                self.ctx.symbol_types.remove(&sym_id);
+            } else {
+                if cached == TypeId::ERROR && self.ctx.symbol_resolution_set.contains(&sym_id) {
+                    // Pre-cache ANY sentinel to prevent re-entrancy: provisional_circular_function_symbol_type
+                    // processes type annotations which may call get_type_of_symbol for the same symbol
+                    // (e.g., `typeof foo<T>` in foo's own return type). Without this sentinel, the re-entrant
+                    // call finds ERROR, detects circularity, and calls provisional again → stack overflow.
+                    self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
+                    if let Some(provisional) =
+                        self.provisional_circular_function_symbol_type(sym_id)
+                    {
+                        self.ctx.symbol_types.insert(sym_id, provisional);
+                        trace!(
+                            sym_id = sym_id.0,
+                            type_id = provisional.0,
+                            file = self.ctx.file_name.as_str(),
+                            "(cached provisional) get_type_of_symbol"
+                        );
+                        return provisional;
+                    }
+                    // Restore ERROR if provisional failed
+                    self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
                 }
-                // Restore ERROR if provisional failed
-                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+                let cached = self
+                    .ctx
+                    .symbol_types
+                    .get(&sym_id)
+                    .copied()
+                    .unwrap_or(TypeId::ERROR);
+                trace!(
+                    sym_id = sym_id.0,
+                    type_id = cached.0,
+                    file = self.ctx.file_name.as_str(),
+                    "(cached) get_type_of_symbol"
+                );
+                return cached;
             }
-            let cached = self
-                .ctx
-                .symbol_types
-                .get(&sym_id)
-                .copied()
-                .unwrap_or(TypeId::ERROR);
-            trace!(
-                sym_id = sym_id.0,
-                type_id = cached.0,
-                file = self.ctx.file_name.as_str(),
-                "(cached) get_type_of_symbol"
-            );
-            return cached;
         }
 
         // Check fuel - return ERROR if exhausted to prevent timeout

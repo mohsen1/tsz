@@ -156,9 +156,12 @@ impl Server {
                 .iter()
                 .enumerate()
                 .map(|(file_idx, file)| {
-                    Arc::new(parallel::create_binder_from_bound_file(
-                        file, &program, file_idx,
-                    ))
+                    let mut binder =
+                        parallel::create_binder_from_bound_file(file, &program, file_idx);
+                    binder.declaration_arenas = Arc::clone(&program.declaration_arenas);
+                    binder.sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
+                    binder.symbol_arenas = Arc::clone(&program.symbol_arenas);
+                    Arc::new(binder)
                 })
                 .collect(),
         );
@@ -419,9 +422,12 @@ impl Server {
                 .iter()
                 .enumerate()
                 .map(|(file_idx, file)| {
-                    Arc::new(parallel::create_binder_from_bound_file(
-                        file, &program, file_idx,
-                    ))
+                    let mut binder =
+                        parallel::create_binder_from_bound_file(file, &program, file_idx);
+                    binder.declaration_arenas = Arc::clone(&program.declaration_arenas);
+                    binder.sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
+                    binder.symbol_arenas = Arc::clone(&program.symbol_arenas);
+                    Arc::new(binder)
                 })
                 .collect(),
         );

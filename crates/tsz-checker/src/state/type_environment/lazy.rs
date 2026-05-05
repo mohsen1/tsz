@@ -285,7 +285,11 @@ impl<'a> CheckerState<'a> {
             if use_cache {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
-            eval_result.result
+            if eval_result.result == type_id {
+                result
+            } else {
+                eval_result.result
+            }
         } else {
             result
         };
@@ -1245,16 +1249,24 @@ impl<'a> CheckerState<'a> {
         let type_params = if let Some(params) = cached_env_params {
             params
         } else if let Some(def_id) = def_id {
-            self.ctx
-                .get_def_type_params(def_id)
-                .unwrap_or_else(|| self.get_type_params_for_symbol(sym_id))
+            match self.ctx.get_def_type_params(def_id) {
+                Some(params)
+                    if !params.is_empty()
+                        && params
+                            .iter()
+                            .all(|param| param.constraint.is_none() && param.default.is_none()) =>
+                {
+                    self.get_type_params_for_symbol(sym_id)
+                }
+                Some(params) => params,
+                None => self.get_type_params_for_symbol(sym_id),
+            }
         } else {
             self.get_type_params_for_symbol(sym_id)
         };
 
         if let Some(def_id) = def_id
             && !type_params.is_empty()
-            && self.ctx.get_def_type_params(def_id).is_none()
         {
             self.ctx.insert_def_type_params(def_id, type_params.clone());
         }
@@ -1565,7 +1577,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_of_symbol(sym_id)
             };
-
             let inserted = self.insert_type_env_symbol(sym_id, resolved);
 
             // When import alias resolution remapped the symbol (e.g., ALIAS

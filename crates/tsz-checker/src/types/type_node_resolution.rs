@@ -565,8 +565,89 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         sym_id: tsz_binder::SymbolId,
     ) -> tsz_solver::def::DefId {
         let def_id = self.ctx.get_or_create_def_id(sym_id);
+        self.ensure_declared_type_params_cached(sym_id, def_id);
         self.ensure_type_alias_resolved(sym_id, def_id);
         def_id
+    }
+
+    fn ensure_declared_type_params_cached(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        def_id: tsz_solver::def::DefId,
+    ) {
+        if self.ctx.get_def_type_params(def_id).is_some() {
+            return;
+        }
+        let Some(symbol) = self.get_symbol_from_any_context(sym_id) else {
+            return;
+        };
+        if !symbol.has_any_flags(
+            tsz_binder::symbol_flags::TYPE_ALIAS
+                | tsz_binder::symbol_flags::INTERFACE
+                | tsz_binder::symbol_flags::CLASS,
+        ) {
+            return;
+        }
+
+        let mut decls_with_arenas = Vec::new();
+        for &decl_idx in &symbol.declarations {
+            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                decls_with_arenas.extend(arenas.iter().map(|arena| (decl_idx, arena.as_ref())));
+            } else if let Some(arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+                decls_with_arenas.push((decl_idx, arena.as_ref()));
+            } else {
+                decls_with_arenas.push((decl_idx, self.ctx.arena));
+            }
+        }
+
+        let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            let name = decls_with_arenas
+                .iter()
+                .find_map(|(_, arena)| arena.get_identifier_text(node_idx))
+                .or_else(|| self.ctx.arena.get_identifier_text(node_idx))?;
+            self.resolve_entity_name_text_symbol(name).map(|sym| sym.0)
+        };
+        let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
+            let name = decls_with_arenas
+                .iter()
+                .find_map(|(_, arena)| arena.get_identifier_text(node_idx))
+                .or_else(|| self.ctx.arena.get_identifier_text(node_idx))?;
+            self.resolve_entity_name_text_symbol(name)
+                .map(|sym| self.ctx.get_or_create_def_id(sym))
+        };
+        let value_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
+        let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+            self.resolve_entity_name_text_symbol(type_name)
+                .map(|sym| self.ctx.get_or_create_def_id(sym))
+        };
+        let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
+            self.ctx.arena,
+            self.ctx.types,
+            &type_resolver,
+            &def_id_resolver,
+            &value_resolver,
+        )
+        .with_name_def_id_resolver(&name_resolver)
+        .prefer_name_def_id_resolution();
+
+        let mut params = Vec::new();
+        for (decl_idx, decl_arena) in &decls_with_arenas {
+            let Some(node) = decl_arena.get(*decl_idx) else {
+                continue;
+            };
+            if let Some(alias) = decl_arena.get_type_alias(node) {
+                params = lowering
+                    .with_arena(decl_arena)
+                    .collect_type_alias_type_parameters(alias);
+            } else if decl_arena.get_interface(node).is_some() {
+                params =
+                    lowering.collect_merged_interface_type_parameters(&[(*decl_idx, *decl_arena)]);
+            }
+            if !params.is_empty() {
+                self.ctx.insert_def_type_params(def_id, params);
+                return;
+            }
+        }
     }
 
     /// Ensure a type alias symbol has its type params and body registered
@@ -691,17 +772,47 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
                 resolve_text_symbol(ident_name).map(|sym| sym.0)
             };
-            let def_id_resolver = |n: NodeIndex| -> Option<tsz_solver::def::DefId> {
-                let referenced_sym_id = if std::ptr::eq(decl_arena, self.ctx.arena) {
-                    tsz_binder::SymbolId(self.resolve_type_symbol(n)?)
-                } else {
-                    let ident_name = decl_arena.get_identifier_text(n)?;
-                    if is_compiler_managed_type(ident_name) {
-                        return None;
+            let def_id_for_symbol =
+                |referenced_sym_id: tsz_binder::SymbolId, name: &str| -> tsz_solver::def::DefId {
+                    let leaf_name = name.rsplit('.').next().unwrap_or(name);
+                    let lib_binders: Vec<_> = self
+                        .ctx
+                        .lib_contexts
+                        .iter()
+                        .map(|ctx| std::sync::Arc::clone(&ctx.binder))
+                        .collect();
+                    let is_lib_global = self
+                        .ctx
+                        .binder
+                        .get_global_type_with_libs(leaf_name, &lib_binders)
+                        .is_some_and(|sym_id| sym_id == referenced_sym_id)
+                        || lib_binders
+                            .iter()
+                            .any(|lib| lib.file_locals.get(leaf_name) == Some(referenced_sym_id));
+
+                    if is_lib_global {
+                        self.ctx
+                            .get_canonical_lib_def_id(leaf_name, referenced_sym_id)
+                    } else {
+                        self.ctx.get_or_create_def_id(referenced_sym_id)
                     }
-                    resolve_text_symbol(ident_name)?
                 };
-                let resolved_def_id = self.ctx.get_or_create_def_id(referenced_sym_id);
+            let def_id_resolver = |n: NodeIndex| -> Option<tsz_solver::def::DefId> {
+                let (referenced_sym_id, referenced_name) =
+                    if std::ptr::eq(decl_arena, self.ctx.arena) {
+                        (
+                            tsz_binder::SymbolId(self.resolve_type_symbol(n)?),
+                            self.entity_name_text(n).unwrap_or_default(),
+                        )
+                    } else {
+                        let ident_name = decl_arena.get_identifier_text(n)?;
+                        if is_compiler_managed_type(ident_name) {
+                            return None;
+                        }
+                        (resolve_text_symbol(ident_name)?, ident_name.to_string())
+                    };
+                let resolved_def_id = def_id_for_symbol(referenced_sym_id, &referenced_name);
+                self.ensure_declared_type_params_cached(referenced_sym_id, resolved_def_id);
                 // Recursively ensure referenced type aliases have their body
                 // and params registered in TypeEnvironment. Without this,
                 // type aliases only referenced inside other type alias bodies
@@ -741,13 +852,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     scoped.push_str(prefix);
                     scoped.push('.');
                     scoped.push_str(name);
-                    if let Some(resolved) =
-                        self.resolve_entity_name_text_def_id(sym_id, def_id, &scoped)
-                    {
+                    if let Some(referenced_sym_id) = resolve_text_symbol(&scoped) {
+                        let resolved = def_id_for_symbol(referenced_sym_id, &scoped);
+                        self.ensure_declared_type_params_cached(referenced_sym_id, resolved);
+                        if referenced_sym_id != sym_id && resolved != def_id {
+                            self.ensure_type_alias_resolved(referenced_sym_id, resolved);
+                        }
                         return Some(resolved);
                     }
                 }
-                self.resolve_entity_name_text_def_id(sym_id, def_id, name)
+                let referenced_sym_id = resolve_text_symbol(name)?;
+                let resolved = def_id_for_symbol(referenced_sym_id, name);
+                self.ensure_declared_type_params_cached(referenced_sym_id, resolved);
+                if referenced_sym_id != sym_id && resolved != def_id {
+                    self.ensure_type_alias_resolved(referenced_sym_id, resolved);
+                }
+                Some(resolved)
             };
             let computed_names = self.precompute_computed_property_names_in_arena(
                 decl_arena,
@@ -858,9 +978,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Register body in both type environments so resolve_lazy
             // and flow-analysis narrowing can both find it
+            self.ctx.definition_store.set_body(def_id, body);
             if params.is_empty() {
                 self.ctx.register_def_in_envs(def_id, body);
             } else {
+                self.ctx
+                    .definition_store
+                    .set_type_params(def_id, params.clone());
                 self.ctx
                     .register_def_with_params_in_envs(def_id, body, params);
             }

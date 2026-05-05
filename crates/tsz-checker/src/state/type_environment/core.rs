@@ -1543,8 +1543,7 @@ impl<'a> CheckerState<'a> {
             .then(|| self.ctx.def_type_params.borrow().get(&def_id).cloned())
             .flatten();
         if let Some(cached) = cached_params {
-            let cached_is_placeholder = self.ctx.symbol_is_from_lib(sym_id)
-                && !cached.is_empty()
+            let cached_is_placeholder = !cached.is_empty()
                 && cached
                     .iter()
                     .all(|param| param.constraint.is_none() && param.default.is_none());

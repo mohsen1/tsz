@@ -1384,7 +1384,12 @@ impl<'a> CheckerState<'a> {
             .get(name)
             .copied()
         {
-            return cached;
+            // A miss recorded before lib contexts were attached is not stable
+            // for child/cross-arena checkers. Retry once libs are available so
+            // imported declaration files can resolve globals like `Error`.
+            if cached.is_some() || !self.ctx.has_lib_loaded() {
+                return cached;
+            }
         }
 
         let mut segments = name.split('.');

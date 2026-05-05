@@ -163,6 +163,14 @@ pub(crate) mod type_construction;
     clippy::doc_markdown,
     clippy::manual_map
 )]
+pub(crate) mod type_defaults;
+#[allow(
+    dead_code,
+    clippy::missing_const_for_fn,
+    clippy::match_same_arms,
+    clippy::doc_markdown,
+    clippy::manual_map
+)]
 pub(crate) mod variance;
 #[allow(dead_code)]
 pub(crate) mod widening;

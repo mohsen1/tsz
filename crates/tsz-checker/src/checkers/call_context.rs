@@ -854,6 +854,15 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        if crate::query_boundaries::common::callable_shape_for_type(
+            self.ctx.types,
+            callee_type_for_context,
+        )
+        .is_some_and(|callable| callable.call_signatures.len() > 1)
+        {
+            return false;
+        }
+
         if shape.type_params.is_empty() {
             return false;
         }

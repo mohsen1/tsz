@@ -116,8 +116,10 @@ impl<'a> CheckerState<'a> {
                     })
                 })
                 .unwrap_or(false);
+                let jsx_intrinsic_dom_spread_target =
+                    self.jsx_spread_target_allows_no_common_properties(props_type, display_target);
 
-                if !has_jsx_managed_prop {
+                if !has_jsx_managed_prop && !jsx_intrinsic_dom_spread_target {
                     let source_str = self.format_type(spread_type);
                     let target_str = if display_target.is_empty() {
                         self.format_type(props_type)
@@ -468,6 +470,31 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn jsx_spread_target_allows_no_common_properties(
+        &mut self,
+        props_type: TypeId,
+        display_target: &str,
+    ) -> bool {
+        let target = if display_target.is_empty() {
+            self.format_type(props_type)
+        } else {
+            display_target.to_string()
+        };
+
+        // React DOM/SVG intrinsic element prop bags are intentionally permissive
+        // for spread attributes: tsc accepts `<div {...{ answer: 42 }} />` even
+        // though the object has no overlap with the weak `HTMLAttributes<T>`
+        // target. Keep TS2559 for ordinary component prop bags.
+        [
+            "HTMLAttributes<",
+            "AllHTMLAttributes<",
+            "SVGAttributes<",
+            "DOMAttributes<",
+        ]
+        .iter()
+        .any(|needle| target.contains(needle))
     }
 
     /// Remove the synthetic JSX `& { children?: ... }` injection from a

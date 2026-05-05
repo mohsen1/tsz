@@ -71,7 +71,8 @@ impl<'a> CheckerState<'a> {
 
         let object_contextual_target = object_literal_idx.and_then(|object_literal_idx| {
             self.ctx
-                .object_literal_contextual_targets
+                .object_literal_tracking
+                .contextual_targets
                 .get(&object_literal_idx)
                 .copied()
         });
@@ -81,7 +82,8 @@ impl<'a> CheckerState<'a> {
         });
         let property_diag_target = self
             .ctx
-            .object_literal_property_diag_targets
+            .object_literal_tracking
+            .property_diag_targets
             .get(&property_elem)
             .copied();
         let mut raw_call_param_property_target = None;
@@ -249,7 +251,8 @@ impl<'a> CheckerState<'a> {
         };
         let Some(&object_contextual_target) = self
             .ctx
-            .object_literal_contextual_targets
+            .object_literal_tracking
+            .contextual_targets
             .get(&object_literal_idx)
         else {
             return false;

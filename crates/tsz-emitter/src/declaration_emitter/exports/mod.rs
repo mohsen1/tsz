@@ -561,7 +561,57 @@ impl<'a> DeclarationEmitter<'a> {
             } else if expr_node.kind == SyntaxKind::Identifier as u16 {
                 // TS2883: Check for non-portable inferred type references
                 // in `export default <identifier>` expressions.
-                if let Some(file_path) = self.current_file_path.clone()
+                let mut resolved_expr = assign.expression;
+                if let Some(ident_name) = self.get_identifier_text(assign.expression)
+                    && let Some(source_file_idx) = self.current_source_file_idx
+                    && let Some(source_file_node) = self.arena.get(source_file_idx)
+                    && let Some(source_file) = self.arena.get_source_file(source_file_node)
+                {
+                    for &stmt_idx in &source_file.statements.nodes {
+                        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                            continue;
+                        };
+                        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                            continue;
+                        }
+                        let Some(variable) = self.arena.get_variable(stmt_node) else {
+                            continue;
+                        };
+                        for &decl_list_idx in &variable.declarations.nodes {
+                            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                                continue;
+                            };
+                            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                                continue;
+                            };
+                            for &decl_idx in &decl_list.declarations.nodes {
+                                let Some(decl_node) = self.arena.get(decl_idx) else {
+                                    continue;
+                                };
+                                let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                                else {
+                                    continue;
+                                };
+                                if self.get_identifier_text(decl.name).as_deref()
+                                    == Some(&ident_name)
+                                    && decl.initializer.is_some()
+                                {
+                                    resolved_expr = decl.initializer;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let is_object_assign_default = self
+                    .arena
+                    .get(resolved_expr)
+                    .and_then(|node| self.arena.get_call_expr(node))
+                    .is_some_and(|call| self.is_object_assign_call(call.expression));
+
+                if !is_object_assign_default
+                    && let Some(file_path) = self.current_file_path.clone()
                     && let Some(type_id) = self
                         .get_node_type_or_names(&[assign.expression])
                         .or_else(|| self.get_type_via_symbol(assign.expression))
@@ -625,9 +675,23 @@ impl<'a> DeclarationEmitter<'a> {
                             if self.default_expression_has_safe_nameable_surface_type(arg_idx) {
                                 continue;
                             }
+                            let arg_type_text =
+                                self.preferred_expression_type_text(arg_idx).or_else(|| {
+                                    self.get_node_type_or_names(&[arg_idx])
+                                        .map(|type_id| self.print_type_id(type_id))
+                                });
+                            let arg_has_nameable_surface =
+                                arg_type_text.as_deref().is_some_and(|text| {
+                                    self.type_text_is_directly_nameable_reference(text)
+                                });
+                            let arg_is_object_literal =
+                                self.arena.get(arg_idx).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                });
                             if let Some(arg_type_id) = self
                                 .get_node_type_or_names(&[arg_idx])
                                 .or_else(|| self.get_type_via_symbol(arg_idx))
+                                && !arg_is_object_literal
                                 && self.emit_non_portable_type_diagnostic(
                                     arg_type_id,
                                     "default",
@@ -638,15 +702,21 @@ impl<'a> DeclarationEmitter<'a> {
                             {
                                 break;
                             }
-                            let arg_type_text =
-                                self.preferred_expression_type_text(arg_idx).or_else(|| {
-                                    self.get_node_type_or_names(&[arg_idx])
-                                        .map(|type_id| self.print_type_id(type_id))
-                                });
                             if let Some(arg_type_text) = arg_type_text
                                 && arg_type_text.starts_with("import(\"")
                                 && self.emit_non_portable_import_type_text_diagnostics(
                                     &arg_type_text,
+                                    "default",
+                                    &file_path,
+                                    assign_node.pos,
+                                    assign_node.end - assign_node.pos,
+                                )
+                            {
+                                break;
+                            }
+                            if !arg_has_nameable_surface
+                                && self.emit_non_portable_initializer_declaration_diagnostics(
+                                    arg_idx,
                                     "default",
                                     &file_path,
                                     assign_node.pos,
@@ -1077,9 +1147,21 @@ impl<'a> DeclarationEmitter<'a> {
                     if self.default_expression_has_safe_nameable_surface_type(arg_idx) {
                         continue;
                     }
+                    let arg_type_text =
+                        self.preferred_expression_type_text(arg_idx).or_else(|| {
+                            self.get_node_type_or_names(&[arg_idx])
+                                .map(|type_id| self.print_type_id(type_id))
+                        });
+                    let arg_has_nameable_surface = arg_type_text
+                        .as_deref()
+                        .is_some_and(|text| self.type_text_is_directly_nameable_reference(text));
+                    let arg_is_object_literal = self.arena.get(arg_idx).is_some_and(|node| {
+                        node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    });
                     if let Some(arg_type_id) = self
                         .get_node_type_or_names(&[arg_idx])
                         .or_else(|| self.get_type_via_symbol(arg_idx))
+                        && !arg_is_object_literal
                         && self.emit_non_portable_type_diagnostic(
                             arg_type_id,
                             "default",
@@ -1090,11 +1172,6 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         break;
                     }
-                    let arg_type_text =
-                        self.preferred_expression_type_text(arg_idx).or_else(|| {
-                            self.get_node_type_or_names(&[arg_idx])
-                                .map(|type_id| self.print_type_id(type_id))
-                        });
                     if let Some(arg_type_text) = arg_type_text
                         && arg_type_text.starts_with("import(\"")
                         && self.emit_non_portable_import_type_text_diagnostics(
@@ -1103,6 +1180,13 @@ impl<'a> DeclarationEmitter<'a> {
                             &file_path,
                             diag_pos,
                             diag_len,
+                        )
+                    {
+                        break;
+                    }
+                    if !arg_has_nameable_surface
+                        && self.emit_non_portable_initializer_declaration_diagnostics(
+                            arg_idx, "default", &file_path, diag_pos, diag_len,
                         )
                     {
                         break;

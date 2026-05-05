@@ -284,9 +284,19 @@ impl<'a> CheckerState<'a> {
         let Some(raw_param) = self.raw_param_for_argument_index(sig, arg_pos) else {
             return;
         };
-        if query_common::type_application(self.ctx.types, raw_param.type_id).is_none() {
-            return;
-        }
+        let mut from_type_param_constraint = false;
+        let candidate_source_type =
+            if query_common::type_application(self.ctx.types, raw_param.type_id).is_some() {
+                raw_param.type_id
+            } else if let Some(type_param) =
+                query_common::type_param_info(self.ctx.types, raw_param.type_id)
+                && let Some(constraint) = type_param.constraint
+            {
+                from_type_param_constraint = true;
+                constraint
+            } else {
+                return;
+            };
 
         let mut substitution = query_common::TypeSubstitution::new();
         for tp in &sig.type_params {
@@ -297,16 +307,27 @@ impl<'a> CheckerState<'a> {
         }
 
         let candidate =
-            query_common::instantiate_type(self.ctx.types, raw_param.type_id, &substitution);
+            query_common::instantiate_type(self.ctx.types, candidate_source_type, &substitution);
         let evaluated_candidate = self.evaluate_type_for_assignability(candidate);
         let matches_evaluated = evaluated_candidate == evaluated_param
             || (self.is_assignable_to(evaluated_candidate, evaluated_param)
                 && self.is_assignable_to(evaluated_param, evaluated_candidate));
-        if !matches_evaluated {
+        if !(matches_evaluated
+            || from_type_param_constraint
+                && query_common::object_shape_for_type(self.ctx.types, evaluated_candidate)
+                    .is_some())
+        {
             return;
         }
 
-        let candidate_display = self.format_type_diagnostic(candidate);
+        let candidate_display = if evaluated_candidate != candidate
+            && evaluated_candidate != TypeId::ERROR
+            && !query_common::contains_type_parameters(self.ctx.types, evaluated_candidate)
+        {
+            self.format_type_for_assignability_message(evaluated_candidate)
+        } else {
+            self.format_type_diagnostic(candidate)
+        };
         if display
             .as_ref()
             .is_some_and(|existing| existing != &candidate_display)
@@ -365,16 +386,15 @@ impl<'a> CheckerState<'a> {
                 Some(query_common::LiteralValue::Number(_))
             )
         };
-        let candidate_display_type =
-            if query_common::type_application(self.ctx.types, raw_constraint).is_some()
-                && evaluated_constraint != raw_constraint
-                && evaluated_constraint != TypeId::ERROR
-                && evaluated_number_literal_union
-            {
-                evaluated_constraint
-            } else {
-                raw_constraint
-            };
+        let candidate_display_type = if evaluated_constraint != raw_constraint
+            && evaluated_constraint != TypeId::ERROR
+            && (evaluated_number_literal_union
+                || !query_common::contains_type_parameters(self.ctx.types, evaluated_constraint))
+        {
+            evaluated_constraint
+        } else {
+            raw_constraint
+        };
         let candidate = self.format_type_for_assignability_message(candidate_display_type);
         if display
             .as_ref()

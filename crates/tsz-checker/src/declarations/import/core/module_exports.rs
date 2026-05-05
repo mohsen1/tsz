@@ -222,17 +222,23 @@ impl<'a> CheckerState<'a> {
                                 && !self.ctx.is_declaration_file()
                             {
                                 let resolved_type = self.resolve_lazy_type(expr_type);
-                                if let Some((from_path, type_name)) = self
+                                let object_assign_reference = self
                                     .first_non_portable_object_assign_object_literal_reference(
                                         export_data.expression,
-                                    )
+                                    );
+                                let diagnostic_node = if object_assign_reference.is_some() {
+                                    stmt_idx
+                                } else {
+                                    export_data.expression
+                                };
+                                if let Some((from_path, type_name)) = object_assign_reference
                                     .or_else(|| self.first_non_portable_type_reference(expr_type))
                                     .or_else(|| {
                                         self.first_non_portable_type_reference(resolved_type)
                                     })
                                 {
                                     self.error_at_node_msg(
-                                        export_data.expression,
+                                        diagnostic_node,
                                         crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
                                         &["default", &type_name, &from_path],
                                     );

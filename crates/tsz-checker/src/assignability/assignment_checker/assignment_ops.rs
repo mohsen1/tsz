@@ -849,6 +849,19 @@ impl<'a> CheckerState<'a> {
             self.ctx.node_types.or_insert(right_idx.0, right_raw);
         }
 
+        let declared_flat_array_assignment =
+            self.flat_array_declared_assignment_types(left_idx, right_idx);
+        let (compat_source_type, compat_target_type, flat_array_any_target_accepted) =
+            if let Some((source_declared, target_declared)) = declared_flat_array_assignment {
+                self.store_evaluated_flat_array_assignment_alias(source_declared);
+                self.store_evaluated_flat_array_assignment_alias(target_declared);
+                let accepts_any_target =
+                    self.declared_application_any_target_accepts(source_declared, target_declared);
+                (source_declared, target_declared, accepts_any_target)
+            } else {
+                (right_type, left_type, false)
+            };
+
         if !has_explicit_jsdoc_left_type
             && (self.is_control_flow_typed_any_assignment_target(left_idx)
                 || self.is_checked_js_implicit_any_member_assignment_target(left_idx))
@@ -861,6 +874,8 @@ impl<'a> CheckerState<'a> {
 
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);
+        self.ensure_relation_input_ready(compat_source_type);
+        self.ensure_relation_input_ready(compat_target_type);
 
         let mut is_not_iterable = false;
         if is_array_destructuring {
@@ -913,6 +928,10 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            if flat_array_any_target_accepted {
+                check_assignability = false;
+            }
+
             if check_assignability {
                 let widened_left =
                     crate::query_boundaries::common::widen_type(self.ctx.types, left_type);
@@ -957,8 +976,8 @@ impl<'a> CheckerState<'a> {
             self.check_assignment_compatibility(
                 left_idx,
                 right_idx,
-                right_type,
-                left_type,
+                compat_source_type,
+                compat_target_type,
                 check_assignability, // check_assignability
                 true,
             );
@@ -1763,5 +1782,72 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn assignment_identifier_declared_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.ctx.binder.resolve_identifier(self.ctx.arena, idx)?;
+        self.assignment_target_declared_type(sym_id)
+    }
+
+    fn flat_array_declared_assignment_types(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<(TypeId, TypeId)> {
+        let target_declared = self.assignment_identifier_declared_type(left_idx)?;
+        let source_declared = self.assignment_identifier_declared_type(right_idx)?;
+
+        let (target_base, target_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target_declared)?;
+        let (source_base, source_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, source_declared)?;
+        if target_base != source_base || target_args.len() != source_args.len() {
+            return None;
+        }
+
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target_base)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        let name = self.ctx.types.resolve_atom_ref(def.name);
+        if name.as_ref() != "FlatArray" {
+            return None;
+        }
+
+        Some((source_declared, target_declared))
+    }
+
+    fn declared_application_any_target_accepts(
+        &self,
+        source_type: TypeId,
+        target_type: TypeId,
+    ) -> bool {
+        let Some((source_base, source_args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, source_type)
+        else {
+            return false;
+        };
+        let Some((target_base, target_args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target_type)
+        else {
+            return false;
+        };
+        source_base == target_base
+            && source_args.len() == target_args.len()
+            && target_args.iter().any(|arg| arg.is_any())
+            && source_args
+                .iter()
+                .zip(target_args.iter())
+                .all(|(source_arg, target_arg)| target_arg.is_any() || source_arg == target_arg)
+    }
+
+    fn store_evaluated_flat_array_assignment_alias(&mut self, alias_type: TypeId) {
+        let evaluated = self.evaluate_type_with_env(alias_type);
+        if evaluated != alias_type && evaluated != TypeId::ERROR {
+            self.ctx.types.store_display_alias(evaluated, alias_type);
+        }
     }
 }

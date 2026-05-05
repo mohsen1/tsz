@@ -78,8 +78,7 @@ impl<'a> CheckerContext<'a> {
             lib_heritage_in_progress: FxHashSet::default(),
             node_types: crate::context::NodeTypeCache::with_capacity(arena.nodes.len()),
             request_node_types: FxHashMap::default(),
-            object_literal_property_diag_targets: FxHashMap::default(),
-            object_literal_contextual_targets: FxHashMap::default(),
+            object_literal_tracking: crate::context::ObjectLiteralTracking::default(),
             request_cache_counters: crate::context::RequestCacheCounters::default(),
             type_environment: RefCell::new(TypeEnvironment::new()),
             application_eval_set: FxHashSet::default(),
@@ -596,6 +595,10 @@ impl<'a> CheckerContext<'a> {
 
         // Propagate parent state that is safe across arenas.
         ctx.no_implicit_override = parent.no_implicit_override;
+        if !parent.lib_contexts.is_empty() {
+            ctx.set_lib_contexts_shared(Arc::clone(&parent.lib_contexts));
+            ctx.set_actual_lib_file_count(parent.actual_lib_file_count);
+        }
 
         // Share symbol caches: after merge, all binders use global SymbolIds,
         // so SymbolId(N) means the same entity regardless of which arena/binder

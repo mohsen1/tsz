@@ -254,12 +254,19 @@ impl<'a> CheckerState<'a> {
         )?;
 
         let substitution = type_args
-            .filter(|type_args| !params.is_empty() && params.len() == type_args.len())
+            .filter(|type_args| !params.is_empty() && type_args.len() <= params.len())
+            .and_then(|type_args| {
+                crate::query_boundaries::type_defaults::fill_application_defaults(
+                    self.ctx.types,
+                    type_args,
+                    &params,
+                )
+            })
             .map(|type_args| {
                 crate::query_boundaries::common::TypeSubstitution::from_args(
                     self.ctx.types,
                     &params,
-                    type_args,
+                    &type_args,
                 )
             });
 
