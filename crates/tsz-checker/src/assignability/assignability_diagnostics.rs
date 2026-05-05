@@ -646,6 +646,16 @@ impl<'a> CheckerState<'a> {
         }
 
         if assignable {
+            if let Some(display_source) =
+                self.polymorphic_this_call_assignment_source(source_idx, target)
+            {
+                self.error_type_not_assignable_at_with_display_types(
+                    display_source,
+                    target,
+                    diag_idx,
+                );
+                return false;
+            }
             return true;
         }
 

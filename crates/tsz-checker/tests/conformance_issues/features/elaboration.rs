@@ -445,7 +445,7 @@ objAndPartial({ x: 0, y: 0 }, { x: 1, y: 1, z: 1 });
 }
 
 #[test]
-fn test_cross_binder_symbol_id_collision_emits_ts2322_for_this_return() {
+fn test_export_equals_named_import_preserves_polymorphic_this_ts2322() {
     let passport_dts = r#"
 declare module 'passport' {
     namespace passport {
@@ -481,9 +481,15 @@ let p: Passport = passport.use();
         },
     );
     let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
-    // After lib type resolution alignment (e369dffe12), the `PassportStatic extends Passport`
-    // relationship is correctly resolved via the symbol type cache, so TS2322 is no longer
-    // emitted. The key invariant is that we don't regress into false TS2749/TS2300/TS2451.
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for `PassportStatic` assigned to polymorphic-this `Passport`. Got: {codes:?}\n{diagnostics:#?}"
+    );
+    let ts2322 = diagnostic_message(&diagnostics, 2322).unwrap_or_default();
+    assert!(
+        ts2322.contains("is not assignable to type 'Passport'"),
+        "TS2322 should use the named import's instance type as the target.\nActual: {diagnostics:#?}"
+    );
     assert!(
         !has_error(&diagnostics, 2749)
             && !has_error(&diagnostics, 2300)
