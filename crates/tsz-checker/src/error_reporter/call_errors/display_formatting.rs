@@ -1151,6 +1151,176 @@ impl<'a> CheckerState<'a> {
         self.literal_expression_display(arg_idx)
     }
 
+    fn object_literal_call_argument_display_with_target_literals(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        if !self.object_literal_is_missing_required_target_property(arg_idx, param_type) {
+            return None;
+        }
+
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let literal = self.ctx.arena.get_literal_expr(node)?;
+        let elements = literal.elements.nodes.to_vec();
+        let mut literal_overrides = FxHashMap::default();
+
+        for elem_idx in elements {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                        continue;
+                    };
+                    (prop.name, prop.initializer)
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node) else {
+                        continue;
+                    };
+                    (prop.name, prop.name)
+                }
+                _ => continue,
+            };
+            let Some(prop_name) = self
+                .object_literal_property_name_text(prop_name_idx)
+                .or_else(|| self.get_property_name_resolved(prop_name_idx))
+            else {
+                continue;
+            };
+            let Some((target_prop_type, _)) =
+                self.object_literal_target_property_type(param_type, prop_name_idx, &prop_name)
+            else {
+                continue;
+            };
+            if !self.is_literal_sensitive_assignment_target(target_prop_type) {
+                continue;
+            }
+            let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx) else {
+                continue;
+            };
+            literal_overrides.insert(self.ctx.types.intern_string(&prop_name), literal_type);
+        }
+
+        if literal_overrides.is_empty() {
+            return None;
+        }
+
+        let display_type = crate::query_boundaries::common::widen_argument_type_for_display(
+            self.ctx.types,
+            arg_type,
+        );
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, display_type)?;
+        let mut props = shape.properties.clone();
+        props.sort_by_key(|prop| prop.declaration_order);
+
+        let mut rendered = Vec::new();
+        for prop in props {
+            let name = self.ctx.types.resolve_atom(prop.name);
+            let ty_display = if let Some(&literal_type) = literal_overrides.get(&prop.name) {
+                self.format_type_for_assignability_message(literal_type)
+            } else {
+                let widened =
+                    crate::query_boundaries::common::widen_type(self.ctx.types, prop.type_id);
+                let mut formatter = self
+                    .ctx
+                    .create_diagnostic_type_formatter()
+                    .with_preserve_optional_parameter_surface_syntax(true);
+                formatter.format(widened).into_owned()
+            };
+            let optional = if prop.optional { "?" } else { "" };
+            rendered.push(format!("{name}{optional}: {ty_display};"));
+        }
+
+        Some(format!("{{ {} }}", rendered.join(" ")))
+    }
+
+    fn object_literal_is_missing_required_target_property(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(literal) = self.ctx.arena.get_literal_expr(node) else {
+            return false;
+        };
+        let elements = literal.elements.nodes.to_vec();
+        let mut source_names = rustc_hash::FxHashSet::default();
+        for elem_idx in elements {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let name_idx = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .map(|p| p.name),
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .map(|p| p.name),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    self.ctx.arena.get_method_decl(elem_node).map(|m| m.name)
+                }
+                _ => None,
+            };
+            let Some(name_idx) = name_idx else {
+                continue;
+            };
+            if let Some(name) = self
+                .object_literal_property_name_text(name_idx)
+                .or_else(|| self.get_property_name_resolved(name_idx))
+            {
+                source_names.insert(name);
+            }
+        }
+
+        let resolved = self.resolve_type_for_property_access(param_type);
+        let evaluated = self.evaluate_type_with_env(resolved);
+        let evaluated = self.resolve_lazy_type(evaluated);
+        let evaluated = self.evaluate_application_type(evaluated);
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
+        else {
+            return false;
+        };
+
+        static OBJECT_PROTO_METHODS: &[&str] = &[
+            "constructor",
+            "toString",
+            "toLocaleString",
+            "valueOf",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ];
+
+        shape.properties.iter().any(|prop| {
+            !prop.optional && {
+                let name = self.ctx.types.resolve_atom(prop.name);
+                !source_names.contains(name.as_str())
+                    && !OBJECT_PROTO_METHODS.contains(&name.as_str())
+            }
+        })
+    }
+
     fn jsdoc_constructor_identifier_source_display(
         &mut self,
         expr_idx: NodeIndex,
@@ -1218,6 +1388,12 @@ impl<'a> CheckerState<'a> {
         if let Some(display) =
             self.contextual_function_argument_display(arg_type, param_type, arg_idx)
         {
+            return display;
+        }
+
+        if let Some(display) = self.object_literal_call_argument_display_with_target_literals(
+            arg_type, param_type, arg_idx,
+        ) {
             return display;
         }
 

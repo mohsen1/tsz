@@ -1152,7 +1152,6 @@ impl<'a> CheckerState<'a> {
             self.generic_mapped_receiver_explicit_property_names(effective_param_type);
         if self.target_has_missing_required_properties_from_source(&obj, effective_param_type)
             && mapped_surface_names.is_empty()
-            && !self.target_has_named_property_for_any_source_prop(arg_idx, effective_param_type)
         {
             return false;
         }
