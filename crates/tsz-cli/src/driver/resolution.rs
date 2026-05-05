@@ -1,6 +1,6 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::fs::{is_valid_module_file, is_valid_module_or_js_file};
@@ -17,6 +17,20 @@ pub(crate) struct ModuleResolutionCache {
     package_json_by_path: FxHashMap<PathBuf, Option<PackageJson>>,
     node_modules_dir_by_path: FxHashMap<PathBuf, bool>,
     package_root_dir_by_path: FxHashMap<PathBuf, bool>,
+}
+
+fn package_relative_target_path(package_root: &Path, target: &str) -> Option<PathBuf> {
+    let rest = target.strip_prefix("./")?;
+    let path = Path::new(target);
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return None;
+    }
+    Some(package_root.join(rest))
 }
 
 impl ModuleResolutionCache {
@@ -491,8 +505,8 @@ pub(crate) fn resolve_type_package_entry_with_mode_and_cache(
     // Try the exports map first
     if let Some(exports) = &package_json.exports
         && let Some(target) = resolve_exports_subpath(exports, ".", &conditions)
+        && let Some(target_path) = package_relative_target_path(package_root, &target)
     {
-        let target_path = package_root.join(target.trim_start_matches("./"));
         // Try to find a declaration file at the target
         let package_type = package_type_from_json(Some(package_json));
         for candidate in expand_module_path_candidates(&target_path, options, package_type) {
@@ -2169,6 +2183,9 @@ fn resolve_package_imports_specifier(
             && let Some(imports) = package_json.imports.as_ref()
             && let Some(target) = resolve_imports_subpath(imports, module_specifier, &conditions)
         {
+            if target.starts_with('/') || target.starts_with('.') {
+                package_relative_target_path(current, &target)?;
+            }
             let package_type = package_type_from_json(Some(&package_json));
             if let Some(resolved) =
                 resolve_package_entry(current, &target, options, package_type, resolution_cache)
@@ -2497,12 +2514,7 @@ fn resolve_export_entry(
     if entry.is_empty() {
         return None;
     }
-    let entry = entry.trim_start_matches("./");
-    let path = if Path::new(entry).is_absolute() {
-        PathBuf::from(entry)
-    } else {
-        package_root.join(entry)
-    };
+    let path = package_relative_target_path(package_root, entry)?;
 
     for candidate in expand_export_path_candidates(&path, options, package_type) {
         if candidate.is_file() && is_valid_module_file(&candidate) {
@@ -2573,11 +2585,10 @@ fn try_remap_output_to_source(
         canon_package_root.join(configured)
     }
 
-    let target = target.trim_start_matches("./");
     // Canonicalize package_root first (it exists) so that symlinks are resolved
     // before joining the target (which may not exist on disk).
     let canon_root = normalize_resolved_path(package_root, options);
-    let target_path = canon_root.join(target);
+    let target_path = package_relative_target_path(&canon_root, target)?;
 
     // Compute the source directory: the root from which source files are organized.
     // Use rootDir if set (already canonicalized), otherwise fall back to the
