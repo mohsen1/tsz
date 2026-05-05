@@ -471,9 +471,7 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_identifier_at(access.expression)
                 .is_some_and(|ident| ident.escaped_text == "exports")
-            && self
-                .resolve_identifier_symbol_without_tracking(access.expression)
-                .is_none()
+            && self.is_unshadowed_commonjs_exports_identifier(access.expression)
         {
             let namespace_type = self.current_file_commonjs_namespace_type();
             object_type = namespace_type;
