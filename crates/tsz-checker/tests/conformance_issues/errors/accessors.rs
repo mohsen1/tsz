@@ -310,12 +310,22 @@ type X<T> = T[keyof T]["foo"];
 fn test_unknown_control_flow_generic_keyspace_and_overlap_regression() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
+function ff1<T>(t: T, k: keyof T) {
+    t[k];
+}
+function ff2<T>(t: T & {}, k: keyof T) {
+    t[k];
+}
 function ff3<T>(t: T, k: keyof (T & {})) {
     t[k];
 }
 function ff4<T>(t: T & {}, k: keyof (T & {})) {
     t[k];
 }
+ff1(null, 'foo');
+ff2(null, 'foo');
+ff3(null, 'foo');
+ff4(null, 'foo');
 function fx2<T extends {}>(value: T & ({} | null)) {
     if (value === 42) {}
 }
@@ -331,18 +341,20 @@ function fx4<T extends {} | null>(value: T & ({} | null)) {
         .cloned()
         .collect();
     let ts2536_count = relevant.iter().filter(|(code, _)| *code == 2536).count();
+    let ts2345_count = relevant.iter().filter(|(code, _)| *code == 2345).count();
     let ts2367_count = relevant.iter().filter(|(code, _)| *code == 2367).count();
 
     assert_eq!(
         ts2536_count, 1,
         "Expected exactly one TS2536 for indexing raw T with keyof (T & {{}}), got: {relevant:#?}"
     );
-    // `T extends {}` and `T extends {} | null` can both be instantiated with
-    // a number literal (since `{}` includes primitives), so there IS potential
-    // overlap with `42`. tsc does NOT emit TS2367 for these; we must not either.
     assert_eq!(
-        ts2367_count, 0,
-        "Expected no TS2367 for T extends {{}} comparisons ({{}} includes primitives), got: {relevant:#?}"
+        ts2345_count, 3,
+        "Expected TS2345 for ff1, ff2, and ff4 only; ff3(null, 'foo') is valid because keyof never is PropertyKey. Got: {relevant:#?}"
+    );
+    assert_eq!(
+        ts2367_count, 2,
+        "Expected TS2367 for the T extends {{}} and T extends {{}} | null comparisons, got: {relevant:#?}"
     );
 }
 

@@ -11132,9 +11132,12 @@ fn test_object_trifecta_keyof_object_interface() {
 fn test_keyof_never() {
     let interner = TypeInterner::new();
 
-    // keyof never = never
+    // keyof never = string | number | symbol
     let result = evaluate_keyof(&interner, TypeId::NEVER);
-    assert_eq!(result, TypeId::NEVER);
+    assert_eq!(
+        result,
+        interner.union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL)
+    );
 }
 
 #[test]
@@ -38606,8 +38609,11 @@ fn test_keyof_intersection_with_never() {
     let intersection = interner.intersection(vec![obj, TypeId::NEVER]);
     let result = evaluate_keyof(&interner, intersection);
 
-    // Intersection with never is never, so keyof never = never
-    assert_eq!(result, TypeId::NEVER);
+    // Intersection with never is never, so keyof never is PropertyKey.
+    assert_eq!(
+        result,
+        interner.union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL)
+    );
 }
 
 #[test]
@@ -38893,17 +38899,23 @@ fn test_keyof_empty_intersection() {
     let intersection = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
     let result = evaluate_keyof(&interner, intersection);
 
-    // Intersection of disjoint primitives is never, keyof never = never
-    assert_eq!(result, TypeId::NEVER);
+    // Intersection of disjoint primitives is never, so keyof never is PropertyKey.
+    assert_eq!(
+        result,
+        interner.union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL)
+    );
 }
 
 #[test]
 fn test_keyof_empty_union() {
-    // keyof never = never
+    // keyof never = string | number | symbol
     let interner = TypeInterner::new();
 
     let result = evaluate_keyof(&interner, TypeId::NEVER);
-    assert_eq!(result, TypeId::NEVER);
+    assert_eq!(
+        result,
+        interner.union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL)
+    );
 }
 
 #[test]
