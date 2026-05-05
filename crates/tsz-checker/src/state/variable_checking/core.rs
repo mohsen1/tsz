@@ -882,6 +882,14 @@ impl<'a> CheckerState<'a> {
                                 // diagnostics that need to be re-evaluated.
                                 || diag.code
                                     == crate::diagnostics::diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+                                // TS2348/TS2538: invalid calls and invalid
+                                // index expressions are structural initializer
+                                // diagnostics, not artifacts of contextual
+                                // typing from the variable annotation.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE
                                 // TS2339: "Property does not exist on type" is a structural
                                 // error (the object type and property name don't depend on
                                 // contextual typing). Preserve it so namespace/module

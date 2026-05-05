@@ -1,9 +1,9 @@
-# [WIP] fix(checker): align object element-access diagnostics
+# fix(checker): align object element-access diagnostics
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-object-element-access-diagnostics`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: https://github.com/mohsen1/tsz/pull/3087
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 - **Claimed**: 2026-05-05
 
@@ -11,18 +11,22 @@
 
 Fix the validated random conformance pick
 `TypeScript/tests/cases/compiler/objectCreationOfElementAccessExpression.ts`.
-`tsz` reports the expected `TS2348`, `TS2538`, and `TS2564` codes, but the
-diagnostic fingerprints diverge from `tsc`: the missing fingerprints are the
-`TS2348` non-callable constructor diagnostic and the `TS2538` invalid index-type
-diagnostic on the malformed element-access expression.
+`tsz` reported the expected `TS2348`, `TS2538`, and `TS2564` codes, but the
+diagnostic fingerprints diverged from `tsc`: annotated variable initializers
+lost the inner `TS2348` non-callable constructor diagnostic and `TS2538` invalid
+index-type diagnostic during the pre-contextual diagnostic reset.
 
 ## Files Touched
 
 - `docs/plan/claims/fix-checker-object-element-access-diagnostics.md`
-- Production and regression-test files TBD after root-cause diagnosis.
+- `crates/tsz-checker/Cargo.toml`
+- `crates/tsz-checker/src/state/variable_checking/core.rs`
+- `crates/tsz-checker/tests/object_element_access_diagnostics_tests.rs`
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter "objectCreationOfElementAccessExpression" --verbose`.
-- Planned: focused Rust regression test in the owning crate.
-- Planned: `cargo check`, focused `cargo nextest run`, and conformance smoke before marking ready.
+- `cargo fmt --all -- --check`
+- `CARGO_TARGET_DIR=.target/nextest-local cargo nextest run -p tsz-checker --test object_element_access_diagnostics_tests annotated_element_access_initializer_preserves_inner_call_and_index_errors`
+- `./scripts/conformance/conformance.sh run --filter "objectCreationOfElementAccessExpression" --verbose`
+- `CARGO_TARGET_DIR=.target/nextest-local cargo check --package tsz-checker`
+- `./scripts/conformance/conformance.sh run --max 200`
