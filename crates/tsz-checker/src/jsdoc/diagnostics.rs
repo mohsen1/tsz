@@ -1918,7 +1918,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn report_jsdoc_backtick_import_type_error(
+    pub(crate) fn report_jsdoc_backtick_import_type_error(
         &mut self,
         type_expr: &str,
         type_expr_start: u32,
@@ -1926,8 +1926,16 @@ impl<'a> CheckerState<'a> {
         let Some(offset) = Self::jsdoc_backtick_import_argument_offset(type_expr) else {
             return false;
         };
+        let start = type_expr_start + offset as u32;
+        if self.ctx.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == crate::diagnostics::diagnostic_codes::STRING_LITERAL_EXPECTED
+                && diagnostic.file == self.ctx.file_name
+                && diagnostic.start == start
+        }) {
+            return true;
+        }
         self.error_at_position(
-            type_expr_start + offset as u32,
+            start,
             1,
             crate::diagnostics::diagnostic_messages::STRING_LITERAL_EXPECTED,
             crate::diagnostics::diagnostic_codes::STRING_LITERAL_EXPECTED,
