@@ -1160,6 +1160,8 @@ impl<'a> Printer<'a> {
 
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         let mut first = true;
+        let mut object_rest_temp_counter = 0u32;
+        let mut object_rest_temp_names = Vec::<String>::new();
         for &param_idx in params {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
@@ -1223,7 +1225,10 @@ impl<'a> Printer<'a> {
 
                 // ES2018 object rest lowering: replace destructuring param with a temp
                 if needs_rest_lowering && self.param_has_object_rest(param_idx) {
-                    let temp = self.get_temp_var_name();
+                    let temp = self.next_object_rest_param_temp_name(
+                        &mut object_rest_temp_counter,
+                        &mut object_rest_temp_names,
+                    );
                     self.write(&temp);
                     // Skip type annotation comments
                     if param.type_annotation.is_some()
@@ -1404,6 +1409,32 @@ impl<'a> Printer<'a> {
         // scanning from name_node.end would place these comments INSIDE the
         // parameter list. The caller (statement-level comment emission) handles
         // trailing comments after the whole function declaration.
+    }
+
+    fn next_object_rest_param_temp_name(
+        &self,
+        counter: &mut u32,
+        used: &mut Vec<String>,
+    ) -> String {
+        loop {
+            let current = *counter;
+            *counter += 1;
+
+            if current < 26 && (current == 8 || current == 13) {
+                continue;
+            }
+
+            let name = if current < 26 {
+                format!("_{}", (b'a' + current as u8) as char)
+            } else {
+                format!("_{}", current - 26)
+            };
+
+            if !self.file_identifiers.contains(&name) && !used.contains(&name) {
+                used.push(name.clone());
+                return name;
+            }
+        }
     }
 
     pub(super) fn emit_parameter(&mut self, node: &Node) {
