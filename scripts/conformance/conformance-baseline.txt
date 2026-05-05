@@ -10,7 +10,6 @@ FAIL TypeScript/tests/cases/compiler/destructuringUnspreadableIntoRest.ts | expe
 FAIL TypeScript/tests/cases/compiler/dissallowSymbolAsWeakType.ts | expected:[TS2345,TS2769] actual:[TS2345,TS2769]
 FAIL TypeScript/tests/cases/compiler/excessivelyLargeTupleSpread.ts | expected:[TS2799,TS2800] actual:[TS2589]
 FAIL TypeScript/tests/cases/compiler/extractInferenceImprovement.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
-FAIL TypeScript/tests/cases/compiler/fuzzy.ts | expected:[TS2322,TS2352,TS2420] actual:[TS2322,TS2420]
 FAIL TypeScript/tests/cases/compiler/genericFunctionInference1.ts | expected:[TS2345] actual:[TS2322,TS2345,TS2362]
 FAIL TypeScript/tests/cases/compiler/homomorphicMappedTypeWithNonHomomorphicInstantiationSpreadable1.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/inKeywordTypeguard.ts | expected:[TS2322,TS2339,TS2564,TS2638,TS5024,TS18046] actual:[TS2322,TS2339,TS2564,TS5024,TS7053,TS18046]
@@ -2966,6 +2965,7 @@ PASS TypeScript/tests/cases/compiler/funduleExportedClassIsUsedBeforeDeclaration
 PASS TypeScript/tests/cases/compiler/funduleOfFunctionWithoutReturnTypeAnnotation.ts
 PASS TypeScript/tests/cases/compiler/funduleSplitAcrossFiles.ts
 PASS TypeScript/tests/cases/compiler/funduleUsedAcrossFileBoundary.ts
+PASS TypeScript/tests/cases/compiler/fuzzy.ts
 PASS TypeScript/tests/cases/compiler/generativeRecursionWithTypeOf.ts
 PASS TypeScript/tests/cases/compiler/generatorES6InAMDModule.ts
 PASS TypeScript/tests/cases/compiler/generatorES6_1.ts

@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-05T00:04:33Z",
-  "git_sha": "586ce211183a271359f8ba301928a41ec81d3db0",
+  "timestamp": "2026-05-05T00:38:46Z",
+  "git_sha": "198cce43edc6ba9c00a55c246879e549a535ff9d",
   "summary": {
     "total_tests": 12582,
-    "passed": 12433,
-    "failed": 149,
+    "passed": 12434,
+    "failed": 148,
     "pass_rate": 98.8
   },
   "areas_by_pass_rate": [
@@ -207,9 +207,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6455,
-      "failed": 65,
-      "pass_rate": 99.0
+      "passed": 6456,
+      "failed": 64,
+      "pass_rate": 99.02
     },
     {
       "area": "jsdoc",
@@ -893,10 +893,6 @@
       "count": 1
     },
     {
-      "code": "TS2352",
-      "count": 1
-    },
-    {
       "code": "TS2430",
       "count": 1
     },
@@ -953,10 +949,6 @@
     {
       "code": "TS7006",
       "count": 2
-    },
-    {
-      "code": "TS2352",
-      "count": 1
     },
     {
       "code": "TS2430",
@@ -1093,10 +1085,6 @@
       "count": 1
     },
     {
-      "code": "TS2352",
-      "count": 1
-    },
-    {
       "code": "TS2638",
       "count": 1
     },
@@ -1174,6 +1162,10 @@
     },
     {
       "code": "TS7027",
+      "count": 1
+    },
+    {
+      "code": "TS1228",
       "count": 1
     }
   ],
@@ -1286,9 +1278,9 @@
   "categories": {
     "false_positive": 3,
     "all_missing": 1,
-    "wrong_code": 40,
+    "wrong_code": 39,
     "fingerprint_only": 105,
     "same_code_count_drift": 0,
-    "close_to_passing": 26
+    "close_to_passing": 25
   }
 }
