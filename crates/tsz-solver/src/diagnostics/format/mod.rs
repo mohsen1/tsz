@@ -139,9 +139,60 @@ pub struct TypeFormatter<'a> {
     /// structural object branches. Used for long property receiver diagnostics.
     long_property_receiver_display: bool,
     long_property_receiver_object_elision_end_depth: u32,
+    /// When true, generic mapped type aliases that evaluate to scalar types are
+    /// displayed as their evaluated result. Used for assignability diagnostics.
+    expand_scalar_mapped_alias_applications: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
+    fn scalar_mapped_alias_application_display(
+        &self,
+        type_id: TypeId,
+        base: TypeId,
+        args: &[TypeId],
+    ) -> Option<TypeId> {
+        if !self.expand_scalar_mapped_alias_applications {
+            return None;
+        }
+
+        let def_store = self.def_store?;
+        let def_id = match self.interner.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            _ => def_store.find_def_for_type(base)?,
+        };
+        let def = def_store.get(def_id)?;
+        if def.kind != crate::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body = crate::evaluation::evaluate::evaluate_type(self.interner, def.body?);
+        let mapped_id = match self.interner.lookup(body) {
+            Some(TypeData::Mapped(mapped_id)) => mapped_id,
+            _ => return None,
+        };
+        let identity_info =
+            crate::type_queries::mapped::classify_identity_mapped(self.interner, mapped_id)?;
+        let source_arg_index = def
+            .type_params
+            .iter()
+            .position(|param| param.name == identity_info.source_param_name)?;
+        let evaluated = crate::type_queries::mapped::evaluate_identity_mapped_passthrough(
+            self.interner,
+            mapped_id,
+            *args.get(source_arg_index)?,
+        )?;
+        if evaluated == type_id
+            || evaluated == TypeId::ERROR
+            || crate::type_queries::contains_type_parameters_db(self.interner, evaluated)
+        {
+            return None;
+        }
+
+        (crate::visitor::is_primitive_type(self.interner, evaluated)
+            || matches!(self.interner.lookup(evaluated), Some(TypeData::Literal(_)))
+            || evaluated == TypeId::NEVER)
+            .then_some(evaluated)
+    }
+
     /// For Application-arg display: when the arg is an `IndexAccess(obj, idx)`
     /// whose `obj` is fully concrete (no type parameters, no infer
     /// placeholders) and `idx` is a literal, resolve the indexed access for
@@ -273,6 +324,7 @@ impl<'a> TypeFormatter<'a> {
             skip_object_display_alias: false,
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
+            expand_scalar_mapped_alias_applications: false,
         }
     }
 
@@ -460,6 +512,7 @@ impl<'a> TypeFormatter<'a> {
             skip_object_display_alias: false,
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
+            expand_scalar_mapped_alias_applications: false,
         }
     }
 
@@ -629,6 +682,14 @@ impl<'a> TypeFormatter<'a> {
     /// freshness model side table for error messages.
     pub const fn with_display_properties(mut self) -> Self {
         self.use_display_properties = true;
+        self
+    }
+
+    /// Expand mapped type aliases like `{ [K in keyof T]: T[K] }` when a
+    /// concrete instantiation reduces to a scalar type. This is intentionally
+    /// opt-in for error-message contexts that need tsc's assignability surface.
+    pub const fn with_expand_scalar_mapped_alias_applications(mut self) -> Self {
+        self.expand_scalar_mapped_alias_applications = true;
         self
     }
 
@@ -1208,6 +1269,12 @@ impl<'a> TypeFormatter<'a> {
                 // already signals the underlying failure.
                 if app.base == TypeId::ERROR || matches!(base_key, Some(TypeData::Error)) {
                     return Cow::Borrowed("error");
+                }
+
+                if let Some(evaluated) =
+                    self.scalar_mapped_alias_application_display(type_id, app.base, &app.args)
+                {
+                    return self.format(evaluated);
                 }
 
                 if let Some(distributed) =

@@ -42,8 +42,43 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn compile_strict_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 fn relevant_diagnostics(source: &str) -> Vec<(u32, String)> {
     compile_and_get_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318) // Filter out "Cannot find global type"
+        .collect()
+}
+
+fn relevant_strict_diagnostics(source: &str) -> Vec<(u32, String)> {
+    compile_strict_and_get_diagnostics(source)
         .into_iter()
         .filter(|(code, _)| *code != 2318) // Filter out "Cannot find global type"
         .collect()
@@ -150,6 +185,57 @@ const result = zip([1, 2], ["a", "b"], (x, y) => [x, y]);
     assert!(
         diags.iter().all(|(code, _)| *code != 7006),
         "Multi-param generic should contextually type all callback params. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn mapped_object_key_inference_is_lower_priority_than_direct_key_argument() {
+    let source = r#"
+type Lower<T> = { [K in keyof T]: T[K] };
+
+declare function appendToOptionalArray<
+  K extends string | number | symbol,
+  T
+>(
+  object: { [x in K]?: Lower<T>[] },
+  key: K,
+  value: T
+): void;
+
+const foo: { x?: number[]; y?: string[] } = {};
+appendToOptionalArray(foo, "x", 123);
+appendToOptionalArray(foo, "y", "bar");
+appendToOptionalArray(foo, "y", 12);
+appendToOptionalArray(foo, "x", "no");
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    let ts2345_messages: Vec<_> = diags
+        .iter()
+        .filter_map(|(code, message)| (*code == 2345).then_some(message.as_str()))
+        .collect();
+
+    assert_eq!(
+        ts2345_messages.len(),
+        2,
+        "only the two mismatched key/value calls should report TS2345. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2345_messages
+            .iter()
+            .any(|message| message.contains("{ y?: number[]")),
+        "the numeric value passed with key 'y' should check the object against only the y slot. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2345_messages
+            .iter()
+            .any(|message| message.contains("{ x?: string[]")),
+        "the string value passed with key 'x' should check the object against only the x slot. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2345_messages
+            .iter()
+            .all(|message| !message.contains("Lower<")),
+        "the final TS2345 surface should use the instantiated mapped property type, not the alias wrapper. Diagnostics: {diags:#?}"
     );
 }
 
