@@ -2411,7 +2411,6 @@ pub(super) const fn is_plain_js_allowed_code(code: u32) -> bool {
         | 2528 // A module cannot have multiple default exports
         | 2752 // The first export default is here
         | 2753 // Another export default is here
-        | 2774 // This condition will always return true since this function is always defined
         | 2801 // This condition will always return true since this '{0}' is always defined
         | 2803 // Cannot assign to private method '{0}'. Private methods are not writable
         | 2839 // This condition will always return '{0}' since JS compares objects by reference

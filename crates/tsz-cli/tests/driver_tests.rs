@@ -118,6 +118,56 @@ const unused = 1;
 }
 
 #[test]
+fn plain_js_suppresses_ts2774_without_check_js() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "noEmit": true,
+            "strict": true
+          },
+          "files": ["plain.js", "checked.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("plain.js"),
+        r#"function f() {}
+if (f) {}
+"#,
+    );
+    write_file(
+        &base.join("checked.js"),
+        r#"// @ts-check
+function g() {}
+if (g) {}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let ts2774: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2774)
+        .collect();
+    assert_eq!(
+        ts2774.len(),
+        1,
+        "plain JS should suppress TS2774, while @ts-check JS should keep it. Diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts2774[0].file.ends_with("checked.js"),
+        "TS2774 should come from the @ts-check file, got: {:?}",
+        ts2774[0]
+    );
+}
+
+#[test]
 fn instanceof_rhs_validation_uses_lib_function_when_local_type_shadows_function() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
