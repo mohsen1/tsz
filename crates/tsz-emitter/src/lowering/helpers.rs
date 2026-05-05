@@ -1084,6 +1084,7 @@ impl<'a> LoweringPass<'a> {
         let needs_private_field_lowering = self.ctx.needs_es2022_lowering;
         let target_needs_field_lowering =
             self.ctx.needs_es2022_lowering || !self.ctx.options.use_define_for_class_fields;
+        #[allow(clippy::nonminimal_bool)]
         let has_static_field_comma_expr = target_needs_field_lowering
             && class.members.nodes.iter().any(|&member_idx| {
                 self.arena.get(member_idx).is_some_and(|member| {
