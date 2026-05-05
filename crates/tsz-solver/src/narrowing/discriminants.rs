@@ -799,8 +799,10 @@ impl<'a> NarrowingContext<'a> {
                 ) {
                     Some(t) => t,
                     None => {
-                        // Property doesn't exist -> undefined (falsy)
-                        return !sense;
+                        // A missing property is an invalid access, not useful
+                        // narrowing evidence. Keep the member on both branches
+                        // so downstream property accesses can report TS2339.
+                        return true;
                     }
                 };
 
