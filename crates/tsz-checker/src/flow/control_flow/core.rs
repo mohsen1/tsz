@@ -635,6 +635,33 @@ impl<'a> FlowAnalyzer<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::TrueKeyword as u16)
     }
 
+    fn flow_chain_contains_switch_clause(&self, flow_id: FlowNodeId) -> bool {
+        let mut worklist = VecDeque::from([flow_id]);
+        let mut visited = FxHashSet::default();
+        let mut steps = 0usize;
+
+        while let Some(current) = worklist.pop_front() {
+            if current.is_none() || !visited.insert(current) {
+                continue;
+            }
+            steps += 1;
+            if steps > 32 {
+                return false;
+            }
+            let Some(flow) = self.binder.flow_nodes.get(current) else {
+                continue;
+            };
+            if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
+                return true;
+            }
+            for &ant in &flow.antecedent {
+                worklist.push_back(ant);
+            }
+        }
+
+        false
+    }
+
     #[inline]
     fn switch_can_affect_reference(&self, switch_expr: NodeIndex, reference: NodeIndex) -> bool {
         // switch(true) can narrow any reference — each case expression is an
@@ -1124,7 +1151,6 @@ impl<'a> FlowAnalyzer<'a> {
             .or_else(|| self.reference_symbol(reference))
             .is_some_and(|sid| self.is_control_flow_typed_any_symbol(sid));
         let skip_cache_for_control_flow_typed_any = control_flow_typed_any_symbol;
-        let skip_cache_for_explicit_unknown = initial_type == TypeId::UNKNOWN;
 
         // Use a synthetic cache symbol for references that don't resolve to a symbol
         // (for example complex/property references). This enables cache reuse while
@@ -1160,6 +1186,8 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     (false, false)
                 };
+            let skip_cache_for_explicit_unknown_switch = initial_type == TypeId::UNKNOWN
+                && self.flow_chain_contains_switch_clause(current_flow);
 
             // Use cache if: 1) not a switch clause, AND
             // 2) either initial type is concrete OR this is a loop label.
@@ -1168,7 +1196,7 @@ impl<'a> FlowAnalyzer<'a> {
             // stack overflow when types contain type parameters.
             if !is_switch_clause
                 && (!skip_cache_for_control_flow_typed_any || is_loop_label_node)
-                && !skip_cache_for_explicit_unknown
+                && !skip_cache_for_explicit_unknown_switch
                 && (!initial_has_type_params || is_loop_label_node)
                 && let Some(cache) = self.flow_cache
             {
@@ -1997,7 +2025,8 @@ impl<'a> FlowAnalyzer<'a> {
                 && cacheable_walk
                 && (!skip_cache_for_control_flow_typed_any
                     || flow.has_any_flags(flow_flags::LOOP_LABEL))
-                && !skip_cache_for_explicit_unknown
+                && !(initial_type == TypeId::UNKNOWN
+                    && self.flow_chain_contains_switch_clause(current_flow))
             {
                 let final_has_type_params = self.contains_type_parameters_cached(final_type);
 

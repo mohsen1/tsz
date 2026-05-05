@@ -97,13 +97,32 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         narrowing: &NarrowingContext,
     ) -> TypeId {
+        if matches!(type_id, TypeId::UNKNOWN | TypeId::ANY)
+            && self.is_matching_reference(switch_expr, target)
+        {
+            let case_expr = self.skip_parenthesized(case_expr);
+            if let Some(sym_id) = self.binder.resolve_identifier(self.arena, case_expr)
+                && let Some(case_type) = self.annotation_comparison_type(sym_id)
+            {
+                return case_type;
+            }
+        }
+
         let binary = BinaryExprData {
             left: switch_expr,
             operator_token: SyntaxKind::EqualsEqualsEqualsToken as u16,
             right: case_expr,
         };
 
-        self.narrow_by_binary_expr(type_id, &binary, target, true, narrowing, FlowNodeId::NONE)
+        self.narrow_by_binary_expr(
+            type_id,
+            &binary,
+            target,
+            true,
+            narrowing,
+            FlowNodeId::NONE,
+            true,
+        )
     }
 
     pub(crate) fn narrow_by_switch_case_clause(
@@ -293,6 +312,7 @@ impl<'a> FlowAnalyzer<'a> {
                 false,
                 narrowing,
                 FlowNodeId::NONE,
+                true,
             );
         }
 
@@ -477,6 +497,7 @@ impl<'a> FlowAnalyzer<'a> {
                 false,
                 narrowing,
                 FlowNodeId::NONE,
+                true,
             );
         }
 
@@ -704,6 +725,7 @@ impl<'a> FlowAnalyzer<'a> {
                                     is_true_branch,
                                     &narrowing,
                                     antecedent_id,
+                                    false,
                                 );
                             }
                         }
@@ -719,6 +741,7 @@ impl<'a> FlowAnalyzer<'a> {
                         is_true_branch,
                         &narrowing,
                         antecedent_id,
+                        false,
                     );
                     return narrowed;
                 }
@@ -1216,6 +1239,7 @@ impl<'a> FlowAnalyzer<'a> {
         is_true_branch: bool,
         narrowing: &NarrowingContext,
         antecedent_id: FlowNodeId,
+        allow_untyped_comparison_fallback: bool,
     ) -> TypeId {
         let operator = bin.operator_token;
 
@@ -1479,8 +1503,17 @@ impl<'a> FlowAnalyzer<'a> {
             // Check if target is on the left side (x === y, target is x)
             if self.is_matching_reference(bin.left, target) {
                 // We need the type of the RIGHT side (y)
-                if let Some(right_type) = self.flow_comparison_type(bin.right, antecedent_id) {
+                if let Some(right_type) = self.flow_comparison_type(
+                    bin.right,
+                    antecedent_id,
+                    allow_untyped_comparison_fallback,
+                ) {
                     if effective_truth {
+                        if allow_untyped_comparison_fallback
+                            && matches!(type_id, TypeId::UNKNOWN | TypeId::ANY)
+                        {
+                            return right_type;
+                        }
                         return narrowing.narrow_type(
                             type_id,
                             &TypeGuard::LiteralEquality(right_type),
@@ -1499,8 +1532,17 @@ impl<'a> FlowAnalyzer<'a> {
             // Check if target is on the right side (y === x, target is x)
             if self.is_matching_reference(bin.right, target) {
                 // We need the type of the LEFT side (y)
-                if let Some(left_type) = self.flow_comparison_type(bin.left, antecedent_id) {
+                if let Some(left_type) = self.flow_comparison_type(
+                    bin.left,
+                    antecedent_id,
+                    allow_untyped_comparison_fallback,
+                ) {
                     if effective_truth {
+                        if allow_untyped_comparison_fallback
+                            && matches!(type_id, TypeId::UNKNOWN | TypeId::ANY)
+                        {
+                            return left_type;
+                        }
                         return narrowing.narrow_type(
                             type_id,
                             &TypeGuard::LiteralEquality(left_type),
@@ -1524,19 +1566,27 @@ impl<'a> FlowAnalyzer<'a> {
         &self,
         other_node: NodeIndex,
         antecedent_id: FlowNodeId,
+        allow_untyped_fallback: bool,
     ) -> Option<TypeId> {
         if let Some(node_types) = self.node_types
             && let Some(&initial_type) = node_types.get(&other_node.0)
         {
-            return if antecedent_id.is_some() {
-                Some(self.get_flow_type(other_node, initial_type, antecedent_id))
+            let comparison_type = if antecedent_id.is_some() {
+                self.get_flow_type(other_node, initial_type, antecedent_id)
             } else {
-                Some(initial_type)
+                initial_type
             };
+            if comparison_type != TypeId::UNKNOWN || !allow_untyped_fallback {
+                return Some(comparison_type);
+            }
         }
 
         if let Some(literal_type) = self.literal_type_from_node_for_unknown_target(other_node) {
             return Some(literal_type);
+        }
+
+        if !allow_untyped_fallback {
+            return None;
         }
 
         let other_node = self.skip_parenthesized(other_node);
@@ -1544,15 +1594,19 @@ impl<'a> FlowAnalyzer<'a> {
         let sym_ref = tsz_solver::SymbolRef(sym_id.0);
         if let Some(env) = self.type_environment.as_ref() {
             let env = env.borrow();
-            if let Some(ty) = env.get(sym_ref) {
+            if let Some(ty) = env.get(sym_ref)
+                && !matches!(ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            {
                 return Some(ty);
             }
         }
-        self.resolve_symbol_to_lazy(sym_ref)
-            .or_else(|| self.objectish_annotation_comparison_type(sym_id))
+        self.annotation_comparison_type(sym_id).or_else(|| {
+            self.resolve_symbol_to_lazy(sym_ref)
+                .filter(|&ty| is_unit_type(self.interner, ty))
+        })
     }
 
-    fn objectish_annotation_comparison_type(&self, sym_id: SymbolId) -> Option<TypeId> {
+    fn annotation_comparison_type(&self, sym_id: SymbolId) -> Option<TypeId> {
         let symbol = self.binder.get_symbol(sym_id)?;
         let mut decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
@@ -1579,6 +1633,20 @@ impl<'a> FlowAnalyzer<'a> {
         };
         let annotation_node = self.arena.get(annotation)?;
         match annotation_node.kind {
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                let op = self.arena.get_type_operator(annotation_node)?;
+                if op.operator == SyntaxKind::UniqueKeyword as u16
+                    && self.is_symbol_type_reference(op.type_node)
+                {
+                    let decl_sym = self.binder.get_node_symbol(decl_idx).unwrap_or(sym_id);
+                    Some(
+                        self.interner
+                            .unique_symbol(tsz_solver::SymbolRef(decl_sym.0)),
+                    )
+                } else {
+                    None
+                }
+            }
             k if k == SyntaxKind::ObjectKeyword as u16
                 || k == syntax_kind_ext::TYPE_LITERAL
                 || k == syntax_kind_ext::FUNCTION_TYPE
@@ -1588,6 +1656,27 @@ impl<'a> FlowAnalyzer<'a> {
             }
             _ => None,
         }
+    }
+
+    fn is_symbol_type_reference(&self, type_node: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(type_node) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::SymbolKeyword as u16 {
+            return true;
+        }
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        self.arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "symbol")
     }
 
     /// Handle boolean comparison narrowing: `expr === true`, `expr === false`,

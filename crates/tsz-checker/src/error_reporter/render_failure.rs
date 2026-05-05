@@ -25,6 +25,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let expected_len = crate::query_boundaries::common::union_members(self.ctx.types, source)
             .map(|members| members.len())?;
+        let target_members = crate::query_boundaries::common::union_members(self.ctx.types, target);
         if expected_len < 2 {
             return None;
         }
@@ -74,13 +75,15 @@ impl<'a> CheckerState<'a> {
             if clause.expression.is_none() {
                 return None;
             }
-            let case_type = self
-                .literal_type_from_initializer(clause.expression)
-                .unwrap_or_else(|| self.get_type_of_node(clause.expression));
+            let case_type = self.literal_type_from_initializer(clause.expression)?;
             let display = self
                 .literal_expression_display(clause.expression)
                 .unwrap_or_else(|| self.format_assignability_type_for_message(case_type, target));
-            if self.is_assignable_to(case_type, target) {
+            let matches_target = case_type == target
+                || target_members
+                    .as_ref()
+                    .is_some_and(|members| members.contains(&case_type));
+            if matches_target {
                 valid.push(display);
             } else {
                 invalid.push(display);
