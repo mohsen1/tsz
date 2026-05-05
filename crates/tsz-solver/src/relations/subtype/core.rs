@@ -15,6 +15,7 @@ use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
+use crate::objects::{PropertyCollectionResult, collect_properties};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
@@ -417,6 +418,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             SubtypeResult::False
         }
+    }
+
+    fn intersection_has_incompatible_target_property(
+        &mut self,
+        source_intersection: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some(target_shape_id) = object_shape_id(self.interner, target)
+            .or_else(|| object_with_index_shape_id(self.interner, target))
+        else {
+            return false;
+        };
+        let target_shape = self.interner.object_shape(target_shape_id);
+        let PropertyCollectionResult::Properties {
+            properties: source_props,
+            ..
+        } = collect_properties(source_intersection, self.interner, self.resolver)
+        else {
+            return false;
+        };
+
+        for target_prop in &target_shape.properties {
+            let Some(source_prop) = self.lookup_property(&source_props, None, target_prop.name)
+            else {
+                continue;
+            };
+
+            let saved_tracer = self.tracer.take();
+            let compatible =
+                self.check_property_compatibility(source_prop, target_prop, None, None);
+            self.tracer = saved_tracer;
+
+            if compatible.is_false() {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Reset per-check state so this checker can be reused for another subtype check.
@@ -1018,6 +1057,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // the weak-type generosity concern.
             let target_is_object_like = object_shape_id(self.interner, target).is_some()
                 || object_with_index_shape_id(self.interner, target).is_some();
+            let target_property_conflict = target_is_object_like
+                && self.intersection_has_incompatible_target_property(source, target);
             // Branded-primitive targets carry their brand properties on a
             // sibling weak object member (e.g., `string & { kind?: K }`).  When
             // the source is also an intersection that mixes a primitive with a
@@ -1063,6 +1104,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let saved_intersection_check = self.in_intersection_member_check;
             self.in_intersection_member_check = false;
             for &member in member_list.iter() {
+                if target_property_conflict {
+                    continue;
+                }
                 if target_is_object_like && type_param_info(self.interner, member).is_some() {
                     continue;
                 }

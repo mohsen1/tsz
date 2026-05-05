@@ -4257,6 +4257,80 @@ const r1: number = x;
 }
 
 #[test]
+fn test_ts2322_intersections_and_optional_properties_source_display() {
+    let source = r#"
+declare let x: { a?: number, b: string };
+declare let y: { a: null, b: string };
+declare let z: { a: null } & { b: string };
+x = y;
+x = z;
+"#;
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322.iter().any(|message| message.contains(
+            "Type '{ a: null; b: string; }' is not assignable to type '{ a?: number | undefined; b: string; }'."
+        )),
+        "expected plain object source to display as a collapsed object, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322.iter().any(|message| message.contains(
+            "Type '{ a: null; } & { b: string; }' is not assignable to type '{ a?: number | undefined; b: string; }'."
+        )),
+        "expected declared intersection source to keep its intersection surface, got: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_ts2322_reports_alias_intersection_optional_property_conflict() {
+    let source = r#"
+interface To {
+    field?: number;
+    anotherField: string;
+}
+type From = { field: null } & Omit<To, 'field'>;
+function foo(v: From) {
+    let x: To;
+    x = v;
+}
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'From' is not assignable to type 'To'.")),
+        "expected alias intersection assignment to report TS2322 as From -> To, got: {ts2322:#?}"
+    );
+}
+
+#[test]
 fn test_ts2322_keeps_outer_object_error_for_direct_index_access_target() {
     let source = r#"
 interface TextChannel {
