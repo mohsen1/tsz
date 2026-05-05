@@ -121,7 +121,7 @@ fn check_resolution_mode_with_targets_and_file_map(
             0usize,
             "pkg".to_string(),
             Some(ResolutionModeOverride::Require),
-            ResolutionRequestKind::EsmImport,
+            ResolutionRequestKind::CjsRequire,
         ),
         2usize,
     );
