@@ -398,6 +398,14 @@ impl<'a> LoweringPass<'a> {
                     }
                     if let Some(mods) = &class_data.modifiers {
                         for &mod_idx in &mods.nodes {
+                            if self.ctx.options.legacy_decorators
+                                && self
+                                    .arena
+                                    .get(mod_idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                            {
+                                continue;
+                            }
                             self.visit(mod_idx);
                         }
                     }
