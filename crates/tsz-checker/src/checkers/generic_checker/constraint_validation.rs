@@ -340,18 +340,11 @@ impl<'a> CheckerState<'a> {
                                                 || self
                                                     .infer_result_satisfies_via_check_constraint(
                                                         base,
-                                                        cond_check,
+                                                        (cond_check, cond_extends, cond_true),
                                                         inst_constraint,
                                                     )
                                                 || self
                                                     .infer_result_satisfies_array_like_constraint(
-                                                        cond_extends,
-                                                        cond_true,
-                                                        inst_constraint,
-                                                    )
-                                                || self
-                                                    .infer_result_satisfies_via_mapped_key_subset(
-                                                        cond_check,
                                                         cond_extends,
                                                         cond_true,
                                                         inst_constraint,
@@ -799,16 +792,10 @@ impl<'a> CheckerState<'a> {
                                             .is_assignable_to(type_arg_evaluated, inst_constraint))
                                     || self.infer_result_satisfies_via_check_constraint(
                                         type_arg,
-                                        cond_check,
+                                        (cond_check, cond_extends, cond_true),
                                         inst_constraint,
                                     )
                                     || self.infer_result_satisfies_array_like_constraint(
-                                        cond_extends,
-                                        cond_true,
-                                        inst_constraint,
-                                    )
-                                    || self.infer_result_satisfies_via_mapped_key_subset(
-                                        cond_check,
                                         cond_extends,
                                         cond_true,
                                         inst_constraint,

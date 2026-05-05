@@ -20,9 +20,19 @@ impl<'a> CheckerState<'a> {
     pub(super) fn infer_result_satisfies_via_check_constraint(
         &mut self,
         type_arg: TypeId,
-        cond_check: TypeId,
+        cond_components: (TypeId, TypeId, TypeId),
         inst_constraint: TypeId,
     ) -> bool {
+        let (cond_check, cond_extends, cond_true) = cond_components;
+        if self.infer_result_satisfies_via_mapped_key_subset(
+            cond_check,
+            cond_extends,
+            cond_true,
+            inst_constraint,
+        ) {
+            return true;
+        }
+
         let db = self.ctx.types.as_type_database();
         let Some(check_name) = query::type_parameter_name(db, cond_check) else {
             return false;
@@ -49,7 +59,7 @@ impl<'a> CheckerState<'a> {
             || self.is_assignable_to(restricted, inst_constraint)
     }
 
-    pub(super) fn infer_result_satisfies_via_mapped_key_subset(
+    fn infer_result_satisfies_via_mapped_key_subset(
         &mut self,
         cond_check: TypeId,
         cond_extends: TypeId,
