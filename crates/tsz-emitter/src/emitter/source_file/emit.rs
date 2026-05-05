@@ -1284,6 +1284,17 @@ impl<'a> Printer<'a> {
         let mut has_deferred_empty_export = false;
         let mut skip_recovered_yield_operand_statement = false;
         let mut skip_recovered_debugger_namespace_until: Option<u32> = None;
+        if source.statements.nodes.is_empty()
+            && self
+                .source_text
+                .is_some_and(|text| text.trim_start().starts_with("@<"))
+        {
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+            self.write(";");
+            self.write_line();
+        }
         for (stmt_i, &stmt_idx) in source.statements.nodes.iter().enumerate() {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
