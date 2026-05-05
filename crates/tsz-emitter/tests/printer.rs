@@ -926,7 +926,10 @@ fn test_nested_for_await_of_targets_nested_return_temps() {
 
     assert!(output.contains("for (var"));
     assert!(output.contains("__asyncValues"));
-    assert!(output.contains("var e_1"));
+    // After ESM for-await alignment, hoisted catch temps are coalesced into a
+    // single `var` declaration alongside other top-of-function temps, matching
+    // TypeScript's emit. Verify both temps still appear in such a declaration.
+    assert!(output.contains("e_1"));
     assert!(output.contains("e_2"));
     assert!(output.contains("_a ="));
 }
