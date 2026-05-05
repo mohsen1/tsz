@@ -721,5 +721,9 @@ path = "tests/ts1262_multiple_await_declarations_tests.rs"
 name = "unused_jsdoc_pattern_comment_scoped_tests"
 path = "tests/unused_jsdoc_pattern_comment_scoped_tests.rs"
 
+[[test]]
+name = "unused_internal_name_suppression_tests"
+path = "tests/unused_internal_name_suppression_tests.rs"
+
 [lints]
 workspace = true
