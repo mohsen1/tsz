@@ -150,6 +150,40 @@ doSomething([{ foo() {} }]); // ok: T = { foo(): void }[]
     );
 }
 
+#[test]
+fn self_referential_constraint_fallback_preserves_literal_union_display() {
+    let source = r#"
+interface Comparable<T> {
+    compareTo(other: T): number;
+}
+interface Comparer {
+    <T extends Comparable<T>>(x: T, y: T): T;
+}
+var max2: Comparer = (x, y) => { return (x.compareTo(y) > 0) ? x : y };
+var maxResult = max2(1, 2);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for max2(1, 2); got: {diags:#?}"
+    );
+    let msg = &ts2345[0].1;
+    assert!(
+        msg.contains("Argument of type 'number'"),
+        "source display should widen the direct numeric literal to number. Got: {msg}"
+    );
+    assert!(
+        msg.contains("parameter of type 'Comparable<1 | 2>'"),
+        "self-referential constraint fallback should preserve the literal union. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("Comparable<number>"),
+        "TS2345 should not instantiate the fallback constraint with widened number. Got: {msg}"
+    );
+}
+
 // ─── Overloaded function arguments ───────────────────────────────────
 
 #[test]
