@@ -141,15 +141,12 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(name) = self.declaration_import_attribute_text(attr.name) else {
             return true;
         };
-        if name != "resolution-mode" {
-            return true;
-        }
-
-        matches!(
-            self.declaration_import_attribute_text(attr.value)
-                .as_deref(),
-            Some("import" | "require")
-        )
+        name == "resolution-mode"
+            && matches!(
+                self.declaration_import_attribute_text(attr.value)
+                    .as_deref(),
+                Some("import" | "require")
+            )
     }
 
     pub(super) fn emit_declaration_import_attributes(&mut self, attributes: NodeIndex) {
