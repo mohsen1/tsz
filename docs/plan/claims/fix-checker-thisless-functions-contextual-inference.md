@@ -1,9 +1,9 @@
-# [WIP] fix(checker): align thisless contextual inference diagnostics
+# fix(checker): align thisless contextual inference diagnostics
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-thisless-functions-contextual-inference`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2759
+- **Status**: ready
 - **Workstream**: conformance / contextual inference and diagnostic fingerprints
 
 ## Intent
@@ -26,13 +26,20 @@ Observed verbose mismatch on `origin/main`:
 
 ## Files Touched
 
-- TBD after root-cause analysis; likely checker contextual typing / inference
-  boundary helpers and owning crate regression tests.
+- `crates/tsz-solver/src/operations/constraints/walker.rs` (conditional target inference)
+- `crates/tsz-checker/src/types/computation/call_helpers.rs` (object-literal inference from callable union members)
+- `crates/tsz-checker/src/error_reporter/*` (TS2820 target display preservation)
+- `crates/tsz-solver/tests/operations_tests.rs` (conditional inference regression)
+- `crates/tsz-checker/tests/generic_call_inference_tests.rs` (checker inference regression)
+- `crates/tsz-checker/tests/conformance_issues/features/import_aliases.rs` (Vuex-style callback regression)
 
 ## Verification
 
-- `./scripts/conformance/conformance.sh run --filter "thislessFunctionsNotContextSensitive1" --verbose` (currently failing, baseline captured)
-- Planned: `cargo check --package tsz-checker`
-- Planned: `cargo check --package tsz-solver`
-- Planned: owning-crate `cargo nextest run` for new regression tests
-- Planned: targeted conformance rerun for `thislessFunctionsNotContextSensitive1`
+- `cargo fmt --all --check`
+- `cargo check --package tsz-checker`
+- `cargo check --package tsz-solver`
+- `cargo nextest run -p tsz-solver test_infer_generic_conditional_param_with_check_placeholder_from_branch` (1 passed)
+- `cargo nextest run -p tsz-checker conditional_parameter_infers_through_branches_before_assignability test_no_false_ts18046_union_state_function_infers_top_level_state` (2 passed)
+- `cargo nextest run -p tsz-checker mapped_type_recursive_inference_generic_call_preserves_nested_callback_context` (2 passed)
+- `./scripts/conformance/conformance.sh run --filter "thislessFunctionsNotContextSensitive1" --verbose` (1/1 passed, fingerprint-only 0)
+- `./scripts/conformance/conformance.sh run --max 200` (200/200 passed, fingerprint-only 0)

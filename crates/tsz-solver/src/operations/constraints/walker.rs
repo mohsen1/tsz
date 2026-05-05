@@ -559,21 +559,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 } else {
-                    // When the conditional can't be evaluated and its check type is
-                    // an inference placeholder, skip inference entirely. This matches
-                    // tsc's inferToConditionalType: tsc only infers from a conditional
-                    // when its own `infer` type parameters include the check type
-                    // (i.e., `infer X` in the extends clause). When the check type is
-                    // an outer inference variable (from a generic function call), tsc
-                    // does NOT infer through the conditional, preventing false
-                    // candidates that would pollute the inferred type.
-                    if var_map.contains_key(&cond.check_type) {
-                        return;
-                    }
+                    // Match tsc's `inferToConditionalType`: if the target conditional
+                    // cannot be evaluated yet, infer against both branch types. Direct
+                    // naked type-parameter branches are fallback evidence; structured
+                    // branches should win when they can infer more specific candidates.
                     let mut visited = FxHashSet::default();
                     if self.type_contains_placeholder(target, var_map, &mut visited) {
-                        self.constrain_types(ctx, var_map, source, cond.true_type, priority);
-                        self.constrain_types(ctx, var_map, source, cond.false_type, priority);
+                        if var_map.contains_key(&cond.check_type)
+                            && cond.true_type != TypeId::NEVER
+                            && cond.false_type != TypeId::NEVER
+                        {
+                            return;
+                        }
+                        let true_priority = if var_map.contains_key(&cond.true_type) {
+                            crate::types::InferencePriority::LowPriority
+                        } else {
+                            priority
+                        };
+                        let false_priority = if var_map.contains_key(&cond.false_type) {
+                            crate::types::InferencePriority::LowPriority
+                        } else {
+                            priority
+                        };
+                        self.constrain_types(ctx, var_map, source, cond.true_type, true_priority);
+                        self.constrain_types(ctx, var_map, source, cond.false_type, false_priority);
                     }
                 }
             }

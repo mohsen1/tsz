@@ -759,6 +759,39 @@ create({
 }
 
 #[test]
+fn test_no_false_ts18046_union_state_function_infers_top_level_state() {
+    // `state?: State | (() => State) | { (): State }` still contributes
+    // return-type evidence for State. The callable union arms are the inference
+    // sources; the naked State arm must not force fallback to the constraint.
+    let source = r#"
+type StateFunction<State> = (s: State, ...args: any[]) => any;
+
+type Options<State> = {
+  state?: State | (() => State) | { (): State };
+  mutations?: Record<string, StateFunction<State>>;
+};
+
+declare function create<State extends Record<string, unknown>>(options: Options<State>): void;
+
+create({
+  state() {
+    return { bar2: 1 };
+  },
+  mutations: {
+    inc: (state123) => state123.bar2++,
+  },
+});
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 18046),
+        "TS18046 should not be emitted for top-level mutation callbacks. \
+         State should be inferred from the callable union arm of state(), not \
+         fall back to Record<string, unknown>. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_module_augmentation_class_prototype_assignable_to_augmented_interface() {
     let files = [
         (

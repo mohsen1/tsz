@@ -446,23 +446,19 @@ impl<'a> CheckerState<'a> {
                 ) {
                     source_str = widened;
                 }
-                // TS2820 prefers "did you mean X?" and uses the expanded union
-                // form rather than the alias name.
                 let evaluated_target_for_suggestion = self.evaluate_type_with_env(target);
                 if let Some(suggestion) = self.find_string_literal_spelling_suggestion(
                     source,
                     evaluated_target_for_suggestion,
                 ) {
-                    let expanded_target_str =
-                        self.format_type_diagnostic(evaluated_target_for_suggestion);
-                    let display_target_str = if expanded_target_str != target_str {
-                        &expanded_target_str
-                    } else {
-                        &target_str
-                    };
+                    let display_target_str = self.format_ts2820_target_display(
+                        target,
+                        evaluated_target_for_suggestion,
+                        &target_str,
+                    );
                     let msg = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
-                        &[&source_str, display_target_str, &suggestion],
+                        &[&source_str, &display_target_str, &suggestion],
                     );
                     return Diagnostic::error(
                         file_name,
