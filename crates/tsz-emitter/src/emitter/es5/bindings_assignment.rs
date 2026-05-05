@@ -525,12 +525,12 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit value binding for async iterator protocol: `var item = _a.value;`
-    /// Uses direct `.value` access (no `__read`) for `for await...of` downleveling.
+    /// Emit value binding for async iterator protocol from an already extracted value.
+    /// Uses direct assignment (no `__read`) for `for await...of` downleveling.
     pub(in crate::emitter) fn emit_for_of_value_binding_iterator_es5_async(
         &mut self,
         initializer: NodeIndex,
-        result_name: &str,
+        value_name: &str,
     ) {
         if initializer.is_none() {
             return;
@@ -541,7 +541,18 @@ impl<'a> Printer<'a> {
         };
 
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            self.write("var ");
+            let flags = init_node.flags as u32;
+            let keyword = if self.ctx.target_es5 {
+                "var"
+            } else if flags & tsz_parser::parser::node_flags::CONST != 0 {
+                "const"
+            } else if flags & tsz_parser::parser::node_flags::LET != 0 {
+                "let"
+            } else {
+                "var"
+            };
+            self.write(keyword);
+            self.write(" ");
             if let Some(decl_list) = self.arena.get_variable(init_node) {
                 let mut first = true;
                 for &decl_idx in &decl_list.declarations.nodes {
@@ -551,9 +562,7 @@ impl<'a> Printer<'a> {
                         if self.is_binding_pattern(decl.name) {
                             let mut first = true;
                             self.emit_es5_destructuring_from_value(
-                                decl.name,
-                                &format!("{result_name}.value"),
-                                &mut first,
+                                decl.name, value_name, &mut first,
                             );
                         } else {
                             if !first {
@@ -562,8 +571,7 @@ impl<'a> Printer<'a> {
                             first = false;
                             self.emit(decl.name);
                             self.write(" = ");
-                            self.write(result_name);
-                            self.write(".value");
+                            self.write(value_name);
                         }
                     }
                 }
@@ -572,17 +580,12 @@ impl<'a> Printer<'a> {
         } else if self.is_binding_pattern(initializer) {
             self.write("var ");
             let mut first = true;
-            self.emit_es5_destructuring_from_value(
-                initializer,
-                &format!("{result_name}.value"),
-                &mut first,
-            );
+            self.emit_es5_destructuring_from_value(initializer, value_name, &mut first);
             self.write_semicolon();
         } else {
             self.emit_expression(initializer);
             self.write(" = ");
-            self.write(result_name);
-            self.write(".value");
+            self.write(value_name);
             self.write_semicolon();
         }
     }
