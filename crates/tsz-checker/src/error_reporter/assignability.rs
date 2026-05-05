@@ -1395,6 +1395,12 @@ impl<'a> CheckerState<'a> {
         anchor_idx: NodeIndex,
     ) -> (String, String) {
         let (mut source_str, _) = self.format_top_level_assignability_message_types(source, target);
+        if self
+            .array_literal_element_source_widening_required_for_display(anchor_idx, source, target)
+        {
+            let widened = self.widen_type_for_display(source);
+            source_str = self.format_assignability_type_for_message(widened, target);
+        }
         if let Some(expr_idx) = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))

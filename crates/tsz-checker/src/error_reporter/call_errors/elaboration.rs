@@ -2224,7 +2224,13 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.is_assignable_to(elem_type, target_element_type) {
-                if !skip_deep_elaboration
+                let widen_source_display = self.array_elaboration_widening_required_for_display(
+                    elem_type,
+                    target_element_type,
+                );
+
+                if !widen_source_display
+                    && !skip_deep_elaboration
                     && self.try_elaborate_assignment_source_error(elem_idx, target_element_type)
                 {
                     elaborated = true;
@@ -2252,11 +2258,19 @@ impl<'a> CheckerState<'a> {
                     target_element_type,
                     self.ctx.file_name
                 );
-                self.error_type_not_assignable_at_with_anchor(
-                    elem_type,
-                    display_target_element_type,
-                    elem_idx,
-                );
+                if widen_source_display {
+                    self.error_type_not_assignable_at_with_widened_source_display(
+                        elem_type,
+                        display_target_element_type,
+                        elem_idx,
+                    );
+                } else {
+                    self.error_type_not_assignable_at_with_anchor(
+                        elem_type,
+                        display_target_element_type,
+                        elem_idx,
+                    );
+                }
                 elaborated = true;
             }
         }
