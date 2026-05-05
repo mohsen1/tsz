@@ -39,7 +39,7 @@ impl<'a> CheckerState<'a> {
         let raw_comment = &source_text[comment_pos as usize..comment_end];
         let mut cursor = 0usize;
 
-        while let Some(rel) = raw_comment[cursor..].find("@template") {
+        while let Some(rel) = Self::jsdoc_tag_offset(&raw_comment[cursor..], "template") {
             let template_start = cursor + rel;
             let mut idx = template_start + "@template".len();
 
@@ -175,17 +175,16 @@ impl<'a> CheckerState<'a> {
                     template_is_invalid_here = true;
                     continue;
                 }
-                if (content.starts_with("@property")
-                    || content.starts_with("@prop ")
-                    || content.starts_with("@prop{")
-                    || content.starts_with("@member")
-                    || content.starts_with("@param"))
+                if (Self::line_starts_with_jsdoc_tag(content, "property")
+                    || Self::line_starts_with_jsdoc_tag(content, "prop")
+                    || Self::line_starts_with_jsdoc_tag(content, "member")
+                    || Self::line_starts_with_jsdoc_tag(content, "param"))
                     && saw_typedef
                 {
                     template_is_invalid_here = true;
                 }
 
-                if !content.starts_with("@template") {
+                if !Self::line_starts_with_jsdoc_tag(content, "template") {
                     continue;
                 }
                 if !template_is_invalid_here && !saw_typedef {
@@ -203,8 +202,7 @@ impl<'a> CheckerState<'a> {
                     );
                     emitted_template_error = true;
                 }
-                let invalid_template_name = content
-                    .strip_prefix("@template")
+                let invalid_template_name = Self::strip_jsdoc_tag_prefix(content, "template")
                     .and_then(|rest| rest.split_whitespace().next())
                     .map(|name| name.trim_matches(',').to_string())
                     .filter(|name| !name.is_empty());
@@ -220,13 +218,11 @@ impl<'a> CheckerState<'a> {
                             .trim()
                             .trim_end_matches("*/")
                             .trim();
-                        if later_content.starts_with("@template") {
+                        if Self::line_starts_with_jsdoc_tag(later_content, "template") {
                             later_base += later_line.len() + 1;
                             continue;
                         }
-                        if later_content.starts_with("@returns")
-                            || later_content.starts_with("@return")
-                        {
+                        if Self::strip_jsdoc_return_tag_prefix(later_content).is_some() {
                             break;
                         }
                         if (later_content.starts_with("@param")
@@ -355,7 +351,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let find_modifier_pos = |modifier: &str| -> (u32, u32) {
-                    if let Some(template_offset) = comment_text.find("@template") {
+                    if let Some(template_offset) = Self::jsdoc_tag_offset(comment_text, "template")
+                    {
                         let after_template = &comment_text[template_offset + "@template".len()..];
                         if let Some(mod_offset) = after_template.find(modifier) {
                             let abs_pos = comment.pos

@@ -293,6 +293,10 @@ impl<'a> CheckerState<'a> {
         Self::strip_jsdoc_tag_prefix(line, tag_name).is_some()
     }
 
+    pub(crate) fn line_starts_with_jsdoc_tag(line: &str, tag_name: &str) -> bool {
+        Self::jsdoc_line_starts_with_tag(line, tag_name)
+    }
+
     pub(crate) fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
         let typedef_pos = Self::jsdoc_tag_offset(jsdoc, "typedef");
         let tag_pos = Self::jsdoc_tag_offset(jsdoc, "type");
@@ -544,7 +548,7 @@ impl<'a> CheckerState<'a> {
         let mut out = Vec::new();
         for raw_line in jsdoc.lines() {
             let trimmed = raw_line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed.strip_prefix("@template") else {
+            let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "template") else {
                 continue;
             };
             let rest = rest.trim();
@@ -868,7 +872,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if current_info.callback.is_some() {
-                if let Some(rest) = line.strip_prefix("@param") {
+                if let Some(rest) = Self::strip_jsdoc_tag_prefix(line, "param") {
                     if let Some(param_info) = Self::parse_jsdoc_param_tag(rest)
                         && let Some(ref mut cb) = current_info.callback
                     {
@@ -876,10 +880,7 @@ impl<'a> CheckerState<'a> {
                     }
                     continue;
                 }
-                if let Some(rest) = line
-                    .strip_prefix("@returns")
-                    .or_else(|| line.strip_prefix("@return"))
-                {
+                if let Some(rest) = Self::strip_jsdoc_return_tag_prefix(line) {
                     let rest = rest.trim();
                     if rest.starts_with('{')
                         && let Some(end) = rest[1..].find('}')
@@ -1168,9 +1169,9 @@ impl<'a> CheckerState<'a> {
 
     pub(super) fn parse_jsdoc_property_type(line: &str) -> Option<JsdocPropertyTagInfo> {
         let mut rest = line.trim();
-        if let Some(after_tag) = rest.strip_prefix("@property") {
+        if let Some(after_tag) = Self::strip_jsdoc_tag_prefix(rest, "property") {
             rest = after_tag.trim();
-        } else if let Some(after_tag) = rest.strip_prefix("@prop") {
+        } else if let Some(after_tag) = Self::strip_jsdoc_tag_prefix(rest, "prop") {
             rest = after_tag.trim();
         } else {
             return None;

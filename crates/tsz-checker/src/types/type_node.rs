@@ -20,7 +20,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
-
 /// Type node checker that operates on the shared context.
 ///
 /// This is a stateless checker that borrows the context mutably.
@@ -1996,7 +1995,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         self.ctx
     }
 }
-
 #[cfg(test)]
 #[path = "../../tests/type_node.rs"]
 mod tests;
