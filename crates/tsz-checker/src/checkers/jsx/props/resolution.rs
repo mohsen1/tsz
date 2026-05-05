@@ -1,12 +1,10 @@
-//! JSX props union resolution, attribute-vs-props checking (TS2322), spread property
-//! validation, and children excess property diagnostics.
+//! JSX props union resolution, attr checking, spread validation, and children diagnostics.
 
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -567,11 +565,12 @@ impl<'a> CheckerState<'a> {
         let mut needs_special_attr_object_assignability = false;
         let mut has_prop_type_error = false;
         let mut invalid_generic_spread_types: Vec<TypeId> = Vec::new();
+        let mut has_explicit_jsx_attrs = false;
 
         let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
             rustc_hash::FxHashMap::default();
 
-        let mut spread_entries: Vec<(TypeId, NodeIndex, usize)> = Vec::new();
+        let mut spread_entries: Vec<(TypeId, TypeId, NodeIndex, usize)> = Vec::new();
 
         let attr_nodes = &attrs.properties.nodes;
         let any_spread_present = attr_nodes.iter().any(|&attr_idx| {
@@ -609,6 +608,7 @@ impl<'a> CheckerState<'a> {
                 let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
                     continue;
                 };
+                has_explicit_jsx_attrs = true;
 
                 // Track all attributes for missing-prop checking (including key/ref).
                 // Even though key/ref are not checked against component props for TYPE
@@ -1271,7 +1271,7 @@ impl<'a> CheckerState<'a> {
 
                 // Defer TS2322 spread checking until after attribute override tracking.
                 if !skip_prop_checks {
-                    spread_entries.push((spread_type, spread_expr_idx, attr_i));
+                    spread_entries.push((spread_type, raw_spread_type, spread_expr_idx, attr_i));
                 }
             }
         }
@@ -1301,7 +1301,7 @@ impl<'a> CheckerState<'a> {
             // what properties earlier spreads already provide.
             let mut earlier_spread_props: rustc_hash::FxHashSet<String> =
                 rustc_hash::FxHashSet::default();
-            for (i, &(spread_type, _spread_expr_idx, spread_pos)) in
+            for (i, &(spread_type, raw_spread_type, _spread_expr_idx, spread_pos)) in
                 spread_entries.iter().enumerate()
             {
                 // Only later explicit attributes override the current spread.
@@ -1365,6 +1365,7 @@ impl<'a> CheckerState<'a> {
 
                 let had_error = self.check_spread_property_types(
                     spread_type,
+                    raw_spread_type,
                     props_type,
                     tag_name_idx,
                     &overridden,
@@ -1579,7 +1580,7 @@ impl<'a> CheckerState<'a> {
         let spread_satisfies_type_param = props_is_type_param
             && spread_entries
                 .iter()
-                .any(|&(spread_type, _, _)| self.is_assignable_to(spread_type, props_type));
+                .any(|&(spread_type, _, _, _)| self.is_assignable_to(spread_type, props_type));
         let reported_type_param_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
@@ -1612,13 +1613,16 @@ impl<'a> CheckerState<'a> {
 
         let reported_invalid_generic_spread_assignability = self
             .report_invalid_generic_jsx_spread_assignability(
-                invalid_generic_spread_types,
-                &provided_attrs,
-                props_type,
-                &display_target,
-                tag_name_idx,
-                has_excess_property_error,
-                skip_prop_checks,
+                super::generic_spread::GenericSpreadAssignabilityReport {
+                    generic_spread_types: invalid_generic_spread_types,
+                    provided_attrs: &provided_attrs,
+                    props_type,
+                    display_target: &display_target,
+                    tag_name_idx,
+                    has_excess_property_error,
+                    skip_prop_checks,
+                    has_explicit_jsx_attrs,
+                },
             );
 
         let reported_dynamic_intrinsic_assignability = if !reported_custom_children_assignability

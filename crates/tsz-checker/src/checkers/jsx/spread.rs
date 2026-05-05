@@ -60,6 +60,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_spread_property_types(
         &mut self,
         spread_type: TypeId,
+        spread_source_type: TypeId,
         props_type: TypeId,
         tag_name_idx: NodeIndex,
         overridden_names: &rustc_hash::FxHashSet<&str>,
@@ -171,7 +172,7 @@ impl<'a> CheckerState<'a> {
             if self.is_assignable_to(spread_type, props_type) {
                 return false;
             }
-            let spread_name = self.format_type(spread_type);
+            let spread_name = self.format_type(spread_source_type);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&spread_name, &props_display],
@@ -394,7 +395,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if has_type_mismatch {
-            let spread_name = self.format_type(spread_type);
+            let spread_name = self.format_type(spread_source_type);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&spread_name, &props_display],
