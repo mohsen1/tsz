@@ -3660,6 +3660,14 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     text
                 } else if let Some(text) = self
+                    .return_expression_identifier(ret.expression)
+                    .and_then(|identifier_idx| {
+                        self.reference_declared_type_annotation_text(identifier_idx)
+                    })
+                    .filter(|text| text == "any")
+                {
+                    text
+                } else if let Some(text) = self
                     .local_variable_initializer_type_text(ret.expression)
                     .filter(|text| !text.is_empty())
                 {
