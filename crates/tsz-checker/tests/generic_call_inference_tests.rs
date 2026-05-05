@@ -1781,6 +1781,33 @@ x.f({s: 1})
 }
 
 #[test]
+fn dependent_type_parameter_constraint_checks_second_argument_against_first_inference() {
+    // Regression: typeParameterAsTypeParameterConstraint2.ts
+    // For <T, U extends T>, tsc fixes T from the first argument and then
+    // validates the second argument's inferred U against that T.
+    let source = r#"
+interface NumberVariant {
+    x: number;
+}
+
+var n: NumberVariant;
+function foo<T, U extends T>(x: T, y: U): U { return y; }
+foo(1, n);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2454),
+        "Should emit TS2454 for variable used before assignment. Got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2345 && message.contains("NumberVariant") && message.contains("number")
+        }),
+        "Should also emit TS2345 for NumberVariant not assignable to number. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn ts2454_does_not_suppress_property_access_errors() {
     // Even with TS2454, property accesses on the declared type should
     // still produce type errors when used in incompatible contexts.
