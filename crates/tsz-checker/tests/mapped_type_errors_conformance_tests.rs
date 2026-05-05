@@ -1,4 +1,5 @@
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::{check_source_diagnostics, check_with_options};
 
 #[test]
 fn pick_rejects_unconstrained_and_broad_key_type_parameters() {
@@ -135,5 +136,38 @@ let x2: Partial<T2> = { a: 'no' };
             .iter()
             .all(|message| message.contains("Type 'string' is not assignable to type 'number'")),
         "named property diagnostics should use the explicit property type, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn pick_preserves_optional_property_undefined_for_present_assignment() {
+    let source = r#"
+interface Foo {
+    a: string;
+    b?: number;
+}
+
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+
+declare function setState<T, K extends keyof T>(obj: T, props: Pick<T, K>): void;
+
+let foo: Foo = { a: "hello", b: 42 };
+setState(foo, { b: undefined });
+"#;
+
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            exact_optional_property_types: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 2322
+            && diag.message_text.contains("'undefined'")
+            && diag.message_text.contains("'number'")),
+        "Pick<T, K> should preserve optional-property undefined when exactOptionalPropertyTypes is off.\nDiagnostics: {diagnostics:#?}"
     );
 }
