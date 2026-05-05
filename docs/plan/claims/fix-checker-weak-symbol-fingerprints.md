@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-weak-symbol-fingerprints`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #3343
+- **Status**: ready
 - **Workstream**: 1 (conformance)
 
 ## Intent
@@ -18,4 +18,7 @@ do not surface the expected TS2345 fingerprints.
 
 ## Verification
 
-- Pending.
+- `CARGO_TARGET_DIR=.target/nextest-local cargo nextest run -p tsz-checker --lib failed_weak_collection_new_recovers_constraint_for_method_diagnostics`
+- `./scripts/conformance/conformance.sh run --filter "dissallowSymbolAsWeakType" --verbose`
+- `./scripts/conformance/conformance.sh run --max 200`
+- `PATH="$HOME/.cargo/bin:$PATH" scripts/githooks/pre-commit`
