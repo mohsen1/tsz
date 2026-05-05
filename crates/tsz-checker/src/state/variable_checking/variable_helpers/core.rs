@@ -177,6 +177,33 @@ impl<'a> CheckerState<'a> {
             };
 
             if names_share_scope {
+                let has_same_scope_function_conflict = self
+                    .ctx
+                    .binder
+                    .symbols
+                    .find_all_by_name(var_name)
+                    .iter()
+                    .any(|&candidate_id| {
+                        self.ctx
+                            .binder
+                            .get_symbol(candidate_id)
+                            .is_some_and(|candidate| {
+                                candidate.has_any_flags(symbol_flags::FUNCTION)
+                                    && candidate.declarations.iter().any(|&fn_decl_idx| {
+                                        let fn_name_idx = self
+                                            .get_declaration_name_node(fn_decl_idx)
+                                            .unwrap_or(fn_decl_idx);
+                                        self.ctx
+                                            .binder
+                                            .find_enclosing_scope(self.ctx.arena, fn_name_idx)
+                                            == Some(found_scope_id)
+                                    })
+                            })
+                    });
+                if has_same_scope_function_conflict {
+                    continue;
+                }
+
                 // The var hoists to the same scope as the let/const.
                 // tsc uses TS2300 ("Duplicate identifier") when the var declaration
                 // appears before the block-scoped declaration, and TS2451 ("Cannot

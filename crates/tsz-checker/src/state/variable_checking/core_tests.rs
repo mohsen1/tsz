@@ -235,6 +235,24 @@ function f() {
     }
 
     #[test]
+    fn function_scope_let_var_function_conflict_uses_duplicate_identifier_only() {
+        let source = "function f() {\n    let x1;\n    var x1;\n    function x1() { }\n}";
+        let diagnostics = crate::test_utils::check_source_diagnostics(source);
+        let ts2300: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+        let ts2451: Vec<_> = diagnostics.iter().filter(|d| d.code == 2451).collect();
+
+        assert_eq!(
+            ts2300.len(),
+            3,
+            "expected TS2300 on all three declarations, got: {diagnostics:#?}"
+        );
+        assert!(
+            ts2451.is_empty(),
+            "did not expect TS2451 when the conflict also has a function declaration, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
     fn only_ts2481_errors_present() {
         // Ensure ONLY TS2481 is emitted for this case, nothing else
         let source = "{\n    const x = 0;\n    var x = \"\";\n}";
