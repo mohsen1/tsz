@@ -1070,6 +1070,12 @@ impl<'a> DeclarationEmitter<'a> {
                 ) {
                     self.write(": ");
                     self.write(&type_text);
+                } else if param.initializer.is_some()
+                    && let Some(type_text) =
+                        self.conditional_boolean_undefined_default_type_text(param.initializer)
+                {
+                    self.write(": ");
+                    self.write(type_text);
                 } else if let Some(type_id) = self.parameter_type_for_emit(param_idx, param.name) {
                     // Inferred type from type cache
                     self.write(": ");
