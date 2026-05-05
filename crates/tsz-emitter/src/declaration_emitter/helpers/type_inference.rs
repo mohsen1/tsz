@@ -2569,12 +2569,21 @@ impl<'a> DeclarationEmitter<'a> {
         let call = self.arena.get_call_expr(expr_node)?;
         let binder = self.binder?;
         let raw_sym_id = self.value_reference_symbol(call.expression)?;
-        let sym_id = self
-            .resolve_portability_import_alias(raw_sym_id, binder)
-            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
         let imported_module = self
             .imported_value_module_specifier(raw_sym_id, binder)
             .or_else(|| self.imported_value_module_specifier_from_syntax(call.expression));
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .or_else(|| {
+                imported_module.as_deref().and_then(|module_specifier| {
+                    self.imported_value_export_symbol_from_syntax(
+                        call.expression,
+                        module_specifier,
+                        binder,
+                    )
+                })
+            })
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
         let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
         self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
             let decl_node = source_arena.get(decl_idx)?;
@@ -2671,12 +2680,14 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             if let Some(source_path) = source_path.as_deref() {
-                type_text = self.qualify_foreign_exported_names_in_text(
-                    source_arena,
-                    source_path,
-                    &type_text,
-                    &type_param_names,
-                );
+                if !type_text.contains("import(\"") {
+                    type_text = self.qualify_foreign_exported_names_in_text(
+                        source_arena,
+                        source_path,
+                        &type_text,
+                        &type_param_names,
+                    );
+                }
                 if self
                     .current_file_path
                     .as_deref()
@@ -2774,6 +2785,199 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn imported_value_export_symbol_from_syntax(
+        &self,
+        expr_idx: NodeIndex,
+        module_specifier: &str,
+        binder: &BinderState,
+    ) -> Option<SymbolId> {
+        let export_name =
+            self.imported_value_export_name_from_syntax(expr_idx, module_specifier)?;
+        if let Some(sym_id) = binder
+            .module_exports
+            .get(module_specifier)
+            .and_then(|exports| exports.get(&export_name))
+        {
+            return Some(sym_id);
+        }
+
+        let module_paths = if module_specifier.starts_with('.') || module_specifier.starts_with('/')
+        {
+            let current_path = self.current_file_path.as_deref()?;
+            self.matching_module_export_paths(binder, current_path, module_specifier)
+        } else {
+            let mut paths: Vec<_> = binder
+                .module_exports
+                .keys()
+                .filter_map(|module_path| {
+                    (self.node_modules_path_matches_import_specifier(module_path, module_specifier)
+                        || self.node_modules_package_path_matches_import_specifier(
+                            module_path,
+                            module_specifier,
+                        ))
+                    .then_some(module_path.as_str())
+                })
+                .collect();
+            paths.sort();
+            paths
+        };
+        for module_path in module_paths {
+            if let Some(sym_id) = binder
+                .module_exports
+                .get(module_path)
+                .and_then(|exports| exports.get(&export_name))
+            {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
+    fn imported_value_export_name_from_syntax(
+        &self,
+        expr_idx: NodeIndex,
+        module_specifier: &str,
+    ) -> Option<String> {
+        let local_name = self.get_identifier_text(expr_idx)?;
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_node) = self.arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(module_lit) = self.arena.get_literal(module_node) else {
+                continue;
+            };
+            if module_lit.text != module_specifier {
+                continue;
+            }
+
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+
+            if clause.name.is_some()
+                && self.get_identifier_text(clause.name).as_deref() == Some(local_name.as_str())
+            {
+                return Some("default".to_string());
+            }
+
+            if clause.named_bindings.is_some()
+                && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+            {
+                if bindings.name.is_some() {
+                    continue;
+                }
+                for &spec_idx in &bindings.elements.nodes {
+                    let Some(spec_node) = self.arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = self.arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    if self.get_identifier_text(specifier.name).as_deref()
+                        != Some(local_name.as_str())
+                    {
+                        continue;
+                    }
+                    return self
+                        .get_identifier_text(specifier.property_name)
+                        .or_else(|| self.get_identifier_text(specifier.name));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn node_modules_package_path_matches_import_specifier(
+        &self,
+        module_path: &str,
+        module_specifier: &str,
+    ) -> bool {
+        use std::path::{Component, Path};
+
+        let components: Vec<_> = Path::new(module_path).components().collect();
+        let Some(nm_idx) = components.iter().position(|component| {
+            matches!(component, Component::Normal(part) if part.to_str() == Some("node_modules"))
+        }) else {
+            return false;
+        };
+
+        let pkg_start = nm_idx + 1;
+        if components.len() == pkg_start + 1
+            && let Component::Normal(part) = components[pkg_start]
+            && let Some(file_name) = part.to_str()
+            && let Some(runtime_path) = self.declaration_runtime_relative_path(file_name)
+        {
+            let runtime_path = runtime_path.trim_start_matches("./");
+            let package_name = runtime_path
+                .strip_suffix(".js")
+                .unwrap_or(runtime_path)
+                .trim_end_matches("/index");
+            return module_specifier == package_name;
+        }
+
+        let pkg_len = if components.get(pkg_start).is_some_and(|component| {
+            matches!(component, Component::Normal(part) if part.to_str().is_some_and(|text| text.starts_with('@')))
+        }) {
+            2
+        } else {
+            1
+        };
+        if components.len() < pkg_start + pkg_len {
+            return false;
+        }
+
+        let package_name = components[pkg_start..pkg_start + pkg_len]
+            .iter()
+            .filter_map(|component| match component {
+                Component::Normal(part) => part.to_str(),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+
+        let relative_path = components[pkg_start + pkg_len..]
+            .iter()
+            .filter_map(|component| match component {
+                Component::Normal(part) => part.to_str(),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        let Some(runtime_subpath) = self.declaration_runtime_relative_path(&relative_path) else {
+            return false;
+        };
+        let mut runtime_subpath = runtime_subpath.trim_start_matches("./").to_string();
+        if runtime_subpath.ends_with("/index.js") {
+            runtime_subpath.truncate(runtime_subpath.len() - "/index.js".len());
+        } else if runtime_subpath == "index.js" {
+            runtime_subpath.clear();
+        }
+
+        if runtime_subpath.is_empty() {
+            module_specifier == package_name
+        } else {
+            module_specifier == format!("{package_name}/{runtime_subpath}")
+        }
+    }
+
     fn imported_module_exports_name(
         &self,
         binder: &BinderState,
@@ -2800,6 +3004,17 @@ impl<'a> DeclarationEmitter<'a> {
                     return true;
                 }
             }
+        }
+
+        if !module_specifier.starts_with('.') && !module_specifier.starts_with('/') {
+            return binder.module_exports.iter().any(|(module_path, exports)| {
+                (self.node_modules_path_matches_import_specifier(module_path, module_specifier)
+                    || self.node_modules_package_path_matches_import_specifier(
+                        module_path,
+                        module_specifier,
+                    ))
+                    && exports.get(export_name).is_some()
+            });
         }
 
         false
@@ -5981,6 +6196,7 @@ impl<'a> DeclarationEmitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::DeclarationEmitter;
+    use tsz_parser::parser::ParserState;
 
     #[test]
     fn simultaneous_word_replacement_does_not_rewrite_inserted_import_paths() {
@@ -6124,5 +6340,29 @@ mod tests {
             DeclarationEmitter::object_type_property_name_from_line("readonly \"a:b\"?: string;"),
             Some("\"a:b\"".to_string())
         );
+    }
+
+    #[test]
+    fn node_modules_package_path_match_accepts_root_declaration_files() {
+        let mut parser = ParserState::new("test.ts".to_string(), String::new());
+        parser.parse_source_file();
+        let emitter = DeclarationEmitter::new(&parser.arena);
+
+        assert!(emitter.node_modules_package_path_matches_import_specifier(
+            "/repo/node_modules/umd.d.ts",
+            "umd"
+        ));
+        assert!(emitter.node_modules_package_path_matches_import_specifier(
+            "/repo/node_modules/umd/index.d.ts",
+            "umd"
+        ));
+        assert!(emitter.node_modules_package_path_matches_import_specifier(
+            "/repo/node_modules/umd/sub/index.d.ts",
+            "umd/sub"
+        ));
+        assert!(!emitter.node_modules_package_path_matches_import_specifier(
+            "/repo/node_modules/umd/sub/index.d.ts",
+            "umd"
+        ));
     }
 }
