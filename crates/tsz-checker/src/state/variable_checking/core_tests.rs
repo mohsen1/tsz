@@ -294,6 +294,49 @@ mod ts2397_tests {
         let errors = check_and_collect("const undefined = void 0;", 2397);
         assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
     }
+
+    // Module files: `undefined` is module-scoped and does not conflict with the global.
+    // tsc accepts these without TS2397.
+
+    #[test]
+    fn const_undefined_in_module_no_ts2397() {
+        let errors = check_and_collect("const undefined = \"local\";\nexport {};", 2397);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2397 for const undefined in module: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn let_undefined_in_module_no_ts2397() {
+        let errors = check_and_collect("let undefined = 1;\nexport {};", 2397);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2397 for let undefined in module: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn var_undefined_in_module_no_ts2397() {
+        let errors = check_and_collect("var undefined;\nexport {};", 2397);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2397 for var undefined in module: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn global_this_in_module_no_ts2397() {
+        let errors = check_and_collect("var globalThis;\nexport {};", 2397);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2397 for globalThis in module: {errors:?}"
+        );
+    }
 }
 
 #[cfg(test)]
