@@ -1022,11 +1022,7 @@ impl<'a> CheckerState<'a> {
 
     fn strip_jsdoc_import_namespace_alias(before_from: &str) -> Option<&str> {
         let after_star = before_from.strip_prefix('*')?;
-        if !after_star
-            .chars()
-            .next()
-            .is_some_and(char::is_whitespace)
-        {
+        if !after_star.chars().next().is_some_and(char::is_whitespace) {
             return None;
         }
         let mut pieces = after_star.split_whitespace();
