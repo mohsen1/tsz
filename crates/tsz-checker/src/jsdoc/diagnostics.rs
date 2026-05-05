@@ -425,11 +425,10 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if let Some(is_external_module_by_file) = self.ctx.is_external_module_by_file.as_ref() {
-            if let Some(is_external_module) = is_external_module_by_file.get(&source_file.file_name)
-            {
-                return !is_external_module;
-            }
+        if let Some(is_external_module_by_file) = self.ctx.is_external_module_by_file.as_ref()
+            && let Some(is_external_module) = is_external_module_by_file.get(&source_file.file_name)
+        {
+            return !is_external_module;
         }
 
         if self
