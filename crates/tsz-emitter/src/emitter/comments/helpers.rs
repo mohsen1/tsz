@@ -202,18 +202,26 @@ impl<'a> Printer<'a> {
         while i < end_pos {
             let ch = bytes[i];
             match ch {
-                b'{' => {
+                b'{' | b'[' | b'(' => {
                     depth += 1;
                     i += 1;
                 }
-                b'}' => {
+                b'}' | b']' | b')' => {
                     depth -= 1;
                     if depth < 0 {
                         // We've gone past our scope into a parent - stop
                         break;
                     }
                     if depth == 0 {
-                        // This is the closing brace at the top level of this node
+                        // This is the closing bracket/brace/paren at the top
+                        // level of this node — a real terminator for the
+                        // value expression. Tracking `]` and `)` (not just
+                        // `}`) lets us pick the right end for property
+                        // values like `items: [...]` whose last inner `}`
+                        // sits at the same depth-0 boundary as the closing
+                        // `]`. Without this, comma scans started inside the
+                        // array and falsely matched the array's own trailing
+                        // comma as a property-level trailing comma.
                         last_token_end = Some(i + 1);
                         last_non_trivia_at_depth0 = Some(i + 1);
                     }
