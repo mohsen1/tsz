@@ -259,6 +259,54 @@ fn react_jsx_under_module_detection_legacy_skips_runtime_import() {
     );
 }
 
+#[test]
+fn react_jsx_under_module_detection_legacy_commonjs_uses_bare_runtime_alias() {
+    let source = "namespace JSX {}\nclass Component {\n    render() { return <div />; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        jsx: JsxEmit::ReactJsx,
+        module_detection_legacy: true,
+        ..Default::default()
+    };
+    let output = emit_jsx_with_printer_options(source, opts);
+
+    assert!(
+        !output.contains("react/jsx-runtime"),
+        "Legacy detection must not synthesize a JSX runtime require.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(0, _a.jsx)(\"div\""),
+        "CommonJS legacy JSX calls should use the bare runtime alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn react_jsxdev_under_module_detection_legacy_emits_file_name_without_import() {
+    let source = "namespace JSX {}\nclass Component {\n    render() { return <div />; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::System,
+        jsx: JsxEmit::ReactJsxDev,
+        module_detection_legacy: true,
+        ..Default::default()
+    };
+    let output = emit_jsx_with_printer_options(source, opts);
+
+    assert!(
+        !output.contains("react/jsx-dev-runtime"),
+        "Legacy detection must not synthesize a JSX dev runtime import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const _jsxFileName = \"test.tsx\";"),
+        "JSX dev source locations still need the file-name constant.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_jsxDEV(\"div\", {"),
+        "System legacy JSX dev calls should stay as bare _jsxDEV references.\nOutput:\n{output}"
+    );
+}
+
 /// Counterpart: with `moduleDetection: "auto"` (default) and the same
 /// non-module-syntax file, the JSX runtime import IS added (which then
 /// makes the file an ES module).

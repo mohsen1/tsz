@@ -662,6 +662,11 @@ pub struct Printer<'a> {
     /// Used to emit `const _jsxFileName = "file.tsx";` and source location args.
     pub(crate) jsx_dev_file_name: Option<String>,
 
+    /// Bare JSX runtime alias for `moduleDetection=legacy` CommonJS scripts.
+    /// In this mode tsc suppresses the synthesized `require`, but still emits
+    /// calls like `(0, _a.jsx)(...)`.
+    pub(crate) jsx_legacy_cjs_runtime_var: Option<String>,
+
     /// When true, the current source file is a JavaScript file (.js/.jsx/.cjs/.mjs).
     /// JS files do not undergo import elision since all imports are value imports.
     pub(crate) source_is_js_file: bool,
@@ -949,6 +954,7 @@ impl<'a> Printer<'a> {
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
+            jsx_legacy_cjs_runtime_var: None,
             source_is_js_file: false,
             computed_prop_temp_map: FxHashMap::default(),
             scoped_static_this_alias: None,
