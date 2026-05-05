@@ -754,7 +754,14 @@ impl<'a> Printer<'a> {
             || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
     }
 
-    /// Check if a token is a compound assignment operator (+=, -=, etc.)
+    /// Check if a token is a compound assignment operator (+=, -=, etc.).
+    ///
+    /// Includes the logical-assignment family (`||=`, `&&=`, `??=`) so the
+    /// private-field compound-assignment lowering can route them through the
+    /// same `__classPrivateFieldSet(get() <op> rhs)` shape as `+=` and friends.
+    /// This intentionally drops the short-circuit semantics of native `||=`/
+    /// `&&=`/`??=` (the `set` always runs); tsc makes the same trade-off for
+    /// private-field lowering — see issue #61109.
     pub(in crate::emitter) const fn is_compound_assignment(&self, token: u16) -> bool {
         token == SyntaxKind::PlusEqualsToken as u16
             || token == SyntaxKind::MinusEqualsToken as u16
@@ -768,6 +775,9 @@ impl<'a> Printer<'a> {
             || token == SyntaxKind::AmpersandEqualsToken as u16
             || token == SyntaxKind::CaretEqualsToken as u16
             || token == SyntaxKind::BarEqualsToken as u16
+            || token == SyntaxKind::BarBarEqualsToken as u16
+            || token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || token == SyntaxKind::QuestionQuestionEqualsToken as u16
     }
 
     /// Get the base operator for a compound assignment (e.g., `+=` → `+`)
@@ -787,6 +797,9 @@ impl<'a> Printer<'a> {
             t if t == SyntaxKind::AmpersandEqualsToken as u16 => "&".to_string(),
             t if t == SyntaxKind::CaretEqualsToken as u16 => "^".to_string(),
             t if t == SyntaxKind::BarEqualsToken as u16 => "|".to_string(),
+            t if t == SyntaxKind::BarBarEqualsToken as u16 => "||".to_string(),
+            t if t == SyntaxKind::AmpersandAmpersandEqualsToken as u16 => "&&".to_string(),
+            t if t == SyntaxKind::QuestionQuestionEqualsToken as u16 => "??".to_string(),
             _ => "=".to_string(),
         }
     }
