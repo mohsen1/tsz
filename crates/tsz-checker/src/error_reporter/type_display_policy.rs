@@ -112,7 +112,16 @@ impl<'a> CheckerState<'a> {
             DiagnosticTypeDisplayRole::CallParameter {
                 argument,
                 argument_idx,
-            } => self.format_call_parameter_type_for_diagnostic(ty, argument, argument_idx),
+            } => {
+                let display =
+                    self.format_call_parameter_type_for_diagnostic(ty, argument, argument_idx);
+                if crate::query_boundaries::common::array_element_type(self.ctx.types, ty).is_some()
+                {
+                    Self::normalize_array_generic_to_shorthand(&display)
+                } else {
+                    display
+                }
+            }
             DiagnosticTypeDisplayRole::PropertyReceiver => {
                 self.format_property_receiver_type_for_diagnostic(ty)
             }
