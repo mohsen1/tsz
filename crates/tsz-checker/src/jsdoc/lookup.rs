@@ -457,6 +457,11 @@ impl<'a> CheckerState<'a> {
         );
         // Set the anchor position for typedef scoping.
         if Self::jsdoc_backtick_import_argument_offset(type_expr).is_some() {
+            let type_expr_start = self
+                .jsdoc_type_expression_span_for_node(idx)
+                .map(|(start, _)| start)
+                .unwrap_or(node.pos);
+            self.report_jsdoc_backtick_import_type_error(type_expr, type_expr_start);
             return Some(TypeId::ERROR);
         }
         let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
