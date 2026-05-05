@@ -1762,3 +1762,54 @@ fn instantiation_expression_with_empty_args_emits_bare() {
         "Empty type-argument list must not retain the wrapping parens.\nOutput:\n{output}"
     );
 }
+
+/// Regression: `export default (X as T)` where `X` is a class or function
+/// expression. The parens only existed to delimit the type cast; after
+/// erasure they look removable, but stripping them silently changes the
+/// export from "default-export an expression" to "default-export a
+/// declaration". tsc preserves the parens.
+#[test]
+fn export_default_paren_class_expression_with_cast_keeps_parens() {
+    let source = "export default (class Foo {} as any);\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("export default (class Foo {"),
+        "Parens around the class expression must be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export default class Foo {"),
+        "Stripping parens would change the export shape from expression to declaration.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: `export default class Foo {}` (no parens, no cast) is a
+/// class declaration export and stays unchanged.
+#[test]
+fn export_default_class_declaration_unchanged() {
+    let source = "export default class Foo {}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("export default class Foo"),
+        "Bare default-class export should not gain parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export default (class Foo"),
+        "Bare default-class export must not be wrapped in parens.\nOutput:\n{output}"
+    );
+}

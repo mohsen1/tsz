@@ -662,7 +662,21 @@ impl<'a> Printer<'a> {
                     }
                 } else {
                     self.write("export default ");
+                    // `export default (class X {} as any)` — when the source
+                    // wrapped a class/function expression in parens for a
+                    // type cast, tsc preserves the parens after erasure.
+                    // Stripping them would silently change "default-export
+                    // an expression" into "default-export a declaration".
+                    let preserve_paren =
+                        self.export_default_paren_protects_class_or_function(export.export_clause);
+                    let prev = self.ctx.flags.paren_leftmost_function_or_object;
+                    if preserve_paren {
+                        self.ctx.flags.paren_leftmost_function_or_object = true;
+                    }
                     self.emit(export.export_clause);
+                    if preserve_paren {
+                        self.ctx.flags.paren_leftmost_function_or_object = prev;
+                    }
                     if !clause_is_func_or_class {
                         self.write_semicolon();
                     }
@@ -949,9 +963,57 @@ impl<'a> Printer<'a> {
             // ES6: export = expr (not valid ES6, but emit as export default)
             //      export default expr → export default expr;
             self.write("export default ");
+            // `export default (class X {} as any)` — when the source wrapped a
+            // class/function expression in parens (because of a type cast),
+            // tsc preserves the parens after erasure. Otherwise stripping them
+            // would silently change `export default (class X {})` (expression
+            // export) into `export default class X {}` (declaration export).
+            let preserve_paren =
+                self.export_default_paren_protects_class_or_function(export_assign.expression);
+            let prev = self.ctx.flags.paren_leftmost_function_or_object;
+            if preserve_paren {
+                self.ctx.flags.paren_leftmost_function_or_object = true;
+            }
             self.emit_expression(export_assign.expression);
+            if preserve_paren {
+                self.ctx.flags.paren_leftmost_function_or_object = prev;
+            }
             self.write_semicolon();
         }
+    }
+
+    /// True when `export default <expr>` has source `(<class|fn> as T)` or
+    /// equivalent: the parens only existed to delimit the type cast, but
+    /// stripping them after type erasure would change the export semantics
+    /// from "default-export an expression" to "default-export a declaration".
+    /// Detects ParenthesizedExpression(AsExpression|TypeAssertion|SatisfiesExpression(ClassExpression|FunctionExpression)).
+    fn export_default_paren_protects_class_or_function(&self, expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return false;
+        }
+        let Some(paren) = self.arena.get_parenthesized(node) else {
+            return false;
+        };
+        let Some(inner) = self.arena.get(paren.expression) else {
+            return false;
+        };
+        if inner.kind != syntax_kind_ext::AS_EXPRESSION
+            && inner.kind != syntax_kind_ext::SATISFIES_EXPRESSION
+            && inner.kind != syntax_kind_ext::TYPE_ASSERTION
+        {
+            return false;
+        }
+        let Some(assertion) = self.arena.get_type_assertion(inner) else {
+            return false;
+        };
+        let Some(operand) = self.arena.get(assertion.expression) else {
+            return false;
+        };
+        operand.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || operand.kind == syntax_kind_ext::FUNCTION_EXPRESSION
     }
 
     /// Collect variable names from a `VARIABLE_STATEMENT` node
