@@ -738,80 +738,89 @@ impl<'a> DeclarationEmitter<'a> {
         use std::path::{Component, Path};
 
         let components: Vec<_> = Path::new(module_path).components().collect();
-        let Some(nm_idx) = components.iter().position(|component| {
-            matches!(component, Component::Normal(part) if part.to_str() == Some("node_modules"))
-        }) else {
-            return false;
-        };
-
-        let pkg_start = nm_idx + 1;
-        let pkg_len = if components.get(pkg_start).is_some_and(|component| {
-            matches!(component, Component::Normal(part) if part.to_str().is_some_and(|text| text.starts_with('@')))
-        }) {
-            2
-        } else {
-            1
-        };
-        if components.len() < pkg_start + pkg_len {
-            return false;
-        }
-
-        let package_name = components[pkg_start..pkg_start + pkg_len]
+        components
             .iter()
-            .filter_map(|component| match component {
-                Component::Normal(part) => part.to_str(),
-                _ => None,
+            .enumerate()
+            .filter_map(|(idx, component)| {
+                matches!(component, Component::Normal(part) if part.to_str() == Some("node_modules"))
+                    .then_some(idx)
             })
-            .collect::<Vec<_>>()
-            .join("/");
+            .any(|nm_idx| {
+                let pkg_start = nm_idx + 1;
+                let pkg_len = if components.get(pkg_start).is_some_and(|component| {
+                    matches!(component, Component::Normal(part) if part.to_str().is_some_and(|text| text.starts_with('@')))
+                }) {
+                    2
+                } else {
+                    1
+                };
+                if components.len() < pkg_start + pkg_len {
+                    return false;
+                }
 
-        let subpath_start = pkg_start + pkg_len;
-        if subpath_start >= components.len() {
-            return false;
-        }
+                let package_name = components[pkg_start..pkg_start + pkg_len]
+                    .iter()
+                    .filter_map(|component| match component {
+                        Component::Normal(part) => part.to_str(),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("/");
 
-        let relative_path = components[subpath_start..]
-            .iter()
-            .filter_map(|component| match component {
-                Component::Normal(part) => part.to_str(),
-                _ => None,
+                let subpath_start = pkg_start + pkg_len;
+                if subpath_start >= components.len() {
+                    return false;
+                }
+
+                let relative_path = components[subpath_start..]
+                    .iter()
+                    .filter_map(|component| match component {
+                        Component::Normal(part) => part.to_str(),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let Some(runtime_subpath) =
+                    self.declaration_runtime_relative_path(&relative_path)
+                else {
+                    return false;
+                };
+                let mut runtime_subpath = runtime_subpath.trim_start_matches("./").to_string();
+                if runtime_subpath.ends_with("/index.js") {
+                    runtime_subpath.truncate(runtime_subpath.len() - "/index.js".len());
+                } else if runtime_subpath == "index.js" {
+                    runtime_subpath.clear();
+                }
+                if module_specifier == package_name {
+                    if !runtime_subpath.is_empty() {
+                        return false;
+                    }
+
+                    let package_root = components[..subpath_start].iter().fold(
+                        std::path::PathBuf::new(),
+                        |mut path, component| {
+                            path.push(component.as_os_str());
+                            path
+                        },
+                    );
+                    return self
+                        .reverse_export_specifier_for_runtime_path(&package_root, "./index.ts")
+                        .is_some()
+                        || self
+                            .reverse_export_specifier_for_runtime_path(&package_root, "./index.d.ts")
+                            .is_some()
+                        || std::fs::read_to_string(package_root.join("package.json"))
+                            .ok()
+                            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+                            .is_none_or(|package_json| package_json.get("exports").is_none());
+                }
+                let candidate = if runtime_subpath.is_empty() {
+                    package_name
+                } else {
+                    format!("{package_name}/{runtime_subpath}")
+                };
+                module_specifier == candidate
             })
-            .collect::<Vec<_>>()
-            .join("/");
-        let Some(runtime_subpath) = self.declaration_runtime_relative_path(&relative_path) else {
-            return false;
-        };
-        let mut runtime_subpath = runtime_subpath.trim_start_matches("./").to_string();
-        if runtime_subpath.ends_with("/index.js") {
-            runtime_subpath.truncate(runtime_subpath.len() - "/index.js".len());
-        } else if runtime_subpath == "index.js" {
-            runtime_subpath.clear();
-        }
-        if module_specifier == package_name {
-            if !runtime_subpath.is_empty() {
-                return false;
-            }
-
-            let package_root = components[..subpath_start].iter().fold(
-                std::path::PathBuf::new(),
-                |mut path, component| {
-                    path.push(component.as_os_str());
-                    path
-                },
-            );
-            return self
-                .reverse_export_specifier_for_runtime_path(&package_root, "./index.ts")
-                .is_some()
-                || self
-                    .reverse_export_specifier_for_runtime_path(&package_root, "./index.d.ts")
-                    .is_some();
-        }
-        let candidate = if runtime_subpath.is_empty() {
-            package_name
-        } else {
-            format!("{package_name}/{runtime_subpath}")
-        };
-        module_specifier == candidate
     }
 
     pub(in crate::declaration_emitter) fn module_export_path_rank(

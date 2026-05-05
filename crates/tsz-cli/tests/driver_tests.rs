@@ -8274,6 +8274,74 @@ fn compile_emit_declaration_only_from_tsconfig_suppresses_js_output() {
 }
 
 #[test]
+fn declaration_emit_expands_foreign_import_mapped_keys_from_nested_package() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "outDir": "dist",
+            "rootDir": "r",
+            "target": "es2017",
+            "module": "commonjs",
+            "moduleResolution": "node",
+            "ignoreDeprecations": "6.0",
+            "skipLibCheck": true,
+            "strict": true,
+            "typeRoots": ["./empty-types"]
+          },
+          "files": ["r/entry.ts"]
+        }"#,
+    );
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+    write_file(
+        &base.join("r/entry.ts"),
+        r#"import { foo } from "foo";
+
+export const x = foo();
+"#,
+    );
+    write_file(
+        &base.join("r/node_modules/foo/index.d.ts"),
+        r#"export function foo(): { [K in import("keys").Key]?: string };
+"#,
+    );
+    write_file(
+        &base.join("r/node_modules/foo/node_modules/keys/index.d.ts"),
+        r#"export type Key = "a" | "b";
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "did not expect diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let dts = std::fs::read_to_string(base.join("dist/entry.d.ts"))
+        .expect("Declaration output should be emitted");
+    assert!(
+        dts.contains("a?: string | undefined;"),
+        "expected expanded mapped key 'a': {dts}",
+    );
+    assert!(
+        dts.contains("b?: string | undefined;"),
+        "expected expanded mapped key 'b': {dts}",
+    );
+    assert!(
+        !dts.contains("[K in"),
+        "foreign mapped type should not leak into declaration output: {dts}",
+    );
+}
+
+#[test]
 fn compile_emit_declaration_only_from_cli_suppresses_js_output() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

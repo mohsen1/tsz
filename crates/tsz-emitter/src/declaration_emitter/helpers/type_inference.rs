@@ -410,8 +410,9 @@ impl<'a> DeclarationEmitter<'a> {
         let source = std::fs::read_to_string(module_path).ok()?;
         let mut parser = ParserState::new(module_path.to_string(), source);
         let _root = parser.parse_source_file();
-        let alias_type_node =
-            self.find_type_alias_type_node_in_arena(&parser.arena, export_name)?;
+        let alias_type_node = self
+            .find_type_alias_type_node_in_arena(&parser.arena, export_name)
+            .or_else(|| self.type_alias_type_node_by_name_in_arena(&parser.arena, export_name))?;
         self.expand_string_literals_from_type_node_in_arena(
             &parser.arena,
             alias_type_node,
@@ -459,6 +460,28 @@ impl<'a> DeclarationEmitter<'a> {
                     self.find_type_alias_type_node_in_arena(arena.as_ref(), export_name)
             {
                 return Some((arena.as_ref(), type_node));
+            }
+        }
+
+        None
+    }
+
+    fn type_alias_type_node_by_name_in_arena(
+        &self,
+        arena: &NodeArena,
+        export_name: &str,
+    ) -> Option<NodeIndex> {
+        for node_id in 0..arena.len() {
+            let node_idx = NodeIndex(u32::try_from(node_id).ok()?);
+            let node = arena.get(node_idx)?;
+            let Some(alias) = arena.get_type_alias(node) else {
+                continue;
+            };
+            if self
+                .identifier_text_from_arena(arena, alias.name)
+                .is_some_and(|name| name == export_name)
+            {
+                return Some(alias.type_node);
             }
         }
 
