@@ -28,6 +28,9 @@ use tsz::module_resolver::ModuleResolver;
 use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
 use tsz_common::common::ModuleKind;
+use tsz_common::file_extensions::{
+    JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_json_file,
+};
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
 use super::emit::{EmitOutputsContext, emit_outputs, normalize_type_roots, write_outputs};
 pub(crate) use super::emit::{normalize_base_url, normalize_output_dir, normalize_root_dir};
@@ -37,7 +40,7 @@ use super::resolution::{
     collect_star_export_specifiers, collect_type_packages_from_root, default_type_roots, env_flag,
     is_declaration_file, normalize_path, normalize_resolved_path, resolve_module_specifier,
 };
-use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file};
+use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file, is_ts_file};
 use crate::incremental::{BuildInfo, default_build_info_path};
 use rustc_hash::FxHasher;
 #[cfg(test)]
@@ -1055,6 +1058,7 @@ fn compile_inner(
         &resolved,
     )?;
     let mut file_paths = discover_ts_files(&discovery)?;
+    config_diagnostics.extend(unsupported_explicit_file_diagnostics(&discovery));
 
     // If config validation already emitted TS5110 (module/moduleResolution mismatch),
     // or TS5090 (`paths` substitutions require `baseUrl`), bail out early.
@@ -1665,7 +1669,7 @@ fn compile_inner(
         })?;
         diagnostics.extend(emit_diags);
         if should_emit {
-            write_outputs(&outputs)?
+            write_outputs(&outputs, resolved.emit_bom)?
         } else {
             // Declaration emit ran for diagnostics only (--noEmit with --declaration)
             Vec::new()
@@ -1956,6 +1960,64 @@ pub(super) fn no_input_diagnostics_for_config(
     // tsc emits TS18003 without file position (file="", pos=0).
     config_diagnostics.push(Diagnostic::error(String::new(), 0, 0, message, 18003));
     config_diagnostics
+}
+
+fn unsupported_explicit_file_diagnostics(discovery: &FileDiscoveryOptions) -> Vec<Diagnostic> {
+    if discovery.files.is_empty() {
+        return Vec::new();
+    }
+
+    discovery
+        .files
+        .iter()
+        .filter_map(|file| {
+            let path = if file.is_absolute() {
+                file.clone()
+            } else {
+                discovery.base_dir.join(file)
+            };
+            if is_ts_file(&path)
+                || is_js_file(&path)
+                || (discovery.resolve_json_module && is_json_file(&path))
+            {
+                return None;
+            }
+
+            let supported_extensions = supported_extensions_display(discovery);
+            let path_display = path.to_string_lossy().to_string();
+            Some(
+                Diagnostic::from_code(
+                    diagnostic_codes::FILE_HAS_AN_UNSUPPORTED_EXTENSION_THE_ONLY_SUPPORTED_EXTENSIONS_ARE,
+                    String::new(),
+                    0,
+                    0,
+                    &[&path_display, &supported_extensions],
+                )
+                .with_related(
+                    String::new(),
+                    0,
+                    0,
+                    "The file is in the program because:\n  Part of 'files' list in tsconfig.json",
+                ),
+            )
+        })
+        .collect()
+}
+
+fn supported_extensions_display(discovery: &FileDiscoveryOptions) -> String {
+    let mut extensions: Vec<&str> = TS_FAMILY_EXTENSIONS.to_vec();
+    if discovery.allow_js {
+        extensions.extend(JS_FAMILY_EXTENSIONS);
+    }
+    if discovery.resolve_json_module {
+        extensions.push(JSON_EXTENSION);
+    }
+
+    extensions
+        .iter()
+        .map(|ext| format!("'{ext}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
@@ -2607,6 +2669,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.source_map {
         options.source_map = true;
+    }
+    if args.emit_bom {
+        options.emit_bom = true;
     }
     if let Some(out_file) = args.out_file.as_ref() {
         options.out_file = Some(out_file.clone());

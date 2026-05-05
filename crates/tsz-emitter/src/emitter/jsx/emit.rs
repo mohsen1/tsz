@@ -856,6 +856,11 @@ impl<'a> Printer<'a> {
             {
                 return JsxAttrValue::Expr(expr.expression);
             }
+            if let Some(expr) = self.arena.get_jsx_expression(node)
+                && expr.dot_dot_dot_token
+            {
+                return JsxAttrValue::EmptyExpression;
+            }
             return JsxAttrValue::Bool(true);
         }
 
@@ -1155,6 +1160,7 @@ impl<'a> Printer<'a> {
             JsxAttrValue::Expr(idx) => {
                 self.emit(*idx);
             }
+            JsxAttrValue::EmptyExpression => {}
         }
     }
 }

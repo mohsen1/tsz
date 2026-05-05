@@ -1034,9 +1034,11 @@ impl<'a> CheckerState<'a> {
                         {
                             result
                         } else {
-                            self.check_assignable_or_report_at(
+                            self.check_assignable_or_report_at_with_display_types(
                                 actual_type,
                                 expected_type,
+                                actual_type,
+                                original_property_type,
                                 value_node_idx,
                                 attr_data.name,
                             )

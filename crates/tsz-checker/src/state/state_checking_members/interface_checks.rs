@@ -890,6 +890,8 @@ impl<'a> CheckerState<'a> {
     /// Returns `true` if the expression is a bare `Symbol()` call (not
     /// `Symbol.for(...)` or `Symbol.xxx`).  Each `Symbol()` call creates a
     /// new unique symbol, so two `[Symbol()]` properties are never duplicates.
+    /// A locally-bound `Symbol` shadows the global and is *not* the unique-symbol
+    /// constructor.
     fn is_bare_symbol_constructor_call(&self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
             return false;
@@ -900,14 +902,8 @@ impl<'a> CheckerState<'a> {
         let Some(call) = self.ctx.arena.get_call_expr(expr_node) else {
             return false;
         };
-        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
-            return false;
-        };
-        // Bare `Symbol()` — the callee is just the `Symbol` identifier
-        if let Some(ident) = self.ctx.arena.get_identifier(callee_node) {
-            return ident.escaped_text.as_str() == "Symbol";
-        }
-        false
+        // Bare `Symbol()` — the callee is the global `Symbol` identifier
+        self.identifier_resolves_to_unshadowed_global(call.expression, "Symbol")
     }
 
     fn is_symbol_for_call_expression(&self, expr_idx: NodeIndex) -> bool {
@@ -929,13 +925,9 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
             return false;
         };
-        let Some(obj_node) = self.ctx.arena.get(access.expression) else {
-            return false;
-        };
-        let Some(obj_ident) = self.ctx.arena.get_identifier(obj_node) else {
-            return false;
-        };
-        obj_ident.escaped_text == "Symbol"
+        // `Symbol.for(...)` only resolves to a unique-symbol-keyed expression
+        // when `Symbol` is the built-in global, not a same-named local.
+        self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
             && self
                 .ctx
                 .arena
@@ -1016,12 +1008,14 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        // Well-known symbols (Symbol.xxx) are statically determinable
+        // Well-known symbols (`Symbol.xxx`) are statically determinable, but
+        // *only* when `Symbol` is the built-in global. A local
+        // `const Symbol = { tag: "name" } as const` makes `Symbol.tag` a
+        // regular literal-typed expression that the type-based fallback below
+        // must classify on its own.
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
-            && let Some(obj_node) = self.ctx.arena.get(access.expression)
-            && let Some(obj_ident) = self.ctx.arena.get_identifier(obj_node)
-            && obj_ident.escaped_text.as_str() == "Symbol"
+            && self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
         {
             return false;
         }

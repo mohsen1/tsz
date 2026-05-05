@@ -1,0 +1,87 @@
+//! Regression coverage for assertion-function target diagnostics and reachability.
+
+use crate::context::CheckerOptions;
+use crate::test_utils::{check_source, check_source_codes};
+
+#[test]
+fn unannotated_assertion_identifier_emits_ts2775() {
+    let codes = check_source_codes(
+        r#"
+function f(x: unknown) {
+    const assert = (value: unknown): asserts value => {};
+    assert(typeof x === "string");
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2775),
+        "expected TS2775 for assertion variable without explicit declaration type, got {codes:?}"
+    );
+}
+
+#[test]
+fn assertion_element_access_emits_ts2776() {
+    let codes = check_source_codes(
+        r#"
+const assert: (value: unknown) => asserts value = value => {};
+const a = [assert];
+a[0](true);
+"#,
+    );
+    assert!(
+        codes.contains(&2776),
+        "expected TS2776 for assertion call through element access, got {codes:?}"
+    );
+}
+
+#[test]
+fn asserts_this_method_does_not_require_receiver_annotation() {
+    let codes = check_source_codes(
+        r#"
+class Test {
+    assertIsTest(): asserts this is Test {}
+}
+function f(items: Test[]) {
+    for (let item of items) {
+        item.assertIsTest();
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2775),
+        "asserts-this methods should not require a receiver annotation, got {codes:?}"
+    );
+}
+
+#[test]
+fn assertion_false_condition_emits_unreachable_code() {
+    let diagnostics = check_source(
+        r#"
+const assert: (value: unknown) => asserts value = value => {};
+function f(x: unknown) {
+    assert(false && x === undefined);
+    x;
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            allow_unreachable_code: Some(false),
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+    assert!(
+        codes.contains(&7027),
+        "expected TS7027 after assert(false && ...), got {codes:?}"
+    );
+}
+
+#[test]
+fn constructor_type_predicate_return_emits_ts1228() {
+    let codes = check_source_codes("declare let Q: new (x: unknown) => asserts x;");
+    assert!(
+        codes.contains(&1228),
+        "expected TS1228 for predicate return in constructor type, got {codes:?}"
+    );
+}

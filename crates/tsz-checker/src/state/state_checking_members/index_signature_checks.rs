@@ -1299,12 +1299,11 @@ impl<'a> CheckerState<'a> {
                 let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
                     return false;
                 };
-                let Some(ident) = self.ctx.arena.get_identifier_at(access.expression) else {
-                    return false;
-                };
-                let is_global_symbol =
-                    self.known_global_identifier_resolves_to_lib_value(access.expression, "Symbol");
-                ident.escaped_text.as_str() == "Symbol" && is_global_symbol
+                // `[Symbol.x]` only denotes a symbol-keyed member when `Symbol`
+                // is the built-in global. A locally-bound `Symbol` (e.g.
+                // `const Symbol = { tag: "name" } as const`) makes the computed
+                // name a regular string property.
+                self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
             }
             ek if ek == tsz_scanner::SyntaxKind::Identifier as u16 => {
                 let expr_type = self.get_type_of_node(computed.expression);
