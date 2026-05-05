@@ -73,6 +73,11 @@ impl<'a> CheckerState<'a> {
         if let Some(literal_type) = self.const_array_to_enum_member_literal_type_query(idx) {
             return literal_type;
         }
+        if let Some(literal_type) = self
+            .imported_array_to_enum_member_literal_type(access.expression, access.name_or_argument)
+        {
+            return literal_type;
+        }
 
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
