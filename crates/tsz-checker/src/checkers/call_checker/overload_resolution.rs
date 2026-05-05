@@ -702,6 +702,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                     return Some(OverloadResolution {
                         arg_types: final_arg_types,
                         result: CallResult::Success(final_return_type),
@@ -1283,11 +1284,15 @@ impl<'a> CheckerState<'a> {
                                 &overload_snap.diag,
                                 &candidate_snap,
                             );
-                        let kept_candidate_diags =
-                            self.ctx.take_speculative_diagnostics(&candidate_snap);
+                        let candidate_end = self.ctx.snapshot_diagnostics();
+                        let kept_candidate_diags = self.collect_non_callback_diagnostics_between(
+                            args,
+                            &candidate_snap,
+                            &candidate_end,
+                        );
                         // Merge: preserve hard speculative call diagnostics
                         // (e.g. TS2302/TS2708), then append first-pass and
-                        // candidate diagnostics without duplication.
+                        // non-callback candidate diagnostics without duplication.
                         let mut merged =
                             self.preserved_speculative_call_diagnostics(&overload_snap.diag);
                         self.extend_unique_diagnostics(&mut merged, preserved_first_pass_diags);
@@ -1315,11 +1320,15 @@ impl<'a> CheckerState<'a> {
                         &overload_snap.diag,
                         &candidate_snap,
                     );
-                    let kept_candidate_diags =
-                        self.ctx.take_speculative_diagnostics(&candidate_snap);
+                    let candidate_end = self.ctx.snapshot_diagnostics();
+                    let kept_candidate_diags = self.collect_non_callback_diagnostics_between(
+                        args,
+                        &candidate_snap,
+                        &candidate_end,
+                    );
                     // Merge: preserve hard speculative call diagnostics
                     // (e.g. TS2302/TS2708), then append first-pass and
-                    // candidate diagnostics without duplication.
+                    // non-callback candidate diagnostics without duplication.
                     let mut merged =
                         self.preserved_speculative_call_diagnostics(&overload_snap.diag);
                     self.extend_unique_diagnostics(&mut merged, preserved_first_pass_diags);

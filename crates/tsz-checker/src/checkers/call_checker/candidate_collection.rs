@@ -608,7 +608,44 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let arg_snap = self.ctx.snapshot_diagnostics();
-            let arg_type = self.get_type_of_node_with_request(arg_idx, &request);
+            let raw_arg_type = self.get_type_of_node_with_request(arg_idx, &request);
+            let arg_type = if let Some(expected) = expected_context_type.or(expected_type) {
+                let expected_eval = self.evaluate_type_with_env(expected);
+                let expected_shape =
+                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        expected,
+                    )
+                    .or_else(|| {
+                        crate::query_boundaries::checkers::call::get_contextual_signature(
+                            self.ctx.types,
+                            expected_eval,
+                        )
+                    });
+                let should_refine_generic_arg = expected_shape.is_some_and(|shape| {
+                    !shape.is_constructor
+                        && !shape.params.iter().any(|param| param.rest)
+                        && crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            shape.return_type,
+                        )
+                });
+                if should_refine_generic_arg
+                    && self.expression_needs_contextual_signature_instantiation(
+                        arg_idx,
+                        Some(expected),
+                    )
+                {
+                    self.instantiate_generic_function_argument_against_target_params(
+                        raw_arg_type,
+                        expected,
+                    )
+                } else {
+                    raw_arg_type
+                }
+            } else {
+                raw_arg_type
+            };
             self.ctx.in_const_assertion = prev_const_assertion;
 
             let is_direct_function_arg = self.is_callback_like_argument(arg_idx);

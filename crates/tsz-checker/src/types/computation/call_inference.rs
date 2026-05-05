@@ -371,6 +371,9 @@ impl<'a> CheckerState<'a> {
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
         };
+        if target_fn.params.iter().any(|param| param.rest) {
+            return source_ty;
+        }
         let normalize = |shape: tsz_solver::FunctionShape| {
             let unpacked: Vec<_> = shape
                 .params
@@ -429,6 +432,9 @@ impl<'a> CheckerState<'a> {
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
         };
+        if target_fn.params.iter().any(|param| param.rest) {
+            return source_ty;
+        }
         let normalize = |shape: tsz_solver::FunctionShape| {
             let unpacked: Vec<_> = shape
                 .params
