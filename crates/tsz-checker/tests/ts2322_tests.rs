@@ -1375,6 +1375,37 @@ export class Foo<T> extends Base<T> {
 }
 
 #[test]
+fn generic_object_assign_helper_keeps_outer_ts2322() {
+    let source = r#"
+const func = <T>() => {};
+const assign = <T, U>(a: T, b: U) => Object.assign(a, b);
+const res: (() => void) & { func: any } = assign(() => {}, { func });
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let codes: Vec<_> = diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
+        "Expected inner TS2769 for generic Object.assign helper, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type '{ func: <T>() => void; }' is not assignable to type '(() => void) & { func: any; }'.")
+        }),
+        "Expected outer TS2322 for generic Object.assign helper, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_string_intrinsic_targets_widen_literal_sources() {
     let source = r#"
 let x: Uppercase<string>;
