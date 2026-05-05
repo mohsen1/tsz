@@ -300,7 +300,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Skip special/internal names
-            if name == "default" || name == "__export" || name == "arguments" {
+            if name == "default" || name == "arguments" {
                 continue;
             }
 
