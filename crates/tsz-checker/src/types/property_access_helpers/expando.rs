@@ -1612,7 +1612,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.arena,
                     binary.left,
                 )
-                .unwrap_or_else(|| self.ctx.arena.skip_parenthesized(binary.right));
+                .unwrap_or_else(|| self.terminal_expando_assignment_rhs(binary.right));
                 let rhs_type = self.get_type_of_node(rhs_idx);
                 if rhs_type != TypeId::ANY
                     && rhs_type != TypeId::ERROR
@@ -1632,6 +1632,18 @@ impl<'a> CheckerState<'a> {
                 best_match,
             );
         }
+    }
+
+    fn terminal_expando_assignment_rhs(&self, idx: NodeIndex) -> NodeIndex {
+        let idx = self.ctx.arena.skip_parenthesized(idx);
+        if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return self.terminal_expando_assignment_rhs(binary.right);
+        }
+        idx
     }
 
     fn expando_assignment_access_key(&self, idx: NodeIndex) -> Option<String> {
