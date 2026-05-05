@@ -4281,6 +4281,67 @@ fn test_array_terminated_by_close_bracket_keeps_clean_close() {
 }
 
 #[test]
+fn test_parameter_list_stray_colon_recovers_through_object_binding_tail() {
+    // Regression for `parametersSyntaxErrorNoCrash1.ts`. After the stray second
+    // colon, tsc keeps parsing the following `{ return arg; }` as a malformed
+    // object binding parameter, producing the full recovery tail.
+    let source = "\n// https://github.com/microsoft/TypeScript/issues/59422\n\nfunction identity<T>(arg: T: T {\n    return arg;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let line_map = LineMap::build(source);
+
+    let mut fingerprints: Vec<(u32, u32, u32, String)> = diagnostics
+        .iter()
+        .map(|d| {
+            let pos = line_map.offset_to_position(d.start, source);
+            (d.code, pos.line + 1, pos.character + 1, d.message.clone())
+        })
+        .collect();
+    fingerprints.sort();
+
+    let mut expected = vec![
+        (
+            diagnostic_codes::EXPECTED,
+            4,
+            28,
+            "',' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            4,
+            32,
+            "',' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            5,
+            12,
+            "':' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            5,
+            15,
+            "',' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            6,
+            2,
+            "')' expected.".to_string(),
+        ),
+    ];
+    expected.sort();
+
+    assert_eq!(
+        fingerprints, expected,
+        "parameter-list recovery fingerprints must match tsc, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_object_literal_comma_recovery_after_short_distance_colon_error() {
     // Regression for conformance test
     // `conformance/classes/nestedClassDeclaration.ts`:
