@@ -111,6 +111,7 @@ impl<'a> NarrowingContext<'a> {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             };
             let filter_obj = self.db.object(vec![required_prop]);
@@ -247,6 +248,7 @@ impl<'a> NarrowingContext<'a> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 };
                 let filter_obj = self.db.object(vec![required_prop]);
@@ -291,6 +293,7 @@ impl<'a> NarrowingContext<'a> {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         };
         self.db.object(vec![required_prop])

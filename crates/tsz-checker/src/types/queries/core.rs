@@ -1212,6 +1212,17 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn is_symbol_property_name(&mut self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        self.get_property_name_resolved(name_idx)
+            .is_some_and(|name| name.starts_with("[Symbol.") || name.starts_with("__unique_"))
+    }
+
     /// For an identifier expression, trace back to the variable's declaration
     /// and check if the initializer or type annotation references `Symbol.xxx`.
     /// If so, return the canonical `[Symbol.xxx]` property name.

@@ -134,6 +134,7 @@ impl<'a> InferSubstitutor<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
+                        is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                     });
                 }
@@ -169,6 +170,7 @@ impl<'a> InferSubstitutor<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
+                        is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                     });
                 }
@@ -450,6 +452,7 @@ impl<'a> InferSubstitutor<'a> {
                             parent_id: prop.parent_id,
                             declaration_order: prop.declaration_order,
                             is_string_named: prop.is_string_named,
+                            is_symbol_named: prop.is_symbol_named,
                             single_quoted_name: prop.single_quoted_name,
                         }
                     })

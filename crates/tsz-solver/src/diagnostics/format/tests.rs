@@ -134,6 +134,7 @@ fn object_type_with_hyphenated_property_quoted() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     };
     let obj = db.object(vec![prop]);
@@ -2219,6 +2220,7 @@ fn format_no_infer_in_union_with_function_member() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let no_infer_obj = db.no_infer(obj);
@@ -3378,6 +3380,7 @@ fn optional_property_shows_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let result = fmt.format(obj);
@@ -3406,6 +3409,7 @@ fn optional_property_never_shows_as_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let result = fmt.format(obj);
@@ -3434,6 +3438,7 @@ fn optional_property_with_union_undefined_keeps_it() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let result = fmt.format(obj);

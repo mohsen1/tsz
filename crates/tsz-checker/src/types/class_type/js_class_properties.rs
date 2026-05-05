@@ -758,6 +758,7 @@ impl CheckerState<'_> {
                     parent_id: parent_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );
@@ -1140,6 +1141,7 @@ impl CheckerState<'_> {
                         parent_id: class_sym,
                         declaration_order: 0,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -1187,6 +1189,7 @@ impl CheckerState<'_> {
                             parent_id: class_sym,
                             declaration_order: 0,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }

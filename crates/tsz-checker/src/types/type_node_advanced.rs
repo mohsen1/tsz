@@ -1327,6 +1327,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     parent_id: None,
                     declaration_order: index as u32,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 }
             })

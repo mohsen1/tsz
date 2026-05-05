@@ -78,6 +78,7 @@ fn obj_with_method(interner: &TypeInterner, method_name: &str, method: TypeId) -
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }])
 }
@@ -97,6 +98,7 @@ fn obj_with_prop(interner: &TypeInterner, prop_name: &str, prop: TypeId) -> Type
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }])
 }
@@ -116,6 +118,7 @@ fn animal_type(interner: &TypeInterner) -> TypeId {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }])
 }
@@ -137,6 +140,7 @@ fn cat_type(interner: &TypeInterner) -> TypeId {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
@@ -768,6 +772,7 @@ fn test_object_prototype_fallback_for_missing_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -784,6 +789,7 @@ fn test_object_prototype_fallback_for_missing_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -801,6 +807,7 @@ fn test_object_prototype_fallback_for_missing_property() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -815,6 +822,7 @@ fn test_object_prototype_fallback_for_missing_property() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);

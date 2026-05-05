@@ -798,6 +798,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: 0,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                     let write = (instantiated_write_type != instantiated_read_type)

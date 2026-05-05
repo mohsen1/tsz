@@ -1628,6 +1628,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 }
             })
@@ -1872,6 +1873,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: 0,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         }
                     })

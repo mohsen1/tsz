@@ -19,6 +19,7 @@ fn test_build_object_type() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }];
 
@@ -46,6 +47,7 @@ fn test_merge_spread() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }];
 
@@ -63,6 +65,7 @@ fn test_merge_spread() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -77,6 +80,7 @@ fn test_merge_spread() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ];
@@ -118,6 +122,7 @@ fn test_apply_contextual_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -135,6 +140,7 @@ fn test_apply_contextual_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }];
 
@@ -162,6 +168,7 @@ fn test_extract_properties_from_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -177,6 +184,7 @@ fn test_extract_properties_from_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -215,6 +223,7 @@ fn test_collect_spread_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         ObjectFlags::FRESH_LITERAL,
