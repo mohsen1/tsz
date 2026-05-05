@@ -57,6 +57,61 @@ function removeNothing(y = cond ? true : undefined) {
 }
 
 #[test]
+fn strip_internal_omits_exported_top_level_declarations() {
+    let source = r#"
+/** @internal */
+export const stripped = 2;
+
+/** @internal */
+export function hiddenFunction() {}
+
+/** @internal */
+export interface HiddenInterface {
+    value: string;
+}
+
+/** @internal */
+export class HiddenClass {}
+
+/** @internal */
+export type HiddenAlias = string;
+
+/** @internal */
+export enum HiddenEnum {
+    A,
+}
+
+/** @internal */
+export namespace HiddenNamespace {
+    export const value = 1;
+}
+
+export const visible = 3;
+"#;
+    let output = emit_dts_strip_internal(source);
+
+    assert!(
+        output.contains("visible"),
+        "Expected visible export to remain: {output}"
+    );
+    for stripped_name in [
+        "stripped",
+        "hiddenFunction",
+        "HiddenInterface",
+        "HiddenClass",
+        "HiddenAlias",
+        "HiddenEnum",
+        "HiddenNamespace",
+        "@internal",
+    ] {
+        assert!(
+            !output.contains(stripped_name),
+            "Expected {stripped_name} to be stripped from declaration output: {output}"
+        );
+    }
+}
+
+#[test]
 fn test_object_rest_with_keyword_property_names_omits_destructured_key() {
     let source = r#"
 type P = {
