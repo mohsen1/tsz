@@ -945,7 +945,8 @@ impl<'a> CheckerState<'a> {
     /// Get the return type for implicit return checking.
     ///
     /// For async functions, this unwraps Promise<T> to get T.
-    /// For generator functions, returns UNKNOWN (not fully implemented).
+    /// For generator functions, this unwraps `Generator<Y, R, N>` /
+    /// `AsyncGenerator<Y, R, N>` to get `R`.
     /// Otherwise, returns the original return type.
     pub fn return_type_for_implicit_return_check(
         &mut self,
@@ -954,7 +955,9 @@ impl<'a> CheckerState<'a> {
         is_generator: bool,
     ) -> TypeId {
         if is_generator {
-            return TypeId::UNKNOWN; // Generator support not implemented - use UNKNOWN
+            return self
+                .generator_return_type_for_implicit_return_check(return_type)
+                .unwrap_or(TypeId::UNKNOWN);
         }
 
         if is_async {
@@ -968,6 +971,28 @@ impl<'a> CheckerState<'a> {
         }
 
         return_type
+    }
+
+    /// Extract the generator completion type used by TS2355/TS2366/TS7030.
+    ///
+    /// Return-completeness diagnostics reason about the value passed to
+    /// `return`, not the full generator object type. Try the original type
+    /// first because evaluating `Generator<Y, R, N>` can expand it into a
+    /// structural object and lose the application wrapper that carries `R`.
+    pub fn generator_return_type_for_implicit_return_check(
+        &mut self,
+        return_type: TypeId,
+    ) -> Option<TypeId> {
+        if let Some(inner) = self.get_generator_return_type_argument(return_type) {
+            return Some(inner);
+        }
+
+        let resolved = self.resolve_ref_type(return_type);
+        if resolved != return_type {
+            self.get_generator_return_type_argument(resolved)
+        } else {
+            None
+        }
     }
 
     /// Check if a return type annotation syntactically looks like Promise<T>.

@@ -42,11 +42,127 @@ fn check_with_strict(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn check_with_no_implicit_returns(source: &str) -> Vec<(u32, String)> {
+    let full_source = format!("{GENERATOR_STUBS}\n{source}");
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        no_implicit_any: true,
+        no_implicit_returns: true,
+        ..CheckerOptions::default()
+    };
+    check_source(&full_source, "test.ts", options)
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 fn codes_with_strict(source: &str) -> Vec<u32> {
     check_with_strict(source)
         .iter()
         .map(|(code, _)| *code)
         .collect()
+}
+
+fn count_code(diags: &[(u32, String)], code: u32) -> usize {
+    diags
+        .iter()
+        .filter(|(diag_code, _)| *diag_code == code)
+        .count()
+}
+
+// =========================================================================
+// Generator TReturn return-completeness diagnostics
+// =========================================================================
+
+#[test]
+fn generator_treturn_drives_return_completeness_diagnostics() {
+    let source = r#"
+declare const cond: boolean;
+
+function* declPartial(): Generator<number, number, unknown> {
+    if (cond) {
+        return 1;
+    }
+}
+
+function* declEmpty(): Generator<number, number, unknown> {
+}
+
+const exprPartial = function* (): Generator<number, number, unknown> {
+    if (cond) {
+        return 1;
+    }
+};
+
+async function* asyncPartial(): AsyncGenerator<number, number, unknown> {
+    if (cond) {
+        return 1;
+    }
+}
+
+function* voidReturn(): Generator<number, void, unknown> {
+    if (cond) {
+        return;
+    }
+}
+"#;
+    let diags = check_with_no_implicit_returns(source);
+    assert_eq!(
+        count_code(&diags, 2355),
+        1,
+        "empty generator with non-void TReturn should emit TS2355, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2366),
+        3,
+        "partial declaration, expression, and async-generator returns should emit TS2366, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 7030),
+        0,
+        "explicit generator TReturn diagnostics should not fall back to TS7030, got: {diags:?}"
+    );
+}
+
+#[test]
+fn generator_treturn_unknown_and_undefined_union_keep_ts2355_rules() {
+    let source = r#"
+declare const cond: boolean;
+
+function* unknownEmpty(): Generator<number, unknown, unknown> {
+}
+
+function* unknownPartial(): Generator<number, unknown, unknown> {
+    if (cond) {
+        return 1;
+    }
+}
+
+function* undefinedUnionEmpty(): Generator<number, number | undefined, unknown> {
+}
+
+function* undefinedUnionPartial(): Generator<number, number | undefined, unknown> {
+    if (cond) {
+        return 1;
+    }
+}
+"#;
+    let diags = check_with_no_implicit_returns(source);
+    assert_eq!(
+        count_code(&diags, 2355),
+        2,
+        "empty generator bodies with unknown or undefined-union TReturn should emit TS2355, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 7030),
+        2,
+        "partial unknown/undefined-union TReturn generators should still emit TS7030, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2366),
+        0,
+        "unknown and undefined-union TReturn should not emit TS2366, got: {diags:?}"
+    );
 }
 
 // =========================================================================
