@@ -93,8 +93,8 @@ impl<'a> CheckerState<'a> {
 
         // First pass: identify ALL import symbols and track them by import declaration.
         // This includes both used and unused imports.
-        for (_sym_id, _name) in &symbols_to_check {
-            let sym_id = *_sym_id;
+        for (sym_id, name) in &symbols_to_check {
+            let sym_id = *sym_id;
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
@@ -102,6 +102,12 @@ impl<'a> CheckerState<'a> {
 
             // Only track ALIAS symbols (imports)
             if (flags & symbol_flags::ALIAS) == 0 {
+                continue;
+            }
+
+            // TSC treats underscore-prefixed imports as intentionally unused,
+            // so they should not contribute to aggregate TS6192 accounting.
+            if name.starts_with('_') {
                 continue;
             }
 
