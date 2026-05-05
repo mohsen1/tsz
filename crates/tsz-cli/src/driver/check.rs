@@ -3304,6 +3304,33 @@ const result: Next<number> = map.values().next();
         );
     }
 
+    #[test]
+    fn es2015_destructuring_reduce_concat_reports_overload_and_iterability() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+declare var tuple: [boolean, number, ...string[]];
+
+const [a, b, c, ...rest] = tuple;
+
+declare var receiver: typeof tuple;
+
+[...receiver] = tuple;
+
+const [oops1] = [1, 2, 3].reduce((accu, el) => accu.concat(el), []);
+"#,
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+
+        assert!(
+            codes.contains(&2488),
+            "expected TS2488 for destructuring the failed reduce result, got: {diagnostics:?}"
+        );
+        assert!(
+            codes.contains(&2769),
+            "expected TS2769 for the nested reduce/concat overload failure, got: {diagnostics:?}"
+        );
+    }
+
     fn mapped_type_indexed_access_constraint_repro() -> &'static str {
         r#"type Identity<T> = { [K in keyof T]: T[K] };
 

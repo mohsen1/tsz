@@ -710,11 +710,11 @@ impl<'a> CheckerState<'a> {
                             || (!is_direct_function_arg
                                 && (raw_context_requires_generic_epc_skip
                                     || callable_context_requires_generic_epc_skip)));
-                    let keep = if is_provisional_callback_body_overload
-                        || is_provisional_callback_body_property_error
-                    {
+                    let keep = if is_provisional_callback_body_property_error {
                         false
-                    } else if !is_provisional_assignability && !is_provisional_implicit_any {
+                    } else if is_provisional_callback_body_overload
+                        || (!is_provisional_assignability && !is_provisional_implicit_any)
+                    {
                         true
                     } else if is_direct_function_arg {
                         is_direct_callback_body_assignability
