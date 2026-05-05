@@ -988,11 +988,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if an initializer expression is a global `Symbol(...)` call.
-    ///
-    /// Verifies both that the callee is spelled `Symbol` and that the
-    /// identifier resolves to the lib global, not a user-declared local
-    /// that happens to share the name.
+    /// Check if an initializer expression is a `Symbol(...)` call where
+    /// `Symbol` resolves to the built-in global, not a same-named local.
+    /// A user-defined `function Symbol() { ... }` (or `const Symbol = ...`)
+    /// shadows the global and must not trigger the unique-symbol shortcut.
     pub(crate) fn is_symbol_call_initializer(&self, init_idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         let Some(node) = self.ctx.arena.get(init_idx) else {
@@ -1004,16 +1003,7 @@ impl<'a> CheckerState<'a> {
         let Some(call) = self.ctx.arena.get_call_expr(node) else {
             return false;
         };
-        let Some(expr_node) = self.ctx.arena.get(call.expression) else {
-            return false;
-        };
-        let Some(ident) = self.ctx.arena.get_identifier(expr_node) else {
-            return false;
-        };
-        if ident.escaped_text != "Symbol" {
-            return false;
-        }
-        self.known_global_identifier_resolves_to_lib_value(call.expression, "Symbol")
+        self.identifier_resolves_to_unshadowed_global(call.expression, "Symbol")
     }
 
     /// Get the binder SymbolId for a variable declaration's name node.
