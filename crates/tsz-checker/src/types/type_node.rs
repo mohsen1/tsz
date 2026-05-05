@@ -1983,11 +1983,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .and_then(|expr_node| arena.get_identifier(expr_node))
             .is_some_and(|ident| ident.escaped_text == "Symbol")
     }
-
-    /// Get the context reference (for read-only access).
-    pub const fn context(&self) -> &CheckerContext<'ctx> {
-        self.ctx
-    }
 }
 #[cfg(test)]
 #[path = "../../tests/type_node.rs"]
