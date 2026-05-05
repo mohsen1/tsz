@@ -843,7 +843,21 @@ impl<'a> CheckerState<'a> {
                     self.invalidate_expression_for_contextual_retry(right_idx);
                 }
             }
-            TypingRequest::with_contextual_type(contextual_target)
+            if self
+                .ctx
+                .arena
+                .get(left_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && self
+                    .ctx
+                    .arena
+                    .get(right_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            {
+                TypingRequest::NONE
+            } else {
+                TypingRequest::with_contextual_type(contextual_target)
+            }
         } else {
             TypingRequest::NONE
         };
@@ -1744,13 +1758,7 @@ impl<'a> CheckerState<'a> {
         left_idx: NodeIndex,
         source_type: TypeId,
     ) -> Option<TypeId> {
-        if source_type == TypeId::ANY
-            || source_type == TypeId::NEVER
-            || crate::query_boundaries::assignability::contains_type_parameters(
-                self.ctx.types,
-                source_type,
-            )
-        {
+        if source_type == TypeId::ANY || source_type == TypeId::NEVER {
             return None;
         }
 

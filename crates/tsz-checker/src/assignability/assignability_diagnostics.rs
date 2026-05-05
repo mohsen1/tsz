@@ -541,6 +541,10 @@ impl<'a> CheckerState<'a> {
             );
             return false;
         }
+        if self.same_base_application_to_constrained_type_param_target(source, target) {
+            self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+            return false;
+        }
         if self
             .ctx
             .arena

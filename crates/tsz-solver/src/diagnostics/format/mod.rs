@@ -281,7 +281,13 @@ impl<'a> TypeFormatter<'a> {
             self.interner.lookup(source),
             Some(TypeData::Union(_) | TypeData::Intersection(_))
         ) && (source_str.contains(" & ") || source_str.contains(" | "));
-        let idx_str = self.format(idx);
+        let idx_for_display = match self.interner.lookup(idx) {
+            Some(TypeData::TypeParameter(tp)) if tp.name == mapped.type_param.name => {
+                mapped.constraint
+            }
+            _ => idx,
+        };
+        let idx_str = self.format(idx_for_display);
         let core = if needs_parens {
             format!("({source_str})[{idx_str}]")
         } else {
