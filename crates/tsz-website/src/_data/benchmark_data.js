@@ -60,6 +60,27 @@ function fastestTiming(row) {
   return timings.length ? Math.min(...timings) : Infinity;
 }
 
+function tszSpeedupScore(row) {
+  const tsz = Number(row?.tsz_ms);
+  const tsgo = Number(row?.tsgo_ms);
+  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) {
+    return -Infinity;
+  }
+  return tsgo / tsz;
+}
+
+function compareByTszSpeedup(a, b) {
+  const aScore = tszSpeedupScore(a);
+  const bScore = tszSpeedupScore(b);
+  if (aScore !== bScore) return bScore - aScore;
+
+  const aFastest = fastestTiming(a);
+  const bFastest = fastestTiming(b);
+  if (aFastest !== bFastest) return aFastest - bFastest;
+
+  return String(a?.name || "").localeCompare(String(b?.name || ""));
+}
+
 function hasSuccessfulTiming(row) {
   return hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms);
 }
@@ -1304,16 +1325,6 @@ function generateCharts(data, mode = "projects") {
   if (!results.length && !failedResults.length) return "";
 
   const barMaxWidth = 420;
-  const visibleCategories = categories
-    .filter((category) => categoryBelongsToMode(category, mode))
-    .sort((a, b) => {
-      if (mode !== "projects") return 0;
-      const aFastest = Math.min(...(grouped.get(a) || []).map(fastestTiming));
-      const bFastest = Math.min(...(grouped.get(b) || []).map(fastestTiming));
-      if (aFastest !== bFastest) return aFastest - bFastest;
-      return categoryTitle(a).localeCompare(categoryTitle(b));
-    });
-  const visibleFailedResults = failedResults.filter((row) => failedBelongsToMode(row, mode));
   const entriesForCategory = (category) => {
     const entries = (grouped.get(category) || []).slice();
     if (isExternalLibraryCategory(category)) {
@@ -1325,6 +1336,20 @@ function generateCharts(data, mode = "projects") {
     }
     return entries;
   };
+  const categoryTszSpeedupScore = (category) => Math.max(
+    -Infinity,
+    ...entriesForCategory(category).map(tszSpeedupScore),
+  );
+  const visibleCategories = categories
+    .filter((category) => categoryBelongsToMode(category, mode))
+    .sort((a, b) => {
+      if (mode !== "projects") return 0;
+      const aScore = categoryTszSpeedupScore(a);
+      const bScore = categoryTszSpeedupScore(b);
+      if (aScore !== bScore) return bScore - aScore;
+      return categoryTitle(a).localeCompare(categoryTitle(b));
+    });
+  const visibleFailedResults = failedResults.filter((row) => failedBelongsToMode(row, mode));
   const chartMaxMs = Math.max(
     1,
     ...visibleCategories
@@ -1343,9 +1368,7 @@ function generateCharts(data, mode = "projects") {
 
     entries.sort((a, b) => {
       if (isProject) {
-        const aFastest = fastestTiming(a);
-        const bFastest = fastestTiming(b);
-        if (aFastest !== bFastest) return aFastest - bFastest;
+        return compareByTszSpeedup(a, b);
       } else {
         const aLines = Number(a.lines) || 0;
         const bLines = Number(b.lines) || 0;
