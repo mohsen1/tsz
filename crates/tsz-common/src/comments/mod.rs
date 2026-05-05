@@ -155,6 +155,112 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
     comments
 }
 
+/// True when the source text contains a top-level `declare module
+/// "<specifier>"` (or single-quoted) declaration *outside* of comments,
+/// strings, and regex literals.
+///
+/// Used by the module resolver to decide whether a `.d.ts` file ambiently
+/// declares a particular package subpath. A raw substring scan is wrong
+/// because example code in JSDoc / line comments / string literals would
+/// otherwise let the resolver believe the subpath exists. This helper
+/// reuses the same code-scope detection as [`get_comment_ranges`], so
+/// matches inside strings, regexes, or comments are skipped.
+#[must_use]
+pub fn source_declares_ambient_module(source: &str, specifier: &str) -> bool {
+    source_contains_in_code(source, &format!("declare module \"{specifier}\""))
+        || source_contains_in_code(source, &format!("declare module '{specifier}'"))
+}
+
+/// True when the source text contains `needle` at a byte position that
+/// is outside of strings, comments, regex literals, and template
+/// literals. The scan mirrors the state machine used by
+/// [`get_comment_ranges`] but checks for the needle at each code byte
+/// instead of recording comment positions.
+#[must_use]
+pub fn source_contains_in_code(source: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let bytes = source.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    let len = bytes.len();
+    let mut pos = 0;
+
+    while pos < len {
+        let ch = bytes[pos];
+
+        if ch == b' ' || ch == b'\t' || ch == b'\r' || ch == b'\n' {
+            pos += 1;
+            continue;
+        }
+
+        if ch == b'/' && pos + 1 < len {
+            let next = bytes[pos + 1];
+            if next == b'/' {
+                pos += 2;
+                while pos < len && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                    pos += 1;
+                }
+                continue;
+            } else if next == b'*' {
+                pos += 2;
+                while pos + 1 < len {
+                    if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                        pos += 2;
+                        break;
+                    }
+                    pos += 1;
+                }
+                continue;
+            }
+        }
+
+        if ch == b'\'' || ch == b'"' {
+            pos = skip_quoted_string(bytes, pos, ch);
+            continue;
+        }
+
+        if ch == b'`' {
+            pos = skip_template_literal(bytes, pos);
+            continue;
+        }
+
+        if ch == b'/'
+            && pos + 1 < len
+            && can_start_regex_at(bytes, pos)
+            && let Some(next_pos) = skip_regex_literal(bytes, pos)
+        {
+            pos = next_pos;
+            continue;
+        }
+
+        if pos + needle_bytes.len() <= len && &bytes[pos..pos + needle_bytes.len()] == needle_bytes
+        {
+            return true;
+        }
+        pos += 1;
+    }
+
+    false
+}
+
+fn skip_template_literal(bytes: &[u8], start: usize) -> usize {
+    // Walk past the opening backtick to the matching closing backtick,
+    // honoring escape sequences. Nested `${...}` interpolations contain
+    // code, but for ambient-module / pragma detection we accept the
+    // approximation that the directive cannot legally appear inside a
+    // template-string interpolation at the top level.
+    let mut pos = start + 1;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => pos = (pos + 2).min(bytes.len()),
+            b'`' => return pos + 1,
+            _ => pos += 1,
+        }
+    }
+    pos
+}
+
 fn skip_quoted_string(bytes: &[u8], start: usize, quote: u8) -> usize {
     let mut pos = start + 1;
     while pos < bytes.len() {
