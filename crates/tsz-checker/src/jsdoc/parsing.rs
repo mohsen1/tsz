@@ -1184,8 +1184,25 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let mut depth = 0usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
         for (idx, ch) in line.char_indices() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
             match ch {
+                '"' | '\'' | '`' => quote = Some(ch),
                 '{' => depth += 1,
                 '}' => {
                     depth = depth.saturating_sub(1);
