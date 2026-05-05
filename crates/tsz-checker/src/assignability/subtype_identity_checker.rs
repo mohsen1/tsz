@@ -460,10 +460,9 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        tsz_solver::type_queries::mutable_array_element_for_redeclaration(
+        crate::query_boundaries::common::mutable_array_element_for_redeclaration(
             self.ctx.types,
             type_id,
-            tsz_solver::TypeDatabase::get_array_base_type(self.ctx.types),
             Some(self.ctx.definition_store.as_ref()),
         )
         .map_or(type_id, |elem| self.ctx.types.array(elem))

@@ -807,6 +807,21 @@ pub(crate) fn application_info(
     tsz_solver::type_queries::extended::get_application_info(db, type_id)
 }
 
+/// Return the element type when `type_id` is a mutable `Array<T>` form used for
+/// redeclaration identity.
+pub(crate) fn mutable_array_element_for_redeclaration(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    def_store: Option<&tsz_solver::def::DefinitionStore>,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::mutable_array_element_for_redeclaration(
+        db,
+        type_id,
+        db.get_array_base_type(),
+        def_store,
+    )
+}
+
 // ── Literal type classification ──
 
 pub(crate) use tsz_solver::type_queries::extended::LiteralTypeKind;
