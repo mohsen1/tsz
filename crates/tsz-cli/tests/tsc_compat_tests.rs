@@ -44,6 +44,70 @@ fn write_file(path: &Path, contents: &str) {
     std::fs::write(path, contents).expect("failed to write file");
 }
 
+#[test]
+fn declaration_emit_expands_foreign_import_mapped_keys_from_nested_package() {
+    let temp = TempDir::new("foreign_mapped_keys").expect("temp dir");
+
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "outDir": "dist",
+            "rootDir": "r",
+            "target": "es2017",
+            "module": "commonjs",
+            "moduleResolution": "node",
+            "ignoreDeprecations": "6.0",
+            "skipLibCheck": true,
+            "strict": true,
+            "typeRoots": ["./empty-types"]
+          },
+          "files": ["r/entry.ts"]
+        }"#,
+    );
+    std::fs::create_dir_all(temp.path.join("empty-types")).expect("empty typeRoots");
+    write_file(
+        &temp.path.join("r/entry.ts"),
+        r#"import { foo } from "foo";
+
+export const x = foo();
+"#,
+    );
+    write_file(
+        &temp.path.join("r/node_modules/foo/index.d.ts"),
+        r#"export function foo(): { [K in import("keys").Key]?: string };
+"#,
+    );
+    write_file(
+        &temp
+            .path
+            .join("r/node_modules/foo/node_modules/keys/index.d.ts"),
+        r#"export type Key = "a" | "b";
+"#,
+    );
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["-p", "tsconfig.json"]).expect("tsz should run");
+    assert_eq!(code, 0, "tsz should succeed, got output:\n{output}");
+
+    let dts = std::fs::read_to_string(temp.path.join("dist/entry.d.ts"))
+        .expect("Declaration output should be emitted");
+    assert!(
+        dts.contains("a?: string | undefined;"),
+        "expected expanded mapped key 'a': {dts}",
+    );
+    assert!(
+        dts.contains("b?: string | undefined;"),
+        "expected expanded mapped key 'b': {dts}",
+    );
+    assert!(
+        !dts.contains("[K in"),
+        "foreign mapped type should not leak into declaration output: {dts}",
+    );
+}
+
 /// Run tsc and return its stderr output (where diagnostics go) with ANSI codes stripped.
 fn run_tsc(cwd: &Path, args: &[&str]) -> Option<String> {
     let mut cmd = tsc_command()?;

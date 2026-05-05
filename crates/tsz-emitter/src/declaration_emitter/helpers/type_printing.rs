@@ -700,10 +700,18 @@ impl<'a> DeclarationEmitter<'a> {
             type_id,
             Self::should_preserve_named_application_for_inferred_emit,
         );
-        if elided_alias_names.is_empty() {
+        let printed = if elided_alias_names.is_empty() {
             printed
         } else {
             Self::elide_type_reference_names(&printed, &elided_alias_names)
+        };
+        if Self::contains_portable_mapped_object_text(&printed)
+            && let Some(expanded) =
+                self.expand_portable_intersection_type_text(self.arena, &printed)
+        {
+            expanded
+        } else {
+            printed
         }
     }
 
