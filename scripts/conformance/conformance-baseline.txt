@@ -129,7 +129,6 @@ FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/co
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithFunctionTypedArguments.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericClassWithFunctionTypedMemberArguments.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/intraExpressionInferences.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339,TS18046]
-FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts | expected:[TS2322,TS2352,TS2454,TS2769] actual:[TS2322,TS2352,TS2454,TS2769]
 FAIL TypeScript/tests/cases/conformance/types/union/contextualTypeWithUnionTypeObjectLiteral.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes2.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
 FAIL TypeScript/tests/cases/conformance/types/union/unionTypeReduction2.ts | expected:[TS2554] actual:[TS2554]
@@ -12334,6 +12333,7 @@ PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/ke
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/keyofInferenceLowerPriorityThanReturn.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/noInfer.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/noInferRedeclaration.ts
+PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference2.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference3.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionTypeInference.ts
