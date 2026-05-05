@@ -129,9 +129,7 @@ impl<'a> CheckerState<'a> {
                 // Also include parenthesized expressions that might contain callbacks
                 let mut current = arg_idx;
                 for _ in 0..10 {
-                    let Some(node) = self.ctx.arena.get(current) else {
-                        return None;
-                    };
+                    let node = self.ctx.arena.get(current)?;
                     if node.kind == syntax_kind_ext::ARROW_FUNCTION
                         || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                     {
