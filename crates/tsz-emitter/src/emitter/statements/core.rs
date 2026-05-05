@@ -984,6 +984,15 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_recovered_typeof_member_call_after_variable_statement(&mut self, node: &Node) {
+        // Only recover when every declaration in the statement lacks an initializer.
+        // If any declaration has an initializer, .typeof( is a valid property call
+        // in a value expression that was already emitted — not a type-annotation tail.
+        if let Some(var_stmt) = self.arena.get_variable(node) {
+            if !self.all_declarations_lack_initializer(&var_stmt.declarations) {
+                return;
+            }
+        }
+
         let Some(text) = self.source_text else {
             return;
         };
