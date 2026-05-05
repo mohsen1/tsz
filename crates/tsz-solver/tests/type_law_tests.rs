@@ -574,6 +574,7 @@ fn test_coinductive_recursive_type_reflexivity() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -614,6 +615,7 @@ fn test_coinductive_mutually_recursive_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -630,6 +632,7 @@ fn test_coinductive_mutually_recursive_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 

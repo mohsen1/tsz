@@ -1096,7 +1096,7 @@ impl<'a> CheckerState<'a> {
         //    overlap just because `I1` is assignable from `I2`.
         if let Some(left_members) = query::get_intersection_members(self.ctx.types, effective_left)
         {
-            if self.intersection_with_explicit_unknown_like_constraint_excludes_primitive(
+            if self.intersection_with_object_or_null_constraint_excludes_primitive(
                 &left_members,
                 effective_right,
             ) {
@@ -1148,7 +1148,7 @@ impl<'a> CheckerState<'a> {
         if let Some(right_members) =
             query::get_intersection_members(self.ctx.types, effective_right)
         {
-            if self.intersection_with_explicit_unknown_like_constraint_excludes_primitive(
+            if self.intersection_with_object_or_null_constraint_excludes_primitive(
                 &right_members,
                 effective_left,
             ) {
@@ -1304,7 +1304,7 @@ impl<'a> CheckerState<'a> {
     fn ts2367_type_param_from_intersection_members(&self, members: &[TypeId]) -> Option<TypeId> {
         let type_param = members.iter().copied().find(|&member| {
             is_type_parameter_like(self.ctx.types, member)
-                && self.type_param_has_explicit_unknown_or_undefined_constraint(member)
+                && self.type_param_has_object_or_null_constraint_without_undefined(member)
         })?;
         let has_object_nullish_member = members.iter().any(|&member| {
             !is_type_parameter_like(self.ctx.types, member)
@@ -1313,7 +1313,7 @@ impl<'a> CheckerState<'a> {
         has_object_nullish_member.then_some(type_param)
     }
 
-    fn intersection_with_explicit_unknown_like_constraint_excludes_primitive(
+    fn intersection_with_object_or_null_constraint_excludes_primitive(
         &self,
         members: &[TypeId],
         other: TypeId,
@@ -1328,7 +1328,7 @@ impl<'a> CheckerState<'a> {
         for &member in members {
             if is_type_parameter_like(self.ctx.types, member) {
                 has_matching_type_param |=
-                    self.type_param_has_explicit_unknown_or_undefined_constraint(member);
+                    self.type_param_has_object_or_null_constraint_without_undefined(member);
             } else if self.is_object_or_nullish_only_type(member) {
                 has_object_nullish_member = true;
             }
@@ -1337,7 +1337,7 @@ impl<'a> CheckerState<'a> {
         has_matching_type_param && has_object_nullish_member
     }
 
-    fn type_param_has_explicit_unknown_or_undefined_constraint(&self, type_id: TypeId) -> bool {
+    fn type_param_has_object_or_null_constraint_without_undefined(&self, type_id: TypeId) -> bool {
         let Some(info) = crate::query_boundaries::common::type_param_info(self.ctx.types, type_id)
         else {
             return false;
@@ -1346,9 +1346,9 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        constraint == TypeId::UNKNOWN
-            || (self.type_contains_exact(constraint, TypeId::UNDEFINED)
-                && !self.type_contains_exact(constraint, TypeId::NULL))
+        constraint != TypeId::UNKNOWN
+            && !self.type_contains_exact(constraint, TypeId::UNDEFINED)
+            && self.is_object_or_nullish_only_type(constraint)
     }
 
     fn is_object_or_nullish_only_type(&self, type_id: TypeId) -> bool {

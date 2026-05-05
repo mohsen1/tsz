@@ -404,6 +404,65 @@ pub fn unresolved_type_name_atom(
     })
 }
 
+/// Returns true when `type_id` (recursively) contains an `Application`
+/// whose base is `UnresolvedTypeName`. Used by checker-level evaluation
+/// passes to detect when the first-pass result still carries cross-file
+/// resolution residue and a wider resolver pass is required.
+pub fn contains_unresolved_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    fn walk(
+        types: &dyn TypeDatabase,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+        depth: u32,
+    ) -> bool {
+        if depth > 64 || !visited.insert(type_id) {
+            return false;
+        }
+        let Some(key) = types.lookup(type_id) else {
+            return false;
+        };
+        match key {
+            TypeData::Application(app_id) => {
+                let app = types.type_application(app_id);
+                if matches!(
+                    types.lookup(app.base),
+                    Some(TypeData::UnresolvedTypeName(_))
+                ) {
+                    return true;
+                }
+                if walk(types, app.base, visited, depth + 1) {
+                    return true;
+                }
+                app.args.iter().any(|&a| walk(types, a, visited, depth + 1))
+            }
+            TypeData::Intersection(list_id) | TypeData::Union(list_id) => {
+                let members = types.type_list(list_id);
+                members.iter().any(|&m| walk(types, m, visited, depth + 1))
+            }
+            TypeData::Conditional(id) => {
+                let cond = types.conditional_type(id);
+                walk(types, cond.check_type, visited, depth + 1)
+                    || walk(types, cond.extends_type, visited, depth + 1)
+                    || walk(types, cond.true_type, visited, depth + 1)
+                    || walk(types, cond.false_type, visited, depth + 1)
+            }
+            TypeData::Mapped(id) => {
+                let m = types.mapped_type(id);
+                walk(types, m.constraint, visited, depth + 1)
+                    || walk(types, m.template, visited, depth + 1)
+            }
+            TypeData::Array(elem) => walk(types, elem, visited, depth + 1),
+            TypeData::IndexAccess(obj, idx) => {
+                walk(types, obj, visited, depth + 1) || walk(types, idx, visited, depth + 1)
+            }
+            TypeData::KeyOf(operand) => walk(types, operand, visited, depth + 1),
+            _ => false,
+        }
+    }
+    let mut visited = rustc_hash::FxHashSet::default();
+    walk(types, type_id, &mut visited, 0)
+}
+
 /// Extract the mapped type id if this is a mapped type.
 pub fn mapped_type_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<MappedTypeId> {
     if type_id.is_intrinsic() {

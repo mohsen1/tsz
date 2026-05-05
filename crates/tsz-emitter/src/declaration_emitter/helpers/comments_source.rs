@@ -381,6 +381,16 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(crate) fn skip_comments_before_raw(&mut self, end: u32) {
+        while self.comment_emit_idx < self.all_comments.len() {
+            if self.all_comments[self.comment_emit_idx].pos < end {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
     pub(in crate::declaration_emitter) fn find_node_code_end(&self, pos: u32, end: u32) -> u32 {
         let Some(ref text) = self.source_file_text else {
             return end;

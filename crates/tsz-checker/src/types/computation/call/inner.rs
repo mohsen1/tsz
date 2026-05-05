@@ -15,19 +15,72 @@ use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::TypeId;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::{FunctionShape, ParamInfo, TypeId};
 
 use super::super::call_result::CallResultContext;
 use super::super::complex::is_contextually_sensitive;
 
 impl<'a> CheckerState<'a> {
+    fn setup_higher_order_callee_contextual_type(
+        &mut self,
+        callee_expression: NodeIndex,
+        contextual_type: Option<TypeId>,
+        args: &[NodeIndex],
+    ) -> Option<TypeId> {
+        let ctx_type = contextual_type?;
+        if ctx_type == TypeId::ANY || ctx_type == TypeId::UNKNOWN || args.is_empty() {
+            return None;
+        }
+
+        let mut expr_idx = callee_expression;
+        loop {
+            match self.ctx.arena.get(expr_idx) {
+                Some(n) if n.kind == syntax_kind_ext::CALL_EXPRESSION => break,
+                Some(n) if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    expr_idx = self.ctx.arena.get_parenthesized(n)?.expression;
+                }
+                _ => return None,
+            }
+        }
+
+        if args.iter().copied().any(|arg_idx| {
+            self.ctx
+                .arena
+                .get(arg_idx)
+                .is_none_or(|node| node.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                || is_contextually_sensitive(self, arg_idx)
+        }) {
+            return None;
+        }
+
+        let snap = self.ctx.snapshot_diagnostics();
+        let params = args
+            .iter()
+            .copied()
+            .map(|arg_idx| ParamInfo {
+                name: None,
+                type_id: self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE),
+                optional: false,
+                rest: false,
+            })
+            .collect();
+        self.ctx.rollback_diagnostics(&snap);
+
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .function(FunctionShape::new(params, ctx_type)),
+        )
+    }
+
     /// Inner implementation of call expression type resolution.
     pub(crate) fn get_type_of_call_expression_inner(
         &mut self,
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        use tsz_parser::parser::syntax_kind_ext;
         let contextual_type = request.contextual_type;
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -50,13 +103,31 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
+        let early_args: &[NodeIndex] = call
+            .arguments
+            .as_ref()
+            .map(|a| a.nodes.as_slice())
+            .unwrap_or(&[]);
+
         // For IIFEs, wrap the contextual type into a callable type so the
         // function expression resolver can extract the return type.
         let iife_info = self.setup_iife_contextual_type(call.expression, contextual_type);
+        let higher_order_callee_context = if iife_info.is_none() {
+            self.setup_higher_order_callee_contextual_type(
+                call.expression,
+                contextual_type,
+                early_args,
+            )
+        } else {
+            None
+        };
         let callee_request = iife_info
             .map(|(wrapper_fn, _)| request.read().contextual(wrapper_fn))
+            .or_else(|| {
+                higher_order_callee_context.map(|wrapper_fn| request.read().contextual(wrapper_fn))
+            })
             .unwrap_or(*request);
-        if iife_info.is_some() {
+        if iife_info.is_some() || higher_order_callee_context.is_some() {
             self.invalidate_expression_for_contextual_retry(call.expression);
         }
 
@@ -1066,10 +1137,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(ctx_type) = generic_inference_contextual_type {
                         let mut return_context_substitution = self
                             .compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
-                        let return_param_names: FxHashSet<_> = self
-                            .function_like_return_parameter_type_params(&shape)
-                            .into_iter()
-                            .collect();
+                        let return_param_names = self.return_context_type_params_to_filter(&shape);
                         let same_return_context_application =
                             common::application_info(self.ctx.types, shape.return_type)
                                 .zip(common::application_info(self.ctx.types, ctx_type))
@@ -2433,10 +2501,7 @@ impl<'a> CheckerState<'a> {
         {
             let mut return_context_substitution =
                 self.compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
-            let return_param_names: FxHashSet<_> = self
-                .function_like_return_parameter_type_params(&shape)
-                .into_iter()
-                .collect();
+            let return_param_names = self.return_context_type_params_to_filter(&shape);
             let same_return_context_application =
                 common::application_info(self.ctx.types, return_type)
                     .zip(common::application_info(self.ctx.types, ctx_type))

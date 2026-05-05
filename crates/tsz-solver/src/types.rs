@@ -1048,6 +1048,12 @@ pub struct PropertyInfo {
     /// (e.g. `"404"` vs `404`). Included in PartialEq/Hash because `"100"` and
     /// `100` are semantically different property keys in TypeScript.
     pub is_string_named: bool,
+    /// Whether this property key came from a symbol-valued computed name.
+    ///
+    /// Unique-symbol keys are encoded as `__unique_N` atoms internally, but a
+    /// user-authored string property can also have that exact text. This flag
+    /// keeps the two cases distinct.
+    pub is_symbol_named: bool,
     /// Whether the string property name was written with single quotes in source.
     /// Declaration emit preserves this for reconstructed mapped properties.
     /// Excluded from PartialEq/Hash since it's purely cosmetic (controls quote
@@ -1068,6 +1074,7 @@ impl PartialEq for PropertyInfo {
             && self.visibility == other.visibility
             && self.parent_id == other.parent_id
             && self.is_string_named == other.is_string_named
+            && self.is_symbol_named == other.is_symbol_named
     }
 }
 
@@ -1084,6 +1091,7 @@ impl std::hash::Hash for PropertyInfo {
         self.visibility.hash(state);
         self.parent_id.hash(state);
         self.is_string_named.hash(state);
+        self.is_symbol_named.hash(state);
     }
 }
 
@@ -1103,6 +1111,7 @@ impl PropertyInfo {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }
     }

@@ -824,21 +824,29 @@ fn ts2367_preserves_literal_types_in_display() {
 }
 
 #[test]
-fn ts2367_for_explicit_unknown_intersection_compared_to_primitive() {
+fn ts2367_for_object_or_null_constrained_intersection_compared_to_primitive() {
     let diags = check_source_diagnostics(
-        r#"function f<T extends unknown>(value: T & ({} | null)) {
+        r#"function unconstrained<T>(value: T & ({} | null)) {
     if (value === 42) {}
 }
 
-function g<T extends {} | undefined>(value: T & ({} | null)) {
-    if (value === 42) {}
-}
-
-function unconstrained<T>(value: T & ({} | null)) {
+function unknown_constrained<T extends unknown>(value: T & ({} | null)) {
     if (value === 42) {}
 }
 
 function object_constrained<T extends {}>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+
+function object_or_undefined<T extends {} | undefined>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+
+function object_or_null<T extends {} | null>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+
+function object_null_or_undefined<T extends {} | null | undefined>(value: T & ({} | null)) {
     if (value === 42) {}
 }"#,
     );
@@ -846,7 +854,7 @@ function object_constrained<T extends {}>(value: T & ({} | null)) {
     assert_eq!(
         relevant.len(),
         2,
-        "Expected TS2367 only for explicit unknown/undefined-bearing constraints, got: {:?}",
+        "Expected TS2367 only for object/null constraints without undefined, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, d.message_text.as_str()))

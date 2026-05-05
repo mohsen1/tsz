@@ -135,6 +135,32 @@ fn get_all_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn promise_suffixed_generic_wrapper_does_not_suppress_nested_argument_mismatch() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+interface NotPromise<T> {
+    value: T;
+}
+
+declare const nested: NotPromise<NotPromise<number>>;
+
+const flattened: NotPromise<number> = nested;
+flattened;
+"#,
+    );
+
+    let ts2322 = diagnostics.iter().find(|(code, message)| {
+        *code == 2322
+            && message.contains("NotPromise<NotPromise<number>>")
+            && message.contains("NotPromise<number>")
+    });
+    assert!(
+        ts2322.is_some(),
+        "expected TS2322 for ordinary Promise-suffixed generic wrapper, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_for_index_accesses_with_distinct_key_type_parameters() {
     let diagnostics = get_all_diagnostics(
         r#"

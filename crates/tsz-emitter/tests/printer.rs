@@ -116,6 +116,14 @@ fn test_es6_generator_param_named_yield_keeps_identifier_text() {
 }
 
 #[test]
+fn recovered_template_object_property_name_emits_as_recovered_statements() {
+    let source = "var x = {\n    `abc${ 123 }def${ 456 }ghi`: 321\n}";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert_eq!(output, "var x = {} `abc${123}def${456}ghi`;\n321;\n");
+}
+
+#[test]
 fn test_optional_catch_binding_downlevel_to_param() {
     let source = "try {\n} catch {\n}\n";
     let output = parse_lower_print(
@@ -417,6 +425,24 @@ fn test_nested_namespace_does_not_qualify_parent_class_in_same_block() {
 }
 
 #[test]
+fn namespace_reference_to_later_dotted_child_is_qualified() {
+    let source = "namespace TypeScript {\n    export class PositionedElement {\n        childIndex() {\n            return Syntax.childIndex();\n        }\n    }\n}\nnamespace TypeScript.Syntax {\n    export function childIndex() { }\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("return TypeScript.Syntax.childIndex();"),
+        "Reference to a dotted child namespace declared in a later block should \
+         be qualified through the parent namespace.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_module_temp_vars_do_not_collide() {
     let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\nconsole.log(x);\n";
     let output = parse_lower_print(
@@ -487,6 +513,25 @@ fn test_commonjs_void_zero_exports_are_emitted_in_reverse_declaration_order() {
     assert!(
         output.contains("exports.b = exports.a = void 0;"),
         "unexpected output:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_computed_instance_field_side_effects_fold_into_method_name() {
+    let source = "class C {\n    [Symbol.iterator] = 0;\n    [Symbol.unscopables]: number;\n    [Symbol.toPrimitive]() { }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("this[_a] = 0;"),
+        "expected constructor to use hoisted computed field temp:\n{output}"
+    );
+    assert!(
+        output.contains("[(_a = Symbol.iterator, Symbol.unscopables, Symbol.toPrimitive)]() { }"),
+        "expected prior computed field expressions to fold into the computed method name:\n{output}"
+    );
+    assert!(
+        !output.contains("_a = Symbol.iterator, Symbol.unscopables;"),
+        "unexpected trailing computed field side-effect expression:\n{output}"
     );
 }
 
@@ -1930,5 +1975,78 @@ fn es5_var_destructuring_reassigning_rhs_uses_temp() {
     assert!(
         !output.contains("var foo = foo.foo, baz = foo.baz;"),
         "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: ESM `--importHelpers` was not aliasing helper imports
+/// when the helper name collides with a local declaration. tsc emits
+/// `import { __decorate as __decorate_1 } from "tslib";` and uses
+/// `__decorate_1(...)` at call sites to avoid shadowing.
+#[test]
+fn esm_import_helpers_aliases_when_helper_name_shadowed() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var dec: any, __decorate: any;\n@dec export class A {}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        import_helpers: true,
+        legacy_decorators: true,
+        emit_decorator_metadata: false,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import { __decorate as __decorate_1 } from \"tslib\";"),
+        "Local `__decorate` shadowing must trigger import alias rename.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__decorate_1("),
+        "Decorator call site must use the renamed alias.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: no local collision means no alias renaming.
+#[test]
+fn esm_import_helpers_no_alias_when_no_collision() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var dec: any;\n@dec export class A {}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        import_helpers: true,
+        legacy_decorators: true,
+        emit_decorator_metadata: false,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import { __decorate } from \"tslib\";"),
+        "No local collision: import name should stay unaliased.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("as __decorate_1"),
+        "Don't rename when there's no local shadowing.\nOutput:\n{output}"
     );
 }

@@ -928,7 +928,10 @@ fn test_keyof_string_indexed_object_preserves_unique_symbol_property() {
         flags: ObjectFlags::empty(),
         properties: vec![
             PropertyInfo::new(interner.intern_string("str"), TypeId::STRING),
-            PropertyInfo::new(sym_name, TypeId::NUMBER),
+            PropertyInfo {
+                is_symbol_named: true,
+                ..PropertyInfo::new(sym_name, TypeId::NUMBER)
+            },
         ],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -970,7 +973,10 @@ fn test_keyof_generic_remapped_mapped_type_keeps_concrete_lower_bound_keys() {
         flags: ObjectFlags::empty(),
         properties: vec![
             PropertyInfo::new(interner.intern_string("str"), TypeId::STRING),
-            PropertyInfo::new(sym_name, TypeId::NUMBER),
+            PropertyInfo {
+                is_symbol_named: true,
+                ..PropertyInfo::new(sym_name, TypeId::NUMBER)
+            },
         ],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,

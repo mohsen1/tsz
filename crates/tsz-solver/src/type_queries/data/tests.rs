@@ -222,6 +222,7 @@ fn test_collect_callable_property_types() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -236,6 +237,7 @@ fn test_collect_callable_property_types() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -501,6 +503,7 @@ fn test_get_object_symbol() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -534,6 +537,7 @@ fn test_get_raw_property_type() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -548,6 +552,7 @@ fn test_get_raw_property_type() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);

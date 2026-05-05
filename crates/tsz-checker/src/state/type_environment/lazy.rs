@@ -259,7 +259,17 @@ impl<'a> CheckerState<'a> {
                     || crate::query_boundaries::common::is_template_literal_type(
                         self.ctx.types,
                         result,
-                    )));
+                    )))
+            // When the first pass leaves an
+            // `Application(UnresolvedTypeName(...), args)` residue from
+            // cross-file lowering, retry with `CheckerContext` as the
+            // resolver. CheckerContext can walk the merged binder graph
+            // via `resolve_unresolved_type_name`, recover the alias's
+            // `DefId`, and let the application expand normally.
+            || crate::query_boundaries::spread::contains_unresolved_application(
+                self.ctx.types,
+                result,
+            );
         let final_result = if needs_resolver_pass {
             let seed_iter = if use_cache {
                 let cache = self.ctx.env_eval_cache.borrow();

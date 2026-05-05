@@ -1467,6 +1467,53 @@ let g8 = pipe((x: number, y: string) => 42, x => "" + x);
 }
 
 #[test]
+fn pipe_contextual_return_refines_overload_callbacks_progressively() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+type Fn = (n: number) => number;
+const fn30: Fn = pipe(
+    x => x + 1,
+    x => x * 2,
+);
+"#,
+    );
+    let false_positives: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2362)
+        .collect();
+    assert!(
+        false_positives.is_empty(),
+        "Contextual pipe overload should refine B from the first callback before checking the second, got: {:?}",
+        false_positives
+            .iter()
+            .map(|d| (d.code, d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn nested_generic_call_callee_receives_outer_call_context() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+declare function map<T, U>(transform: (t: T) => U): (arr: T[]) => U[];
+declare const identity: <T>(value: T) => T;
+const arr1: string[] = map(identity)(['a']);
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Nested generic callee should infer string[] from the outer call arguments/context, got: {:?}",
+        ts2322
+            .iter()
+            .map(|d| (d.code, d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn pipe_concrete_callback_holes_only_in_expected_no_ts2322_in_body() {
     // Specifically guards against the arrow-body TS2322 false positive.
     // `() => true` against `(...args: A) => B` should NOT elaborate into the body

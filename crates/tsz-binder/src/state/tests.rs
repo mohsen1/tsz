@@ -2280,6 +2280,30 @@ function foo() {}
     );
 }
 
+#[test]
+fn object_define_property_exports_make_js_file_external_module() {
+    for source in [
+        r#"
+const URL = 1;
+Object.defineProperty(exports, "value", { value: URL });
+"#,
+        r#"
+const Headers = 1;
+Object.defineProperty(module.exports, "value", { value: Headers });
+"#,
+    ] {
+        let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        assert!(
+            binder.is_external_module,
+            "Object.defineProperty CommonJS export should make JS file module-scoped: {source}"
+        );
+    }
+}
+
 // =============================================================================
 // 7. FLOW GRAPH ADVANCED PATTERNS
 // =============================================================================

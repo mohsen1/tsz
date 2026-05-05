@@ -1189,15 +1189,18 @@ pub(crate) fn find_integer_length(s: &str) -> usize {
     let bytes = s.as_bytes();
     let mut i = 0;
 
-    // Handle optional sign (only for decimal integers)
-    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+    // Handle optional minus (only for decimal integers).
+    // TypeScript accepts `-1` for `${bigint}`, but unlike `${number}` it
+    // rejects plus-signed strings such as `+1`.
+    let has_sign = i < bytes.len() && bytes[i] == b'-';
+    if has_sign {
         i += 1;
     }
 
     let start = i;
 
     // Check for 0x/0o/0b prefixes (no sign allowed for prefixed forms)
-    if start == i && i + 1 < bytes.len() && bytes[i] == b'0' {
+    if !has_sign && i + 1 < bytes.len() && bytes[i] == b'0' {
         match bytes[i + 1] {
             b'x' | b'X' => {
                 i += 2;

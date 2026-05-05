@@ -87,6 +87,22 @@ fn test_all_imports_unused_emits_ts6192() {
 }
 
 #[test]
+fn test_underscore_named_imports_do_not_emit_unused_import_diagnostics() {
+    let diags = tsz_checker::test_utils::check_source_no_unused_locals(
+        "import { _foo, bar as _bar } from './b';\nvoid 0;\n",
+    );
+    let unused_codes = diags
+        .iter()
+        .filter(|d| d.code == 6133 || d.code == 6192)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect::<Vec<_>>();
+    assert!(
+        unused_codes.is_empty(),
+        "Expected no TS6133/TS6192 for underscore-prefixed imports, got: {unused_codes:?}"
+    );
+}
+
+#[test]
 fn test_type_alias_unused_type_param() {
     let diags = tsz_checker::test_utils::check_source_no_unused_params("type A<T> = string;");
     let names = ts6133_names(&diags);

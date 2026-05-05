@@ -124,9 +124,18 @@ impl<'a> Printer<'a> {
     /// Write a runtime helper call name (e.g. `__awaiter`).
     /// When `importHelpers` is active and the module is CJS, this prefixes with `tslib_1.`.
     /// For ESM with importHelpers, the helpers are imported directly so no prefix is needed.
+    /// If the helper was renamed at the import site (e.g., `__decorate as __decorate_1`)
+    /// because of a local-identifier collision, write the alias instead.
     pub(super) fn write_helper(&mut self, name: &str) {
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             self.write("tslib_1.");
+            self.write(name);
+            return;
+        }
+        if let Some(alias) = self.helper_import_aliases.get(name) {
+            let alias_owned = alias.clone();
+            self.write(&alias_owned);
+            return;
         }
         self.write(name);
     }

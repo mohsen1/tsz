@@ -23,6 +23,7 @@ fn make_optional_object(interner: &TypeInterner, name: &str, type_id: TypeId) ->
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }];
     interner.object(props)
@@ -45,6 +46,7 @@ fn make_two_optional_object(interner: &TypeInterner) -> TypeId {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -59,6 +61,7 @@ fn make_two_optional_object(interner: &TypeInterner) -> TypeId {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ];
@@ -185,6 +188,7 @@ fn test_global_object_interface_exempt_from_weak_type_check() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }
     };
@@ -217,6 +221,7 @@ fn test_global_object_interface_exempt_from_weak_type_check() {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             },
             PropertyInfo {
@@ -231,6 +236,7 @@ fn test_global_object_interface_exempt_from_weak_type_check() {
                 parent_id: None,
                 declaration_order: 1,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             },
         ];

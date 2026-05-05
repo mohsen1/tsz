@@ -498,8 +498,7 @@ impl<'a> InferenceContext<'a> {
                     for p in &source_shape.properties {
                         // Skip symbol-keyed properties — they are not reachable via
                         // a string index and must not pollute string-index inference.
-                        let prop_name_str = self.interner.resolve_atom(p.name);
-                        if prop_name_str.starts_with("__unique_") {
+                        if p.is_symbol_named {
                             continue;
                         }
                         // For optional properties, strip `undefined` from optionality
@@ -619,7 +618,7 @@ impl<'a> InferenceContext<'a> {
         let string_named_props: Vec<_> = source
             .properties
             .iter()
-            .filter(|p| !self.interner.resolve_atom(p.name).starts_with("__unique_"))
+            .filter(|p| !p.is_symbol_named)
             .collect();
 
         if !string_named_props.is_empty() {

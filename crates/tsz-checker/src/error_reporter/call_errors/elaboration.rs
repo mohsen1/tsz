@@ -39,8 +39,8 @@ impl<'a> CheckerState<'a> {
                     if candidate_keyof == TypeId::ERROR {
                         continue;
                     }
-                    // `keyof null`, `keyof undefined`, `keyof void`, and
-                    // `keyof never` all reduce to `never`. tsc displays the
+                    // `keyof null`, `keyof undefined`, and `keyof void` all
+                    // reduce to `never`. tsc displays the
                     // reduced form; falling back to "keyof null" loses
                     // fingerprint parity (unknownControlFlow.ts ff1).
                     if candidate_keyof == TypeId::NEVER {

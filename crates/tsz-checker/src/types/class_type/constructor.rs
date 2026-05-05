@@ -479,6 +479,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -633,6 +634,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: current_sym,
                                 declaration_order: 0,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             }),
                             &inherited_static_props,
@@ -751,6 +753,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: current_sym,
                                 declaration_order: 0,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             }),
                             &inherited_static_props,
@@ -828,6 +831,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order: 0,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         },
                     );
@@ -1110,6 +1114,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );
@@ -1156,6 +1161,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );
@@ -1248,6 +1254,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: current_sym,
                         declaration_order: 0,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -1304,6 +1311,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: current_sym,
                         declaration_order: 0,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -1374,6 +1382,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: current_sym,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             },
         );
@@ -1980,6 +1989,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: current_sym,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -2003,6 +2013,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: current_sym,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -2038,6 +2049,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }

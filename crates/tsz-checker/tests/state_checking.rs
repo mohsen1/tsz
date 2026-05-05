@@ -33,6 +33,7 @@ fn exposes_state_checking_boundary_queries() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let readonly_array = types.readonly_type(array);

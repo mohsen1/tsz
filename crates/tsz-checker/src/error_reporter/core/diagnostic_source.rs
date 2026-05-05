@@ -3,6 +3,7 @@
 mod assignment_formatting;
 mod compound_assignment_context;
 mod object_literal_targets;
+mod type_query_alias;
 
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
@@ -375,6 +376,9 @@ impl<'a> CheckerState<'a> {
             if let Some(param) = decl_arena.get_parameter(decl)
                 && param.type_annotation.is_some()
             {
+                if self.annotation_names_type_query_alias(decl_arena, param.type_annotation) {
+                    return None;
+                }
                 let mut text =
                     node_text_in_arena(decl_arena, param.type_annotation).and_then(|text| {
                         self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
@@ -395,6 +399,9 @@ impl<'a> CheckerState<'a> {
             if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
                 && var_decl.type_annotation.is_some()
             {
+                if self.annotation_names_type_query_alias(decl_arena, var_decl.type_annotation) {
+                    return None;
+                }
                 return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {
                     self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
                 });
@@ -407,6 +414,9 @@ impl<'a> CheckerState<'a> {
             if let Some(prop_decl) = decl_arena.get_property_decl(decl)
                 && prop_decl.type_annotation.is_some()
             {
+                if self.annotation_names_type_query_alias(decl_arena, prop_decl.type_annotation) {
+                    return None;
+                }
                 return node_text_in_arena(decl_arena, prop_decl.type_annotation).and_then(
                     |text| {
                         self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
@@ -485,6 +495,9 @@ impl<'a> CheckerState<'a> {
         if let Some(param) = decl_arena.get_parameter(decl)
             && param.type_annotation.is_some()
         {
+            if self.annotation_names_type_query_alias(decl_arena, param.type_annotation) {
+                return None;
+            }
             return node_text_in_arena(decl_arena, param.type_annotation).and_then(|text| {
                 self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
             });
@@ -493,6 +506,9 @@ impl<'a> CheckerState<'a> {
         if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
             && var_decl.type_annotation.is_some()
         {
+            if self.annotation_names_type_query_alias(decl_arena, var_decl.type_annotation) {
+                return None;
+            }
             return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {
                 self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
             });
@@ -516,6 +532,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let annotation = annotation_text.trim();
+        if self.declared_source_annotation_names_type_query_alias(expr_idx) {
+            return false;
+        }
         if annotation.contains("`${") {
             return true;
         }
@@ -1415,6 +1434,7 @@ impl<'a> CheckerState<'a> {
         if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
+        let type_query_alias_def_id = self.declared_source_type_query_alias_def_id(expr_idx);
         let prefer_declared_display = if declared_type == TypeId::ANY
             && expr_display_type != TypeId::ANY
         {
@@ -1603,7 +1623,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        let declared_display = if declared_is_generic_callable {
+        let declared_display = if let Some(def_id) = type_query_alias_def_id {
+            self.format_type_diagnostic_for_assignability_display_skipping_type_alias(
+                declared_display_type,
+                def_id,
+            )
+        } else if declared_is_generic_callable {
             let mut formatter =
                 tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
                     .with_def_store(&self.ctx.definition_store)

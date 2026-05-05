@@ -971,6 +971,81 @@ impl<'a> Printer<'a> {
         names
     }
 
+    fn collect_namespace_local_module_names(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let module_node = if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                Some(stmt_node)
+            } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| self.arena.get(export.export_clause))
+                    .filter(|inner| inner.kind == syntax_kind_ext::MODULE_DECLARATION)
+            } else {
+                None
+            };
+            let Some(module_node) = module_node else {
+                continue;
+            };
+            let Some(module) = self.arena.get_module(module_node) else {
+                continue;
+            };
+            let name = self.get_identifier_text_idx(module.name);
+            if !name.is_empty() {
+                names.insert(name);
+            }
+        }
+        names
+    }
+
+    fn collect_dotted_namespace_children_from_source(
+        &self,
+        parent: &str,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut children = rustc_hash::FxHashSet::default();
+        let Some(text) = self.source_text else {
+            return children;
+        };
+        for keyword in ["namespace ", "module "] {
+            let mut search_start = 0;
+            while let Some(relative_pos) = text[search_start..].find(keyword) {
+                let name_start = search_start + relative_pos + keyword.len();
+                let Some(rest) = text.get(name_start..) else {
+                    break;
+                };
+                let Some(after_parent) = rest.strip_prefix(parent) else {
+                    search_start = name_start;
+                    continue;
+                };
+                let Some(child_rest) = after_parent.strip_prefix('.') else {
+                    search_start = name_start;
+                    continue;
+                };
+                let child: String = child_rest
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                    .collect();
+                if !child.is_empty() {
+                    children.insert(child);
+                }
+                search_start = name_start;
+            }
+        }
+        children
+    }
+
     /// Emit body statements of a namespace IIFE, handling exports.
     fn emit_namespace_body_statements(
         &mut self,
@@ -991,6 +1066,10 @@ impl<'a> Printer<'a> {
             let prev_parent_exported = std::mem::take(&mut self.namespace_parent_exported_names);
             let mut local_exports = self.collect_namespace_exported_names(module);
             let leaf_name = self.get_identifier_text_idx(module.name);
+            if !leaf_name.is_empty() {
+                local_exports
+                    .extend(self.collect_dotted_namespace_children_from_source(&leaf_name));
+            }
             let mut parent_exports = self
                 .parent_namespace_name
                 .as_ref()
@@ -1084,6 +1163,10 @@ impl<'a> Printer<'a> {
             for name in &local_names {
                 local_exports.remove(name);
                 parent_exports.remove(name);
+            }
+            for name in self.collect_namespace_local_module_names(body_node) {
+                local_exports.remove(&name);
+                parent_exports.remove(&name);
             }
             self.namespace_exported_names = local_exports;
             self.namespace_parent_exported_names = parent_exports;

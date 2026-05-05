@@ -4609,6 +4609,11 @@ impl<'a> DeclarationEmitter<'a> {
                 if member_text.trim_start().starts_with(':') {
                     continue;
                 }
+                if !self.remove_comments {
+                    for jsdoc in self.leading_jsdoc_comment_chain_for_pos(member_node.pos) {
+                        members.push(Self::format_object_member_jsdoc_text(&jsdoc));
+                    }
+                }
                 members.push(member_text);
             }
         }
@@ -4717,6 +4722,139 @@ impl<'a> DeclarationEmitter<'a> {
         format!("{name}: {type_text}")
     }
 
+    fn format_object_member_jsdoc_text(jsdoc: &str) -> String {
+        let trimmed = jsdoc.trim();
+        if !trimmed.contains('\n') {
+            return format!("/** {trimmed} */");
+        }
+
+        let mut result = String::from("/**");
+        for line in trimmed.lines() {
+            result.push('\n');
+            if line.trim().is_empty() {
+                result.push_str(" *");
+            } else {
+                result.push_str(" * ");
+                result.push_str(line.trim());
+            }
+        }
+        result.push_str("\n */");
+        result
+    }
+
+    pub(in crate::declaration_emitter) fn add_returned_object_member_comments_to_type_text(
+        &self,
+        initializer: NodeIndex,
+        type_text: &str,
+    ) -> String {
+        if self.remove_comments || !type_text.contains("{\n") {
+            return type_text.to_string();
+        }
+        let Some(object_idx) =
+            self.function_initializer_unique_returned_object_literal(initializer)
+        else {
+            return type_text.to_string();
+        };
+        let Some(object_node) = self.arena.get(object_idx) else {
+            return type_text.to_string();
+        };
+        let Some(object) = self.arena.get_literal_expr(object_node) else {
+            return type_text.to_string();
+        };
+
+        let mut commented_members = Vec::new();
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(name_idx) = self.object_literal_member_name_idx(member_node) else {
+                continue;
+            };
+            let Some(name_text) = self.object_literal_member_name_text(name_idx) else {
+                continue;
+            };
+            let comments = self.leading_jsdoc_comment_chain_for_pos(member_node.pos);
+            if !comments.is_empty() {
+                commented_members.push((name_text, comments));
+            }
+        }
+        if commented_members.is_empty() {
+            return type_text.to_string();
+        }
+
+        let mut lines: Vec<String> = type_text.lines().map(str::to_string).collect();
+        for (name_text, comments) in commented_members.into_iter().rev() {
+            let Some(line_idx) = lines.iter().position(|line| {
+                let trimmed = line.trim_start();
+                Self::object_literal_property_name_prefixes(&name_text)
+                    .into_iter()
+                    .any(|prefix| {
+                        trimmed.starts_with(&prefix)
+                            || trimmed.starts_with(&format!("readonly {prefix}"))
+                    })
+                    || trimmed.starts_with(&format!("{name_text}("))
+            }) else {
+                continue;
+            };
+            if line_idx > 0 && lines[line_idx - 1].trim_start().starts_with("/**") {
+                continue;
+            }
+            let indent_len = lines[line_idx].len() - lines[line_idx].trim_start().len();
+            let indent = " ".repeat(indent_len);
+            let mut comment_lines = Vec::new();
+            for jsdoc in comments {
+                for line in Self::format_object_member_jsdoc_text(&jsdoc).lines() {
+                    comment_lines.push(format!("{indent}{line}"));
+                }
+            }
+            lines.splice(line_idx..line_idx, comment_lines);
+        }
+
+        if type_text.ends_with('\n') {
+            format!("{}\n", lines.join("\n"))
+        } else {
+            lines.join("\n")
+        }
+    }
+
+    fn function_initializer_unique_returned_object_literal(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.arena.get_function(init_node)?;
+        let body_node = self.arena.get(func.body)?;
+        if body_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return Some(func.body);
+        }
+        let block = self.arena.get_block(body_node)?;
+        let mut returned = None;
+        for &stmt_idx in &block.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                continue;
+            }
+            let ret = self.arena.get_return_statement(stmt_node)?;
+            if !ret.expression.is_some() {
+                continue;
+            }
+            let expr = self.skip_parenthesized_non_null_and_comma(ret.expression);
+            let expr_node = self.arena.get(expr)?;
+            if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return None;
+            }
+            if returned.replace(expr).is_some() {
+                return None;
+            }
+        }
+        returned
+    }
+
     fn format_object_member_entry(member_indent: &str, member_text: &str) -> String {
         let mut lines = member_text.lines();
         let first = lines.next().unwrap_or(member_text);
@@ -4727,7 +4865,7 @@ impl<'a> DeclarationEmitter<'a> {
             result.push('\n');
             result.push_str(line);
         }
-        if !result.trim_end().ends_with(';') {
+        if !result.trim_start().starts_with("/**") && !result.trim_end().ends_with(';') {
             result.push(';');
         }
         result

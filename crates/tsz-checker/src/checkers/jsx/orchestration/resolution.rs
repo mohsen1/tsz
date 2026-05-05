@@ -11,6 +11,43 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(in crate::checkers_domain::jsx) fn file_has_jsx_unicode_escape_parse_error(&self) -> bool {
+        let Some(source) = self.current_jsx_source_text() else {
+            return false;
+        };
+        let has_parse_diagnostics = self.ctx.has_parse_errors
+            || self.ctx.has_syntax_parse_errors
+            || !self.ctx.all_parse_error_positions.is_empty()
+            || !self.ctx.syntax_parse_error_positions.is_empty();
+        if has_parse_diagnostics
+            && (source.contains("<\\u")
+                || source.contains(".\\u")
+                || source.contains("-\\u")
+                || source.contains(" \\u"))
+        {
+            return true;
+        }
+        self.ctx
+            .all_parse_error_positions
+            .iter()
+            .any(|&pos| Self::jsx_name_recovery_span_contains_unicode_escape(source, pos as usize))
+    }
+
+    fn jsx_name_recovery_span_contains_unicode_escape(source: &str, start: usize) -> bool {
+        let bytes = source.as_bytes();
+        let mut offset = start;
+        while offset < bytes.len() {
+            match bytes[offset] {
+                b'\\' if bytes.get(offset + 1) == Some(&b'u') => return true,
+                b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/' | b'=' | b'"' | b'\'' | b'{' | b'}' => {
+                    return false;
+                }
+                _ => offset += 1,
+            }
+        }
+        false
+    }
+
     pub(in crate::checkers_domain::jsx) fn get_default_instantiated_generic_class_props_type(
         &mut self,
         component_type: TypeId,
@@ -247,6 +284,10 @@ impl<'a> CheckerState<'a> {
         request: &TypingRequest,
         children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
     ) -> TypeId {
+        if self.file_has_jsx_unicode_escape_parse_error() {
+            return TypeId::ANY;
+        }
+
         self.check_jsx_factory_in_scope(idx);
         self.check_jsx_import_source(idx);
 

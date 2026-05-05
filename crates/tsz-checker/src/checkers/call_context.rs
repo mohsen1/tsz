@@ -774,6 +774,39 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
+    pub(crate) fn return_context_type_params_to_filter(
+        &mut self,
+        callee_shape: &tsz_solver::FunctionShape,
+    ) -> FxHashSet<tsz_common::interner::Atom> {
+        let return_param_names: FxHashSet<_> = self
+            .function_like_return_parameter_type_params(callee_shape)
+            .into_iter()
+            .collect();
+        if return_param_names.is_empty() {
+            return FxHashSet::default();
+        }
+
+        let tracked_type_params: FxHashSet<_> =
+            callee_shape.type_params.iter().map(|tp| tp.name).collect();
+        let input_param_names: FxHashSet<_> = callee_shape
+            .params
+            .iter()
+            .flat_map(|param| common::collect_referenced_types(self.ctx.types, param.type_id))
+            .filter_map(|ty| {
+                common::type_param_info(self.ctx.types, ty).and_then(|info| {
+                    tracked_type_params
+                        .contains(&info.name)
+                        .then_some(info.name)
+                })
+            })
+            .collect();
+
+        return_param_names
+            .into_iter()
+            .filter(|name| !input_param_names.contains(name))
+            .collect()
+    }
+
     pub(crate) fn should_strip_sensitive_placeholder_substitution(
         &mut self,
         callee_shape: &tsz_solver::FunctionShape,

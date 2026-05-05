@@ -46,6 +46,10 @@ name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
 [[test]]
+name = "array_generic_shorthand_canonical_tests"
+path = "tests/array_generic_shorthand_canonical_tests.rs"
+
+[[test]]
 name = "ts2567_augmentation_enum_cross_arena_decl_tests"
 path = "tests/ts2567_augmentation_enum_cross_arena_decl_tests.rs"
 
@@ -112,6 +116,10 @@ path = "tests/ts1238_tests.rs"
 [[test]]
 name = "ts6133_unused_type_params_tests"
 path = "tests/ts6133_unused_type_params_tests.rs"
+
+[[test]]
+name = "unused_parameter_tests"
+path = "tests/unused_parameter_tests.rs"
 
 [[test]]
 name = "private_brands"
@@ -272,6 +280,10 @@ path = "tests/jsdoc_type_expression_tests.rs"
 [[test]]
 name = "js_jsdoc_diagnostics_tests"
 path = "tests/js_jsdoc_diagnostics_tests.rs"
+
+[[test]]
+name = "js_arguments_reference_tests"
+path = "tests/js_arguments_reference_tests.rs"
 
 [[test]]
 name = "static_member_access_types"
@@ -530,6 +542,10 @@ name = "jsdoc_class_template_cross_comment_tests"
 path = "tests/jsdoc_class_template_cross_comment_tests.rs"
 
 [[test]]
+name = "jsdoc_cross_file_typedef_tests"
+path = "tests/jsdoc_cross_file_typedef_tests.rs"
+
+[[test]]
 name = "override_intersection_display_tests"
 path = "tests/override_intersection_display_tests.rs"
 
@@ -724,6 +740,14 @@ path = "tests/unused_jsdoc_pattern_comment_scoped_tests.rs"
 [[test]]
 name = "unused_internal_name_suppression_tests"
 path = "tests/unused_internal_name_suppression_tests.rs"
+
+[[test]]
+name = "unused_catch_binding_tests"
+path = "tests/unused_catch_binding_tests.rs"
+
+[[test]]
+name = "template_literal_bigint_placeholder_tests"
+path = "tests/template_literal_bigint_placeholder_tests.rs"
 
 [lints]
 workspace = true

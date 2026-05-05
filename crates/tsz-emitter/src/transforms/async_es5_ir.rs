@@ -69,6 +69,8 @@ pub struct AsyncTransformState {
     pub has_await: bool,
     /// Whether the body references `arguments` (needs `var arguments_1 = arguments;`)
     pub captures_arguments: bool,
+    /// Generated name used for captured `arguments` references.
+    pub arguments_capture_name: String,
 }
 
 enum SuspendedAssignmentTarget {
@@ -82,11 +84,12 @@ impl AsyncTransformState {
     }
 
     /// Reset for a new async function
-    pub const fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.label_counter = 0;
         self.in_async_body = false;
         self.has_await = false;
         self.captures_arguments = false;
+        self.arguments_capture_name.clear();
     }
 
     /// Get the next label number
@@ -204,6 +207,213 @@ impl<'a> AsyncES5Transformer<'a> {
         self.temp_var_counter.get()
     }
 
+    fn emit_arguments_capture_decl(&self, body: &mut Vec<IRNode>) {
+        if self.state.captures_arguments {
+            body.push(IRNode::VarDecl {
+                name: self.state.arguments_capture_name.clone().into(),
+                initializer: Some(Box::new(IRNode::Raw("arguments".to_string().into()))),
+            });
+        }
+    }
+
+    fn fresh_arguments_capture_name(&self, body_idx: NodeIndex, params: &[String]) -> String {
+        let mut binding_names = params.to_vec();
+        self.collect_body_binding_names(body_idx, &mut binding_names);
+
+        let mut suffix = 1usize;
+        loop {
+            let candidate = format!("arguments_{suffix}");
+            if !binding_names.iter().any(|name| name == &candidate) {
+                return candidate;
+            }
+            suffix += 1;
+        }
+    }
+
+    fn collect_parameter_binding_names(
+        &self,
+        params: &tsz_parser::parser::NodeList,
+        names: &mut Vec<String>,
+    ) {
+        for &param_idx in &params.nodes {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            self.collect_binding_name(param.name, names);
+        }
+    }
+
+    fn collect_body_binding_names(&self, idx: NodeIndex, names: &mut Vec<String>) {
+        if idx.is_none() {
+            return;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        if let Some(source_file) = self.arena.get_source_file(node) {
+            for &stmt_idx in &source_file.statements.nodes {
+                self.collect_body_binding_names(stmt_idx, names);
+            }
+            return;
+        }
+
+        match node.kind {
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                if let Some(block) = self.arena.get_block(node) {
+                    for &stmt_idx in &block.statements.nodes {
+                        self.collect_body_binding_names(stmt_idx, names);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                || k == syntax_kind_ext::VARIABLE_DECLARATION =>
+            {
+                self.collect_variable_binding_names(idx, names);
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = self.arena.get_function(node) {
+                    self.collect_binding_name(func.name, names);
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = self.arena.get_class(node) {
+                    self.collect_binding_name(class.name, names);
+                }
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_data) = self.arena.get_enum(node) {
+                    self.collect_binding_name(enum_data.name, names);
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = self.arena.get_module(node) {
+                    self.collect_binding_name(module.name, names);
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.arena.get_if_statement(node) {
+                    self.collect_body_binding_names(if_stmt.then_statement, names);
+                    self.collect_body_binding_names(if_stmt.else_statement, names);
+                }
+            }
+            k if k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT =>
+            {
+                if let Some(loop_data) = self.arena.get_loop(node) {
+                    self.collect_variable_binding_names(loop_data.initializer, names);
+                    self.collect_body_binding_names(loop_data.statement, names);
+                }
+            }
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+            {
+                if let Some(for_in_of) = self.arena.get_for_in_of(node) {
+                    self.collect_variable_binding_names(for_in_of.initializer, names);
+                    self.collect_body_binding_names(for_in_of.statement, names);
+                }
+            }
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_stmt) = self.arena.get_try(node) {
+                    self.collect_body_binding_names(try_stmt.try_block, names);
+                    self.collect_body_binding_names(try_stmt.catch_clause, names);
+                    self.collect_body_binding_names(try_stmt.finally_block, names);
+                }
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_clause) = self.arena.get_catch_clause(node) {
+                    self.collect_variable_binding_names(catch_clause.variable_declaration, names);
+                    self.collect_body_binding_names(catch_clause.block, names);
+                }
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_stmt) = self.arena.get_switch(node) {
+                    self.collect_body_binding_names(switch_stmt.case_block, names);
+                }
+            }
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                if let Some(clause) = self.arena.get_case_clause(node) {
+                    for &stmt_idx in &clause.statements.nodes {
+                        self.collect_body_binding_names(stmt_idx, names);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(node) {
+                    self.collect_body_binding_names(labeled.statement, names);
+                }
+            }
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                if let Some(with_stmt) = self.arena.get_with_statement(node) {
+                    self.collect_body_binding_names(with_stmt.then_statement, names);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_variable_binding_names(&self, idx: NodeIndex, names: &mut Vec<String>) {
+        if idx.is_none() {
+            return;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            if let Some(decl) = self.arena.get_variable_declaration(node) {
+                self.collect_binding_name(decl.name, names);
+            }
+            return;
+        }
+
+        if let Some(var_data) = self.arena.get_variable(node) {
+            for &decl_idx in &var_data.declarations.nodes {
+                self.collect_variable_binding_names(decl_idx, names);
+            }
+        }
+    }
+
+    fn collect_binding_name(&self, name_idx: NodeIndex, names: &mut Vec<String>) {
+        if name_idx.is_none() {
+            return;
+        }
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+
+        if name_node.is_identifier() {
+            if let Some(name) = crate::transforms::emit_utils::identifier_text(self.arena, name_idx)
+                && !names.contains(&name)
+            {
+                names.push(name);
+            }
+            return;
+        }
+
+        match name_node.kind {
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
+                    for &elem_idx in &pattern.elements.nodes {
+                        self.collect_binding_name(elem_idx, names);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::BINDING_ELEMENT => {
+                if let Some(elem) = self.arena.get_binding_element(name_node) {
+                    self.collect_binding_name(elem.name, names);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Get the helpers needed after transformation
     pub(crate) const fn suspension_kind(&self) -> u16 {
         if self.generator_mode {
@@ -224,7 +434,7 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     /// Take the helpers needed (consumes the transformer)
-    pub const fn take_helpers_needed(self) -> HelpersNeeded {
+    pub fn take_helpers_needed(self) -> HelpersNeeded {
         self.helpers_needed
     }
 
@@ -244,6 +454,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let (
             name,
             params,
+            param_binding_names,
             body_idx,
             await_default_param_name,
             recover_await_default,
@@ -260,6 +471,8 @@ impl<'a> AsyncES5Transformer<'a> {
                     ))
                 };
                 let params = self.collect_parameters(&func.parameters);
+                let mut param_binding_names = Vec::new();
+                self.collect_parameter_binding_names(&func.parameters, &mut param_binding_names);
                 let await_default_param_name =
                     self.first_await_default_param_name(&func.parameters);
                 let recover_await_default =
@@ -274,6 +487,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 (
                     name,
                     params,
+                    param_binding_names,
                     func.body,
                     await_default_param_name,
                     recover_await_default,
@@ -294,6 +508,10 @@ impl<'a> AsyncES5Transformer<'a> {
         let captures_arguments =
             tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
         self.state.captures_arguments = captures_arguments;
+        if captures_arguments {
+            self.state.arguments_capture_name =
+                self.fresh_arguments_capture_name(body_idx, &param_binding_names);
+        }
 
         if recover_await_default {
             let mut generated = String::new();
@@ -388,6 +606,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
         if let Some(func_name) = name {
             let mut body = hoisted_decls;
+            self.emit_arguments_capture_decl(&mut body);
             body.push(awaiter_call);
             IRNode::FunctionDecl {
                 name: func_name.into(),
@@ -398,6 +617,7 @@ impl<'a> AsyncES5Transformer<'a> {
             }
         } else {
             let mut body = hoisted_decls;
+            self.emit_arguments_capture_decl(&mut body);
             body.push(awaiter_call);
             IRNode::FunctionExpr {
                 name: None,
@@ -417,7 +637,8 @@ impl<'a> AsyncES5Transformer<'a> {
             self.generator_mode = false;
             return IRNode::Undefined;
         };
-        let (name, params, body_idx) = if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+        let (name, params, param_binding_names, body_idx) = if node.kind
+            == syntax_kind_ext::FUNCTION_DECLARATION
             || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
         {
             if let Some(func) = self.arena.get_function(node) {
@@ -429,7 +650,9 @@ impl<'a> AsyncES5Transformer<'a> {
                     ))
                 };
                 let params = self.collect_parameters(&func.parameters);
-                (name, params, func.body)
+                let mut param_binding_names = Vec::new();
+                self.collect_parameter_binding_names(&func.parameters, &mut param_binding_names);
+                (name, params, param_binding_names, func.body)
             } else {
                 self.generator_mode = false;
                 return IRNode::Undefined;
@@ -442,6 +665,10 @@ impl<'a> AsyncES5Transformer<'a> {
         self.state.has_await = has_yield;
         self.state.captures_arguments =
             tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
+        if self.state.captures_arguments {
+            self.state.arguments_capture_name =
+                self.fresh_arguments_capture_name(body_idx, &param_binding_names);
+        }
         let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
         let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
         let hoisted_vars = hoisted_var_groups.into_iter().flatten();
@@ -455,7 +682,7 @@ impl<'a> AsyncES5Transformer<'a> {
         }
         if self.state.captures_arguments {
             body.push(IRNode::VarDecl {
-                name: "arguments_1".to_string().into(),
+                name: self.state.arguments_capture_name.clone().into(),
                 initializer: Some(Box::new(IRNode::Raw("arguments".to_string().into()))),
             });
         }
@@ -521,6 +748,9 @@ impl<'a> AsyncES5Transformer<'a> {
         // (the caller is responsible for emitting `var arguments_1 = arguments;`)
         self.state.captures_arguments =
             tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
+        if self.state.captures_arguments && self.state.arguments_capture_name.is_empty() {
+            self.state.arguments_capture_name = self.fresh_arguments_capture_name(body_idx, &[]);
+        }
 
         self.build_generator_body(body_idx, has_await, &[])
     }
@@ -1492,6 +1722,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let class_ir = class_transformer.transform_class_with_name(class_idx, Some(class_name))?;
         let IRNode::ES5ClassIIFE {
             body,
+            super_param,
             weakmap_decls,
             weakmap_inits,
             deferred_static_blocks,
@@ -1503,7 +1734,9 @@ impl<'a> AsyncES5Transformer<'a> {
         Some(ES5ClassFactoryParts {
             factory: IRNode::FunctionExpr {
                 name: None,
-                parameters: vec![IRParam::new("_super")],
+                parameters: vec![IRParam::new(
+                    super_param.as_deref().unwrap_or("_super").to_string(),
+                )],
                 body,
                 is_expression_body: false,
                 body_source_range: None,

@@ -133,6 +133,7 @@ fn test_call_assignability_respects_strict_function_types_toggle() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let dog = interner.object(vec![
@@ -148,6 +149,7 @@ fn test_call_assignability_respects_strict_function_types_toggle() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
@@ -5059,6 +5061,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let d_type = interner.object(vec![
@@ -5074,6 +5077,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -5088,6 +5092,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);

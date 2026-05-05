@@ -239,6 +239,94 @@ fn es5_arrow_this_capture_skips_multiple_user_bindings() {
 }
 
 #[test]
+fn private_field_weakmap_name_avoids_user_binding() {
+    let source = r#"const _C_x = "user binding";
+
+class C {
+    #x = 1;
+
+    getX() {
+        return this.#x;
+    }
+}
+
+export const result = [new C().getX(), _C_x];
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _C_x_1;"),
+        "Private field lowering should skip the real _C_x binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C_x_1 = new WeakMap()"),
+        "WeakMap initialization should use the collision-free helper name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("[new C().getX(), _C_x]"),
+        "The user binding must still be referenced by its original name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_class_super_parameter_skips_user_binding() {
+    let source = r#"class Base {}
+
+const _super = "user binding";
+
+export class Derived extends Base {
+  static value = _super;
+
+  method() {
+    return _super;
+  }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var Derived = /** @class */ (function (_super_1)"),
+        "Derived class wrapper should skip the user _super binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__extends(Derived, _super_1);"),
+        "__extends should use the generated super parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return _super;") && output.contains("Derived.value = _super;"),
+        "Source _super references inside the class body should still resolve to the user binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn commonjs_module_temp_skips_user_binding() {
     let source = r#"import { value } from "foo";
 
@@ -307,6 +395,76 @@ export const result = value + ":" + local.value;
     assert!(
         !output.contains("{ foo_1.value:"),
         "CommonJS substitution must not create an invalid property key.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_arguments_capture_skips_user_binding() {
+    let source = r#"export async function f() {
+  const arguments_1 = "user binding";
+  await 0;
+  return [arguments.length, arguments_1];
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var arguments_2 = arguments;"),
+        "Async lowering should skip the user arguments_1 binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [arguments_2.length, arguments_1];"),
+        "Captured arguments references should use the fresh generated binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_arguments_capture_skips_parameter_and_pattern_bindings() {
+    let source = r#"export async function f({ arguments_1 }: { arguments_1: string }) {
+  const [arguments_2] = ["user binding"];
+  await 0;
+  return [arguments.length, arguments_1, arguments_2];
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var arguments_3 = arguments;"),
+        "Async lowering should skip parameter and binding-pattern names.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("arguments_3.length"),
+        "Captured arguments references should use the binding-pattern-safe name.\nOutput:\n{output}"
     );
 }
 
@@ -478,6 +636,105 @@ fn anonymous_default_export_function_hoists_export_assignment() {
         output.matches("exports.default = default_1;").count(),
         1,
         "Should emit the anonymous default function export assignment once.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_default_class_avoids_user_default_1_binding() {
+    let source = r#"
+const default_1 = "user binding";
+
+export default class {
+  value = default_1;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("class default_2"),
+        "anonymous default class should avoid colliding with user default_1.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.default = default_2;"),
+        "default export should reference the non-colliding synthetic class name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_default_function_avoids_user_default_1_binding() {
+    let source = r#"
+const default_1 = "user binding";
+
+export default function () {
+  return default_1;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.default = default_2;"),
+        "anonymous default function export should reference the non-colliding synthetic name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function default_2()"),
+        "anonymous default function declaration should avoid colliding with user default_1.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_default_function_ignores_default_1_in_string_literal() {
+    let source = r#"
+const label = "default_1";
+
+export default function () {
+  return label;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.default = default_1;"),
+        "string literal text should not reserve the anonymous default binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function default_1()"),
+        "anonymous default function should keep the first synthetic name.\nOutput:\n{output}"
     );
 }
 

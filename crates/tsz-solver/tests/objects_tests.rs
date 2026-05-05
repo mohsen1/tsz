@@ -49,6 +49,7 @@ fn test_collect_properties_single_object() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }];
 
@@ -84,6 +85,7 @@ fn test_collect_properties_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -100,6 +102,7 @@ fn test_collect_properties_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -145,6 +148,7 @@ fn test_collect_properties_any_commutative() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -177,6 +181,7 @@ fn test_collect_properties_conflicting_property_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -193,6 +198,7 @@ fn test_collect_properties_conflicting_property_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -231,6 +237,7 @@ fn test_collect_properties_optionality_merging() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -247,6 +254,7 @@ fn test_collect_properties_optionality_merging() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -284,6 +292,7 @@ fn test_collect_properties_readonly_mutable_wins() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -300,6 +309,7 @@ fn test_collect_properties_readonly_mutable_wins() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -338,6 +348,7 @@ fn test_collect_properties_nested_intersections() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -353,6 +364,7 @@ fn test_collect_properties_nested_intersections() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -368,6 +380,7 @@ fn test_collect_properties_nested_intersections() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
