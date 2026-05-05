@@ -6,8 +6,8 @@
 //! per-module namespace pattern that callers rely on.
 
 use tsz_solver::{
-    CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
-    TypePredicate,
+    CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeData,
+    TypeDatabase, TypeId, TypePredicate,
 };
 
 // Re-export solver value types used by checker call computation.
@@ -420,6 +420,60 @@ pub(crate) fn normalize_display_property_order(props: &mut [tsz_solver::Property
 
 pub(crate) fn array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::get_array_element_type(db, type_id)
+}
+
+pub(crate) fn mutable_array_element_for_redeclaration(
+    db: &dyn QueryDatabase,
+    definition_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Array(elem)) => Some(elem),
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            (is_array_application_base_for_redeclaration(db, definition_store, app.base)
+                && app.args.len() == 1)
+                .then_some(app.args[0])
+        }
+        _ => None,
+    }
+}
+
+fn is_array_application_base_for_redeclaration(
+    db: &dyn QueryDatabase,
+    definition_store: &tsz_solver::def::DefinitionStore,
+    base: TypeId,
+) -> bool {
+    let array_base = TypeDatabase::get_array_base_type(db);
+    let array_display_base = db.get_array_display_base_type();
+    if array_base == Some(base)
+        || array_display_base.is_some_and(|display_base| display_base == base)
+    {
+        return true;
+    }
+
+    db.get_display_alias(base).is_some_and(|alias| {
+        array_base == Some(alias)
+            || array_display_base.is_some_and(|display_base| display_base == alias)
+    }) || lazy_base_names_array(db, definition_store, base)
+}
+
+fn lazy_base_names_array(
+    db: &dyn QueryDatabase,
+    definition_store: &tsz_solver::def::DefinitionStore,
+    base: TypeId,
+) -> bool {
+    let Some(TypeData::Lazy(def_id)) = db.lookup(base) else {
+        return false;
+    };
+
+    definition_store
+        .get(def_id)
+        .is_some_and(|def| db.resolve_atom_ref(def.name).as_ref() == "Array")
 }
 
 pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {

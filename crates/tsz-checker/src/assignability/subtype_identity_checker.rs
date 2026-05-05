@@ -338,6 +338,10 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(prev_type);
         self.ensure_relation_input_ready(current_type);
 
+        if let Some(result) = self.array_var_decl_types_compatible(prev_type, current_type) {
+            return result;
+        }
+
         let prev_type = self.array_application_to_array_for_redeclaration(prev_type);
         let current_type = self.array_application_to_array_for_redeclaration(current_type);
 
@@ -468,6 +472,25 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.array(args[0]);
         }
         type_id
+    }
+
+    fn array_var_decl_types_compatible(
+        &mut self,
+        prev_type: TypeId,
+        current_type: TypeId,
+    ) -> Option<bool> {
+        let prev_elem = self.mutable_array_element_for_redeclaration(prev_type)?;
+        let current_elem = self.mutable_array_element_for_redeclaration(current_type)?;
+
+        Some(self.are_var_decl_types_compatible(prev_elem, current_elem))
+    }
+
+    fn mutable_array_element_for_redeclaration(&self, type_id: TypeId) -> Option<TypeId> {
+        crate::query_boundaries::common::mutable_array_element_for_redeclaration(
+            self.ctx.types,
+            self.ctx.definition_store.as_ref(),
+            type_id,
+        )
     }
 
     /// Widen literal return types within function signatures for TS2403 comparison.
