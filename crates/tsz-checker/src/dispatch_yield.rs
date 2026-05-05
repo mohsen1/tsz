@@ -273,6 +273,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             if kind != syntax_kind_ext::CALL_EXPRESSION {
                                 return None;
                             }
+                            if crate::query_boundaries::common::contains_type_parameters(
+                                self.checker.ctx.types,
+                                yield_ctx,
+                            ) || crate::query_boundaries::common::contains_infer_types(
+                                self.checker.ctx.types,
+                                yield_ctx,
+                            ) {
+                                return Some(TypeId::UNKNOWN);
+                            }
                             let expected_generator = self.get_expected_generator_type(idx)?;
                             let result_ctx = outer_contextual.unwrap_or(TypeId::UNKNOWN);
                             contextual_yield_star_return = Some(result_ctx);
