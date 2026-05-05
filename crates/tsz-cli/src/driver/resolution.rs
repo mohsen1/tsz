@@ -1458,6 +1458,13 @@ pub(crate) fn resolve_module_specifier(
             options,
             package_type,
         ));
+        for candidate in root_dirs_relative_candidates(from_dir, &specifier, options) {
+            candidates.extend(expand_module_path_candidates(
+                &candidate,
+                options,
+                package_type,
+            ));
+        }
     } else if matches!(resolution, ModuleResolutionKind::Classic) {
         if let Some(paths) = options.paths.as_ref()
             && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
@@ -1575,6 +1582,40 @@ pub(crate) fn resolve_module_specifier(
     }
 
     None
+}
+
+fn root_dirs_relative_candidates(
+    from_dir: &Path,
+    specifier: &str,
+    options: &ResolvedCompilerOptions,
+) -> Vec<PathBuf> {
+    if options.root_dirs.is_empty() {
+        return Vec::new();
+    }
+
+    let from_dir = normalize_path(from_dir);
+    let direct_candidate = normalize_path(&from_dir.join(specifier));
+    let mut candidates = Vec::new();
+
+    for origin_root in &options.root_dirs {
+        let origin_root = normalize_path(origin_root);
+        if from_dir.strip_prefix(&origin_root).is_err() {
+            continue;
+        }
+        let Ok(virtual_path) = direct_candidate.strip_prefix(&origin_root) else {
+            continue;
+        };
+
+        for target_root in &options.root_dirs {
+            let candidate = normalize_path(&target_root.join(virtual_path));
+            if candidate == direct_candidate || candidates.iter().any(|seen| seen == &candidate) {
+                continue;
+            }
+            candidates.push(candidate);
+        }
+    }
+
+    candidates
 }
 
 fn select_path_mapping<'a>(

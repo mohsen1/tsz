@@ -65,6 +65,8 @@ pub struct ModuleResolver {
     base_url: Option<PathBuf>,
     /// Path mappings from tsconfig
     path_mappings: Vec<PathMapping>,
+    /// Virtual root directories from tsconfig rootDirs
+    root_dirs: Vec<PathBuf>,
     /// Type roots for @types packages
     type_roots: Vec<PathBuf>,
     types_versions_compiler_version: Option<String>,
@@ -146,6 +148,7 @@ impl ModuleResolver {
             resolution_kind,
             base_url: options.base_url.clone(),
             path_mappings: options.paths.clone().unwrap_or_default(),
+            root_dirs: options.root_dirs.clone(),
             type_roots: options.type_roots.clone().unwrap_or_default(),
             types_versions_compiler_version: options.types_versions_compiler_version.clone(),
             resolve_package_json_exports: options.resolve_package_json_exports,
@@ -176,6 +179,7 @@ impl ModuleResolver {
             resolution_kind: ModuleResolutionKind::Node,
             base_url: None,
             path_mappings: Vec::new(),
+            root_dirs: Vec::new(),
             type_roots: Vec::new(),
             types_versions_compiler_version: None,
             resolve_package_json_exports: false,

@@ -1643,6 +1643,20 @@ pub(crate) fn normalize_root_dir(base_dir: &Path, dir: Option<PathBuf>) -> Optio
     })
 }
 
+pub(crate) fn normalize_root_dirs(base_dir: &Path, roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    roots
+        .into_iter()
+        .map(|root| {
+            let resolved = if root.is_absolute() {
+                root
+            } else {
+                base_dir.join(root)
+            };
+            canonicalize_with_missing_tail(&resolved)
+        })
+        .collect()
+}
+
 pub(crate) fn normalize_type_roots(
     base_dir: &Path,
     roots: Option<Vec<PathBuf>>,

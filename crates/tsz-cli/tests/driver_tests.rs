@@ -5392,6 +5392,41 @@ value.toFixed();
 }
 
 #[test]
+fn compile_resolves_root_dirs_virtual_relative_imports() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "ES2020",
+            "module": "ESNext",
+            "moduleResolution": "node10",
+            "ignoreDeprecations": "6.0",
+            "rootDirs": ["src", "generated"],
+            "noEmit": true
+          },
+          "files": ["src/main.ts", "generated/generated.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/main.ts"),
+        "import { generated } from './generated';\nconst value: string = generated.toUpperCase();\n",
+    );
+    write_file(
+        &base.join("generated/generated.ts"),
+        "export const generated = 'ok';\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+}
+
+#[test]
 fn compile_paths_wildcard_priority_uses_prefix_length() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

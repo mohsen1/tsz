@@ -1955,6 +1955,46 @@ fn test_resolver_relative_directory_applies_types_versions() {
 }
 
 #[test]
+fn test_resolver_relative_import_uses_root_dirs_overlay() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_root_dirs_overlay");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("generated")).unwrap();
+
+    fs::write(dir.join("src").join("main.ts"), "import './generated';").unwrap();
+    fs::write(
+        dir.join("generated").join("generated.ts"),
+        "export const generated = 'ok';",
+    )
+    .unwrap();
+
+    let options = crate::config::ResolvedCompilerOptions {
+        module_resolution: Some(crate::config::ModuleResolutionKind::Node),
+        root_dirs: vec![dir.join("src"), dir.join("generated")],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve(
+            "./generated",
+            &dir.join("src").join("main.ts"),
+            Span::new(0, 13),
+        )
+        .expect("rootDirs overlay should resolve sibling virtual path");
+
+    assert_eq!(
+        resolved.resolved_path.canonicalize().unwrap(),
+        dir.join("generated")
+            .join("generated.ts")
+            .canonicalize()
+            .unwrap()
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_subpath_ambient_module_falls_back_to_types_entry() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_subpath_ambient_module");
