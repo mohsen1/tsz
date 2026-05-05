@@ -1219,6 +1219,10 @@ impl<'a> CheckerState<'a> {
         let (mut src_str, mut tgt_str_qualified) = if depth == 0 {
             let src = if source_type == TypeId::OBJECT {
                 "{}".to_string()
+            } else if let Some(base_display) =
+                self.private_identifier_missing_source_base_display(source, property_name)
+            {
+                base_display
             } else {
                 self.format_type_for_diagnostic_role(
                     source,
@@ -1771,6 +1775,10 @@ impl<'a> CheckerState<'a> {
             let src_str = if depth == 0 {
                 if source_type == TypeId::OBJECT {
                     "{}".to_string()
+                } else if let Some(base_display) =
+                    self.private_identifier_missing_source_base_display(source, filtered_names[0])
+                {
+                    base_display
                 } else {
                     self.format_type_for_diagnostic_role(
                         source,
@@ -2174,7 +2182,9 @@ impl<'a> CheckerState<'a> {
                 &[&source_str, &target_str],
             );
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-            let source_str = self.format_type_diagnostic(source);
+            let source_str = self
+                .private_identifier_missing_source_base_display(source, property_name)
+                .unwrap_or_else(|| self.format_type_diagnostic(source));
             let target_str = self.format_type_diagnostic(target);
             let detail = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -2198,7 +2208,9 @@ impl<'a> CheckerState<'a> {
             diag
         } else {
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-            let source_str = self.format_type_diagnostic(source);
+            let source_str = self
+                .private_identifier_missing_source_base_display(source, property_name)
+                .unwrap_or_else(|| self.format_type_diagnostic(source));
             let target_str = self.format_type_diagnostic(target);
             let message = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -2212,6 +2224,89 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             )
         }
+    }
+
+    fn private_identifier_missing_source_base_display(
+        &mut self,
+        source: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        let property_name = self.ctx.types.resolve_atom_ref(property_name);
+        if !property_name.starts_with('#') {
+            return None;
+        }
+
+        let source_shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)?;
+        let source_symbol = self.ctx.binder.get_symbol(source_shape.symbol?)?;
+        let source_declarations = source_symbol.declarations.clone();
+
+        for decl_idx in source_declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = self.ctx.arena.get_interface(node) else {
+                continue;
+            };
+            let Some(heritage_clauses) = &interface.heritage_clauses else {
+                continue;
+            };
+
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        continue;
+                    };
+                    let expr_idx = if let Some(expr_type_args) =
+                        self.ctx.arena.get_expr_type_args(type_node)
+                    {
+                        expr_type_args.expression
+                    } else if type_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE
+                    {
+                        self.ctx
+                            .arena
+                            .get_type_ref(type_node)
+                            .map_or(type_idx, |type_ref| type_ref.type_name)
+                    } else {
+                        type_idx
+                    };
+
+                    let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+                        continue;
+                    };
+                    let Some(base_symbol) = self
+                        .get_cross_file_symbol(base_sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(base_sym_id))
+                    else {
+                        continue;
+                    };
+                    let base_declarations = base_symbol.declarations.clone();
+
+                    for base_decl_idx in base_declarations {
+                        let Some(base_node) = self.ctx.arena.get(base_decl_idx) else {
+                            continue;
+                        };
+                        let Some(base_class) = self.ctx.arena.get_class(base_node) else {
+                            continue;
+                        };
+                        let base_type = self.get_class_instance_type(base_decl_idx, base_class);
+                        return Some(self.format_type_diagnostic(base_type));
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     #[allow(clippy::too_many_arguments)]

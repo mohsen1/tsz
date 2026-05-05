@@ -6,6 +6,7 @@
 
 use tsz_binder::BinderState;
 use tsz_checker::{context::CheckerOptions, diagnostics::Diagnostic, state::CheckerState};
+use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -78,6 +79,45 @@ fn collect_private_brand_diagnostics_with_options(
     checker.check_source_file(root);
 
     checker.ctx.diagnostics.clone()
+}
+
+#[test]
+fn private_name_missing_property_source_display_uses_base_class() {
+    let diagnostics = collect_private_brand_diagnostics_with_options(
+        r#"
+class A1 { }
+interface A2 extends A1 { }
+declare const a: A2;
+
+class C { #something: number }
+const c: C = a;
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2741: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2741)
+        .collect();
+    assert_eq!(
+        ts2741.len(),
+        1,
+        "expected exactly one TS2741 diagnostic, got: {diagnostics:#?}"
+    );
+    let message = &ts2741[0].message_text;
+    assert!(
+        message.contains("Property '#something' is missing in type 'A1' but required in type 'C'."),
+        "TS2741 should use the interface's base class in the source display. Got: {message:?}"
+    );
+    assert!(
+        !message.contains("type 'A2'"),
+        "TS2741 should not use the derived interface name for this private-name mismatch. Got: {message:?}"
+    );
 }
 
 /// Test that private members are nominal - different classes with same private member shape
