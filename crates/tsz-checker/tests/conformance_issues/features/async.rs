@@ -112,6 +112,39 @@ export const oWithComputedProperties = {
 }
 
 #[test]
+fn test_isolated_declarations_reports_const_property_access_computed_object_literal_exports() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+let E = { A: 1 } as const;
+function ns() {
+    return { v: 0 } as const;
+}
+enum Enum {
+    V = 10,
+}
+
+export const o8 = { [E.A]: 1 };
+export const o9 = { [ns().v]: 1 };
+export const oEnum = { [Enum.V]: 1 };
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ESNext,
+            isolated_declarations: true,
+            emit_declarations: true,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let ts9038_count = diagnostics.iter().filter(|(code, _)| *code == 9038).count();
+    assert_eq!(
+        ts9038_count, 2,
+        "Expected TS9038 for const property-access computed names except enum members.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_isolated_declarations_reports_exported_variable_statement_in_module_file() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[

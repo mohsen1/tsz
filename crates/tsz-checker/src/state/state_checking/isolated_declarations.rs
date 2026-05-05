@@ -205,11 +205,15 @@ impl<'a> CheckerState<'a> {
                 // names get per-property TS9038 diagnostics (and may also
                 // report TS9010 on referenced helper variables) instead of a
                 // generic TS9010 on the exported variable itself. Const object
-                // literals follow tsc's literal inference path and do not
-                // report TS9038 here.
-                if !is_const
-                    && self.report_isolated_decl_computed_property_names(decl_idx, decl.initializer)
-                {
+                // literals mostly follow tsc's literal inference path, but
+                // property-access computed names that are not enum members still
+                // need per-property TS9038 because the declaration emitter can't
+                // infer a stable name from the emitted value expression.
+                if self.report_isolated_decl_computed_property_names(
+                    decl_idx,
+                    decl.initializer,
+                    is_const,
+                ) {
                     continue;
                 }
 
