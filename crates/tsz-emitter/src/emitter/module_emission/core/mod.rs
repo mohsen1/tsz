@@ -137,14 +137,22 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
         let base = crate::transforms::emit_utils::sanitize_module_name(module_spec);
-        let next = self
-            .ctx
-            .module_state
-            .module_temp_counters
-            .entry(base.clone())
-            .and_modify(|n| *n += 1)
-            .or_insert(1);
-        format!("{base}_{next}")
+        loop {
+            let next = self
+                .ctx
+                .module_state
+                .module_temp_counters
+                .entry(base.clone())
+                .and_modify(|n| *n += 1)
+                .or_insert(1);
+            let candidate = format!("{base}_{next}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
     }
 
     /// Emit a CommonJS export with optional hoisting of the export assignment.
