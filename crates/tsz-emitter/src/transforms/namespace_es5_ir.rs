@@ -596,6 +596,23 @@ impl<'a> NamespaceES5Transformer<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::ExportKeyword as u16)
     }
 
+    fn is_class_like_member(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let inner_idx = if member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_data) = self.arena.get_export_decl(member_node)
+        {
+            export_data.export_clause
+        } else {
+            member_idx
+        };
+
+        self.arena
+            .get(inner_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_DECLARATION)
+    }
+
     /// Flatten a module name into parts (handles both identifiers and qualified names)
     ///
     /// For qualified names like `A.B.C` (parsed as nested `MODULE_DECLARATIONs`), returns `["A", "B", "C"]`.
@@ -808,33 +825,39 @@ impl<'a> NamespaceES5Transformer<'a> {
                     self.extract_standalone_comments_in_range(code_end, stmt_node.end);
 
                 // Extract leading comments between previous end and this statement.
+                // We compute them up-front but defer pushing until we know whether
+                // this statement actually produces IR. If the statement is erased
+                // (e.g., a non-instantiated namespace, interface, type alias), its
+                // leading comments belong to the erasure too and must be dropped.
                 let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
-                if !self.is_uninitialized_exported_var_member(stmt_idx)
+                let leading_comments = if !self.is_uninitialized_exported_var_member(stmt_idx)
                     && !self.is_stray_export_keyword_member(stmt_idx)
                 {
                     if prev_end <= actual_start {
-                        let leading_comments =
-                            self.extract_comments_in_range(prev_end, actual_start);
-                        for c in leading_comments {
-                            result.push(c);
-                        }
+                        self.extract_comments_in_range(prev_end, actual_start)
                     } else if prev_end == stmt_node.pos && prev_stmt_pos <= actual_start {
                         // Parser trivia-skipping can move `stmt_node.end` to the next statement token,
                         // which can skip standalone comments on blank lines. Recover those comments
                         // by probing from the previous statement start as a fallback.
-                        let fallback_comments =
-                            self.extract_comments_in_range(prev_stmt_pos, actual_start);
-                        for c in fallback_comments {
-                            result.push(c);
-                        }
+                        self.extract_comments_in_range(prev_stmt_pos, actual_start)
+                    } else {
+                        Vec::new()
                     }
-                }
+                } else {
+                    Vec::new()
+                };
 
                 let ir = self.transform_namespace_member_with_declared(
                     ns_name,
                     stmt_idx,
                     &declared_names,
                 );
+
+                if ir.is_some() {
+                    for c in leading_comments {
+                        result.push(c);
+                    }
+                }
 
                 if let Some(ir) = ir {
                     // Constrain ASTRef nodes so their source text doesn't extend
@@ -891,7 +914,20 @@ impl<'a> NamespaceES5Transformer<'a> {
                     result.push(c);
                 }
 
-                prev_end = stmt_node.end;
+                // For class-like members the class sub-emitter handles its own
+                // internal comments and we don't extract `trailing_standalone`
+                // for them — but we still need to surface standalone comments
+                // sitting between the class's `}` and the next statement.
+                // Stop the cursor at `code_end` (after `}`, before any trailing
+                // trivia / inter-statement comments) so the next statement's
+                // leading-comment extraction picks them up. For other members
+                // `trailing_standalone` already drained that gap, so advancing
+                // to `stmt_node.end` is safe and keeps current behavior.
+                prev_end = if self.is_class_like_member(stmt_idx) {
+                    code_end
+                } else {
+                    stmt_node.end
+                };
                 prev_stmt_pos = stmt_node.pos;
             }
 
