@@ -962,6 +962,72 @@ function f() {
 }
 
 #[test]
+fn test_evolving_array_read_snapshots_before_later_push() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+function f() {
+    let x = [];
+    x.push(5);
+    let y = x;
+    x.push("hello");
+    y.push("hello");
+}
+        "#,
+        opts,
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2345 && message.contains("'string'") && message.contains("'number'")
+        })
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected exactly one TS2345 for the snapshot array alias.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_evolving_array_branch_merge_with_non_evolving_array_rejects_push() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare function cond(): boolean;
+function f() {
+    let x;
+    if (cond()) {
+        x = [];
+        x.push(5);
+        x.push("hello");
+    } else {
+        x = [true];
+    }
+    x.push(99);
+}
+        "#,
+        opts,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2345
+            && message.contains("'99'")
+            && message.contains("'never'")),
+        "Expected TS2345 for pushing into a merged array union.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts7034_evolving_array_skips_length_and_push_sites() {
     let opts = CheckerOptions {
         no_implicit_any: true,

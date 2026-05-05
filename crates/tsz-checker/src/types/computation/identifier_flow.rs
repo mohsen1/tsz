@@ -247,7 +247,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn is_identifier_array_mutation_receiver(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_identifier_array_mutation_receiver(&self, idx: NodeIndex) -> bool {
         let Some(parent_info) = self.ctx.arena.node_info(idx) else {
             return false;
         };
@@ -334,7 +334,7 @@ impl<'a> CheckerState<'a> {
         (node.kind == SyntaxKind::StringLiteral as u16).then_some(literal.text.as_str())
     }
 
-    fn symbol_has_direct_empty_array_initializer(&self, sym_id: SymbolId) -> bool {
+    pub(crate) fn symbol_has_direct_empty_array_initializer(&self, sym_id: SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
@@ -373,7 +373,7 @@ impl<'a> CheckerState<'a> {
             == decl_node.and_then(|decl| self.find_enclosing_function(decl))
     }
 
-    fn reference_has_reachable_empty_array_assignment(
+    pub(crate) fn reference_has_reachable_empty_array_assignment(
         &self,
         idx: NodeIndex,
         sym_id: SymbolId,
@@ -449,7 +449,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn node_is_empty_array_literal(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn node_is_empty_array_literal(&self, idx: NodeIndex) -> bool {
         self.ctx.arena.get(idx).is_some_and(|node| {
             node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 && self

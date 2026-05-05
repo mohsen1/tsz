@@ -1504,6 +1504,14 @@ impl<'a> CheckerState<'a> {
             // This handles TS2454 errors and applies flow-based narrowing
             let flow_type = self.check_flow_usage(idx, declared_type, sym_id);
             self.maybe_emit_pending_evolving_array_diagnostic(idx, sym_id, flow_type);
+            if self.is_identifier_array_mutation_receiver(idx)
+                && (self.symbol_has_direct_empty_array_initializer(sym_id)
+                    || self.reference_has_reachable_empty_array_assignment(idx, sym_id))
+                && common_query::array_element_type(self.ctx.types, flow_type).is_some()
+                && common_query::union_members(self.ctx.types, flow_type).is_none()
+            {
+                return self.ctx.types.factory().array(TypeId::ANY);
+            }
             trace!(
                 ?flow_type,
                 ?declared_type,
