@@ -124,27 +124,9 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn known_declared_receiver_has_property(
         &mut self,
         expression: NodeIndex,
-        display_object_type: TypeId,
+        _display_object_type: TypeId,
         property_name: &str,
     ) -> bool {
-        let declared_receiver = self.resolve_type_for_property_access(display_object_type);
-        if declared_receiver != TypeId::NEVER
-            && let PropertyAccessResult::Success { .. } =
-                self.resolve_property_access_with_env(declared_receiver, property_name)
-        {
-            return true;
-        }
-
-        let no_flow_base = self.get_type_of_write_target_base_expression(expression);
-        let no_flow_base = self.evaluate_application_type(no_flow_base);
-        let no_flow_receiver = self.resolve_type_for_property_access(no_flow_base);
-        if no_flow_receiver != TypeId::NEVER
-            && let PropertyAccessResult::Success { .. } =
-                self.resolve_property_access_with_env(no_flow_receiver, property_name)
-        {
-            return true;
-        }
-
         let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(expression) else {
             return false;
         };
@@ -156,29 +138,57 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+        if declarations.len() != 1 {
+            return false;
+        }
 
         for decl_idx in declarations {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };
-            if decl_node.kind != syntax_kind_ext::PARAMETER {
-                continue;
-            }
-            let declared_type = self
-                .ctx
-                .arena
-                .get_parameter(decl_node)
-                .and_then(|param| {
-                    param
-                        .type_annotation
-                        .is_some()
-                        .then_some(param.type_annotation)
-                })
-                .map(|type_node| self.get_type_from_type_node(type_node));
-            let Some(declared_type) = declared_type else {
+            let type_annotation = match decl_node.kind {
+                syntax_kind_ext::PARAMETER => {
+                    self.ctx.arena.get_parameter(decl_node).and_then(|param| {
+                        param
+                            .type_annotation
+                            .is_some()
+                            .then_some(param.type_annotation)
+                    })
+                }
+                syntax_kind_ext::VARIABLE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_variable_declaration(decl_node)
+                    .and_then(|var_decl| {
+                        var_decl
+                            .type_annotation
+                            .is_some()
+                            .then_some(var_decl.type_annotation)
+                    }),
+                _ => None,
+            };
+            let Some(type_annotation) = type_annotation else {
                 continue;
             };
+            let declared_type = self.get_type_from_type_node(type_annotation);
             let declared_type = self.evaluate_application_type(declared_type);
+            if matches!(
+                declared_type,
+                TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+            ) || crate::query_boundaries::common::is_union_type(self.ctx.types, declared_type)
+                || crate::query_boundaries::common::is_intersection_type(
+                    self.ctx.types,
+                    declared_type,
+                )
+            {
+                if self.type_reference_class_declares_public_instance_member(
+                    type_annotation,
+                    property_name,
+                ) {
+                    return true;
+                }
+                continue;
+            }
             let declared_type = self.resolve_type_for_property_access(declared_type);
             if declared_type != TypeId::NEVER
                 && let PropertyAccessResult::Success { .. } =
@@ -186,9 +196,110 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
+
+            if self.type_reference_class_declares_public_instance_member(
+                type_annotation,
+                property_name,
+            ) {
+                return true;
+            }
         }
 
         false
+    }
+
+    fn type_reference_class_declares_public_instance_member(
+        &mut self,
+        type_annotation: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+        let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) else {
+            return false;
+        };
+        let Some(type_name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        if self.ctx.arena.get_identifier(type_name_node).is_none() {
+            return false;
+        }
+        let Some(type_sym_id) = self.resolve_identifier_symbol_without_tracking(type_ref.type_name)
+        else {
+            return false;
+        };
+        let Some(type_declarations) = self
+            .ctx
+            .binder
+            .get_symbol(type_sym_id)
+            .map(|symbol| symbol.declarations.clone())
+        else {
+            return false;
+        };
+
+        type_declarations.iter().any(|&decl_idx| {
+            let Some(class_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if class_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                return false;
+            }
+            let Some(class_data) = self.ctx.arena.get_class(class_node) else {
+                return false;
+            };
+
+            class_data.members.nodes.iter().copied().any(|member_idx| {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    return false;
+                };
+                match member_node.kind {
+                    syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_property_decl(member_node)
+                        .is_some_and(|prop| {
+                            self.is_public_instance_member(prop.modifiers.as_ref())
+                                && self.get_property_name(prop.name).as_deref()
+                                    == Some(property_name)
+                        }),
+                    syntax_kind_ext::METHOD_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_method_decl(member_node)
+                        .is_some_and(|method| {
+                            self.is_public_instance_member(method.modifiers.as_ref())
+                                && self.get_property_name(method.name).as_deref()
+                                    == Some(property_name)
+                        }),
+                    syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                        .ctx
+                        .arena
+                        .get_accessor(member_node)
+                        .is_some_and(|accessor| {
+                            self.is_public_instance_member(accessor.modifiers.as_ref())
+                                && self.get_property_name(accessor.name).as_deref()
+                                    == Some(property_name)
+                        }),
+                    _ => false,
+                }
+            })
+        })
+    }
+
+    fn is_public_instance_member(&self, modifiers: Option<&tsz_parser::parser::NodeList>) -> bool {
+        !self
+            .ctx
+            .arena
+            .has_modifier_ref(modifiers, SyntaxKind::StaticKeyword)
+            && !self
+                .ctx
+                .arena
+                .has_modifier_ref(modifiers, SyntaxKind::PrivateKeyword)
+            && !self
+                .ctx
+                .arena
+                .has_modifier_ref(modifiers, SyntaxKind::ProtectedKeyword)
     }
 
     pub(crate) fn declared_intersection_receiver_has_property(
