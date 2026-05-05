@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `fix/recursive-conditional-extra-diagnostics`
 - **PR**: #3399
-- **Status**: claim
+- **Status**: implemented
 - **Workstream**: 1 (Diagnostic Conformance)
 
 ## Intent
@@ -18,9 +18,12 @@ layer, and add a focused Rust regression test for the invariant.
 
 ## Files Touched
 
-- TBD after investigation.
+- `crates/tsz-checker/src/types/type_node_advanced.rs`
+- `crates/tsz-checker/src/checkers/generic_checker/constraint_validation.rs`
+- `crates/tsz-checker/src/checkers/generic_checker/infer_conditional_constraints.rs`
+- `crates/tsz-checker/tests/conditional_infer_tests.rs`
 
 ## Verification
 
-- Planned: `cargo nextest run` for the owning crate test.
-- Planned: `./scripts/conformance/conformance.sh run --filter "recursiveConditionalTypes" --verbose`.
+- Passed: `CARGO_TARGET_DIR=target-3399 CARGO_BUILD_JOBS=1 cargo nextest run -p tsz-checker --test conditional_infer_tests recursive_conditional_index_access_does_not_report_property_missing nested_tuple_rest_infer_result_satisfies_array_constraint`
+- Blocked: target conformance runner build was interrupted by local build-output cleanup/SIGTERM before a stable `tsz` binary could be produced for `recursiveConditionalTypes`; PR remains draft WIP until the target conformance check is rerun successfully.
