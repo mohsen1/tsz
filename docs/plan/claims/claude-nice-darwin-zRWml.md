@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `claude/nice-darwin-zRWml`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: conformance / JSDoc parsing
 
 ## Intent
@@ -22,6 +22,12 @@ form so the rule generalizes structurally.
 
 ## Verification
 
-- `cargo nextest run -p tsz-checker --lib`
-- New unit tests in `parsing.rs` covering tab/multi-space variants of
-  `@import { Foo as Local }` and `@import * as NS`.
+- `cargo test -p tsz-checker --lib jsdoc::parsing::tests` — 9 new tests pass.
+- `cargo test -p tsz-checker --lib` — only two pre-existing failures
+  (`ts2300_tests::duplicate_identifier_with_default_lib_symbol_reports_lib_locations`,
+  `ts2353_tests::recursive_array_union_excess_property_uses_outer_alias_display`)
+  reproduce on the unmodified branch and are unrelated.
+- New unit tests in `parsing.rs` covering tab and mixed-whitespace
+  variants of `@import { Foo as Local }` and `@import * as NS`, plus
+  guards against false matches in identifiers that contain the
+  substring `as`.
