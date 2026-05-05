@@ -1243,6 +1243,47 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn shadowed_property_initializer_typeof_text(
+        &self,
+        property_name: NodeIndex,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let name_node = self.arena.get(property_name)?;
+        let init_node = self.arena.get(initializer)?;
+        if name_node.kind != SyntaxKind::Identifier as u16
+            || init_node.kind != SyntaxKind::Identifier as u16
+        {
+            return None;
+        }
+
+        let name = self.get_identifier_text(property_name)?;
+        if self.get_identifier_text(initializer).as_deref() != Some(name.as_str()) {
+            return None;
+        }
+
+        let binder = self.binder?;
+        let sym_id = binder.file_locals.get(&name)?;
+        let symbol = binder.symbols.get(sym_id)?;
+        if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            return None;
+        }
+
+        if symbol.has_any_flags(
+            symbol_flags::FUNCTION
+                | symbol_flags::CLASS
+                | symbol_flags::ENUM
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::METHOD,
+        ) {
+            return Some(format!(
+                "typeof {}",
+                self.relative_value_reference_text(&name)
+            ));
+        }
+
+        None
+    }
+
     pub(in crate::declaration_emitter) fn direct_value_reference_typeof_text(
         &self,
         expr_idx: NodeIndex,

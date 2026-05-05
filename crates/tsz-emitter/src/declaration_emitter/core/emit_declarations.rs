@@ -1694,11 +1694,16 @@ impl<'a> DeclarationEmitter<'a> {
                     // when the initializer is a simple literal.
                     self.write(" = ");
                     self.write(&lit_text);
-                } else if let Some(typeof_text) = self.typeof_prefix_for_value_entity(
-                    prop.initializer,
-                    prop.initializer.is_some(),
-                    Some(type_id),
-                ) {
+                } else if let Some(typeof_text) = self
+                    .shadowed_property_initializer_typeof_text(prop.name, prop.initializer)
+                    .or_else(|| {
+                        self.typeof_prefix_for_value_entity(
+                            prop.initializer,
+                            prop.initializer.is_some(),
+                            Some(type_id),
+                        )
+                    })
+                {
                     self.write(": ");
                     self.write(&typeof_text);
                     if prop.question_token
