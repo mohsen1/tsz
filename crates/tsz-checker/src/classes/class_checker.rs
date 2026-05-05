@@ -387,10 +387,18 @@ impl<'a> CheckerState<'a> {
             let base_prop_result = base_type_for_member.map(|base_type_id| {
                 self.resolve_property_access_with_env(base_type_id, &info.name)
             });
+            // For intersections like `Protected & Protected2`, a property
+            // missing from every member can still resolve as `Success` with
+            // `type_id == never`. That's not an actual override — treat
+            // `never` as "no such member" so we don't emit a spurious
+            // TS2416 ("not assignable to ... 'never'"). tsc's heritage
+            // override check only fires when the base actually declares
+            // the property.
             let member_exists_via_type = base_prop_result.is_some_and(|result| {
                 matches!(
                     result,
-                    crate::query_boundaries::common::PropertyAccessResult::Success { .. }
+                    crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. }
+                        if type_id != TypeId::NEVER
                 )
             });
             let member_exists_in_base = if info.is_static {
