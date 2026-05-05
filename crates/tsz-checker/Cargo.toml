@@ -386,6 +386,10 @@ name = "signature_assignability_regression_tests"
 path = "tests/signature_assignability_regression_tests.rs"
 
 [[test]]
+name = "element_access_structural_codes_tests"
+path = "tests/element_access_structural_codes_tests.rs"
+
+[[test]]
 name = "enum_recursion_tests"
 path = "tests/enum_recursion_tests.rs"
 
