@@ -1251,6 +1251,7 @@ impl TypeInterner {
                         crate::type_queries::contains_generic_type_parameters_db(self, arg)
                     })
                 });
+        let evaluated_is_mapped = matches!(self.lookup(evaluated), Some(TypeData::Mapped(_)));
         let evaluated_precedes_application = match (
             self.lookup_alloc_order(evaluated),
             self.lookup_alloc_order(application),
@@ -1260,7 +1261,11 @@ impl TypeInterner {
             }
             _ => evaluated.0 <= application.0,
         };
-        if application_is_alias && application_has_generic_args && evaluated_precedes_application {
+        if application_is_alias
+            && application_has_generic_args
+            && evaluated_precedes_application
+            && !evaluated_is_mapped
+        {
             let existing_is_application =
                 self.display_alias.get(&evaluated).is_some_and(|existing| {
                     matches!(self.lookup(*existing), Some(TypeData::Application(_)))
@@ -1330,7 +1335,8 @@ impl TypeInterner {
             }
             _ => evaluated.0 <= application.0,
         };
-        if application_has_generic_args && evaluated_precedes_application {
+        let evaluated_is_mapped = matches!(self.lookup(evaluated), Some(TypeData::Mapped(_)));
+        if application_has_generic_args && evaluated_precedes_application && !evaluated_is_mapped {
             return;
         }
         self.display_alias.insert(evaluated, application);

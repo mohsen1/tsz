@@ -932,9 +932,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //
             // For concrete args: always store (safe, no conflation risk).
             // For generic args: only store when the result is a Conditional or
-            // IndexAccess type. These types are structurally unique per alias
-            // (unlike Mapped/Object types which can collide with built-in aliases
-            // like Record, Partial, Pick, Omit due to interning dedup).
+            // IndexAccess type, plus still-deferred mapped aliases. Deferred mapped
+            // aliases retain the as-written relationship needed for diagnostics like
+            // `Mapped<K>[Remapped<K>]`, while concrete mapped/object reductions keep
+            // using the structural form to avoid repainting shared helper aliases.
             // Note: We use contains_generic_type_parameters_db which excludes
             // `this` types, since `this` is context-dependent and shouldn't
             // cause conflation issues like generic type parameters can.
@@ -969,6 +970,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(
                             crate::types::TypeData::Conditional(_)
                                 | crate::types::TypeData::IndexAccess(_, _)
+                                | crate::types::TypeData::Mapped(_)
                         )
                     )
                 {

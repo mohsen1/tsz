@@ -560,6 +560,11 @@ impl<'a> CheckerState<'a> {
         prop_name: &str,
     ) -> bool {
         let mapped = self.ctx.types.mapped_type(mapped_id);
+        let preserves_source_names = mapped.name_type.is_none()
+            || crate::query_boundaries::state::checking::is_identity_name_mapping(
+                self.ctx.types,
+                &mapped,
+            );
         crate::query_boundaries::state::checking::get_finite_mapped_property_type(
             self.ctx.types,
             mapped_id,
@@ -571,12 +576,13 @@ impl<'a> CheckerState<'a> {
                 mapped_id,
             )
             .is_some_and(|names| names.contains(&self.ctx.types.intern_string(prop_name)))
-            || crate::query_boundaries::state::checking::extract_string_literal_keys(
-                self.ctx.types,
-                mapped.constraint,
-            )
-            .iter()
-            .any(|name| self.ctx.types.resolve_atom(*name) == prop_name)
+            || (preserves_source_names
+                && crate::query_boundaries::state::checking::extract_string_literal_keys(
+                    self.ctx.types,
+                    mapped.constraint,
+                )
+                .iter()
+                .any(|name| self.ctx.types.resolve_atom(*name) == prop_name))
     }
 
     fn mapped_explicit_property_names(&self, mapped_id: tsz_solver::MappedTypeId) -> Vec<String> {

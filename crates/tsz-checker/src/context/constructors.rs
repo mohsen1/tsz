@@ -154,6 +154,7 @@ impl<'a> CheckerContext<'a> {
             callback_return_type_errors: Vec::new(),
             modules_with_ts2307_emitted: FxHashSet::default(),
             deferred_truthiness_diagnostics: Vec::new(),
+            deferred_excess_property_implicit_any_diagnostics: Vec::new(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: FxHashSet::default(),
             circular_type_aliases: FxHashSet::default(),

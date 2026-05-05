@@ -554,6 +554,20 @@ impl<'a> CheckerState<'a> {
 
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
         if let Some(node) = self.ctx.arena.get(expr_idx)
+            && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            let source_type = self
+                .ctx
+                .node_types
+                .get(&expr_idx.0)
+                .copied()
+                .unwrap_or_else(|| self.elaboration_source_expression_type(expr_idx));
+            if query_common::is_remapped_mapped_index_access(self.ctx.types, source_type) {
+                return false;
+            }
+        }
+
+        if let Some(node) = self.ctx.arena.get(expr_idx)
             && node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
             && self.assignment_source_is_return_expression(source_idx)
             && let Some(cond) = self.ctx.arena.get_conditional_expr(node)

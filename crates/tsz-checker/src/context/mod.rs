@@ -721,6 +721,10 @@ pub struct CheckerContext<'a> {
     /// expression evaluation but lost when call-resolution speculation rolls
     /// back the main diagnostics vector. Flushed once per top-level statement.
     pub deferred_truthiness_diagnostics: Vec<Diagnostic>,
+    /// Deferred TS7006 diagnostics for callback parameters on excess object
+    /// literal properties. These are produced only after EPC proves the
+    /// contextual property invalid, and must survive speculative rollback.
+    pub deferred_excess_property_implicit_any_diagnostics: Vec<Diagnostic>,
 
     // --- Recursion Guards ---
     /// Stack of symbols being resolved.

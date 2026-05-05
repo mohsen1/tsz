@@ -247,7 +247,7 @@ impl<'a> CheckerState<'a> {
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall
         // back to the flow-narrowed receiver so subtype-based writes still work.
-        let (object_type, write_presence_only) = if skip_flow_narrowing {
+        let (object_type, raw_object_type, write_presence_only) = if skip_flow_narrowing {
             let object_type_no_flow =
                 self.get_type_of_write_target_base_expression(access.expression);
             let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
@@ -314,10 +314,14 @@ impl<'a> CheckerState<'a> {
                     false,
                 )
             };
-            (self.evaluate_application_type(chosen.0), chosen.1)
+            (self.evaluate_application_type(chosen.0), chosen.0, chosen.1)
         } else {
             let object_type = self.get_type_of_node_with_request(access.expression, &read_request);
-            (self.evaluate_application_type(object_type), false)
+            (
+                self.evaluate_application_type(object_type),
+                object_type,
+                false,
+            )
         };
 
         // Handle optional chain continuations: for `o?.b["c"]`, when processing `["c"]`,
@@ -730,6 +734,33 @@ impl<'a> CheckerState<'a> {
         let mut result_type = None;
         let mut report_no_index = false;
         let mut use_index_signature_check = true;
+
+        if result_type.is_none() {
+            let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
+            let mapped_access =
+                crate::query_boundaries::common::remapped_mapped_index_access_result(
+                    self.ctx.types,
+                    raw_object_type,
+                    index_type,
+                )
+                .or_else(|| {
+                    crate::query_boundaries::common::remapped_mapped_index_access_result(
+                        self.ctx.types,
+                        resolved_pre,
+                        index_type,
+                    )
+                });
+            if let Some(mapped_access) = mapped_access {
+                use crate::query_boundaries::common::RemappedMappedIndexAccessResult::{
+                    Deferred, Known,
+                };
+                let value_type = match mapped_access {
+                    Known(value_type) | Deferred(value_type) => value_type,
+                };
+                result_type = Some(value_type);
+                use_index_signature_check = false;
+            }
+        }
 
         if let Some(name) = literal_string.as_deref() {
             if self

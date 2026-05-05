@@ -7,6 +7,7 @@ use crate::TypeDatabase;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_common::interner::Atom;
 
 // =============================================================================
 // Type Content Queries
@@ -50,6 +51,23 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
                 | TypeData::ThisType
                 | TypeData::BoundParameter(_)
         )
+    })
+}
+
+/// Like `contains_type_parameters_db`, but ignores references to a known
+/// locally-bound mapped key parameter.
+pub fn contains_type_parameters_except_name_db(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    excluded_name: Atom,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    contains_type_matching(db, type_id, |key| match key {
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => info.name != excluded_name,
+        TypeData::ThisType | TypeData::BoundParameter(_) => true,
+        _ => false,
     })
 }
 
