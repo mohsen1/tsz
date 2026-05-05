@@ -184,6 +184,44 @@ fn auto_accessor_mixed_static_and_instance_fields_emit_expected_helpers_and_stor
 }
 
 #[test]
+fn private_auto_accessors_emit_accessor_helpers_at_es2015() {
+    let source = "class C1 {\n    accessor #a: any;\n    accessor #b = 1;\n    static accessor #c: any;\n    static accessor #d = 2;\n\n    constructor() {\n        this.#a = 3;\n        this.#b = 4;\n    }\n\n    static {\n        this.#c = 5;\n        this.#d = 6;\n    }\n}\n";
+
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("var _C1_instances, _a, _C1_a_get, _C1_a_set, _C1_b_get, _C1_b_set, _C1_c_get, _C1_c_set, _C1_d_get, _C1_d_set, _C1_a_accessor_storage, _C1_b_accessor_storage, _C1_c_accessor_storage, _C1_d_accessor_storage;"),
+        "Private auto-accessor helper declarations should match tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C1_instances.add(this);\n        _C1_a_accessor_storage.set(this, void 0);\n        _C1_b_accessor_storage.set(this, 1);\n        __classPrivateFieldSet(this, _C1_instances, 3, \"a\", _C1_a_set);\n        __classPrivateFieldSet(this, _C1_instances, 4, \"a\", _C1_b_set);"),
+        "Instance private auto-accessors should initialize storage and route writes through setters.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C1_a_accessor_storage = new WeakMap(), _C1_b_accessor_storage = new WeakMap(), _C1_a_get = function _C1_a_get() { return __classPrivateFieldGet(this, _C1_a_accessor_storage, \"f\"); }, _C1_a_set = function _C1_a_set(value) { __classPrivateFieldSet(this, _C1_a_accessor_storage, value, \"f\"); }"),
+        "Private auto-accessors should emit backing storage before extracted accessors.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C1_c_get = function _C1_c_get() { return __classPrivateFieldGet(_a, _a, \"f\", _C1_c_accessor_storage); }, _C1_c_set = function _C1_c_set(value) { __classPrivateFieldSet(_a, _a, value, \"f\", _C1_c_accessor_storage); }"),
+        "Static private auto-accessors should use the class alias and storage object.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_C1_c_accessor_storage = { value: void 0 };\n_C1_d_accessor_storage = { value: 2 };"
+        ),
+        "Static private auto-accessor storage should initialize after extracted accessors.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldSet(_a, _a, 5, \"a\", _C1_c_set);\n    __classPrivateFieldSet(_a, _a, 6, \"a\", _C1_d_set);"),
+        "Static block writes should route through private auto-accessor setters.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__classPrivateFieldSet(this, _a, 5, \"f\""),
+        "Static private auto-accessors must not lower as private fields.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn auto_accessor_fields_emit_private_storage_at_es2022() {
     let source = "class C1 {\n    accessor a: any;\n    accessor b = 1;\n    accessor #c: any;\n    accessor #d = 2;\n    static accessor e: any;\n    static accessor f = 3;\n}\n";
 
