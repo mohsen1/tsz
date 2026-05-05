@@ -2679,6 +2679,64 @@ const value = 1;
     }
 
     #[test]
+    fn raw_ts_nocheck_text_does_not_suppress_unused_expect_error() {
+        let source = r#"const marker = "@ts-nocheck";
+
+// @ts-expect-error
+const stringValue = 1;
+
+marker;
+stringValue;
+"#;
+        let mut diagnostics = Vec::new();
+
+        apply_ts_directive_suppression("string.ts", source, &mut diagnostics, false);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+    }
+
+    #[test]
+    fn late_ts_nocheck_comment_does_not_suppress_unused_expect_error() {
+        let source = r#"const before = 0;
+
+// @ts-nocheck
+// @ts-expect-error
+const lateValue = 1;
+
+before;
+lateValue;
+"#;
+        let mut diagnostics = Vec::new();
+
+        apply_ts_directive_suppression("late-comment.ts", source, &mut diagnostics, false);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+    }
+
+    #[test]
+    fn leading_ts_nocheck_suppresses_unused_expect_error() {
+        let source = r#"// @ts-nocheck
+
+// @ts-expect-error
+const unchecked = 1;
+
+unchecked;
+"#;
+        let mut diagnostics = Vec::new();
+
+        apply_ts_directive_suppression(
+            "actual-nocheck-control.ts",
+            source,
+            &mut diagnostics,
+            false,
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
     fn ts_directive_scan_keeps_triple_slash_directives() {
         let directives = find_ts_directives("/// @ts-ignore\nx();");
         assert_eq!(directives.len(), 1);
