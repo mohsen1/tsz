@@ -900,7 +900,8 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(ident) = self.ctx.arena.get_identifier(node) {
-            return ident.escaped_text == "arrayToEnum";
+            return ident.escaped_text == "arrayToEnum"
+                && self.array_to_enum_callee_returns_identity_mapped_type(callee);
         }
 
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -913,6 +914,94 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn array_to_enum_callee_returns_identity_mapped_type(&self, callee: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_qualified_symbol(callee) else {
+            return false;
+        };
+        let arena = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            .unwrap_or(self.ctx.arena);
+        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+            return false;
+        };
+        let mut decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            match symbol.primary_declaration() {
+                Some(decl) => decl,
+                None => return false,
+            }
+        };
+        let mut decl_node = match arena.get(decl_idx) {
+            Some(node) => node,
+            None => return false,
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let Some(parent) = arena.get_extended(decl_idx).map(|ext| ext.parent) else {
+                return false;
+            };
+            decl_idx = parent;
+            let Some(parent_node) = arena.get(decl_idx) else {
+                return false;
+            };
+            decl_node = parent_node;
+        }
+
+        let return_type = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(decl) = arena.get_variable_declaration(decl_node) else {
+                return false;
+            };
+            let Some(init_node) = arena.get(decl.initializer) else {
+                return false;
+            };
+            let Some(func) = arena.get_function(init_node) else {
+                return false;
+            };
+            func.type_annotation
+        } else {
+            let Some(func) = arena.get_function(decl_node) else {
+                return false;
+            };
+            func.type_annotation
+        };
+
+        self.type_node_is_identity_mapped_type_in_arena(arena, return_type)
+    }
+
+    fn type_node_is_identity_mapped_type(&self, type_node: NodeIndex) -> bool {
+        self.type_node_is_identity_mapped_type_in_arena(self.ctx.arena, type_node)
+    }
+
+    fn type_node_is_identity_mapped_type_in_arena(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        type_node: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(type_node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::MAPPED_TYPE {
+            return false;
+        }
+        let Some(mapped) = arena.get_mapped_type(node) else {
+            return false;
+        };
+        let Some(param) = arena
+            .get(mapped.type_parameter)
+            .and_then(|node| arena.get_type_parameter(node))
+        else {
+            return false;
+        };
+        let Some(param_name) = arena.get_identifier_at(param.name) else {
+            return false;
+        };
+        arena
+            .get_identifier_at(mapped.type_node)
+            .is_some_and(|name| name.escaped_text == param_name.escaped_text)
     }
 
     fn type_query_property_name_text(&self, name: NodeIndex) -> Option<String> {
