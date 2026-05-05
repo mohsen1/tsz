@@ -437,6 +437,10 @@ pub fn collect_private_fields_with_reserved(
                 continue;
             };
 
+            if arena.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword) {
+                continue;
+            }
+
             // Check if this is a private field
             if is_private_identifier(arena, prop_data.name) {
                 let field_name = get_private_field_name(arena, prop_data.name).unwrap_or_default();
