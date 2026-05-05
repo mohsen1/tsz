@@ -425,6 +425,24 @@ fn test_nested_namespace_does_not_qualify_parent_class_in_same_block() {
 }
 
 #[test]
+fn namespace_reference_to_later_dotted_child_is_qualified() {
+    let source = "namespace TypeScript {\n    export class PositionedElement {\n        childIndex() {\n            return Syntax.childIndex();\n        }\n    }\n}\nnamespace TypeScript.Syntax {\n    export function childIndex() { }\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("return TypeScript.Syntax.childIndex();"),
+        "Reference to a dotted child namespace declared in a later block should \
+         be qualified through the parent namespace.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_module_temp_vars_do_not_collide() {
     let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\nconsole.log(x);\n";
     let output = parse_lower_print(
