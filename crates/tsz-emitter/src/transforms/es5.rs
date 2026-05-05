@@ -108,6 +108,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if has_extends {
             body.push(IRNode::ExtendsHelper {
                 class_name: class_name.clone().into(),
+                super_name: "_super".into(),
             });
         }
 
@@ -166,6 +167,7 @@ impl<'a> ES5ClassTransformer<'a> {
         Some(IRNode::ES5ClassIIFE {
             name: class_name.into(),
             base_class: base_class.map(Box::new),
+            super_param: has_extends.then(|| "_super".into()),
             body,
             weakmap_decls,
             weakmap_inits,

@@ -1722,6 +1722,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let class_ir = class_transformer.transform_class_with_name(class_idx, Some(class_name))?;
         let IRNode::ES5ClassIIFE {
             body,
+            super_param,
             weakmap_decls,
             weakmap_inits,
             deferred_static_blocks,
@@ -1733,7 +1734,9 @@ impl<'a> AsyncES5Transformer<'a> {
         Some(ES5ClassFactoryParts {
             factory: IRNode::FunctionExpr {
                 name: None,
-                parameters: vec![IRParam::new("_super")],
+                parameters: vec![IRParam::new(
+                    super_param.as_deref().unwrap_or("_super").to_string(),
+                )],
                 body,
                 is_expression_body: false,
                 body_source_range: None,

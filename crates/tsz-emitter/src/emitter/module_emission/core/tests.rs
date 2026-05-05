@@ -281,13 +281,58 @@ export const result = [new C().getX(), _C_x];
 }
 
 #[test]
+fn es5_class_super_parameter_skips_user_binding() {
+    let source = r#"class Base {}
+
+const _super = "user binding";
+
+export class Derived extends Base {
+  static value = _super;
+
+  method() {
+    return _super;
+  }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var Derived = /** @class */ (function (_super_1)"),
+        "Derived class wrapper should skip the user _super binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__extends(Derived, _super_1);"),
+        "__extends should use the generated super parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return _super;") && output.contains("Derived.value = _super;"),
+        "Source _super references inside the class body should still resolve to the user binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn commonjs_module_temp_skips_user_binding() {
     let source = r#"import { value } from "foo";
 
 const foo_1 = "user binding";
 
 export const result = value + ":" + foo_1;
-}
 "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
