@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/jsx-generic-spread-source-display`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2756
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance and fingerprints)
 
 ## Intent
@@ -23,5 +23,9 @@ assignability boundaries, and narrow only the final diagnostic display surface.
 ## Verification
 
 - `cargo check --package tsz-checker`
-- `cargo nextest run --package tsz-checker --test jsx_spread_assignability_suppresses_ts2741`
-- `./scripts/conformance/conformance.sh run --filter "tsxAttributeResolution5" --verbose`
+- `cargo check --package tsz-solver`
+- `cargo nextest run --package tsz-checker --test jsx_spread_assignability_suppresses_ts2741` (4 tests pass)
+- `cargo nextest run --package tsz-checker --lib` (3333 tests pass, 10 skipped)
+- `cargo nextest run --package tsz-solver --lib` (5622 tests pass, 9 skipped)
+- `./scripts/conformance/conformance.sh run --filter "tsxAttributeResolution5" --verbose` (1/1 passed)
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run` (12436 -> 12439, +3 net; 0 regressions reported)

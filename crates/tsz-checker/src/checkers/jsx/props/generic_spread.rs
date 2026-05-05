@@ -5,18 +5,43 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
+pub(in crate::checkers_domain::jsx) struct GenericSpreadAssignabilityReport<'a> {
+    pub generic_spread_types: Vec<TypeId>,
+    pub provided_attrs: &'a [(String, TypeId)],
+    pub props_type: TypeId,
+    pub display_target: &'a str,
+    pub tag_name_idx: NodeIndex,
+    pub has_excess_property_error: bool,
+    pub skip_prop_checks: bool,
+    pub has_explicit_jsx_attrs: bool,
+}
+
 impl<'a> CheckerState<'a> {
     pub(in crate::checkers_domain::jsx) fn report_invalid_generic_jsx_spread_assignability(
         &mut self,
-        generic_spread_types: Vec<TypeId>,
-        provided_attrs: &[(String, TypeId)],
-        props_type: TypeId,
-        display_target: &str,
-        tag_name_idx: NodeIndex,
-        has_excess_property_error: bool,
-        skip_prop_checks: bool,
+        report: GenericSpreadAssignabilityReport<'_>,
     ) -> bool {
+        let GenericSpreadAssignabilityReport {
+            generic_spread_types,
+            provided_attrs,
+            props_type,
+            display_target,
+            tag_name_idx,
+            has_excess_property_error,
+            skip_prop_checks,
+            has_explicit_jsx_attrs,
+        } = report;
+
         if generic_spread_types.is_empty() || has_excess_property_error || skip_prop_checks {
+            return false;
+        }
+        // With no explicit attributes, `provided_attrs` may still contain
+        // properties enumerated from spread shapes. The per-spread checker owns
+        // that whole-object diagnostic because it has the spread expression's
+        // raw type-parameter surface (`T`) and the precise tag anchor.
+        // Rebuilding an aggregate attrs object here normalizes that source to
+        // `T & Constraint`, producing a duplicate fingerprint.
+        if !has_explicit_jsx_attrs {
             return false;
         }
 
