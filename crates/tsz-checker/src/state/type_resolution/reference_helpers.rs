@@ -896,8 +896,25 @@ impl<'a> CheckerState<'a> {
                 // save/restore cycle). Fall through to re-resolve from the
                 // class_instance_type_cache which always has the correct final type.
                 if instance_type != TypeId::ERROR {
-                    self.pop_type_parameters(updates);
-                    return Some((instance_type, params));
+                    let cached_has_construct_signature =
+                        crate::query_boundaries::common::callable_shape_for_type(
+                            self.ctx.types,
+                            instance_type,
+                        )
+                        .is_some_and(|shape| !shape.construct_signatures.is_empty());
+                    if cached_has_construct_signature
+                        && let Some(&class_cached) =
+                            self.ctx.class_instance_type_cache.get(&decl_idx)
+                        && class_cached != TypeId::ERROR
+                        && class_cached != TypeId::ANY
+                    {
+                        self.pop_type_parameters(updates);
+                        return Some((class_cached, params));
+                    }
+                    if !cached_has_construct_signature {
+                        self.pop_type_parameters(updates);
+                        return Some((instance_type, params));
+                    }
                 }
             }
 
