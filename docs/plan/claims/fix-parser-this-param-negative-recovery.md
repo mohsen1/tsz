@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/parser-this-param-negative-recovery`
-- **PR**: TBD
+- **PR**: #3206
 - **Status**: claim
 - **Workstream**: 1 (Conformance / parser diagnostics)
 
