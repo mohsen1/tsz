@@ -1227,6 +1227,22 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if prop.type_annotation.is_some()
+            && let Some(class_info) = self.ctx.enclosing_class.as_ref()
+            && let Some(property_name) =
+                crate::types_domain::queries::core::get_literal_property_name(
+                    self.ctx.arena,
+                    prop.name,
+                )
+            && self.indexed_access_references_owner_property(
+                prop.type_annotation,
+                &class_info.name,
+                &property_name,
+            )
+        {
+            return false;
+        }
+
         let prop_type = if let Some(declared_type) =
             self.effective_class_property_declared_type(member_idx, prop)
         {

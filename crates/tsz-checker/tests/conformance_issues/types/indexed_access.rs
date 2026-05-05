@@ -136,6 +136,10 @@ class C1 {
         ts2502_count, 3,
         "Expected TS2502 for self-indexed type literal, interface, and class properties.\nActual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        !has_error(&diagnostics, 2564),
+        "Self-indexed class property should not also emit TS2564.\nActual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]

@@ -375,11 +375,21 @@ impl<'a> CheckerState<'a> {
             .copied()
             .unwrap_or_else(|| self.get_type_of_node(access.expression));
 
-        self.recover_self_recursive_property_access_type(
+        let recovered = self.recover_self_recursive_property_access_type(
             receiver_type,
             &name_ident.escaped_text,
             result_type,
-        )
+        );
+        if recovered == TypeId::ANY && recovered != result_type {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+            self.error_at_node(
+                idx,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+        }
+        recovered
     }
 
     pub(crate) fn is_stale_unconstrained_type_parameter(&self, type_id: TypeId) -> bool {

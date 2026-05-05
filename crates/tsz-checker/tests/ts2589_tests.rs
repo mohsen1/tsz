@@ -46,6 +46,10 @@ let x2x = x2.x;
     );
     checker.ctx.set_lib_contexts(Vec::new());
     checker.check_source_file(root);
+    assert!(
+        checker.ctx.diagnostics.iter().any(|d| d.code == 2589),
+        "x2.x should emit TS2589 while recovering the recursive indexed access to any"
+    );
 
     let decl_idx = binder
         .get_symbol(sym_id)
