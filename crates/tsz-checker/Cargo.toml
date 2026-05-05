@@ -54,6 +54,10 @@ name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
 
 [[test]]
+name = "nan_equality_lib_symbol_ids_tests"
+path = "tests/nan_equality_lib_symbol_ids_tests.rs"
+
+[[test]]
 name = "ts2567_augmentation_enum_cross_arena_decl_tests"
 path = "tests/ts2567_augmentation_enum_cross_arena_decl_tests.rs"
 
