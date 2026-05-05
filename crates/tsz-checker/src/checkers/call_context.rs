@@ -530,6 +530,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         shape: &tsz_solver::FunctionShape,
         args: &[NodeIndex],
+        contextual_type: Option<TypeId>,
     ) -> bool {
         let return_type_params: FxHashSet<_> =
             common::collect_referenced_types(self.ctx.types, shape.return_type)
@@ -538,6 +539,22 @@ impl<'a> CheckerState<'a> {
                 .collect();
 
         if return_type_params.is_empty() {
+            return false;
+        }
+
+        let has_bare_return_param_argument = shape.params.iter().any(|param| {
+            common::type_param_info(self.ctx.types, param.type_id)
+                .is_some_and(|info| return_type_params.contains(&info.name))
+        });
+        if has_bare_return_param_argument
+            && let Some(contextual_type) = contextual_type
+            && self.contextual_return_type_specializes_wrapped_params(
+                shape.return_type,
+                contextual_type,
+                &return_type_params,
+                &mut FxHashSet::default(),
+            )
+        {
             return false;
         }
 
@@ -580,6 +597,108 @@ impl<'a> CheckerState<'a> {
             }) {
                 return true;
             }
+        }
+
+        false
+    }
+
+    fn contextual_return_type_specializes_wrapped_params(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<tsz_common::interner::Atom>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+    ) -> bool {
+        if matches!(target, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            || !visited.insert((source, target))
+        {
+            return false;
+        }
+
+        if let Some(info) = common::type_param_info(self.ctx.types, source) {
+            return tracked_type_params.contains(&info.name);
+        }
+
+        if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
+            common::application_info(self.ctx.types, source),
+            common::application_info(self.ctx.types, target),
+        ) && source_base == target_base
+            && source_args.len() == target_args.len()
+        {
+            return source_args
+                .iter()
+                .zip(target_args.iter())
+                .any(|(&source_arg, &target_arg)| {
+                    self.contextual_return_type_specializes_wrapped_params(
+                        source_arg,
+                        target_arg,
+                        tracked_type_params,
+                        visited,
+                    )
+                });
+        }
+
+        if let (Some(source_elem), Some(target_elem)) = (
+            common::array_element_type(self.ctx.types, source),
+            common::array_element_type(self.ctx.types, target),
+        ) {
+            return self.contextual_return_type_specializes_wrapped_params(
+                source_elem,
+                target_elem,
+                tracked_type_params,
+                visited,
+            );
+        }
+
+        if let (Some(source_elems), Some(target_elems)) = (
+            common::tuple_elements(self.ctx.types, source),
+            common::tuple_elements(self.ctx.types, target),
+        ) && source_elems.len() == target_elems.len()
+        {
+            return source_elems.iter().zip(target_elems.iter()).any(
+                |(source_elem, target_elem)| {
+                    self.contextual_return_type_specializes_wrapped_params(
+                        source_elem.type_id,
+                        target_elem.type_id,
+                        tracked_type_params,
+                        visited,
+                    )
+                },
+            );
+        }
+
+        if let (Some(source_shape), Some(target_shape)) = (
+            common::object_shape_for_type(self.ctx.types, source),
+            common::object_shape_for_type(self.ctx.types, target),
+        ) {
+            for source_prop in &source_shape.properties {
+                let Some(target_prop) = target_shape
+                    .properties
+                    .iter()
+                    .find(|prop| prop.name == source_prop.name)
+                else {
+                    continue;
+                };
+                if self.contextual_return_type_specializes_wrapped_params(
+                    source_prop.type_id,
+                    target_prop.type_id,
+                    tracked_type_params,
+                    visited,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        let source_eval = self.evaluate_application_type(source);
+        let target_eval = self.evaluate_application_type(target);
+        if source_eval != source || target_eval != target {
+            return self.contextual_return_type_specializes_wrapped_params(
+                source_eval,
+                target_eval,
+                tracked_type_params,
+                visited,
+            );
         }
 
         false
@@ -798,6 +917,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn suppress_initializer_contextual_type_for_generic_call(
         &mut self,
         idx: NodeIndex,
+        contextual_type: TypeId,
     ) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -884,7 +1004,11 @@ impl<'a> CheckerState<'a> {
         if return_is_bare_type_param {
             return false;
         }
-        self.suppress_generic_return_context_for_direct_arg_overlap(&shape, args)
+        self.suppress_generic_return_context_for_direct_arg_overlap(
+            &shape,
+            args,
+            Some(contextual_type),
+        )
     }
 
     /// Whether a node is a direct literal expression (numeric/string/boolean/bigint/null

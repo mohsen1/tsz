@@ -813,6 +813,7 @@ impl<'a> CheckerState<'a> {
                     let suppress_initializer_context = evaluated_type != TypeId::ANY
                         && checker.suppress_initializer_contextual_type_for_generic_call(
                             var_decl.initializer,
+                            evaluated_type,
                         );
                     let suppress_identifier_context = checker
                         .should_suppress_identifier_initializer_context_for_index_access(

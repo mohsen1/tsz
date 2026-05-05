@@ -2613,7 +2613,7 @@ fn estimate_json_value_len(value: &serde_json::Value) -> u32 {
 }
 
 /// Matches TypeScript's `pathIsRelative` check: `/^\\.\\.?($|[\\\\/])/`.
-fn is_relative_path_mapping_substitution(specifier: &str) -> bool {
+const fn is_relative_path_mapping_substitution(specifier: &str) -> bool {
     matches!(
         specifier.as_bytes(),
         [b'.'] | [b'.', b'.'] | [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..]

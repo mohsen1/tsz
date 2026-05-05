@@ -951,6 +951,17 @@ impl<'a> InferenceContext<'a> {
                     .iter()
                     .any(|prop| self.type_implies_literals(prop.type_id))
             }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                app.args.iter().any(|&arg| self.type_implies_literals(arg))
+            }
+            Some(TypeData::Array(elem)) => self.type_implies_literals(elem),
+            Some(TypeData::Tuple(list_id)) => {
+                let elems = self.interner.tuple_list(list_id);
+                elems
+                    .iter()
+                    .any(|elem| self.type_implies_literals(elem.type_id))
+            }
             _ => false,
         }
     }
