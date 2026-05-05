@@ -5996,3 +5996,79 @@ declare var E: I;
         "Expected NO TS2322 for class JSX whole-attrs assignability against primitive props, got: {codes:?}"
     );
 }
+
+// =============================================================================
+// LibraryManagedAttributes — user-named generic property does not block evaluation
+// =============================================================================
+
+/// Regression for #3227: `JSX.LibraryManagedAttributes` evaluation must not be
+/// thrown away because the rendered evaluated props type happens to spell a
+/// particular identifier (historically the formatter produced `Factory<…>`).
+/// LMA application is a structural rule; it does not depend on user-chosen
+/// identifiers in the source program.
+///
+/// The fixture defines a generic interface used as a prop type. After LMA
+/// applies and the formatter prints the evaluated props, the rendered text
+/// will contain `<wrapper>(`; the `<` makes it look like a generic
+/// application boundary in the printed string. Historically, a hardcoded
+/// substring check (`format_type(evaluated).contains("Factory<")`) would
+/// discard the LMA result whenever the user happened to pick the name
+/// `Factory`. LMA application is structural and must not depend on
+/// user-chosen identifiers.
+fn jsx_lma_props_with_user_generic_source(generic_name: &str) -> String {
+    format!(
+        r#"
+declare namespace JSX {{
+    interface Element {{}}
+    interface ElementClass {{}}
+    interface ElementAttributesProperty {{ props: {{}} }}
+    interface IntrinsicElements {{}}
+    type LibraryManagedAttributes<C, P> = P & {{ injected: number }};
+}}
+
+interface {generic_name}<T> {{ make(): T; }}
+
+declare const Comp: (p: {{ value: {generic_name}<number> }}) => JSX.Element;
+
+declare const factoryValue: {generic_name}<number>;
+const _ = <Comp value={{factoryValue}} injected={{1}} />;
+"#
+    )
+}
+
+#[test]
+fn jsx_library_managed_attributes_user_factory_generic_does_not_disable_lma() {
+    // The user's generic interface is named `Factory`, so the printed
+    // evaluated type contains `Factory<`. With the historical hardcoded
+    // substring check in place, LMA was discarded and the JSX call lost the
+    // alias-injected `injected` prop, surfacing TS2322 / TS2353. Removing the
+    // string check restores the structural behaviour.
+    let source = jsx_lma_props_with_user_generic_source("Factory");
+    let diags = jsx_diagnostics(&source);
+    let codes: Vec<u32> = diags.iter().map(|(c, _)| *c).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "TS2322 must not fire on the LMA-extended attrs when a prop type is a user `Factory<…>` generic, got: {diags:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE),
+        "TS2353 must not fire on the LMA-injected `injected` prop, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_library_managed_attributes_user_renamed_generic_does_not_disable_lma() {
+    // Same structural shape, but the user renamed the generic. The behaviour
+    // must match the `Factory` case — the rule is structural, not name-keyed.
+    let source = jsx_lma_props_with_user_generic_source("Box");
+    let diags = jsx_diagnostics(&source);
+    let codes: Vec<u32> = diags.iter().map(|(c, _)| *c).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "TS2322 must not fire on the LMA-extended attrs when a prop type is a user generic, got: {diags:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE),
+        "TS2353 must not fire on the LMA-injected `injected` prop, got: {diags:?}"
+    );
+}
