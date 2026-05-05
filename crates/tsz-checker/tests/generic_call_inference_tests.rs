@@ -188,9 +188,15 @@ declare function g<T>(a: T, b: T, c: (t: T) => T): T;
 g("", 3, a => a);
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
+        ts2345.is_some(),
         "Expected TS2345 for conflicting direct candidates before callback inference. Diagnostics: {diags:#?}"
+    );
+    let msg = &ts2345.unwrap().1;
+    assert!(
+        msg.contains("Argument of type '3' is not assignable to parameter of type '\"\"'."),
+        "TS2345 should preserve the first direct literal inference candidate in the diagnostic. Got: {msg:?}"
     );
 }
 
