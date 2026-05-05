@@ -10,7 +10,7 @@
 //! and the switch discriminant is `"foo"`.
 //! See conformance test
 //! `tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements03.ts`.
-use crate::test_utils::check_source_strict_codes as check_strict;
+use crate::test_utils::{check_source_strict, check_source_strict_codes as check_strict};
 
 /// `"baz" || z` (where z is a non-literal identifier) should produce the
 /// literal type `"baz"`, not the widened `string`.
@@ -102,5 +102,45 @@ const x: never = "baz" ?? z;
     assert!(
         codes.contains(&2322),
         "Expected TS2322 for 'baz' not assignable to never, got: {codes:?}"
+    );
+}
+
+#[test]
+fn logical_or_type_parameter_assignment_reports_whole_expression() {
+    let source = r#"
+function fn1<T, U>(t: T, u: U) {
+    var r4: {} = t || u;
+}
+
+function fn2<U, V>(u: U, v: V) {
+    var r6: {} = u || v;
+}
+"#;
+
+    let diagnostics = check_source_strict(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected one TS2322 per logical-or assignment, got: {diagnostics:?}"
+    );
+    let has_t_u_display = ts2322.iter().any(|diag| {
+        diag.message_text
+            .contains("Type 'U | NonNullable<T>' is not assignable to type '{}'.")
+    });
+    let has_u_v_display = ts2322.iter().any(|diag| {
+        diag.message_text
+            .contains("Type 'V | NonNullable<U>' is not assignable to type '{}'.")
+    });
+    assert!(
+        has_t_u_display,
+        "expected whole-expression display for T || U, got: {ts2322:?}"
+    );
+    assert!(
+        has_u_v_display,
+        "expected whole-expression display for U || V, got: {ts2322:?}"
     );
 }

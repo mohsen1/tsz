@@ -1012,7 +1012,8 @@ impl<'a> TypeFormatter<'a> {
 
         let formatted = self.format(id);
         let needs_parens = match self.interner.lookup(id) {
-            Some(TypeData::Intersection(_) | TypeData::Function(_)) => true,
+            Some(TypeData::Intersection(_)) => !formatted.starts_with("NonNullable<"),
+            Some(TypeData::Function(_)) => true,
             Some(TypeData::Callable(_)) => {
                 formatted.starts_with('(')
                     || formatted.starts_with("new ")
@@ -1269,6 +1270,10 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_intersection(&mut self, members: &[TypeId]) -> String {
+        if let Some(display) = self.format_non_nullable_type_parameter_intersection(members) {
+            return display;
+        }
+
         // Preserve the member order as stored in the TypeListId.
         // For intersections containing Lazy types (type parameters, type aliases),
         // normalize_intersection skips sorting and preserves source/declaration order.
@@ -1286,6 +1291,41 @@ impl<'a> TypeFormatter<'a> {
             .map(|&m| self.format_intersection_member(m))
             .collect();
         formatted.join(" & ")
+    }
+
+    fn format_non_nullable_type_parameter_intersection(
+        &mut self,
+        members: &[TypeId],
+    ) -> Option<String> {
+        if members.len() != 2 {
+            return None;
+        }
+
+        let is_empty_object = |id| {
+            matches!(
+                self.interner.lookup(id),
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id))
+                    if {
+                        let shape = self.interner.object_shape(shape_id);
+                        shape.properties.is_empty()
+                            && shape.string_index.is_none()
+                            && shape.number_index.is_none()
+                    }
+            )
+        };
+        let is_type_parameter_like = |id| {
+            matches!(
+                self.interner.lookup(id),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            )
+        };
+
+        let type_param = match members {
+            [left, right] if is_type_parameter_like(*left) && is_empty_object(*right) => *left,
+            [left, right] if is_empty_object(*left) && is_type_parameter_like(*right) => *right,
+            _ => return None,
+        };
+        Some(format!("NonNullable<{}>", self.format(type_param)))
     }
 
     pub(super) fn format_intersection_with_display(
