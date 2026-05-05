@@ -1867,7 +1867,22 @@ impl ParserState {
                 && !self.is_token(SyntaxKind::SemicolonToken)
                 && !self.can_parse_semicolon()
             {
-                self.parse_error_for_missing_semicolon_after(name);
+                let name_is_identifier = self
+                    .arena
+                    .get(name)
+                    .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16);
+                if !name_is_identifier
+                    && matches!(
+                        self.token(),
+                        SyntaxKind::CommaToken
+                            | SyntaxKind::CloseBracketToken
+                            | SyntaxKind::CloseParenToken
+                    )
+                {
+                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                } else {
+                    self.parse_error_for_missing_semicolon_after(name);
+                }
             }
 
             let end_pos = self.token_end();
