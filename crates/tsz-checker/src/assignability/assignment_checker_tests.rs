@@ -1629,6 +1629,31 @@ function f<T extends "a" | "b">(x: T) {
     );
 }
 
+#[test]
+fn string_intrinsic_type_parameter_variance_emits_ts2322() {
+    let diags = diagnostics_for(
+        r#"
+function foo<T extends string, U extends T>(x: Uppercase<T>, y: Uppercase<U>) {
+    x = y;
+    y = x;
+}
+"#,
+    );
+
+    let ts2322s: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322s.len(),
+        1,
+        "expected only `Uppercase<T> -> Uppercase<U>` to be rejected; got: {diags:?}"
+    );
+    assert!(
+        ts2322s[0]
+            .message_text
+            .contains("Type 'Uppercase<T>' is not assignable to type 'Uppercase<U>'."),
+        "expected intrinsic variance diagnostic to preserve generic intrinsic display; got: {ts2322s:?}"
+    );
+}
+
 // Companion check: template-literal vs template-literal assignments where
 // both sides share a type parameter (e.g. ``${Uppercase<T>}``) must keep
 // their existing suppression. This locks in the narrowness of the
