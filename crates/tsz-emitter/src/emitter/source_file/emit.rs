@@ -1574,10 +1574,25 @@ impl<'a> Printer<'a> {
             // Previously we used skip_whitespace_forward which stopped at
             // comments, causing `c_end > actual_start` for the comment itself.
             let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+            let next_stmt_node = source
+                .statements
+                .nodes
+                .get(stmt_i + 1)
+                .and_then(|&next_idx| self.arena.get(next_idx));
 
             if is_erased {
                 if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
                     self.emit_recovered_interface_body_statements(stmt_node);
+                }
+                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    let scan_end = next_stmt_node.map_or_else(
+                        || {
+                            self.source_text
+                                .map_or(stmt_node.end, |text| text.len() as u32)
+                        },
+                        |n| n.pos,
+                    );
+                    self.emit_recovered_template_module_declaration(stmt_node, scan_end);
                 }
                 if let Some(recovered_tail) =
                     self.recovered_ambient_class_parenthesized_tail_text(stmt_node)
@@ -1594,11 +1609,6 @@ impl<'a> Printer<'a> {
                 //   - Comments on subsequent lines → keep for the next statement
                 // Cap the scan end at the next statement's pos to avoid scanning
                 // into subsequent statements (same fix as initialization phase).
-                let next_stmt_node = source
-                    .statements
-                    .nodes
-                    .get(stmt_i + 1)
-                    .and_then(|&next_idx| self.arena.get(next_idx));
                 let scan_end = next_stmt_node.map_or(stmt_node.end, |n| n.pos);
                 let stmt_token_end = self.find_token_end_before_trivia(stmt_node.pos, scan_end);
                 let mut line_end = if let Some(text) = self.source_text {
