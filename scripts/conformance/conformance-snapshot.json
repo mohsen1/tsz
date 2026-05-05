@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-05T01:14:15Z",
-  "git_sha": "1a8b2489a21d9b9de6c311f6ff69566bdef74f0e",
+  "timestamp": "2026-05-05T02:28:14Z",
+  "git_sha": "4b45ef8f73bf037bce05d37f8fb5091b560759cf",
   "summary": {
     "total_tests": 12582,
-    "passed": 12434,
-    "failed": 148,
+    "passed": 12435,
+    "failed": 147,
     "pass_rate": 98.8
   },
   "areas_by_pass_rate": [
@@ -49,13 +49,6 @@
       "passed": 22,
       "failed": 2,
       "pass_rate": 91.67
-    },
-    {
-      "area": "types/spread",
-      "total": 25,
-      "passed": 23,
-      "failed": 2,
-      "pass_rate": 92.0
     },
     {
       "area": "controlFlow",
@@ -161,6 +154,13 @@
       "passed": 187,
       "failed": 8,
       "pass_rate": 95.9
+    },
+    {
+      "area": "types/spread",
+      "total": 25,
+      "passed": 24,
+      "failed": 1,
+      "pass_rate": 96.0
     },
     {
       "area": "internalModules/DeclarationMerging",
@@ -1279,7 +1279,7 @@
     "false_positive": 3,
     "all_missing": 1,
     "wrong_code": 38,
-    "fingerprint_only": 106,
+    "fingerprint_only": 105,
     "same_code_count_drift": 0,
     "close_to_passing": 24
   }
