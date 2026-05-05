@@ -30,6 +30,13 @@ targeted conformance test.
 - `CARGO_BUILD_JOBS=1 cargo nextest run -p tsz-checker --lib ts2635`
   - 2 tests passed.
 - Planned: targeted conformance rerun for `instantiationExpressionErrorNoCrash`.
-  - Attempted twice, but the local `dist-fast` build was interrupted by
-    repeated workspace disk exhaustion and one external SIGTERM before the
-    filtered case could run.
+  - Still blocked locally before the filtered case could run.
+  - Earlier attempts were interrupted by repeated workspace disk exhaustion and
+    one external SIGTERM.
+  - After freeing inactive build artifacts, a clean retry failed while writing
+    `.target/dist-fast/.../tsz_core...rcgu.o` because the target directory
+    disappeared mid-build.
+  - A standalone `CARGO_BUILD_JOBS=1 cargo build --target-dir .target --profile
+    dist-fast -p tsz-cli -p tsz-conformance` reached `tsz-lsp`, then failed in
+    Cargo fingerprint/output handling; `.target` was again gone immediately
+    after the failure.
