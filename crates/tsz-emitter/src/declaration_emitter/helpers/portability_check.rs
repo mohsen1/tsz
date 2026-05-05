@@ -1195,8 +1195,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if let Some(identifier) = arena.get_identifier(node) {
-            let skip_direct_identifier_portability =
-                self.is_indexed_access_object_subtree_node(arena, node_idx);
+            let skip_direct_identifier_portability = self
+                .is_indexed_access_object_subtree_node(arena, node_idx)
+                || self.is_namespace_qualifier_node(arena, node_idx);
             let sym_id = self
                 .binder
                 .and_then(|binder| {
@@ -1406,6 +1407,28 @@ impl<'a> DeclarationEmitter<'a> {
             };
             if let Some(indexed) = arena.get_indexed_access_type(parent)
                 && indexed.object_type == current_idx
+            {
+                return true;
+            }
+            current_idx = parent_idx;
+        }
+        false
+    }
+
+    fn is_namespace_qualifier_node(&self, arena: &NodeArena, node_idx: NodeIndex) -> bool {
+        let mut current_idx = node_idx;
+        while let Some(ext) = arena.get_extended(current_idx) {
+            let parent_idx = ext.parent;
+            let Some(parent) = arena.get(parent_idx) else {
+                break;
+            };
+            if let Some(qn) = arena.get_qualified_name(parent)
+                && qn.left == current_idx
+            {
+                return true;
+            }
+            if let Some(access) = arena.get_access_expr(parent)
+                && access.expression == current_idx
             {
                 return true;
             }

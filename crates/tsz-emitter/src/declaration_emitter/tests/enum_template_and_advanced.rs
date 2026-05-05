@@ -1195,3 +1195,72 @@ fn symlinked_nested_package_reference_skips_multiple_node_modules() {
         "multi-node_modules paths must defer to existing rules; got {result:?}"
     );
 }
+
+#[test]
+fn namespace_imported_transitive_type_reports_member_name_for_ts2883() {
+    let root = std::env::temp_dir().join(format!("tsz-namespace-ts2883-{}", std::process::id()));
+    let foo_dir = root.join("r/node_modules/foo");
+    std::fs::create_dir_all(&foo_dir).expect("create fixture directory");
+    let source_path = foo_dir.join("index.d.ts");
+    let source_path_text = source_path.to_string_lossy().to_string();
+    let source = r#"
+import * as nested from "nested";
+export type Return = nested.NestedProps;
+"#;
+    std::fs::write(&source_path, source).expect("write fixture source");
+
+    let mut parser = ParserState::new(source_path_text.clone(), source.to_string());
+    let _ = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let mut arena_to_path = FxHashMap::default();
+    arena_to_path.insert(&parser.arena as *const _ as usize, source_path_text);
+    emitter.set_arena_to_path(arena_to_path);
+
+    let nested_props = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_qualified_name(node)
+                .filter(|qn| {
+                    DeclarationEmitter::rightmost_name_text_in_arena(&parser.arena, qn.right)
+                        .as_deref()
+                        == Some("NestedProps")
+                })
+                .map(|_| NodeIndex(idx as u32))
+        })
+        .expect("missing nested.NestedProps type node");
+
+    assert!(
+        emitter.emit_non_portable_type_node_diagnostic_from_arena(
+            &parser.arena,
+            nested_props,
+            "x",
+            "r/entry.ts",
+            0,
+            1,
+        ),
+        "expected TS2883 diagnostic for nested namespace-imported type"
+    );
+
+    let diagnostics = emitter.take_diagnostics();
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == 2883
+                && diagnostic.message_text.contains("'NestedProps'")
+                && diagnostic.message_text.contains("foo/node_modules/nested")
+        }),
+        "expected TS2883 to name NestedProps from nested dependency, got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message_text.contains("'nested'")),
+        "namespace alias should not win the TS2883 type name, got {diagnostics:#?}"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
