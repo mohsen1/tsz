@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `conformance/noinfer-fingerprints-20260505`
-- **PR**: TBD
+- **PR**: #3342
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
