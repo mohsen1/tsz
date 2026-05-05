@@ -712,6 +712,14 @@ impl<'a> UsageAnalyzer<'a> {
         // Track symbols referenced in computed property names
         self.analyze_computed_property_name(method.name);
 
+        if self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::PrivateKeyword)
+            || self.member_has_private_identifier_name(method.name)
+        {
+            return;
+        }
+
         // Walk type parameters
         if let Some(ref type_params) = method.type_parameters {
             for &param_idx in &type_params.nodes {
