@@ -2952,6 +2952,23 @@ class C {
 }
 
 #[test]
+fn test_returned_local_conditional_annotation_uses_function_generic_scope() {
+    let output = emit_dts_with_binding(
+        r#"
+function g<T>(x: T) {
+    let y: typeof x extends (infer T)[] ? T : typeof x = null as any;
+    return y;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function g<T>(x: T): T extends (infer T_1)[] ? T_1 : T;"),
+        "Expected returned local annotation to substitute parameter type queries and rename shadowed infer type parameter: {output}"
+    );
+}
+
+#[test]
 fn test_const_enum_member_access_const_variable_preserves_initializer() {
     let output = emit_dts_with_binding(
         r#"

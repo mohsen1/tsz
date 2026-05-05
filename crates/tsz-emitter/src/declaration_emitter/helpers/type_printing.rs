@@ -837,6 +837,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
         result
     }
+
     fn extract_type_param_name(segment: &str) -> Option<String> {
         let trimmed = segment.trim();
         if trimmed.is_empty() {
@@ -851,7 +852,11 @@ impl<'a> DeclarationEmitter<'a> {
             .collect();
         if name.is_empty() { None } else { Some(name) }
     }
-    fn replace_whole_word(text: &str, word: &str, replacement: &str) -> String {
+    pub(in crate::declaration_emitter) fn replace_whole_word(
+        text: &str,
+        word: &str,
+        replacement: &str,
+    ) -> String {
         let mut result = String::with_capacity(text.len() + 16);
         let bytes = text.as_bytes();
         let word_bytes = word.as_bytes();
@@ -874,7 +879,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
         result
     }
-    const fn is_ident_char(b: u8) -> bool {
+    pub(in crate::declaration_emitter) const fn is_ident_char(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
     }
 
