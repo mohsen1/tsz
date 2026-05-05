@@ -12,17 +12,17 @@ impl ModuleResolver {
     /// Get the package type for a directory by walking up to find package.json
     pub(super) fn get_package_type_for_dir(&self, dir: &Path) -> Option<PackageType> {
         // Check cache first
-        if let Some(cached) = self.package_type_cache.borrow().get(dir) {
-            return *cached;
+        let cached_dir_type = self.package_type_cache.borrow().get(dir).copied();
+        if let Some(cached) = cached_dir_type {
+            return cached;
         }
 
         let mut current = dir.to_path_buf();
         let mut visited = Vec::new();
 
         loop {
-            // Check cache for this path - copy the value to avoid borrow conflict
-            if let Some(&cached) = self.package_type_cache.borrow().get(&current) {
-                let result = cached;
+            let cached_current_type = self.package_type_cache.borrow().get(&current).copied();
+            if let Some(result) = cached_current_type {
                 // Cache all visited paths with this result
                 let mut cache = self.package_type_cache.borrow_mut();
                 for path in visited {

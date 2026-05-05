@@ -16,10 +16,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
 
-use super::{
-    CheckerContext, LibContext, ResolutionError, ResolutionModeOverride, ResolutionRequestKind,
-    TypeCache,
-};
+use super::{CheckerContext, LibContext, ResolutionError, TypeCache};
 
 impl TypeCache {
     /// Invalidate cached symbol types that depend on the provided roots.
@@ -823,50 +820,6 @@ impl<'a> CheckerContext<'a> {
         None
     }
 
-    /// Get the resolution error for a specifier under an explicit resolution-mode override.
-    pub fn get_resolution_error_with_mode(
-        &self,
-        specifier: &str,
-        resolution_mode_override: Option<ResolutionModeOverride>,
-    ) -> Option<&ResolutionError> {
-        let request_kind = match resolution_mode_override {
-            Some(ResolutionModeOverride::Require) => ResolutionRequestKind::CjsRequire,
-            _ => ResolutionRequestKind::EsmImport,
-        };
-        if let Some(error) =
-            self.get_resolution_error_for_request(specifier, resolution_mode_override, request_kind)
-        {
-            return Some(error);
-        }
-
-        self.get_resolution_error(specifier)
-    }
-
-    /// Get the resolution error for a specifier under the exact driver request.
-    pub fn get_resolution_error_for_request(
-        &self,
-        specifier: &str,
-        resolution_mode_override: Option<ResolutionModeOverride>,
-        request_kind: ResolutionRequestKind,
-    ) -> Option<&ResolutionError> {
-        if let Some(errors) = self.resolved_module_request_errors.as_ref() {
-            for candidate in crate::module_resolution::module_specifier_error_candidates(specifier)
-            {
-                if let Some(error) = errors.get(&(
-                    self.current_file_idx,
-                    candidate,
-                    resolution_mode_override,
-                    request_kind,
-                )) {
-                    return Some(error);
-                }
-            }
-            return None;
-        }
-
-        self.get_resolution_error(specifier)
-    }
-
     /// Set the current file index.
     pub const fn set_current_file_idx(&mut self, idx: usize) {
         self.current_file_idx = idx;
@@ -1335,117 +1288,6 @@ impl<'a> CheckerContext<'a> {
             specifier,
             &fallback_idx,
         )
-    }
-
-    /// Resolve an import specifier from a specific file using an explicit
-    /// `resolution-mode` override when one was present in the original request.
-    pub fn resolve_import_target_from_file_with_mode(
-        &self,
-        source_file_idx: usize,
-        specifier: &str,
-        resolution_mode_override: Option<ResolutionModeOverride>,
-    ) -> Option<usize> {
-        let request_kind = match resolution_mode_override {
-            Some(ResolutionModeOverride::Require) => ResolutionRequestKind::CjsRequire,
-            _ => ResolutionRequestKind::EsmImport,
-        };
-        if let Some(target_idx) = self.resolve_import_target_from_file_for_request(
-            source_file_idx,
-            specifier,
-            resolution_mode_override,
-            request_kind,
-        ) {
-            return Some(target_idx);
-        }
-
-        self.resolve_import_target_from_file(source_file_idx, specifier)
-    }
-
-    /// Resolve an import specifier from a specific file using the exact driver request.
-    pub fn resolve_import_target_from_file_for_request(
-        &self,
-        source_file_idx: usize,
-        specifier: &str,
-        resolution_mode_override: Option<ResolutionModeOverride>,
-        request_kind: ResolutionRequestKind,
-    ) -> Option<usize> {
-        if let Some(paths) = self.resolved_module_request_paths.as_ref() {
-            for candidate in module_specifier_candidates(specifier) {
-                if let Some(target_idx) = paths.get(&(
-                    source_file_idx,
-                    candidate.clone(),
-                    resolution_mode_override,
-                    request_kind,
-                )) {
-                    return Some(*target_idx);
-                }
-            }
-            return None;
-        }
-
-        self.resolve_import_target_from_file(source_file_idx, specifier)
-    }
-
-    /// Compute the checker-side resolution-mode key used by the CLI driver for a request.
-    pub fn resolution_mode_for_request(
-        &self,
-        request_kind: ResolutionRequestKind,
-        resolution_mode_override: Option<ResolutionModeOverride>,
-    ) -> Option<ResolutionModeOverride> {
-        if resolution_mode_override.is_some() {
-            return resolution_mode_override;
-        }
-
-        match request_kind {
-            ResolutionRequestKind::DynamicImport => return Some(ResolutionModeOverride::Import),
-            ResolutionRequestKind::CjsRequire => return Some(ResolutionModeOverride::Require),
-            ResolutionRequestKind::EsmImport | ResolutionRequestKind::EsmReExport => {}
-        }
-
-        let file_name = self
-            .all_arenas
-            .as_ref()
-            .and_then(|arenas| arenas.get(self.current_file_idx))
-            .and_then(|arena| arena.source_files.first())
-            .map(|source_file| source_file.file_name.as_str())
-            .unwrap_or(self.file_name.as_str());
-
-        if self.compiler_options.module == tsz_common::common::ModuleKind::Preserve {
-            if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
-                return Some(ResolutionModeOverride::Import);
-            }
-            if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
-                return Some(ResolutionModeOverride::Require);
-            }
-            return Some(ResolutionModeOverride::Import);
-        }
-
-        if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
-            return Some(ResolutionModeOverride::Import);
-        }
-        if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
-            return Some(ResolutionModeOverride::Require);
-        }
-        if self.compiler_options.module.is_es_module() {
-            return Some(ResolutionModeOverride::Import);
-        }
-        if let Some(is_esm) = self
-            .file_is_esm_map
-            .as_ref()
-            .and_then(|map| map.get(file_name))
-            .copied()
-        {
-            return Some(if is_esm {
-                ResolutionModeOverride::Import
-            } else {
-                ResolutionModeOverride::Require
-            });
-        }
-        Some(if self.file_is_esm == Some(true) {
-            ResolutionModeOverride::Import
-        } else {
-            ResolutionModeOverride::Require
-        })
     }
 
     /// Resolve a member exported by the target module of an ALIAS symbol.
