@@ -122,13 +122,33 @@ impl<'a> CheckerState<'a> {
             return ty;
         };
 
+        if let Some(narrowed) = self.narrow_excess_function_param_by_property_key(prop_name, ty) {
+            return narrowed;
+        }
+
         if let Some(shape) = query::function_shape(self.ctx.types, ty) {
             let params: Vec<_> = shape
                 .params
                 .iter()
                 .map(|param| {
-                    let normalized = self.normalize_excess_display_type(param.type_id);
+                    let normalized = crate::query_boundaries::common::evaluate_type(
+                        self.ctx.types,
+                        param.type_id,
+                    );
+                    let normalized = self
+                        .narrow_excess_function_param_by_property_key(prop_name, normalized)
+                        .unwrap_or(normalized);
                     let type_id = if self.param_matches_property_key_literal(prop_name, normalized)
+                        || crate::query_boundaries::common::type_application(
+                            self.ctx.types,
+                            normalized,
+                        )
+                        .is_some()
+                        || crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            normalized,
+                        )
+                        .is_some()
                     {
                         normalized
                     } else {
@@ -1294,6 +1314,12 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::common::is_lazy_type(self.ctx.types, ty) {
             return self.format_type_diagnostic_widened(ty);
         }
+
+        // TS2353 displays the object-like branch that rejected the property, not
+        // the optional `undefined | ...` wrapper that often appears on contextual
+        // object properties. Do this before union/intersection formatting so a
+        // single remaining intersection can use the specialized object display path.
+        let ty = self.strip_non_object_union_members_for_excess_display(ty);
 
         if let Some(display) = self.format_intersection_union_for_excess_display(ty) {
             return display;
