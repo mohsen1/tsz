@@ -157,6 +157,14 @@ pub struct ModuleTransformState {
     /// "not yet computed" (false) from "computed but empty" (true with empty set).
     pub value_decl_names_computed: bool,
 
+    /// Names that have declarations which emit a runtime binding in the file.
+    /// Ambient declarations are intentionally excluded: they may require an
+    /// export preamble entry but do not always have a local binding to assign.
+    pub runtime_declaration_names: FxHashSet<String>,
+
+    /// Whether `runtime_declaration_names` has been computed.
+    pub runtime_decl_names_computed: bool,
+
     /// Whether any local `export { ... }` clause was fully elided (all specifiers
     /// were type-only). When true and the file has no other module syntax (no value
     /// exports/imports survived), an `export {};` marker must be emitted at the end
