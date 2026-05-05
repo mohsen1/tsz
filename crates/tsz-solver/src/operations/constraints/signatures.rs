@@ -992,6 +992,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return;
                 }
                 let rest_elem_type = self.rest_element_type(t_elem.type_id);
+                // For a terminal rest target like `[...HandleOptions<T[K]>]`, infer the
+                // whole remaining source tuple through the mapped target. Per-element
+                // inference would compare each `{ value: ... }` against the mapped
+                // rest element and lose the tuple position needed for reverse mapping.
+                let rest_target_contains_placeholder = {
+                    let mut visited = FxHashSet::default();
+                    self.type_contains_placeholder(t_elem.type_id, var_map, &mut visited)
+                };
+                if target[i + 1..].is_empty()
+                    && (rest_target_contains_placeholder
+                        || crate::type_queries::is_homomorphic_mapped_type_context(
+                            self.interner,
+                            t_elem.type_id,
+                        ))
+                {
+                    let tail = source
+                        .iter()
+                        .skip(i)
+                        .map(|s_elem| TupleElement {
+                            type_id: s_elem.type_id,
+                            name: s_elem.name,
+                            optional: s_elem.optional,
+                            rest: s_elem.rest,
+                        })
+                        .collect();
+                    let tail_tuple = self.interner.tuple(tail);
+                    self.constrain_types(ctx, var_map, tail_tuple, t_elem.type_id, priority);
+                    return;
+                }
                 for s_elem in source.iter().skip(i) {
                     if s_elem.rest {
                         self.constrain_types(
