@@ -3102,6 +3102,37 @@ fn compile_generic_call_at_yield_expression_in_generic_call2_fixture_has_no_ts23
 }
 
 #[test]
+fn compile_return_type_inference_contextual_parameter_types_in_generator_fixture_has_no_errors() {
+    let Some(source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/returnTypeInferenceContextualParameterTypesInGenerator1.ts",
+    ) else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("test.ts"), &source);
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::EsNext);
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("test.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected generator contextual return fixture to have no diagnostics, got: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
 fn compile_excessive_stack_depth_flat_array_fixture_reports_normalized_jsx_key_target() {
     let Some(source) =
         load_typescript_fixture("TypeScript/tests/cases/compiler/excessiveStackDepthFlatArray.ts")
