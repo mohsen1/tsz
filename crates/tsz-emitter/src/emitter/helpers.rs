@@ -99,12 +99,15 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit a node as a declaration name (suppress namespace qualification).
+    /// Emit a node as a declaration name (suppress namespace/import qualification).
     pub(super) fn emit_decl_name(&mut self, idx: NodeIndex) {
-        let prev = self.suppress_ns_qualification;
+        let prev_ns = self.suppress_ns_qualification;
+        let prev_cjs_import = self.suppress_commonjs_named_import_substitution;
         self.suppress_ns_qualification = true;
+        self.suppress_commonjs_named_import_substitution = true;
         self.emit(idx);
-        self.suppress_ns_qualification = prev;
+        self.suppress_commonjs_named_import_substitution = prev_cjs_import;
+        self.suppress_ns_qualification = prev_ns;
     }
 
     /// Write a single character.
