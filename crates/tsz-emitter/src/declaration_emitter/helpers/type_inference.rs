@@ -2398,7 +2398,76 @@ impl<'a> DeclarationEmitter<'a> {
         let alias_type_node =
             self.find_enclosing_block_type_alias_type_node(assertion_expr_idx, &name)?;
         let alias_text = self.emit_type_node_text_normalized(alias_type_node)?;
-        alias_text.contains("typeof ").then_some(alias_text)
+        if alias_text.contains("typeof ") {
+            return Some(alias_text);
+        }
+
+        if Self::type_text_contains_mapped_type_literal(&alias_text) {
+            return Some(
+                self.expand_enclosing_block_type_aliases_in_text(
+                    assertion_expr_idx,
+                    &alias_text,
+                    &name,
+                )
+                .unwrap_or(alias_text),
+            );
+        }
+
+        None
+    }
+
+    fn type_text_contains_mapped_type_literal(text: &str) -> bool {
+        text.contains("[") && text.contains(" in ") && text.contains("]:")
+    }
+
+    fn expand_enclosing_block_type_aliases_in_text(
+        &self,
+        from_idx: NodeIndex,
+        type_text: &str,
+        excluded_name: &str,
+    ) -> Option<String> {
+        let aliases = self.enclosing_block_type_alias_replacements(from_idx, excluded_name)?;
+        Some(Self::replace_whole_words_in_text(type_text, &aliases))
+    }
+
+    fn enclosing_block_type_alias_replacements(
+        &self,
+        from_idx: NodeIndex,
+        excluded_name: &str,
+    ) -> Option<Vec<(String, String)>> {
+        let mut current_idx = from_idx;
+        while let Some(ext) = self.arena.get_extended(current_idx) {
+            let parent_idx = ext.parent;
+            if !parent_idx.is_some() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::BLOCK {
+                let block = self.arena.get_block(parent_node)?;
+                let replacements = block
+                    .statements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .filter_map(|stmt_idx| {
+                        let stmt_node = self.arena.get(stmt_idx)?;
+                        if stmt_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                            return None;
+                        }
+                        let alias = self.arena.get_type_alias(stmt_node)?;
+                        let name = self.get_identifier_text(alias.name)?;
+                        if name == excluded_name {
+                            return None;
+                        }
+                        let alias_text = self.emit_type_node_text_normalized(alias.type_node)?;
+                        Some((name, alias_text))
+                    })
+                    .collect();
+                return Some(replacements);
+            }
+            current_idx = parent_idx;
+        }
+        None
     }
 
     fn simple_type_reference_name_text(&self, type_node_idx: NodeIndex) -> Option<String> {
@@ -4896,7 +4965,8 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
         if !source_type_text.contains("typeof ") {
-            return false;
+            return Self::type_text_contains_mapped_type_literal(source_type_text)
+                && self.print_type_id(inferred_return_type) != source_type_text;
         }
         !self.print_type_id(inferred_return_type).contains("typeof ")
     }
