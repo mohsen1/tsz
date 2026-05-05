@@ -900,12 +900,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // Type-only imports are likely needed for type references
                 let is_type_only = clause.is_type_only;
 
-                // Default import - keep for type-only, skip otherwise without tracking
-                default_count = if is_type_only {
-                    usize::from(clause.name.is_some())
-                } else {
-                    0
-                };
+                // Default imports can be used only in declaration types even
+                // when the original import was not written as `import type`.
+                // Without usage tracking, preserve them conservatively.
+                default_count = usize::from(clause.name.is_some());
 
                 // Named bindings: check if there are actually any specifiers
                 if clause.named_bindings.is_some() {

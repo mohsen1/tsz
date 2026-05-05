@@ -8130,6 +8130,46 @@ export const visible = 3;
 }
 
 #[test]
+fn compile_declaration_no_check_no_lib_keeps_default_type_import() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noCheck": true,
+            "noLib": true,
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "module": "esnext",
+            "target": "es2022",
+            "outDir": "dist"
+          },
+          "files": ["main.ts", "dep.ts"]
+        }"#,
+    );
+    write_file(&base.join("dep.ts"), "export default class Foo {}\n");
+    write_file(
+        &base.join("main.ts"),
+        "import Foo from \"./dep\";\nexport let x: Foo;\n",
+    );
+
+    let args = default_args();
+    let _ = compile(&args, base).expect("compile should succeed");
+
+    let dts = std::fs::read_to_string(base.join("dist/main.d.ts")).expect("read main.d.ts");
+    assert!(
+        dts.contains("import Foo from \"./dep\";"),
+        "Expected declaration emit to keep default import used as a type: {dts}"
+    );
+    assert!(
+        dts.contains("export declare let x: Foo;"),
+        "Expected declaration emit to reference imported Foo: {dts}"
+    );
+}
+
+#[test]
 fn compile_declaration_false_no_dts_files() {
     // Test that declaration: false (or absent) does NOT produce .d.ts files
     let temp = TempDir::new().expect("temp dir");
