@@ -1019,7 +1019,7 @@ impl<'a> CheckerState<'a> {
         // Walk up from parameter to find containing function/method/constructor
         // Structure: Parameter → SyntaxList/ParameterList → FunctionDecl/MethodDecl/Constructor
         let mut current = idx;
-        for _ in 0..5 {
+        for _ in 0..20 {
             let parent_idx = self
                 .ctx
                 .arena
