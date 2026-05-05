@@ -1611,6 +1611,8 @@ impl<'a> CheckerState<'a> {
             evaluated = distributed;
         }
 
+        evaluated = self.evaluate_awaited_application_for_assignability(evaluated);
+
         evaluated = self.normalize_callable_type_for_assignability(evaluated);
 
         evaluated
@@ -2086,9 +2088,15 @@ impl<'a> CheckerState<'a> {
         if let (Some(s_elem), Some(t_elem)) = (
             crate::query_boundaries::common::array_element_type(self.ctx.types, source),
             crate::query_boundaries::common::array_element_type(self.ctx.types, target),
-        ) && !self.is_assignable_to(s_elem, t_elem)
-        {
-            return false;
+        ) {
+            let s_elem_normalized = self.evaluate_awaited_application_for_assignability(s_elem);
+            let t_elem_normalized = self.evaluate_awaited_application_for_assignability(t_elem);
+            if s_elem_normalized != s_elem || t_elem_normalized != t_elem {
+                return self.is_assignable_to(s_elem_normalized, t_elem_normalized);
+            }
+            if !self.is_assignable_to(s_elem, t_elem) {
+                return false;
+            }
         }
 
         let result = self.check_assignability_cached(source, target, 0, "is_assignable_to");
