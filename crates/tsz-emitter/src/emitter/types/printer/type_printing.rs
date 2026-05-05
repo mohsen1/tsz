@@ -265,7 +265,27 @@ impl<'a> TypePrinter<'a> {
         }
     }
 
-    const fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
+    fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
+        let Some(list_id) = visitor::union_list_id(self.interner, type_id) else {
+            return type_id;
+        };
+        let members = self.interner.type_list(list_id);
+        if !members.contains(&TypeId::UNDEFINED) {
+            return type_id;
+        }
+
+        let non_undefined = members
+            .iter()
+            .copied()
+            .filter(|&member| member != TypeId::UNDEFINED)
+            .collect::<Vec<_>>();
+
+        if non_undefined.len() == 1
+            && visitor::contains_type_parameters(self.interner, non_undefined[0])
+        {
+            return non_undefined[0];
+        }
+
         type_id
     }
 
