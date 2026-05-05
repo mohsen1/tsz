@@ -9,6 +9,13 @@ pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter
 pub(crate) use super::super::common::lazy_def_id as lazy_def_id_for_type;
 pub(crate) use super::super::common::tuple_elements as tuple_elements_for_type;
 
+pub(crate) fn rest_type_needs_aggregate_argument_check(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::rest_type_needs_aggregate_argument_check(db, type_id)
+}
+
 pub(crate) fn get_contextual_signature(
     db: &dyn QueryDatabase,
     type_id: TypeId,

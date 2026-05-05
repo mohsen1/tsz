@@ -465,6 +465,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             else {
                 break;
             };
+            if self.arg_targets_aggregate_rest_param(&instantiated_params, i, arg_type) {
+                continue;
+            }
 
             let Some((contextual_arg_type, contextual_target_type)) =
                 self.contextual_round1_arg_types(arg_type, target_type)

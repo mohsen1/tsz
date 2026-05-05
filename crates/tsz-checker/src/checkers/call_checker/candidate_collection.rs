@@ -15,6 +15,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TupleElement, TypeId};
 
+const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
+
 impl<'a> CheckerState<'a> {
     /// Collect argument types with contextual typing from expected parameter types.
     ///
@@ -159,6 +161,19 @@ impl<'a> CheckerState<'a> {
 
                     // Check if spread argument is iterable, emit TS2488 if not
                     self.check_spread_iterability(spread_type, spread_data.expression);
+
+                    if self
+                        .aggregate_rest_type_for_spread(
+                            callable_ctx,
+                            effective_index,
+                            expanded_count,
+                        )
+                        .is_some()
+                    {
+                        arg_types.push(self.spread_argument_marker_type(spread_type));
+                        effective_index += 1;
+                        continue;
+                    }
 
                     // If it's a tuple type, expand its elements
                     if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
@@ -798,6 +813,40 @@ impl<'a> CheckerState<'a> {
         }
 
         arg_types
+    }
+
+    fn aggregate_rest_type_for_spread(
+        &self,
+        callable_ctx: CallableContext,
+        effective_index: usize,
+        expanded_count: usize,
+    ) -> Option<TypeId> {
+        let callable_type = callable_ctx.callable_type?;
+        let ctx = ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+        if !ctx.is_rest_parameter_position(effective_index, expanded_count) {
+            return None;
+        }
+        let rest_type = ctx.get_rest_parameter_type(effective_index)?;
+        if crate::query_boundaries::common::tuple_elements(self.ctx.types, rest_type).is_some()
+            && !crate::query_boundaries::common::is_union_type(self.ctx.types, rest_type)
+        {
+            return None;
+        }
+        crate::query_boundaries::checkers::call::rest_type_needs_aggregate_argument_check(
+            self.ctx.types,
+            rest_type,
+        )
+        .then_some(rest_type)
+    }
+
+    fn spread_argument_marker_type(&mut self, spread_type: TypeId) -> TypeId {
+        let marker_name = self.ctx.types.intern_string(SPREAD_ARGUMENT_MARKER_NAME);
+        self.ctx.types.tuple(vec![TupleElement {
+            type_id: spread_type,
+            name: Some(marker_name),
+            optional: false,
+            rest: true,
+        }])
     }
 
     pub(crate) fn recursive_mapped_tuple_spread_may_exceed_depth_in_types(

@@ -362,6 +362,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             else {
                 break;
             };
+            if self.arg_targets_aggregate_rest_param(&instantiated_params, i, arg_type) {
+                continue;
+            }
             if self
                 .contextual_round1_arg_types(arg_type, target_type)
                 .is_some()
@@ -647,6 +650,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             else {
                 break;
             };
+            if self.arg_targets_aggregate_rest_param(&instantiated_params, i, arg_type) {
+                continue;
+            }
 
             let target_type_param_name = var_map.get(&target_type).and_then(|&var| {
                 func.type_params
@@ -1223,6 +1229,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 else {
                     break;
                 };
+                if self.arg_targets_aggregate_rest_param(&instantiated_params, i, arg_type) {
+                    continue;
+                }
 
                 // Only process contextually sensitive arguments in Round 2
                 if !self.is_contextually_sensitive(arg_type) {
@@ -2033,6 +2042,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             false
         });
+
+        if let Some(rest_param) = func.params.last().filter(|param| param.rest) {
+            let rest_start = func.params.len().saturating_sub(1);
+            if arg_types.len() == rest_start {
+                let rest_type = instantiate_call_type(
+                    self.interner,
+                    rest_param.type_id,
+                    &final_subst,
+                    actual_this_type,
+                );
+                let rest_type = self.unwrap_readonly(rest_type);
+                let evaluated_rest_type = self.evaluate_rest_param_type(rest_type);
+                if self.rest_type_needs_aggregate_argument_check(evaluated_rest_type)
+                    && let Some(TypeData::Application(app_id)) = self
+                        .interner
+                        .lookup(self.unwrap_readonly(rest_param.type_id))
+                {
+                    let app = self.interner.type_application(app_id);
+                    for &arg in app.args.iter() {
+                        if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(arg)
+                            && final_subst.get(info.name) == Some(TypeId::UNKNOWN)
+                        {
+                            final_subst.insert(info.name, TypeId::NEVER);
+                        }
+                    }
+                }
+            }
+        }
 
         let instantiated_params: Vec<ParamInfo> = func
             .params

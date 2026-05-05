@@ -205,6 +205,158 @@ sum(1, "two", 3);  // Should emit TS2345
 }
 
 #[test]
+fn test_tuple_union_rest_accepts_matching_tuple_spreads() {
+    let source = r#"
+declare let f1: (x: string, ...args: [string] | [number, boolean]) => void;
+declare const t1: [string] | [number, boolean];
+declare const t2: readonly [string] | [number, boolean];
+declare const t3: [string] | readonly [number, boolean];
+declare const t4: readonly [string] | readonly [number, boolean];
+
+f1("foo", ...t1);
+f1("foo", ...t2);
+f1("foo", ...t3);
+f1("foo", ...t4);
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count, 0,
+        "Expected tuple-union rest spreads to be accepted, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_tuple_union_rest_rejects_aggregate_rest_arguments() {
+    let source = r#"
+declare let f1: (x: string, ...args: [string] | [number, boolean]) => void;
+
+f1("foo", 10);
+f1("foo");
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count, 2,
+        "Expected aggregate rest argument mismatches for tuple-union rest, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2345 && d.message_text.contains("[10]")),
+        "Expected literal tuple display for aggregate rest mismatch, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_array_like_rest_rejects_aggregate_rest_arguments() {
+    let source = r#"
+interface Array<E> {
+    length: number;
+    [n: number]: E;
+}
+
+interface CoolArray<E> extends Array<E> {
+    hello: number;
+}
+
+function bar<T extends any[]>(...args: T): T {
+    return args;
+}
+
+let b = bar<CoolArray<number>>(10, 20);
+
+declare function baz<T>(...args: CoolArray<T>): void;
+
+baz();
+baz(1);
+baz(1, 2);
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[10, 20]")
+                && d.message_text.contains("CoolArray<number>")
+        }),
+        "Expected aggregate TS2345 for explicit CoolArray rest type argument, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[]")
+                && d.message_text.contains("CoolArray<never>")
+        }),
+        "Expected empty aggregate rest mismatch to infer CoolArray<never>, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[number]")
+                && d.message_text.contains("CoolArray<unknown>")
+        }),
+        "Expected direct scalar aggregate rest mismatch to widen to [number] vs CoolArray<unknown>, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[number, number]")
+                && d.message_text.contains("CoolArray<unknown>")
+        }),
+        "Expected multi-arg aggregate rest mismatch to widen to [number, number] vs CoolArray<unknown>, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_spread_rest_does_not_report_tuple_tail_mismatch() {
+    let source = r#"
+declare function f10<T extends unknown[]>(...args: T): T;
+declare function f11<T extends (string | number | boolean)[]>(...args: T): T;
+
+function g10<U extends string[], V extends [number, number]>(u: U, v: V) {
+    f10(...u);
+    f10(...u, ...v);
+}
+
+function g11<U extends string[], V extends [number, number]>(u: U, v: V) {
+    f11(...u);
+    f11(...u, ...v);
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count, 0,
+        "Expected generic spread arguments to remain assignable to inferred generic rest tuples, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_tuple_union_rest_method_overloads_cover_variants() {
+    let source = r#"
+declare class MySettable implements Settable {
+    set(option: { [key: string]: unknown }): void;
+    set(name: string, value: unknown): void;
+}
+
+interface Settable {
+    set(...args: [option: { [key: string]: unknown }] | [name: string, value: unknown] | [name: string]): void;
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2416_count = diagnostics.iter().filter(|d| d.code == 2416).count();
+    assert_eq!(
+        ts2416_count, 0,
+        "Expected method overloads to satisfy tuple-union rest surface without TS2416, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_array_destructuring_with_rest() {
     let source = r"
 const arr = [1, 2, 3, 4, 5];

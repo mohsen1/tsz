@@ -1125,10 +1125,9 @@ impl<'a> TypeFormatter<'a> {
                 self.format_intersection(members.as_ref()).into()
             }
             TypeData::Array(elem) => {
-                // tsc preserves `Array<T>` in type-parameter constraints
-                if self.preserve_array_generic_form {
-                    let ef = self.format(*elem);
-                    return format!("Array<{ef}>").into();
+                if self.preserve_array_generic_form && !elem.is_intrinsic() {
+                    let elem_formatted = self.format(*elem);
+                    return format!("Array<{elem_formatted}>").into();
                 }
                 let elem_formatted = self.format(*elem);
                 let needs_parens = matches!(

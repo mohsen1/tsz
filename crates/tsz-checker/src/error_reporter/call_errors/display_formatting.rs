@@ -1371,6 +1371,15 @@ impl<'a> CheckerState<'a> {
         {
             return "IArguments".to_string();
         }
+        if query_common::tuple_elements(self.ctx.types, arg_type).is_some()
+            && self
+                .ctx
+                .arena
+                .get(expr_idx)
+                .is_none_or(|node| node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+        {
+            return self.format_type_diagnostic(arg_type);
+        }
 
         // When the only literal-sensitive member of the parameter type is
         // `undefined` contributed by an optional parameter (`b?: T`), tsc
