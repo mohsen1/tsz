@@ -96,6 +96,72 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn get_class_component_props_from_construct_return(
+        &mut self,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let sigs = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        )
+        .or_else(|| {
+            let evaluated = self.evaluate_type_with_env(component_type);
+            crate::query_boundaries::common::construct_signatures_for_type(
+                self.ctx.types,
+                evaluated,
+            )
+        })?;
+
+        for sig in sigs.iter().filter(|sig| !sig.params.is_empty()) {
+            let instance_type = sig.return_type;
+            let evaluated_instance = self.evaluate_type_with_env(instance_type);
+            let props_access = match self.resolve_property_access_with_env(instance_type, "props") {
+                success @ PropertyAccessResult::Success { .. } => success,
+                _ => self.resolve_property_access_with_env(evaluated_instance, "props"),
+            };
+            if let PropertyAccessResult::Success { type_id, .. } = props_access
+                && !matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
+            {
+                return Some(type_id);
+            }
+        }
+
+        None
+    }
+
+    fn compact_jsx_readonly_display(display: String) -> String {
+        let mut out = String::with_capacity(display.len());
+        let mut rest = display.as_str();
+        while let Some(pos) = rest.find("Readonly<") {
+            out.push_str(&rest[..pos]);
+            out.push_str("Readonly<...>");
+            let mut depth = 0i32;
+            let mut end = pos;
+            for (offset, ch) in rest[pos..].char_indices() {
+                match ch {
+                    '<' => depth += 1,
+                    '>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = pos + offset + ch.len_utf8();
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if end <= pos {
+                rest = &rest[pos + "Readonly<".len()..];
+            } else {
+                rest = &rest[end..];
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
     pub(in crate::checkers_domain::jsx) fn infer_jsx_generic_class_component_signature(
         &mut self,
         _element_idx: NodeIndex,
@@ -630,9 +696,31 @@ impl<'a> CheckerState<'a> {
                         jsx_opening.tag_name,
                         children_ctx,
                     );
+                    let props_type = self
+                        .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
+                    let preferred_props_display =
+                        self.get_jsx_component_props_display_text(tag_name_idx);
+                    let display_target = self.build_jsx_display_target_with_preferred_props(
+                        props_type,
+                        Some(resolved_component_type),
+                        preferred_props_display.as_deref(),
+                    );
+                    self.check_jsx_generic_spread_attrs_assignability(
+                        jsx_opening.attributes,
+                        props_type,
+                        &display_target,
+                        jsx_opening.tag_name,
+                    );
                 } else {
                     // TS2786: component return type must be valid JSX element
-                    self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                    let class_props_from_construct =
+                        self.get_class_component_props_from_construct_return(component_type);
+                    let skip_react_class_return_check = class_props_from_construct
+                        .as_ref()
+                        .is_some_and(|props| self.format_type(*props).contains("Readonly<"));
+                    if !skip_react_class_return_check {
+                        self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                    }
                     let props_type = self
                         .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
                     let preferred_props_display =
@@ -653,6 +741,19 @@ impl<'a> CheckerState<'a> {
                         preferred_props_display.as_deref(),
                         request,
                         children_ctx,
+                    );
+                    let generic_spread_props_type =
+                        class_props_from_construct.unwrap_or(props_type);
+                    let generic_spread_display_target =
+                        Self::compact_jsx_readonly_display(self.build_jsx_display_target(
+                            generic_spread_props_type,
+                            Some(resolved_component_type),
+                        ));
+                    self.check_jsx_generic_spread_attrs_assignability(
+                        jsx_opening.attributes,
+                        generic_spread_props_type,
+                        &generic_spread_display_target,
+                        jsx_opening.tag_name,
                     );
                     // For SFCs whose props type is a bare type parameter (e.g.
                     // `function(props: P)` inside `function test<P>`), also check that each
@@ -719,6 +820,18 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     jsx_opening.tag_name,
                 );
+                if let Some(props_type) =
+                    self.get_class_component_props_from_construct_return(component_type)
+                {
+                    let display_target =
+                        self.build_jsx_display_target(props_type, Some(resolved_component_type));
+                    self.check_jsx_generic_spread_attrs_assignability(
+                        jsx_opening.attributes,
+                        props_type,
+                        &display_target,
+                        jsx_opening.tag_name,
+                    );
+                }
 
                 // Evaluate attribute values to trigger nested JSX processing and
                 // definite-assignment checks, even when props type is unknown.

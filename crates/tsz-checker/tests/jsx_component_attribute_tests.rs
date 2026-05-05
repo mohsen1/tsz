@@ -2047,6 +2047,53 @@ fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
 }
 
 #[test]
+fn jsx_excess_props_and_assignability_react16_generic_spread_reports_ts2322() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let source = r#"
+import * as React from 'react';
+
+const myHoc = <ComposedComponentProps extends any>(
+    ComposedComponent: React.ComponentClass<ComposedComponentProps>,
+) => {
+    type WrapperComponentProps = ComposedComponentProps & { myProp: string };
+    const WrapperComponent: React.ComponentClass<WrapperComponentProps> = null as any;
+
+    const props: ComposedComponentProps = null as any;
+
+    <WrapperComponent {...props} myProp={'1000000'} />;
+    <WrapperComponent {...props} myProp={1000000} />;
+};
+"#;
+    let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
+        &react_types,
+        source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            strict_function_types: true,
+            strict_bind_call_apply: true,
+            strict_property_initialization: true,
+            no_implicit_this: true,
+            always_strict: true,
+            ..CheckerOptions::default()
+        },
+        true,
+    );
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("ComposedComponentProps & { myProp: number; }")
+        }),
+        "expected generic spread plus numeric myProp to emit whole-object TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_jsx_fragment_factory_no_unused_locals_react16_fixture_checks_nested_callback_body() {
     let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
         return;
