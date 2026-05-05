@@ -784,6 +784,101 @@ export class A {
 }
 
 #[test]
+fn test_synthesized_computed_method_index_signatures_widen_nested_literal_returns() {
+    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
+    let _root = parser.parse_source_file();
+    let binder = BinderState::new();
+
+    let interner = TypeInterner::new();
+    let method_return = interner.union(vec![
+        interner.function(FunctionShape::new(
+            Vec::new(),
+            interner.literal_string("value"),
+        )),
+        interner.function(FunctionShape::new(
+            Vec::new(),
+            interner.literal_number(42.0),
+        )),
+    ]);
+    let instance_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: method_return,
+            readonly: false,
+            param_name: Some(interner.intern_string("x")),
+        }),
+        number_index: None,
+        symbol: None,
+    });
+
+    let static_true_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("static"),
+            interner.literal_boolean(true),
+        )],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let static_string_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("static"),
+            interner.literal_string("sometimes"),
+        )],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let static_index_type = interner.union(vec![
+        instance_type,
+        interner.function(FunctionShape::new(Vec::new(), static_true_type)),
+        interner.function(FunctionShape::new(Vec::new(), static_string_type)),
+    ]);
+    let ctor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), instance_type)],
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: static_index_type,
+            readonly: false,
+            param_name: Some(interner.intern_string("x")),
+        }),
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(ctor_type);
+
+    assert!(
+        printed.contains("[x: string]: (() => string) | (() => number);"),
+        "Expected instance computed method returns to widen inside the synthesized index signature: {printed}"
+    );
+    assert!(
+        printed.contains("static: boolean;"),
+        "Expected static computed method object returns to widen boolean literals: {printed}"
+    );
+    assert!(
+        printed.contains("static: string;"),
+        "Expected static computed method object returns to widen string literals: {printed}"
+    );
+    assert!(
+        !printed.contains("\"value\"")
+            && !printed.contains("42")
+            && !printed.contains("true")
+            && !printed.contains("\"sometimes\""),
+        "Did not expect literal return types to leak from synthesized computed methods: {printed}"
+    );
+}
+
+#[test]
 fn test_empty_anonymous_class_shape_recovers_method_from_ast() {
     let source = r#"
 declare const a: symbol;
