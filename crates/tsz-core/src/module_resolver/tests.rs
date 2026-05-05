@@ -4538,3 +4538,46 @@ fn test_node16_direct_index_file_gets_extension_suggestion() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_node16_module_suffix_index_file_emits_ts2834_without_suggestion() {
+    // `./pkg` resolves through `pkg/index.native.ts` via moduleSuffixes. Adding
+    // `./pkg.js` would not reach that file, so this must be TS2834 rather than
+    // TS2835 with a suggested extension.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_node16_modulesuffix_index_ts2834");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("pkg")).unwrap();
+
+    fs::write(dir.join("main.mts"), "import { x } from './pkg';").unwrap();
+    fs::write(dir.join("pkg/index.native.ts"), "export const x = 1;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        module_suffixes: vec![".native".to_string(), String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let result = resolver.resolve("./pkg", &dir.join("main.mts"), Span::new(0, 7));
+    let failure = result.expect_err("Expected TS2834 without suggestion");
+    match &failure {
+        ResolutionFailure::ImportPathNeedsExtension {
+            suggested_extension,
+            ..
+        } => {
+            assert!(
+                suggested_extension.is_empty(),
+                "Module-suffix directory index should not get a suggestion"
+            );
+        }
+        other => panic!("Expected TS2834 without suggestion, got {other:?}"),
+    }
+    assert_eq!(failure.to_diagnostic().code, IMPORT_PATH_NEEDS_EXTENSION);
+
+    let _ = fs::remove_dir_all(&dir);
+}
