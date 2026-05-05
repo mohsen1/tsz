@@ -1979,15 +1979,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return false;
         }
 
-        let Some(call) = arena.get_call_expr(node) else {
-            return false;
-        };
-        let Some(expr_node) = arena.get(call.expression) else {
-            return false;
-        };
-
         arena
-            .get_identifier(expr_node)
+            .get_call_expr(node)
+            .and_then(|call| arena.get(call.expression))
+            .and_then(|expr_node| arena.get_identifier(expr_node))
             .is_some_and(|ident| ident.escaped_text == "Symbol")
     }
 
@@ -1996,7 +1991,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         self.ctx
     }
 }
-
 #[cfg(test)]
 #[path = "../../tests/type_node.rs"]
 mod tests;
