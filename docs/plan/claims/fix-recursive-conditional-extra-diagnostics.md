@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/recursive-conditional-extra-diagnostics`
-- **PR**: TBD
+- **PR**: #3399
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance)
 
