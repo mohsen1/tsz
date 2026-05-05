@@ -15632,6 +15632,60 @@ const foo2 = value => /** @type {string} */(/** @type {T} */({ ...value }));
 }
 
 #[test]
+fn compile_jsdoc_template_prefix_tag_does_not_create_type_parameter() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true,
+            "types": []
+          },
+          "files": ["index.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"// @ts-check
+
+/**
+ * @templatex T
+ * @param {T} value
+ */
+function id(value) {
+  return value;
+}
+
+id("not a number").toFixed();
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        result.diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_NAME
+                && d.message_text.contains("Cannot find name 'T'")
+        }),
+        "Expected @templatex to be ignored so {{T}} reports TS2304, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN),
+        "Expected no TS2551 from treating @templatex as a real generic, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_default_import_class_static_enum_object_keeps_enum_members() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

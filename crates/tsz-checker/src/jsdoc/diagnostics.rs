@@ -1118,13 +1118,16 @@ impl<'a> CheckerState<'a> {
                     .trim_start()
                     .trim_start_matches('*')
                     .trim_start();
+                let is_param_tag = line.starts_with("@param ")
+                    || line.starts_with("@param\t")
+                    || line.starts_with("@param{");
                 let is_return_tag = line.starts_with("@return ")
                     || line.starts_with("@return\t")
                     || line.starts_with("@return{")
                     || line.starts_with("@returns ")
                     || line.starts_with("@returns\t")
                     || line.starts_with("@returns{");
-                if !is_return_tag {
+                if !is_param_tag && !is_return_tag {
                     continue;
                 }
                 let simple_expr = type_expr
@@ -1144,12 +1147,11 @@ impl<'a> CheckerState<'a> {
                 }
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
                 self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
-                let unresolved_return_type =
-                    self.resolve_jsdoc_type_str(simple_expr).is_none_or(|ty| {
-                        ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
-                    });
+                let unresolved_type = self.resolve_jsdoc_type_str(simple_expr).is_none_or(|ty| {
+                    ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
+                });
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
-                if Self::is_simple_type_name(simple_expr) && unresolved_return_type {
+                if Self::is_simple_type_name(simple_expr) && unresolved_type {
                     self.emit_jsdoc_cannot_find_name(
                         simple_expr,
                         comment.pos,
