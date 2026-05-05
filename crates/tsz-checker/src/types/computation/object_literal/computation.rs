@@ -213,6 +213,33 @@ impl<'a> CheckerState<'a> {
         self.pop_partial_object_literal_initializer(partial_initializer_stack_index);
     }
 
+    fn contextual_this_type_from_marker(&self, ctx_type: TypeId) -> Option<TypeId> {
+        use crate::query_boundaries::common::ContextualTypeContext;
+
+        let env = self.ctx.type_env.borrow();
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            ctx_type,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+        if let Some(this_type) = ctx_helper.get_this_type_from_marker_with_resolver(&*env) {
+            return Some(this_type);
+        }
+
+        let def_id = self.ctx.definition_store.find_def_for_type(ctx_type)?;
+        let body = self.ctx.definition_store.get_body(def_id)?;
+        if body == ctx_type {
+            return None;
+        }
+
+        let body_helper = ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            body,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+        body_helper.get_this_type_from_marker_with_resolver(&*env)
+    }
+
     fn function_like_has_explicit_signature_annotations(&self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
             return false;
@@ -488,14 +515,7 @@ impl<'a> CheckerState<'a> {
         // pattern) after union narrowing so discriminated object literals choose
         // the matching union member's marker.
         let marker_this_type: Option<TypeId> = if let Some(ctx_type) = contextual_type {
-            use crate::query_boundaries::common::ContextualTypeContext;
-            let ctx_helper = ContextualTypeContext::with_expected_and_options(
-                self.ctx.types,
-                ctx_type,
-                self.ctx.compiler_options.no_implicit_any,
-            );
-            let env = self.ctx.type_env.borrow();
-            ctx_helper.get_this_type_from_marker_with_resolver(&*env)
+            self.contextual_this_type_from_marker(ctx_type)
         } else {
             None
         };

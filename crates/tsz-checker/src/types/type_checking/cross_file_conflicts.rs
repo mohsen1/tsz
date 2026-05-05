@@ -1538,11 +1538,12 @@ impl<'a> CheckerState<'a> {
     /// Check for declarations that conflict with built-in global identifiers (TS2397).
     ///
     /// TypeScript protects the built-in global names `undefined` and `globalThis`
-    /// from being redeclared:
-    /// - `var undefined = null;` → TS2397 (value declaration of `undefined`)
-    /// - `namespace globalThis {}` → TS2397 (in non-module/script files)
-    /// - `var globalThis;` → TS2397 (in non-module/script files)
+    /// from being redeclared in script (non-module) files:
+    /// - `var undefined = null;` → TS2397 (script file only)
+    /// - `namespace globalThis {}` → TS2397 (script file only)
+    /// - `var globalThis;` → TS2397 (script file only)
     ///
+    /// In external modules both names are module-scoped and do not conflict.
     /// Type declarations (interfaces, type aliases, etc.) named `undefined` are
     /// allowed — `checkTypeNameIsReserved` handles those separately.
     pub(crate) fn check_built_in_global_identifier_conflicts(&mut self) {
@@ -1576,8 +1577,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 // In module files, any declaration of `undefined` is module-scoped
-                // and does not conflict with the global `undefined`. tsc only emits
-                // TS2397 for `undefined` declarations in script (non-module) files.
+                // and does not conflict with the global `undefined`.  tsc only emits
+                // TS2397 for declarations of `undefined` in script (non-module) files.
                 if is_external_module {
                     continue;
                 }
