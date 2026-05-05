@@ -443,9 +443,20 @@ fn test_index_access_never_key() {
 
     let index_access = interner.index_access(obj, TypeId::NEVER);
 
-    let _result = evaluate_type(&interner, index_access);
-    // obj[never] - behavior depends on implementation
-    // Could be never or could be an error type
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(result, TypeId::NEVER, "obj[never] should be never");
+}
+
+#[test]
+fn test_index_access_keyof_empty_object_is_never() {
+    let interner = TypeInterner::new();
+
+    let empty_obj = interner.object(vec![]);
+    let keyof_empty = interner.keyof(empty_obj);
+    let index_access = interner.index_access(empty_obj, keyof_empty);
+
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(result, TypeId::NEVER, "{{}}[keyof {{}}] should be never");
 }
 
 // =============================================================================
