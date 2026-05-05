@@ -1437,6 +1437,7 @@ impl<'a> CheckerState<'a> {
         let prop_node = self.ctx.arena.get(prop_name_idx)?;
 
         let prefer_number_index = prop_node.kind == SyntaxKind::NumericLiteral as u16;
+        let prefer_symbol_index = self.is_symbol_property_name(prop_name_idx);
 
         // For type parameters, also check the constraint for index signatures
         let constraint_target =
@@ -1455,16 +1456,24 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
             })
             .find_map(|shape| {
+                let string_index = shape
+                    .string_index
+                    .as_ref()
+                    .filter(|sig| sig.key_type != TypeId::SYMBOL);
+                let symbol_index = shape
+                    .string_index
+                    .as_ref()
+                    .filter(|sig| sig.key_type == TypeId::SYMBOL);
                 if prefer_number_index {
                     shape
                         .number_index
                         .as_ref()
                         .map(|sig| sig.value_type)
-                        .or_else(|| shape.string_index.as_ref().map(|sig| sig.value_type))
+                        .or_else(|| string_index.map(|sig| sig.value_type))
+                } else if prefer_symbol_index {
+                    symbol_index.map(|sig| sig.value_type)
                 } else {
-                    shape
-                        .string_index
-                        .as_ref()
+                    string_index
                         .map(|sig| sig.value_type)
                         .or_else(|| shape.number_index.as_ref().map(|sig| sig.value_type))
                 }

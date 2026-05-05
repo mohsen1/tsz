@@ -1639,6 +1639,51 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            let computed_property = self
+                .ctx
+                .arena
+                .get(report_idx)
+                .and_then(|node| self.ctx.arena.get_property_assignment(node))
+                .map(|prop| (prop.name, prop.initializer))
+                .or_else(|| {
+                    self.object_literal_property_name_and_value(obj_literal_idx, source_prop.name)
+                })
+                .or_else(|| {
+                    let obj_node = self.ctx.arena.get(obj_literal_idx)?;
+                    let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
+                    obj_lit.elements.nodes.iter().rev().find_map(|&elem_idx| {
+                        let elem_node = self.ctx.arena.get(elem_idx)?;
+                        let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                        let resolved = self.get_property_name_resolved(prop.name)?;
+                        (self.ctx.types.intern_string(&resolved) == source_prop.name)
+                            .then_some((prop.name, prop.initializer))
+                    })
+                });
+            if let Some((prop_name_idx, prop_value_idx)) = computed_property
+                && self
+                    .ctx
+                    .arena
+                    .get(prop_name_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+                let source_type = self
+                    .literal_type_from_initializer(prop_value_idx)
+                    .unwrap_or(source_prop.type_id);
+                let source_str = self.format_type_for_assignability_message(source_type);
+                let target_str = self.format_type_for_assignability_message(target_value_type);
+                let message = format_message(
+                    diagnostic_messages::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                self.error_at_node(
+                    prop_name_idx,
+                    &message,
+                    diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+                continue;
+            }
             self.error_type_not_assignable_at_with_anchor(
                 source_prop.type_id,
                 target_value_type,

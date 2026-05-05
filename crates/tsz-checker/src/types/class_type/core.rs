@@ -951,10 +951,12 @@ impl<'a> CheckerState<'a> {
                         param_name,
                     };
 
-                    if key_type == TypeId::NUMBER {
-                        Self::merge_index_signature(&mut number_index, index);
-                    } else {
-                        Self::merge_index_signature(&mut string_index, index);
+                    if is_valid_index_type {
+                        if key_type == TypeId::NUMBER {
+                            Self::merge_index_signature(&mut number_index, index);
+                        } else {
+                            Self::merge_index_signature(&mut string_index, index);
+                        }
                     }
                 }
                 _ => {}

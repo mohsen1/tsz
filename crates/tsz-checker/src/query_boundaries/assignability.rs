@@ -1,4 +1,6 @@
-use tsz_solver::{QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId};
+use tsz_solver::{
+    ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
+};
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
 
@@ -747,7 +749,7 @@ pub(crate) fn classify_object_properties(
     if let Some(target_shape) =
         crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
     {
-        if target_shape.string_index.is_some() {
+        if shape_has_non_symbol_index_signature(&target_shape) {
             classification.target_has_index_signature = true;
         }
         if target_shape.properties.is_empty()
@@ -769,7 +771,7 @@ pub(crate) fn classify_object_properties(
             if let Some(shape) =
                 crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
             {
-                if shape.string_index.is_some() {
+                if shape_has_non_symbol_index_signature(&shape) {
                     classification.target_has_index_signature = true;
                 }
                 if shape.properties.is_empty()
@@ -797,7 +799,7 @@ pub(crate) fn classify_object_properties(
             if let Some(shape) =
                 crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
             {
-                if shape.string_index.is_some() || shape.number_index.is_some() {
+                if shape_has_non_symbol_index_signature(&shape) {
                     classification.target_has_index_signature = true;
                 }
                 if shape.number_index.is_some() {
@@ -834,7 +836,8 @@ pub(crate) fn classify_object_properties(
             } else {
                 matching_props.push(source_prop.clone());
             }
-        } else if !classification.target_has_index_signature
+        } else if !target_index_signature_accepts_property(db, target, source_prop)
+            && !classification.target_has_index_signature
             && !classification.target_is_empty_object
             && !classification.target_is_global_object_or_function
             && !classification.target_is_type_parameter
@@ -856,6 +859,68 @@ pub(crate) fn classify_object_properties(
     }
 
     Some(classification)
+}
+
+fn shape_has_non_symbol_index_signature(shape: &ObjectShape) -> bool {
+    shape
+        .string_index
+        .as_ref()
+        .is_some_and(|idx| idx.key_type != TypeId::SYMBOL)
+        || shape.number_index.is_some()
+}
+
+fn target_index_signature_accepts_property(
+    db: &dyn TypeDatabase,
+    target: TypeId,
+    source_prop: &PropertyInfo,
+) -> bool {
+    use super::common::{intersection_members, union_members};
+
+    if let Some(shape) =
+        crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
+    {
+        return shape_index_signature_accepts_property(db, &shape, source_prop);
+    }
+
+    if let Some(members) = union_members(db, target) {
+        return members
+            .iter()
+            .any(|&member| target_index_signature_accepts_property(db, member, source_prop));
+    }
+
+    if let Some(members) = intersection_members(db, target) {
+        return members
+            .iter()
+            .any(|&member| target_index_signature_accepts_property(db, member, source_prop));
+    }
+
+    false
+}
+
+fn shape_index_signature_accepts_property(
+    db: &dyn TypeDatabase,
+    shape: &ObjectShape,
+    source_prop: &PropertyInfo,
+) -> bool {
+    let string_index = shape
+        .string_index
+        .as_ref()
+        .filter(|idx| idx.key_type != TypeId::SYMBOL);
+    let symbol_index = shape
+        .string_index
+        .as_ref()
+        .filter(|idx| idx.key_type == TypeId::SYMBOL);
+
+    if source_prop.is_symbol_named {
+        return symbol_index.is_some();
+    }
+
+    let name = db.resolve_atom_ref(source_prop.name);
+    if shape.number_index.is_some() && tsz_solver::utils::is_numeric_literal_name(name.as_ref()) {
+        return true;
+    }
+
+    string_index.is_some()
 }
 
 /// Collect all property names and their types from a target type.

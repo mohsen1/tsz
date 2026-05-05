@@ -846,7 +846,9 @@ impl<'a> CheckerState<'a> {
                 {
                     index_sig.readonly |= readonly;
                     match index_sig.key_type {
-                        TypeId::STRING => object_shape.string_index = Some(index_sig),
+                        TypeId::STRING | TypeId::SYMBOL => {
+                            object_shape.string_index = Some(index_sig);
+                        }
                         TypeId::NUMBER => object_shape.number_index = Some(index_sig),
                         _ => {}
                     }
@@ -907,7 +909,7 @@ impl<'a> CheckerState<'a> {
         let colon_idx = Self::find_top_level_char(inner, ':')?;
         let param_name = inner[..colon_idx].trim();
         let key_type = self.resolve_jsdoc_type_str(inner[colon_idx + 1..].trim())?;
-        if key_type != TypeId::STRING && key_type != TypeId::NUMBER {
+        if key_type != TypeId::STRING && key_type != TypeId::NUMBER && key_type != TypeId::SYMBOL {
             return None;
         }
 
