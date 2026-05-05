@@ -885,17 +885,32 @@ impl<'a> CheckerState<'a> {
         is_static: bool,
         summary: &mut ClassOwnMemberSummary,
     ) {
-        let Some(body_node) = self.ctx.arena.get(body_idx) else {
-            return;
-        };
-        let Some(block) = self.ctx.arena.get_block(body_node) else {
-            return;
+        let (statement_count, this_aliases) = {
+            let Some(body_node) = self.ctx.arena.get(body_idx) else {
+                return;
+            };
+            let Some(block) = self.ctx.arena.get_block(body_node) else {
+                return;
+            };
+            (
+                block.statements.nodes.len(),
+                self.collect_js_this_aliases(&block.statements.nodes),
+            )
         };
 
-        let statements = block.statements.nodes.clone();
-        let this_aliases = self.collect_js_this_aliases(&statements);
-
-        for stmt_idx in statements {
+        for statement_index in 0..statement_count {
+            let stmt_idx = {
+                let Some(body_node) = self.ctx.arena.get(body_idx) else {
+                    return;
+                };
+                let Some(block) = self.ctx.arena.get_block(body_node) else {
+                    return;
+                };
+                let Some(&stmt_idx) = block.statements.nodes.get(statement_index) else {
+                    return;
+                };
+                stmt_idx
+            };
             let Some(name) = self.js_implicit_member_name(stmt_idx, &this_aliases) else {
                 continue;
             };
