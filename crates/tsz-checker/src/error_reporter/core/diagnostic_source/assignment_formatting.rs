@@ -152,6 +152,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 expr_type
             };
+            if self.should_preserve_nuia_source_undefined_display(
+                source,
+                target,
+                expr_idx,
+                expr_display_type,
+            ) {
+                return self.format_type_for_assignability_message(source);
+            }
             let node_is_array_of_source = crate::query_boundaries::common::array_element_type(
                 self.ctx.types,
                 expr_display_type,
@@ -300,6 +308,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 expr_type
             };
+            if self.should_preserve_nuia_source_undefined_display(
+                source,
+                target,
+                expr_idx,
+                expr_display_type,
+            ) {
+                return self.format_type_for_assignability_message(source);
+            }
             let preserve_literal_surface = self.target_preserves_literal_surface(target);
             if expr_type != TypeId::ERROR
                 && let Some(annotation_text) =
@@ -467,6 +483,29 @@ impl<'a> CheckerState<'a> {
         }
 
         self.format_assignability_type_for_message(source, target)
+    }
+
+    fn should_preserve_nuia_source_undefined_display(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        expr_idx: NodeIndex,
+        expr_display_type: TypeId,
+    ) -> bool {
+        if !self.ctx.compiler_options.no_unchecked_indexed_access
+            || expr_display_type == TypeId::ERROR
+        {
+            return false;
+        }
+        if !crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, source)
+            || crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, target)
+        {
+            return false;
+        }
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        })
     }
 
     pub(in crate::error_reporter) fn format_assignment_target_type_for_diagnostic(
