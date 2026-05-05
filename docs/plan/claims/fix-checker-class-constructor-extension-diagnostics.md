@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-class-constructor-extension-diagnostics`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/3118
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
