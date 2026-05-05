@@ -16,7 +16,7 @@ use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, CallableShape, ParamInfo, PropertyInfo, TypeId};
+use tsz_solver::{CallSignature, CallableShape, ParamInfo, PropertyInfo, SymbolRef, TypeId};
 
 impl<'a> FlowAnalyzer<'a> {
     fn is_builtin_promise_like_name(name: &str) -> bool {
@@ -85,6 +85,12 @@ impl<'a> FlowAnalyzer<'a> {
             return self.fallback_await_expression_type(rhs);
         }
 
+        if rhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(property_type) = self.fallback_property_access_type(rhs)
+        {
+            return Some(property_type);
+        }
+
         // Handle binary expressions whose types may only be in request_node_types
         // (contextually typed) rather than node_types. Compute the result type
         // from the operand types which ARE in node_types.
@@ -95,6 +101,23 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    fn fallback_property_access_type(&self, expr: NodeIndex) -> Option<TypeId> {
+        let node = self.arena.get(expr)?;
+        let access = self.arena.get_access_expr(node)?;
+        let prop_name = self
+            .arena
+            .get(access.name_or_argument)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+        let receiver_type = self.fallback_expression_type_from_syntax(access.expression)?;
+        crate::query_boundaries::property_access::resolve_property_access(
+            self.interner,
+            receiver_type,
+            prop_name,
+        )
+        .success_type()
     }
 
     pub(super) fn fallback_expression_type_from_syntax(&self, expr: NodeIndex) -> Option<TypeId> {
@@ -117,7 +140,11 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(nullish_type) = self.nullish_literal_type(expr) {
             return Some(nullish_type);
         }
-        if let Some(ty) = self.node_types.and_then(|nt| nt.get(&expr.0).copied()) {
+        if let Some(ty) = self
+            .node_types
+            .and_then(|nt| nt.get(&expr.0).copied())
+            .filter(|&ty| ty != TypeId::ERROR)
+        {
             return Some(ty);
         }
         if let Some(reference_type) = self.fallback_type_for_reference(expr) {
@@ -541,14 +568,37 @@ impl<'a> FlowAnalyzer<'a> {
 
     fn fallback_type_for_reference(&self, reference: NodeIndex) -> Option<TypeId> {
         let reference = self.skip_parens_and_assertions(reference);
-        if let Some(ty) = self.node_types.and_then(|nt| nt.get(&reference.0).copied()) {
+        if let Some(ty) = self
+            .node_types
+            .and_then(|nt| nt.get(&reference.0).copied())
+            .filter(|&ty| ty != TypeId::ERROR)
+        {
             return Some(ty);
         }
 
         let sym_id = self.reference_symbol(reference)?;
         let symbol = self.binder.get_symbol(sym_id)?;
         let decl = symbol.primary_declaration()?;
-        self.fallback_declaration_type(decl)
+        let declared_type = self
+            .annotation_type_from_var_decl_node(decl)
+            .or_else(|| {
+                self.node_types
+                    .and_then(|nt| nt.get(&decl.0).copied())
+                    .filter(|&ty| ty != TypeId::ERROR)
+            })
+            .or_else(|| {
+                self.resolve_symbol_to_lazy(SymbolRef(sym_id.0))
+                    .map(|ty| self.resolve_lazy_via_env(ty))
+            });
+        if let (Some(initial_type), Some(flow_node)) =
+            (declared_type, self.binder.get_node_flow(reference))
+        {
+            let flowed = self.get_flow_type(reference, initial_type, flow_node);
+            if flowed != TypeId::ERROR {
+                return Some(flowed);
+            }
+        }
+        declared_type.or_else(|| self.fallback_declaration_type(decl))
     }
 
     fn fallback_declaration_type(&self, decl: NodeIndex) -> Option<TypeId> {
