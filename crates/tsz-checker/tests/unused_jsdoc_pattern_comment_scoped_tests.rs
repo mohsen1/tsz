@@ -6,9 +6,8 @@
 //! arbitrary code or strings.
 //!
 //! These tests pin the comment-scoped behavior: a JSDoc-looking match
-//! inside a string literal (or single-line comment, or template
-//! literal) must not count, while a real block-comment reference still
-//! does.
+//! inside a string literal (or non-JSDoc comment) must not count,
+//! while a real JSDoc reference still does.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::check_source;
@@ -79,7 +78,28 @@ type Hidden = { value: number };
 }
 
 #[test]
-fn jsdoc_type_tag_in_block_comment_still_suppresses_ts6196() {
+fn jsdoc_type_tag_in_plain_block_comment_does_not_suppress_ts6196() {
+    let source = r#"
+export {};
+
+type PlainBlockOnly = string;
+
+/* @type {PlainBlockOnly} */
+const value = 1;
+"#;
+    let codes = check_with_no_unused_locals(source);
+    assert!(
+        codes.contains(&6196),
+        "Expected TS6196 for `PlainBlockOnly`; plain block comments are not JSDoc. Got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&6133),
+        "Expected TS6133 for `value` to match noUnusedLocals behavior. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsdoc_type_tag_in_jsdoc_comment_still_suppresses_ts6196() {
     // Sanity: a real `/** ... */` reference still counts as a usage.
     let source = r#"
 export {};
