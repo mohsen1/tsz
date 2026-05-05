@@ -474,6 +474,83 @@ fn test_exports_pattern_key_is_not_treated_as_exact_match_for_literal_star_speci
 }
 
 #[test]
+fn test_package_exports_target_cannot_escape_package_root() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_exports_target_escape");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./leak":"../leak.d.ts"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/leak.d.ts"),
+        "export declare const value: number;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import { value } from 'pkg/leak';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("pkg/leak", &dir.join("src/index.ts"), Span::new(0, 28));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "export target escaping the package root must not resolve, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_imports_absolute_target_is_invalid() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_absolute_target");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(dir.join("abs.d.ts"), "export declare const value: number;").unwrap();
+    fs::write(
+        dir.join("package.json"),
+        serde_json::json!({
+            "name": "app",
+            "imports": {
+                "#abs": dir.join("abs.d.ts").to_string_lossy()
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import { value } from '#abs';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#abs", &dir.join("src/index.ts"), Span::new(0, 28));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "absolute imports target must not resolve, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_package_type_enum() {
     assert_eq!(PackageType::default(), PackageType::CommonJs);
     assert_ne!(PackageType::Module, PackageType::CommonJs);
