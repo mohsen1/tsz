@@ -233,3 +233,21 @@ const fn = <Key extends keyof typeof myRecord>(key: Key) => {
         "Generic-key read should still emit TS2322 for `string | undefined → string`. Got: {codes:?}",
     );
 }
+
+#[test]
+fn nuia_string_index_signature_accepts_numeric_literal_union_without_ts7053() {
+    let source = r#"
+declare const strMap: { [s: string]: boolean };
+const e: boolean = strMap[0 as 0 | 1];
+"#;
+    let diags = diags_for_strict_nuia(source);
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2322),
+        "NUIA numeric-literal union read should still emit TS2322. Got: {codes:?}",
+    );
+    assert!(
+        !codes.contains(&7053),
+        "A string index signature accepts numeric keys, so numeric-literal unions must not emit TS7053. Got: {codes:?}",
+    );
+}
