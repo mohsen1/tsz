@@ -707,10 +707,15 @@ pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 }
 
+/// Get the element type for mutable array forms that are identical for TS2403.
+///
+/// This intentionally recognizes `T[]` and canonical `Array<T>` applications
+/// before application evaluation erases the as-written `Array<T>` identity.
 pub fn mutable_array_element_for_redeclaration(
     db: &dyn TypeDatabase,
-    definition_store: &DefinitionStore,
     type_id: TypeId,
+    array_base: Option<TypeId>,
+    definition_store: Option<&DefinitionStore>,
 ) -> Option<TypeId> {
     if type_id.is_intrinsic() {
         return None;
@@ -720,8 +725,12 @@ pub fn mutable_array_element_for_redeclaration(
         Some(TypeData::Array(elem)) => Some(elem),
         Some(TypeData::Application(app_id)) => {
             let app = db.type_application(app_id);
-            (is_array_application_base_for_redeclaration(db, definition_store, app.base)
-                && app.args.len() == 1)
+            (is_array_application_base_for_redeclaration(
+                db,
+                app.base,
+                array_base,
+                definition_store,
+            ) && app.args.len() == 1)
                 .then_some(app.args[0])
         }
         _ => None,
@@ -730,10 +739,11 @@ pub fn mutable_array_element_for_redeclaration(
 
 fn is_array_application_base_for_redeclaration(
     db: &dyn TypeDatabase,
-    definition_store: &DefinitionStore,
     base: TypeId,
+    array_base: Option<TypeId>,
+    definition_store: Option<&DefinitionStore>,
 ) -> bool {
-    let array_base = TypeDatabase::get_array_base_type(db);
+    let array_base = array_base.or_else(|| db.get_array_base_type());
     let array_display_base = db.get_array_display_base_type();
     if array_base == Some(base)
         || array_display_base.is_some_and(|display_base| display_base == base)
@@ -749,10 +759,12 @@ fn is_array_application_base_for_redeclaration(
 
 fn lazy_base_names_array(
     db: &dyn TypeDatabase,
-    definition_store: &DefinitionStore,
+    definition_store: Option<&DefinitionStore>,
     base: TypeId,
 ) -> bool {
-    let Some(TypeData::Lazy(def_id)) = db.lookup(base) else {
+    let (Some(definition_store), Some(TypeData::Lazy(def_id))) =
+        (definition_store, db.lookup(base))
+    else {
         return false;
     };
 

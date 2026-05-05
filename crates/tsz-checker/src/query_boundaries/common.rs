@@ -2,8 +2,7 @@
 //!
 //! When a solver query is needed by multiple checker modules, define the
 //! canonical thin-wrapper here and re-export it from the per-module boundary
-//! files. This eliminates duplicate function bodies while preserving the
-//! per-module namespace pattern that callers rely on.
+//! files, preserving the per-module namespace pattern that callers rely on.
 
 use tsz_solver::{
     CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
