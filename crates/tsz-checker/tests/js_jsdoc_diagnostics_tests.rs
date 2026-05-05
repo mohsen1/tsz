@@ -139,6 +139,49 @@ console.log(typeof TruffleContract);
 }
 
 #[test]
+fn checked_js_jsdoc_import_module_specifier_may_contain_from() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "fromage.d.ts",
+                r#"
+export interface Foo {
+  value: string;
+}
+                "#,
+            ),
+            (
+                "caller.js",
+                r#"
+// @ts-check
+/** @import { Foo as LocalFoo } from "./fromage" */
+/** @type {LocalFoo} */
+const value = { value: 123 };
+                "#,
+            ),
+        ],
+        "caller.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Expected LocalFoo to resolve when the module specifier contains `from`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 after resolving LocalFoo to Foo. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn checked_js_cross_file_typedef_and_script_globals_duplicate() {
     let files = &[
         ("mod1.js", "/** @typedef {number} Foo */\nclass Bar {}\n"),
