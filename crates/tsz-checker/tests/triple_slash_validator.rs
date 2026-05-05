@@ -381,8 +381,7 @@ fn extract_reference_paths_still_works_before_code() {
 
 #[test]
 fn extract_reference_types_ignores_directives_after_code() {
-    let source =
-        "export const value = 1;\n\n/// <reference types=\"missing-types\" />\n\nvalue;\n";
+    let source = "export const value = 1;\n\n/// <reference types=\"missing-types\" />\n\nvalue;\n";
     let types = extract_reference_types(source);
     assert!(
         types.is_empty(),
