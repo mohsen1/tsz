@@ -1159,16 +1159,10 @@ impl<'a> CheckerState<'a> {
             // TS1109: Check for malformed @import tags (bare @import or missing module specifier)
             {
                 let mut search_from = 0;
-                while let Some(idx) = comment_text[search_from..].find("@import") {
+                while let Some(idx) = Self::jsdoc_tag_offset(&comment_text[search_from..], "import")
+                {
                     let abs_idx = search_from + idx;
                     let after_import = abs_idx + "@import".len();
-                    if after_import < comment_text.len() {
-                        let next = comment_text.as_bytes()[after_import];
-                        if next.is_ascii_alphanumeric() || next == b'_' {
-                            search_from = after_import;
-                            continue;
-                        }
-                    }
                     let rest_full = &comment_text[after_import..];
                     let next_tag = rest_full
                         .lines()
