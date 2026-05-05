@@ -96,6 +96,41 @@ declare const createExperiment: <Name extends string>(
 }
 
 #[test]
+fn test_node_modules_types_entry_uses_bare_package_specifier() {
+    let root =
+        std::env::temp_dir().join(format!("tsz-emitter-package-entry-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let package_root = root.join("node_modules/@babel/parser");
+    let typings_dir = package_root.join("typings");
+    std::fs::create_dir_all(&typings_dir).expect("create package dirs");
+    std::fs::write(
+        package_root.join("package.json"),
+        r#"{"name":"@babel/parser","types":"./typings/babel-parser.d.ts"}"#,
+    )
+    .expect("write package json");
+    std::fs::write(
+        typings_dir.join("babel-parser.d.ts"),
+        "export declare class PluginConfig {}",
+    )
+    .expect("write declaration");
+
+    let arena = tsz_parser::parser::node::NodeArena::default();
+    let emitter = DeclarationEmitter::new(&arena);
+    let current_path = root.join("packages/compiler-sfc/src/index.ts");
+    let source_path = typings_dir.join("babel-parser.d.ts");
+    let specifier = emitter
+        .package_specifier_for_node_modules_path(
+            current_path.to_str().expect("current path utf8"),
+            source_path.to_str().expect("source path utf8"),
+        )
+        .expect("package specifier");
+
+    assert_eq!(specifier, "@babel/parser");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn test_static_super_method_call_preserves_return_type() {
     let output = emit_dts_with_binding(
         r#"
