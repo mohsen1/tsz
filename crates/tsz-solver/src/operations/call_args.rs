@@ -372,7 +372,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     let consumed_offset = i - rest_start;
                     let remaining_rest_type =
                         self.remaining_rest_type_after_offset(rest_type, consumed_offset);
-                    if crate::type_queries::contains_type_parameters_db(
+                    if matches!(
+                        self.interner.lookup(remaining_rest_type),
+                        Some(TypeData::Tuple(_))
+                    ) && crate::type_queries::contains_type_parameters_db(
                         self.interner,
                         remaining_rest_type,
                     ) {
@@ -668,8 +671,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if !self.rest_type_needs_aggregate_argument_check(rest_type) {
             return None;
         }
+        if matches!(self.interner.lookup(rest_type), Some(TypeData::Tuple(_)))
+            && crate::type_queries::contains_type_parameters_db(self.interner, rest_type)
+        {
+            return None;
+        }
 
-        let actual = self.aggregate_rest_actual_type(&arg_types[rest_start..]);
+        let rest_args = &arg_types[rest_start..];
+        let actual = self.aggregate_rest_actual_type(rest_args);
         let assignable = if strict {
             self.checker.is_assignable_to_strict(actual, rest_type)
         } else {

@@ -311,6 +311,52 @@ baz(1, 2);
 }
 
 #[test]
+fn test_generic_spread_rest_does_not_report_tuple_tail_mismatch() {
+    let source = r#"
+declare function f10<T extends unknown[]>(...args: T): T;
+declare function f11<T extends (string | number | boolean)[]>(...args: T): T;
+
+function g10<U extends string[], V extends [number, number]>(u: U, v: V) {
+    f10(...u);
+    f10(...u, ...v);
+}
+
+function g11<U extends string[], V extends [number, number]>(u: U, v: V) {
+    f11(...u);
+    f11(...u, ...v);
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count, 0,
+        "Expected generic spread arguments to remain assignable to inferred generic rest tuples, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_tuple_union_rest_method_overloads_cover_variants() {
+    let source = r#"
+declare class MySettable implements Settable {
+    set(option: { [key: string]: unknown }): void;
+    set(name: string, value: unknown): void;
+}
+
+interface Settable {
+    set(...args: [option: { [key: string]: unknown }] | [name: string, value: unknown] | [name: string]): void;
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2416_count = diagnostics.iter().filter(|d| d.code == 2416).count();
+    assert_eq!(
+        ts2416_count, 0,
+        "Expected method overloads to satisfy tuple-union rest surface without TS2416, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_array_destructuring_with_rest() {
     let source = r"
 const arr = [1, 2, 3, 4, 5];

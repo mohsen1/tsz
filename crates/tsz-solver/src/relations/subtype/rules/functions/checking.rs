@@ -727,6 +727,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let prefix_params: &[ParamInfo] = &target_params_unpacked[..prefix_count];
 
                 let source_has_rest = source_params_unpacked.last().is_some_and(|p| p.rest);
+                let require_all_variants = !is_method;
+                let mut matched_any_variant = false;
                 for member_type_id in &union_members {
                     // When the union member is a readonly tuple and the source has
                     // individual (non-rest) parameters (forming a mutable tuple),
@@ -740,8 +742,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             Some(TypeData::ReadonlyType(_))
                         )
                     {
-                        self.type_param_equivalences.truncate(equiv_start);
-                        return SubtypeResult::False;
+                        if require_all_variants {
+                            self.type_param_equivalences.truncate(equiv_start);
+                            return SubtypeResult::False;
+                        }
+                        continue;
                     }
 
                     // Try unpacking this union member as a tuple
@@ -756,20 +761,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let mut variant_params: Vec<ParamInfo> = prefix_params.to_vec();
                     variant_params.extend(member_unpacked);
 
-                    if !self
+                    let matched = self
                         .check_params_compatible(
                             &source_params_unpacked,
                             &variant_params,
                             is_method,
                         )
-                        .is_true()
-                    {
+                        .is_true();
+                    if require_all_variants && !matched {
                         self.type_param_equivalences.truncate(equiv_start);
                         return SubtypeResult::False;
                     }
+                    matched_any_variant |= matched;
                 }
                 self.type_param_equivalences.truncate(equiv_start);
-                return SubtypeResult::True;
+                return if require_all_variants || matched_any_variant {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                };
             }
         }
 

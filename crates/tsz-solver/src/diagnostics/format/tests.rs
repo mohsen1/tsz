@@ -1143,6 +1143,48 @@ fn format_function_type_param_with_structural_array_constraint_uses_shorthand() 
 }
 
 #[test]
+fn format_function_type_param_with_non_primitive_array_constraint_uses_generic_form() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let t_atom = db.intern_string("T");
+    let foo = PropertyInfo::new(db.intern_string("foo"), TypeId::STRING);
+    let object = db.object(vec![foo]);
+    let constraint = db.array(object);
+    let t_param = db.type_param(TypeParamInfo {
+        name: t_atom,
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    });
+    let func = db.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(db.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = fmt.format(func);
+    assert!(
+        result.contains("<T extends Array<{ foo: string; }>>"),
+        "Expected non-primitive array constraint to preserve generic form, got: {result}"
+    );
+}
+
+#[test]
 fn format_function_type_param_with_array_application_constraint_preserves_generic_form() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
