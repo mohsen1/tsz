@@ -71,6 +71,87 @@ function f(x: A | B) {
     );
 }
 
+#[test]
+fn shadowed_object_and_function_instanceof_use_local_constructor_instances() {
+    let src = r#"
+function testObject() {
+    class Object {
+        private _brand!: void;
+        obj = 1;
+    }
+
+    class Date {
+        date = 1;
+    }
+
+    let value: string | Object = "" as string | Object;
+    if (value instanceof Object) {
+        const asLocalObject: Object = value;
+        const asString: string = value;
+
+        asLocalObject;
+        asString;
+    }
+
+    let other: string | Date = "" as string | Date;
+    if (other instanceof Object) {
+        const impossible: never = other;
+        const asDate: Date = other;
+
+        impossible;
+        asDate;
+    }
+}
+
+function testFunction() {
+    class Function {
+        fn = 1;
+    }
+
+    let value: string | Function = "" as string | Function;
+    if (value instanceof Function) {
+        const asLocalFunction: Function = value;
+        const asString: string = value;
+
+        asLocalFunction;
+        asString;
+    }
+}
+"#;
+    let diags = diagnostic_messages(src);
+    let ts2322_messages: Vec<_> = diags
+        .iter()
+        .filter_map(|(code, msg)| (*code == 2322).then_some(msg.as_str()))
+        .collect();
+
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|msg| msg.contains("Type 'Object' is not assignable to type 'string'.")),
+        "expected local Object to narrow to the shadowing class, got: {diags:?}"
+    );
+    assert!(
+        ts2322_messages.iter().any(|msg| {
+            msg.contains("not assignable to type 'Date'")
+                && !msg.contains("Type 'Date' is not assignable")
+        }),
+        "expected shadowed Object to preserve the intersection with Date instead of built-in \
+         Object narrowing, got: {diags:?}"
+    );
+    assert!(
+        !ts2322_messages.iter().any(|msg| {
+            msg.contains("(Function & string)") || msg.contains("(Function & Function)")
+        }),
+        "local Function assignment should not use the built-in Function fast path, got: {diags:?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|msg| msg.contains("Type 'Function' is not assignable to type 'string'.")),
+        "expected local Function to narrow to the shadowing class, got: {diags:?}"
+    );
+}
+
 /// When narrowing exhausts a union to `never`, property access against the
 /// resulting `never` value must emit TS2339 — the access is unreachable and
 /// the property genuinely doesn't exist on the value at this point. The
