@@ -15221,6 +15221,62 @@ cbThing(type => {
 }
 
 #[test]
+fn compile_jsdoc_enum_initializer_values_are_checked() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["enum.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("enum.js"),
+        r#"
+// @ts-check
+/** @enum {number} */
+const E = { A: "x" };
+
+/** @enum {string} */
+const Frozen = Object.freeze({ A: 1 });
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected TS2322 for mismatched JSDoc @enum object values, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts2322.iter().any(
+            |diag| diag.message_text.contains("string") && diag.message_text.contains("number")
+        ),
+        "Expected string-to-number enum initializer diagnostic, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322.iter().any(
+            |diag| diag.message_text.contains("number") && diag.message_text.contains("string")
+        ),
+        "Expected number-to-string Object.freeze enum initializer diagnostic, got: {ts2322:?}"
+    );
+}
+
+#[test]
 fn compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
