@@ -429,8 +429,8 @@ fn checked_js_jsdoc_type_with_unresolvable_module_does_not_emit_ts9006() {
 interface Item {
     x: string;
 }
-declare const items: Item[];
-export = items;
+declare function getItems(): Item[];
+export = getItems;
                 "#,
             ),
             (
@@ -455,6 +455,45 @@ module.exports = items;
     assert!(
         !has_error(&diagnostics, 9006),
         "TS9006 must not be emitted when the JSDoc `typeof import(...)` module specifier is unresolvable (TS2307 already covers the failure). Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_raw_typeof_import_line_comment_text_still_emits_ts9006() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "some-mod.d.ts",
+                r#"
+interface Item {
+    x: string;
+}
+declare function getItems(): Item[];
+export = getItems;
+                "#,
+            ),
+            (
+                "index.js",
+                r#"
+// typeof import("/some-mod")
+const items = require("./some-mod")();
+module.exports = items;
+                "#,
+            ),
+        ],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            emit_declarations: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 9006),
+        "ordinary line comments must not suppress TS9006. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
