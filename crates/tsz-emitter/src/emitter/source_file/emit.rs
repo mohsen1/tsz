@@ -60,13 +60,7 @@ impl<'a> Printer<'a> {
 
         // Store file name for jsx=react-jsxdev source location emission
         if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
-            // Extract just the basename from the full file path
-            let base_name = source
-                .file_name
-                .rsplit('/')
-                .next()
-                .unwrap_or(&source.file_name);
-            self.jsx_dev_file_name = Some(base_name.to_string());
+            self.jsx_dev_file_name = Some(jsx_dev_file_name(&source.file_name));
         } else {
             self.jsx_dev_file_name = None;
         }
@@ -2326,4 +2320,19 @@ impl<'a> Printer<'a> {
             .map(|comment_start| line[comment_start..].trim());
         Some((line_end as u32, trailing_comment))
     }
+}
+
+fn jsx_dev_file_name(file_name: &str) -> String {
+    let normalized = file_name.replace('\\', "/");
+    if let Some(src_start) = normalized.find("/.src/") {
+        return normalized[src_start..].to_string();
+    }
+    if let Some(stripped) = normalized.strip_prefix(".src/") {
+        return format!("/.src/{stripped}");
+    }
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or(&normalized)
+        .to_string()
 }
