@@ -314,8 +314,7 @@ const table = {
     let codes = diagnostics.iter().map(|d| d.code).collect::<Vec<_>>();
     assert!(
         codes.contains(&2322),
-        "Expected TS2322 for nested Object value type, got: {:?}",
-        codes
+        "Expected TS2322 for nested Object value type, got: {codes:?}"
     );
 }
 
