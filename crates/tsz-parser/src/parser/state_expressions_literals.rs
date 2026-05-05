@@ -309,21 +309,25 @@ impl ParserState {
             // Later reserved words in an array binding should stay on the
             // structural recovery path instead of surfacing a reserved-word
             // identifier diagnostic that tsc does not emit here.
-            if !elements.is_empty() && self.is_reserved_word() {
+            let in_parameter_binding_pattern = (self.context_flags
+                & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
+                != 0;
+            let hard_reserved_word = self.is_reserved_word();
+            let parameter_future_reserved_word =
+                in_parameter_binding_pattern && self.is_strict_mode_future_reserved_word();
+            if !elements.is_empty() && (hard_reserved_word || parameter_future_reserved_word) {
                 if let Some(comma_pos) = last_comma_pos {
-                    self.parse_error_at(comma_pos, 1, "';' expected.", diagnostic_codes::EXPECTED);
+                    let message = if in_parameter_binding_pattern {
+                        "'(' expected."
+                    } else {
+                        "';' expected."
+                    };
+                    self.parse_error_at(comma_pos, 1, message, diagnostic_codes::EXPECTED);
                 }
-                if (self.context_flags
-                    & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
-                    != 0
-                {
+                if in_parameter_binding_pattern && hard_reserved_word {
                     self.parse_companion_error_at_current_token(
                         "Expression expected.",
                         diagnostic_codes::EXPRESSION_EXPECTED,
-                    );
-                    self.parse_companion_error_at_current_token(
-                        "Declaration or statement expected.",
-                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
                     );
                 }
                 self.pending_array_binding_tail_recovery = true;
@@ -407,14 +411,25 @@ impl ParserState {
             last_comma_pos = Some(self.token_pos().saturating_sub(1));
         }
 
+        let in_parameter_binding_pattern = (self.context_flags
+            & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
+            != 0;
         if reserved_word_element_needs_close_error {
-            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            let message = if in_parameter_binding_pattern {
+                "';' expected."
+            } else {
+                "'(' expected."
+            };
+            self.parse_error_at_current_token(message, diagnostic_codes::EXPECTED);
         }
 
         let end_pos = self.token_end();
         self.parse_expected(SyntaxKind::CloseBracketToken);
 
-        if reserved_word_element_needs_close_error && self.is_token(SyntaxKind::EqualsToken) {
+        if reserved_word_element_needs_close_error
+            && ((in_parameter_binding_pattern && self.is_token(SyntaxKind::CloseParenToken))
+                || self.is_token(SyntaxKind::EqualsToken))
+        {
             self.parse_error_at_current_token(
                 "Declaration or statement expected.",
                 diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
