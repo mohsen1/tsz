@@ -1004,11 +1004,15 @@ impl<'a> DeclarationEmitter<'a> {
         Some(inner)
     }
 
-    const fn is_type_reference_identifier_start(ch: char) -> bool {
+    pub(in crate::declaration_emitter) const fn is_type_reference_identifier_start(
+        ch: char,
+    ) -> bool {
         ch == '_' || ch == '$' || ch.is_ascii_alphabetic()
     }
 
-    const fn is_type_reference_identifier_continue(ch: char) -> bool {
+    pub(in crate::declaration_emitter) const fn is_type_reference_identifier_continue(
+        ch: char,
+    ) -> bool {
         ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 

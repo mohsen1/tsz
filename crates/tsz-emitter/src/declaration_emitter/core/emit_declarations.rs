@@ -100,6 +100,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.retain_synthetic_class_extends_alias_dependencies_in_statements(
                 &source_file.statements,
             );
+            self.retain_export_default_expression_type_dependencies_in_statements(
+                &source_file.statements,
+            );
         }
 
         // Prepare aliases and build the import plan before emitting anything
