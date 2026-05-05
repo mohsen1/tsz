@@ -2112,7 +2112,15 @@ impl<'a> Printer<'a> {
                         self.write(",");
                         self.write_line();
                         self.increase_indent();
+                        let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                        if class_name_is_real && !class_name.is_empty() && class_name != *temp {
+                            self.scoped_class_expression_self_alias = Some((
+                                Arc::<str>::from(class_name.as_str()),
+                                Arc::<str>::from(temp.as_str()),
+                            ));
+                        }
                         self.emit_static_block_iife_expression(block_idx, comment_idx);
+                        self.scoped_class_expression_self_alias = prev_self_alias;
                         self.decrease_indent();
                     }
                 }
@@ -2574,11 +2582,19 @@ impl<'a> Printer<'a> {
             if let Some(name) = class_expr_set_function_name.as_ref() {
                 self.emit_class_expr_set_function_name_comma_item(temp, name);
             }
+            let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+            if class_name_is_real && !class_name.is_empty() && class_name != *temp {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(temp.as_str()),
+                ));
+            }
             self.emit_static_block_iife_comma_items_with_context(
                 deferred_static_blocks,
                 static_initializer_this_binding,
                 static_initializer_super_base,
             );
+            self.scoped_class_expression_self_alias = prev_self_alias;
             self.write(",");
             self.write_line();
             self.increase_indent();
