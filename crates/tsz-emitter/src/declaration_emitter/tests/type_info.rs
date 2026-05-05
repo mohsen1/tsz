@@ -497,6 +497,74 @@ export class Derived extends getBase()<string, number> {}
 }
 
 #[test]
+fn test_named_class_extends_expression_recovers_returned_local_class_when_type_is_never() {
+    let source = r#"
+type AnyFunction<Result = any> = (...input: any[]) => Result;
+type AnyConstructor<Instance extends object = object, Static extends object = object> =
+    (new (...input: any[]) => Instance) & Static;
+type MixinHelperFunc = <A extends AnyConstructor, T>(required: [A], arg: T) => T extends AnyFunction<infer M> ? M : never;
+export const Mixin: MixinHelperFunc = null as any;
+export class Base {}
+export class XmlElement2 extends Mixin(
+    [Base],
+    (base: AnyConstructor<Base, typeof Base>) => {
+        class XmlElement2 extends base {
+            num: number = 0;
+        }
+        return XmlElement2;
+    }) {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            (node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION)
+                .then_some(NodeIndex(idx as u32))
+                .filter(|&idx| {
+                    parser
+                        .arena
+                        .get(idx)
+                        .and_then(|node| parser.arena.get_class(node))
+                        .is_some_and(|class| {
+                            parser.arena.get_identifier_text(class.name) == Some("XmlElement2")
+                        })
+                })
+        })
+        .next_back()
+        .expect("missing exported XmlElement2 class");
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, TypeId::NEVER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains(
+            "declare const XmlElement2_base: {\n    new (): {\n        num: number;\n    };\n};"
+        ),
+        "Expected source fallback to recover returned local class constructor shape: {output}"
+    );
+    assert!(
+        !output.contains("declare const XmlElement2_base: never;"),
+        "Did not expect synthetic class base alias to stay `never`: {output}"
+    );
+}
+
+#[test]
 #[ignore = "regressed after remote changes: class extends expression declaration emit loses local dependency source order"]
 fn test_named_class_extends_expression_keeps_local_dependency_in_source_order() {
     let source = r#"
