@@ -6,6 +6,26 @@ use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn known_global_value_has_local_shadow(&self, idx: NodeIndex, name: &str) -> bool {
+        if let Some(mut scope_id) = self.ctx.binder.find_enclosing_scope(self.ctx.arena, idx) {
+            let mut iterations = 0;
+            while scope_id.is_some() {
+                iterations += 1;
+                if iterations > crate::state::MAX_TREE_WALK_ITERATIONS {
+                    break;
+                }
+                let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
+                    break;
+                };
+                if let Some(sym_id) = scope.table.get(name)
+                    && !self.ctx.symbol_is_from_actual_lib(sym_id)
+                    && !self.ctx.symbol_is_from_lib(sym_id)
+                {
+                    return true;
+                }
+                scope_id = scope.parent;
+            }
+        }
+
         let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) else {
             return false;
         };
@@ -14,6 +34,9 @@ impl<'a> CheckerState<'a> {
         };
         if symbol.escaped_name != name {
             return false;
+        }
+        if !self.ctx.symbol_is_from_actual_lib(sym_id) && !self.ctx.symbol_is_from_lib(sym_id) {
+            return true;
         }
 
         let mut declarations = symbol.declarations.clone();
