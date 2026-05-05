@@ -114,6 +114,10 @@ name = "ts6133_unused_type_params_tests"
 path = "tests/ts6133_unused_type_params_tests.rs"
 
 [[test]]
+name = "unused_parameter_tests"
+path = "tests/unused_parameter_tests.rs"
+
+[[test]]
 name = "private_brands"
 path = "tests/private_brands.rs"
 
