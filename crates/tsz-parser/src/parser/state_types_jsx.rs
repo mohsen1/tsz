@@ -1645,8 +1645,9 @@ impl ParserState {
                 "Expression expected.",
                 tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
             );
-            // Consume the spread payload so recovery continues at the closing brace.
-            self.parse_jsx_embedded_expression();
+            // Keep the spread payload token for JSX attribute-list recovery. In
+            // `<X a={...a} />`, tsc emits the malformed `a:` initializer and
+            // then recovers the payload `a` as the following shorthand prop.
             self.error_identifier_expected();
             NodeIndex::NONE
         } else {

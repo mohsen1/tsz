@@ -143,6 +143,28 @@ fn classic_spread_no_flatten_variable() {
     );
 }
 
+#[test]
+fn malformed_attribute_spread_value_preserves_empty_initializer() {
+    let source = r#"
+declare const React: any
+declare namespace JSX {
+    interface IntrinsicElements {
+        [k: string]: any
+    }
+}
+
+const X: any
+const a: any
+<X a={...a} />
+"#;
+    let output = emit_jsx(source, JsxEmit::React, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("React.createElement(X, { a: , a: true });"),
+        "Malformed spread attribute value should keep the empty property initializer.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Target-appropriate spread prop handling (committed in 8717f7d)
 // =============================================================================
