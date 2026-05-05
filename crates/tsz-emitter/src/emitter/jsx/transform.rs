@@ -362,7 +362,19 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // JSX attribute names are property keys on the synthesized props
+        // object, not value references — they must not pick up the
+        // commonjs-named-import substitution (`css` → `react_1.css`),
+        // namespace qualification, or the inline-export `exports.X`
+        // rewrite that `emit_identifier` applies to value identifiers.
+        let prev_ns = self.suppress_ns_qualification;
+        let prev_import = self.suppress_commonjs_named_import_substitution;
+        self.suppress_ns_qualification = true;
+        self.suppress_commonjs_named_import_substitution = true;
         self.emit(attr.name);
+        self.suppress_ns_qualification = prev_ns;
+        self.suppress_commonjs_named_import_substitution = prev_import;
+
         if attr.initializer.is_some() {
             self.write("=");
             self.emit(attr.initializer);

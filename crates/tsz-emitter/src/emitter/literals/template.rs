@@ -17,7 +17,32 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.emit_expression(tagged.tag);
+        // When the tag is a bare identifier whose CJS-named-import
+        // substitution turns it into a property access (`css` →
+        // `react_1.css`), wrap the substituted expression in `(0, …)` so
+        // the tagged-template invocation does not bind `this` to the
+        // module namespace object. Mirrors the call-expression path in
+        // `expressions/call.rs` and tsc's `inlineJsxFactoryDeclarations` /
+        // `jsxImportSourceNonPragmaComment` baselines.
+        let cjs_subst = if !self.suppress_commonjs_named_import_substitution
+            && !self.in_system_execute_body
+            && let Some(tag_node) = self.arena.get(tagged.tag)
+            && let Some(ident) = self.arena.get_identifier(tag_node)
+        {
+            self.commonjs_named_import_substitutions
+                .get(&ident.escaped_text)
+                .cloned()
+        } else {
+            None
+        };
+
+        if let Some(subst) = cjs_subst {
+            self.write("(0, ");
+            self.write(&subst);
+            self.write(")");
+        } else {
+            self.emit_expression(tagged.tag);
+        }
 
         // When the tag is `super` with type arguments (which are stripped),
         // tsc emits `super. ` to preserve the intent of a property access.
