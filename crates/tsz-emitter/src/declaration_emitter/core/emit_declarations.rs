@@ -897,6 +897,12 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 let effective_return_type_id = if func_body.is_some() {
                     self.refine_invokable_return_type_from_identifier(func_body, return_type_id)
+                        .or_else(|| {
+                            self.refine_object_rest_return_type_from_identifier(
+                                func_body,
+                                return_type_id,
+                            )
+                        })
                         .unwrap_or(return_type_id)
                 } else {
                     return_type_id

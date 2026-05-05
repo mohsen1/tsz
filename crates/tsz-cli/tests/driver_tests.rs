@@ -12212,6 +12212,82 @@ fn ts2307_emitted_for_commonjs_module() {
 }
 
 #[test]
+fn compile_resolves_commonjs_require_with_whitespace_before_paren() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true
+          },
+          "files": [
+            "main-space.js",
+            "main-tight-control.js"
+          ]
+        }"#,
+    );
+    write_file(
+        &base.join("main-space.js"),
+        r#"// @ts-check
+
+const depSpace = require ("./dep-space");
+
+depSpace.value.toUpperCase();
+"#,
+    );
+    write_file(
+        &base.join("dep-space.js"),
+        r#"// @ts-check
+
+exports.value = 1;
+"#,
+    );
+    write_file(
+        &base.join("main-tight-control.js"),
+        r#"// @ts-check
+
+const depTight = require("./dep-tight");
+
+depTight.value.toUpperCase();
+"#,
+    );
+    write_file(
+        &base.join("dep-tight.js"),
+        r#"// @ts-check
+
+exports.value = 1;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let missing_property_files: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+        .map(|diag| diag.file.as_str())
+        .collect();
+
+    assert!(
+        missing_property_files
+            .iter()
+            .any(|file| file.contains("main-space.js")),
+        "Expected spaced require dependency to produce TS2339 in main-space.js, got: {result:?}"
+    );
+    assert!(
+        missing_property_files
+            .iter()
+            .any(|file| file.contains("main-tight-control.js")),
+        "Expected tight require control to produce TS2339 in main-tight-control.js, got: {result:?}"
+    );
+}
+
+#[test]
 fn ts1079_emitted_for_declare_import_without_ts2304_on_declare() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;

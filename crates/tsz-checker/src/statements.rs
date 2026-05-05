@@ -231,6 +231,10 @@ pub trait StatementCheckCallbacks {
         self.check_statement(stmt_idx);
     }
 
+    /// Clear expression and flow caches before rechecking a loop body under
+    /// stabilized loop-entry flow types.
+    fn clear_loop_body_recheck_caches(&mut self, _stmt_idx: NodeIndex) {}
+
     /// Check switch statement exhaustiveness (Task 12: CFA Diagnostics).
     ///
     /// Called after all switch clauses have been checked to determine if
@@ -571,6 +575,11 @@ impl StatementChecker {
 
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);
+                    state.check_statement_with_request(statement, request);
+                    state.leave_iteration_statement();
+
+                    state.clear_loop_body_recheck_caches(statement);
+                    state.enter_iteration_statement();
                     state.check_statement_with_request(statement, request);
                     state.leave_iteration_statement();
 

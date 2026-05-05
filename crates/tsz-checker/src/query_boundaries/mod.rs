@@ -96,6 +96,7 @@ pub(crate) mod flow_analysis;
 pub(crate) mod index_signature;
 #[allow(dead_code)]
 pub(crate) mod inference;
+pub(crate) mod intersection_display;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,

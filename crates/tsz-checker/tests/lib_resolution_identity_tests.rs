@@ -1785,6 +1785,51 @@ async function tupleAll() {
     );
 }
 
+#[test]
+fn promise_all_async_map_tuple_context_evaluates_awaited_elements() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib_and_options(
+        r#"
+interface ILocalExtension {
+  isApplicationScoped: boolean;
+  publisherId: string | null;
+}
+type Metadata = {
+  updated: boolean;
+};
+declare function scanMetadata(
+  local: ILocalExtension
+): Promise<Metadata | undefined>;
+
+async function copyExtensions(
+  fromExtensions: ILocalExtension[]
+): Promise<void> {
+  const extensions: [ILocalExtension, Metadata | undefined][] =
+    await Promise.all(
+      fromExtensions
+        .filter((e) => !e.isApplicationScoped)
+        .map(async (e) => [e, await scanMetadata(e)])
+    );
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Promise.all async map tuple context should not produce TS2322.\nDiagnostics: {errors:#?}"
+    );
+}
+
 // ---- Import type lowering focused tests ----
 
 #[test]

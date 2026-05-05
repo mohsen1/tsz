@@ -306,6 +306,68 @@ type R = RT<typeof createReducer<string>>;
 }
 
 #[test]
+fn ts2635_instantiation_expression_filters_union_members_like_tsc() {
+    let diags = check_source_diagnostics(
+        r#"
+function ok(f: (<T>(a: T) => T) | { x: string }) {
+    f<string>;
+}
+function bad(f: (<T>(a: T) => T) | ((a: string, b: number) => string[])) {
+    f<string>;
+}
+"#,
+    );
+
+    let ts2635: Vec<_> = diags.iter().filter(|d| d.code == 2635).collect();
+    assert_eq!(ts2635.len(), 1, "Expected one TS2635, got: {diags:?}");
+    assert!(
+        ts2635[0]
+            .message_text
+            .contains("(a: string, b: number) => string[]"),
+        "Expected TS2635 to report the non-generic function member, got: {:?}",
+        ts2635[0].message_text
+    );
+}
+
+#[test]
+fn typeof_instantiation_validates_call_and_construct_constraints() {
+    let diags = check_source_diagnostics(
+        r#"
+type InstanceType<T extends abstract new (...args: any) => any> = T;
+type A<U> = InstanceType<typeof Array<U>>;
+
+declare const g2: {
+    <T extends string>(a: T): T;
+    new <T extends number>(b: T): T;
+}
+
+type T40<U extends string> = typeof g2<U>;
+type T41<U extends number> = typeof g2<U>;
+"#,
+    );
+
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+    let ts2344: Vec<_> = relevant.iter().filter(|d| d.code == 2344).collect();
+    assert_eq!(
+        ts2344.len(),
+        2,
+        "Expected two TS2344 errors, got: {relevant:?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .any(|d| d.message_text.contains("constraint 'number'")),
+        "Expected construct constraint diagnostic, got: {ts2344:?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .any(|d| d.message_text.contains("constraint 'string'")),
+        "Expected call constraint diagnostic, got: {ts2344:?}"
+    );
+}
+
+#[test]
 fn ts2352_array_assertion_anchors_first_excess_property() {
     let source = r#"
 <{ id: number; }[]>[{ foo: "s" }];

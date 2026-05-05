@@ -59,11 +59,20 @@ impl<'a> CheckerState<'a> {
         let body_idx = func.body;
         let body_node = self.ctx.arena.get(body_idx)?;
         let block = self.ctx.arena.get_block(body_node)?;
-        let statements = block.statements.nodes.clone();
+        let statement_count = block.statements.nodes.len();
 
-        statements
-            .into_iter()
-            .find(|&stmt_idx| self.statement_always_throws(stmt_idx))
+        for statement_index in 0..statement_count {
+            let stmt_idx = {
+                let body_node = self.ctx.arena.get(body_idx)?;
+                let block = self.ctx.arena.get_block(body_node)?;
+                *block.statements.nodes.get(statement_index)?
+            };
+            if self.statement_always_throws(stmt_idx) {
+                return Some(stmt_idx);
+            }
+        }
+
+        None
     }
 
     /// Check if a callee expression explicitly returns `never` based on its

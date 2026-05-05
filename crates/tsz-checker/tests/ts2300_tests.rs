@@ -5,7 +5,9 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
+use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -186,6 +188,57 @@ fn verify_errors(
     }
 
     diagnostics
+}
+
+fn check_script_files(files: &[(&str, &str)], entry_idx: usize) -> Vec<(u32, String)> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        module: ModuleKind::CommonJS,
+        ..CheckerOptions::default()
+    };
+
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(roots[entry_idx]);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.message_text.clone()))
+        .collect()
 }
 
 #[test]
@@ -371,6 +424,28 @@ fn duplicate_function_implementations() {
 
     assert_eq!(ts2300, 0);
     assert_eq!(ts2393, 2, "Should have 2 TS2393 errors");
+}
+
+#[test]
+fn duplicate_script_function_implementations_across_files_emit_ts2393() {
+    let files = [
+        ("a.ts", "function test() { return 1; }"),
+        ("b.ts", "function test() { return 2; }"),
+    ];
+
+    for entry_idx in 0..files.len() {
+        let diagnostics = check_script_files(&files, entry_idx);
+        let ts2393 = diagnostics
+            .iter()
+            .filter(|(code, msg)| *code == 2393 && msg == "Duplicate function implementation.")
+            .count();
+
+        assert_eq!(
+            ts2393, 1,
+            "entry file {} should emit TS2393 on its local implementation, got {diagnostics:?}",
+            files[entry_idx].0
+        );
+    }
 }
 
 /// Test that field + getter with same name emits TS2300.

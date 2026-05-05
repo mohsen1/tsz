@@ -1569,3 +1569,36 @@ fn private_field_logical_and_assign_lowers_to_set_get_and_rhs() {
         "Private-field `&&=` must lower to set(get() && rhs).\nOutput:\n{output}"
     );
 }
+
+/// Regression: a same-named inner declaration that is `declare`-ambient is
+/// erased at emit, so it must not trigger renaming of the namespace IIFE
+/// parameter. tsc emits `(function (M) { ... })`, not `(function (M_1) { ... })`,
+/// for `namespace M { export declare namespace M { } }`.
+#[test]
+fn namespace_iife_param_not_renamed_when_inner_same_name_is_declare() {
+    let source = "namespace M {\n    export declare var x;\n    export declare function f();\n    export declare class C { }\n    export declare enum E { }\n    export declare namespace M { }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("(function (M) {"),
+        "Declare-only inner `M` must not trigger IIFE param renaming.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (M_1)"),
+        "IIFE param must not be renamed to `M_1` when the only same-name binding is ambient.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: a *concrete* inner declaration with the same name DOES
+/// require IIFE-param renaming (so the outer-name reference and inner-name
+/// reference don't collide).
+#[test]
+fn namespace_iife_param_renamed_when_inner_same_name_is_concrete() {
+    let source = "namespace M {\n    export class M { foo() {} }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("M_1") || !output.contains("(function (M) {"),
+        "Concrete same-name inner declaration must rename IIFE param.\nOutput:\n{output}"
+    );
+}

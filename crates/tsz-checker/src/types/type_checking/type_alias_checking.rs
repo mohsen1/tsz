@@ -11,9 +11,9 @@
 //! - `precompute_type_query_flow_types` — pre-computes `typeof` flow-narrowed types
 
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -994,7 +994,6 @@ impl<'a> CheckerState<'a> {
                 // `typeof expr<Args>` — validate instantiation expression type args.
                 if let Some(type_query) = self.ctx.arena.get_type_query(node)
                     && let Some(args) = &type_query.type_arguments
-                    && !args.nodes.is_empty()
                 {
                     let args_nodes = args.nodes.clone();
                     for &arg_idx in &args_nodes {
@@ -1027,36 +1026,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let db = self.ctx.types.as_type_database();
-        let call_sigs = crate::query_boundaries::common::call_signatures_for_type(db, expr_type);
-        let construct_sigs =
-            crate::query_boundaries::common::construct_signatures_for_type(db, expr_type);
-
-        let mut has_applicable = false;
-        if let Some(sigs) = &call_sigs {
-            for sig in sigs {
-                if sig.type_params.len() == num_type_args {
-                    has_applicable = true;
-                    break;
-                }
-            }
-        }
-        if !has_applicable && let Some(sigs) = &construct_sigs {
-            for sig in sigs {
-                if sig.type_params.len() == num_type_args {
-                    has_applicable = true;
-                    break;
-                }
-            }
-        }
-        if !has_applicable
-            && self
-                .type_query_targets_generic_function_like_with_arity(type_query_idx, num_type_args)
+        if let Some(error_type) =
+            self.instantiation_expression_applicability_error_type(expr_type, num_type_args)
         {
-            has_applicable = true;
-        }
-
-        if !has_applicable {
             // Skip TS2635 if any type argument node contains parse errors (e.g. JSDoc
             // syntax like `?string` outside documentation comments). tsc reports the
             // syntax errors but does not validate type argument applicability in that case.
@@ -1066,9 +1038,74 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
-            // TS2635: emit at last type argument node
-            let error_node = type_arg_nodes.last().copied().unwrap_or(type_query_idx);
-            self.error_no_applicable_signatures_for_type_args(expr_type, error_node);
+            if let Some(error_node) = type_arg_nodes.first().copied() {
+                let base_expr = self
+                    .ctx
+                    .arena
+                    .get(type_query_idx)
+                    .and_then(|node| self.ctx.arena.get_type_query(node))
+                    .map(|type_query| type_query.expr_name)
+                    .unwrap_or(type_query_idx);
+                self.error_no_applicable_signatures_for_type_args_with_base(
+                    error_type, error_node, base_expr,
+                );
+            }
+            return;
+        }
+
+        self.validate_instantiation_expression_type_arg_constraints(expr_type, type_arg_nodes);
+    }
+
+    fn validate_instantiation_expression_type_arg_constraints(
+        &mut self,
+        expr_type: TypeId,
+        type_arg_nodes: &[NodeIndex],
+    ) {
+        if type_arg_nodes.is_empty() {
+            return;
+        }
+
+        let type_args_list = NodeList {
+            nodes: type_arg_nodes.to_vec(),
+            pos: 0,
+            end: 0,
+            has_trailing_comma: false,
+        };
+        let expr_type = self.resolve_lazy_type(expr_type);
+
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, expr_type)
+            && shape.type_params.len() == type_arg_nodes.len()
+        {
+            let type_params = shape.type_params.clone();
+            self.validate_type_args_against_params(&type_params, &type_args_list);
+        }
+
+        if let Some(sigs) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, expr_type)
+        {
+            let matching: Vec<Vec<tsz_solver::TypeParamInfo>> = sigs
+                .iter()
+                .filter(|sig| sig.type_params.len() == type_arg_nodes.len())
+                .map(|sig| sig.type_params.clone())
+                .collect();
+            for type_params in matching {
+                self.validate_type_args_against_params(&type_params, &type_args_list);
+            }
+        }
+
+        if let Some(sigs) = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            expr_type,
+        ) {
+            let matching: Vec<Vec<tsz_solver::TypeParamInfo>> = sigs
+                .iter()
+                .filter(|sig| sig.type_params.len() == type_arg_nodes.len())
+                .map(|sig| sig.type_params.clone())
+                .collect();
+            for type_params in matching {
+                self.validate_type_args_against_params(&type_params, &type_args_list);
+            }
         }
     }
 
