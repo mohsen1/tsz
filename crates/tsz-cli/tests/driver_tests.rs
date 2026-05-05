@@ -244,6 +244,90 @@ export const amdCase = 1;
 }
 
 #[test]
+fn compile_import_elision_ignores_string_and_block_comment_text() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("string-literal.ts"),
+        r#"import { Foo } from "./dep";
+
+const label = "Foo";
+
+label;
+"#,
+    );
+    write_file(
+        &base.join("block-comment.ts"),
+        r#"import { Foo } from "./dep";
+
+/* Foo */
+const label = "bar";
+
+label;
+"#,
+    );
+    write_file(
+        &base.join("line-comment.ts"),
+        r#"import { Foo } from "./dep";
+
+// Foo
+const label = "bar";
+
+label;
+"#,
+    );
+    write_file(&base.join("dep.ts"), "export const Foo = 1;\n");
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "esnext",
+            "strict": true,
+            "outDir": "dist"
+          },
+          "files": [
+            "string-literal.ts",
+            "block-comment.ts",
+            "line-comment.ts",
+            "dep.ts"
+          ]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+
+    let string_js =
+        fs::read_to_string(base.join("dist/string-literal.js")).expect("read string output");
+    let block_js =
+        fs::read_to_string(base.join("dist/block-comment.js")).expect("read block output");
+    let line_js = fs::read_to_string(base.join("dist/line-comment.js")).expect("read line output");
+
+    for output in [&string_js, &block_js, &line_js] {
+        assert!(
+            !output.contains("import { Foo }"),
+            "unused Foo import should be elided; output:\n{output}"
+        );
+        assert!(
+            output.contains("export {};"),
+            "module marker should remain after import elision; output:\n{output}"
+        );
+    }
+    assert!(string_js.contains("const label = \"Foo\";"));
+    assert!(block_js.contains("/* Foo */"));
+    assert!(line_js.contains("// Foo"));
+}
+
+#[test]
 fn compile_amd_dependency_comment_name_fixture_keeps_ts2792_under_ts5107() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
