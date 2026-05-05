@@ -112,7 +112,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn direct_diagnostic_source_expression(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::error_reporter) fn direct_diagnostic_source_expression(
+        &self,
+        anchor_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
@@ -554,7 +557,10 @@ impl<'a> CheckerState<'a> {
         annotation.contains('&') || !annotation.starts_with('{')
     }
 
-    fn format_declared_annotation_for_diagnostic(&self, annotation_text: &str) -> String {
+    pub(in crate::error_reporter) fn format_declared_annotation_for_diagnostic(
+        &self,
+        annotation_text: &str,
+    ) -> String {
         let mut formatted = annotation_text.trim().to_string();
         if formatted.contains(':') {
             formatted = formatted.replace(" }", "; }");

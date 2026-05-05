@@ -384,3 +384,34 @@ fn test_intersection_literal_property_mismatch_with_primitive_member() {
          must remain non-assignable in either direction."
     );
 }
+
+#[test]
+fn test_intersection_member_shortcut_preserves_optional_property_conflict() {
+    use crate::relations::subtype::core::SubtypeChecker;
+
+    let interner = TypeInterner::new();
+
+    let field = interner.intern_string("field");
+    let another_field = interner.intern_string("anotherField");
+
+    // Source: { field: null } & { anotherField: string }
+    let source_with_conflict = interner.object(vec![PropertyInfo::new(field, TypeId::NULL)]);
+    let source_sibling = interner.object(vec![PropertyInfo::new(another_field, TypeId::STRING)]);
+    let source = interner.intersection2(source_with_conflict, source_sibling);
+
+    // Target: { field?: number; anotherField: string }
+    let target = interner.object(vec![
+        PropertyInfo::opt(field, TypeId::NUMBER),
+        PropertyInfo::new(another_field, TypeId::STRING),
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.enforce_weak_types = true;
+    checker.strict_null_checks = true;
+
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "An intersection member that satisfies the target's required properties \
+         must not hide a conflicting optional property from a sibling member"
+    );
+}
