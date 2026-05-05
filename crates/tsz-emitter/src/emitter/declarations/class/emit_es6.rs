@@ -57,6 +57,13 @@ impl<'a> Printer<'a> {
             self.get_identifier_text_idx(class.name)
         };
 
+        if !suppress_modifiers
+            && self.ctx.options.target == ScriptTarget::ESNext
+            && self.has_recovered_accessor_modifier(node)
+        {
+            self.write("accessor ");
+        }
+
         // Emit modifiers (including decorators) - skip TS-only modifiers for JS output
         if !suppress_modifiers && let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
@@ -81,6 +88,10 @@ impl<'a> Printer<'a> {
                         self.write("export");
                     } else if mod_node.kind == SyntaxKind::DefaultKeyword as u16 {
                         self.write("default");
+                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16
+                        && self.ctx.options.target == ScriptTarget::ESNext
+                    {
+                        self.write("accessor");
                     } else {
                         self.emit(mod_idx);
                     }
@@ -184,6 +195,12 @@ impl<'a> Printer<'a> {
                 if self
                     .arena
                     .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                {
+                    continue;
+                }
+                if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
                 {
                     continue;
                 }

@@ -359,6 +359,13 @@ impl<'a> Printer<'a> {
         };
 
         if import.import_clause.is_none() {
+            if self
+                .arena
+                .has_modifier(&import.modifiers, SyntaxKind::AccessorKeyword)
+                || self.has_recovered_accessor_modifier(node)
+            {
+                self.write("accessor ");
+            }
             self.write("import ");
             self.emit_module_specifier(import.module_specifier);
             self.emit_import_attributes(import.attributes);
@@ -417,6 +424,13 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self
+            .arena
+            .has_modifier(&import.modifiers, SyntaxKind::AccessorKeyword)
+            || self.has_recovered_accessor_modifier(node)
+        {
+            self.write("accessor ");
+        }
         self.write("import ");
         if has_default {
             self.emit(clause.name);

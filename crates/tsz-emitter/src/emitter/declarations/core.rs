@@ -44,6 +44,14 @@ impl<'a> Printer<'a> {
             self.write("async ");
         }
 
+        if self
+            .arena
+            .has_modifier(&func.modifiers, SyntaxKind::AccessorKeyword)
+            || self.has_recovered_accessor_modifier(node)
+        {
+            self.write("accessor ");
+        }
+
         self.write("function");
 
         if func.asterisk_token {
@@ -448,6 +456,17 @@ impl<'a> Printer<'a> {
                 }
 
                 let mut output = printer.emit(&ir).to_string();
+                if self
+                    .arena
+                    .has_modifier(&enum_decl.modifiers, SyntaxKind::AccessorKeyword)
+                    || self.has_recovered_accessor_modifier(node)
+                {
+                    let var_prefix = format!("var {enum_name};");
+                    let accessor_var_prefix = format!("accessor {var_prefix}");
+                    if output.starts_with(&var_prefix) {
+                        output = format!("{accessor_var_prefix}{}", &output[var_prefix.len()..]);
+                    }
+                }
                 if !enum_name.is_empty() && self.declared_namespace_names.contains(&enum_name) {
                     let var_prefix = format!("var {enum_name};\n");
                     if output.starts_with(&var_prefix) {

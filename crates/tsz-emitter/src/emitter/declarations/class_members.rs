@@ -401,6 +401,10 @@ impl<'a> Printer<'a> {
                         }
                     } else if mod_node.kind == SyntaxKind::AsyncKeyword as u16 {
                         self.write("async ");
+                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16
+                        && self.ctx.options.target == ScriptTarget::ESNext
+                    {
+                        self.write("accessor ");
                     } else if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
                         // `export` on a class member is a parse error, but tsc
                         // preserves it in emit for error-recovery fidelity.
@@ -538,6 +542,21 @@ impl<'a> Printer<'a> {
         &mut self,
         modifiers: &Option<NodeList>,
     ) {
+        self.emit_class_member_modifiers_js_impl(modifiers, true);
+    }
+
+    fn emit_accessor_member_modifiers_js(&mut self, modifiers: &Option<NodeList>) {
+        self.emit_class_member_modifiers_js_impl(
+            modifiers,
+            self.ctx.options.target == ScriptTarget::ESNext,
+        );
+    }
+
+    fn emit_class_member_modifiers_js_impl(
+        &mut self,
+        modifiers: &Option<NodeList>,
+        emit_accessor_keyword: bool,
+    ) {
         if let Some(mods) = modifiers {
             let static_count = mods
                 .nodes
@@ -561,7 +580,9 @@ impl<'a> Printer<'a> {
                         if !suppress_static {
                             self.write("static ");
                         }
-                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16 {
+                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16
+                        && emit_accessor_keyword
+                    {
                         self.write("accessor ");
                     } else if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
                         // `export` on a class member is a parse error, but tsc
@@ -1362,8 +1383,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit modifiers (static only for JavaScript)
-        self.emit_class_member_modifiers_js(&accessor.modifiers);
+        self.emit_accessor_member_modifiers_js(&accessor.modifiers);
 
         self.write("get ");
         self.emit_class_member_name_preserving_class_expression_name(accessor.name);
@@ -1393,8 +1413,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit modifiers (static only for JavaScript)
-        self.emit_class_member_modifiers_js(&accessor.modifiers);
+        self.emit_accessor_member_modifiers_js(&accessor.modifiers);
 
         self.write("set ");
         self.emit_class_member_name_preserving_class_expression_name(accessor.name);
