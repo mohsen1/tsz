@@ -925,6 +925,31 @@ class ElementsArray extends Array {
 }
 
 #[test]
+fn type_only_class_name_in_static_initializer_does_not_create_alias() {
+    let source = r#"class Bug {
+    private static func: Function[] = [
+        (that: Bug, name: string) => {
+            that.foo(name);
+        }
+    ];
+
+    private foo(name: string) {
+        this.name = name;
+    }
+}"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        !output.contains("var _a;") && !output.contains("_a = Bug;"),
+        "Type-only class-name references inside a static initializer should not create a class-value alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Bug.func = ["),
+        "Static initializer should still be emitted on the class.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn static_private_accessor_class_body_references_use_alias() {
     let source = r#"class A2 {
     static get #prop() { return ""; }
