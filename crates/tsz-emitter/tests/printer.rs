@@ -1720,3 +1720,45 @@ fn namespace_exported_object_destructuring_rename_uses_property_name() {
         "Renamed object binding must read source key but assign to renamed target.\nOutput:\n{output}"
     );
 }
+
+/// Instantiation expressions strip the type arguments and wrap the
+/// expression in parens (`fx<T>` → `(fx)`). The empty-arg parser-recovery
+/// shape `fx<>` has no real arguments, so tsc emits the bare expression
+/// without parens (`fx<>` → `fx`).
+#[test]
+fn instantiation_expression_with_args_wraps_in_parens() {
+    let source = "declare function fx<T>(x: T): T;\nfunction f1() {\n    let f1 = fx<string>;\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("let f1 = (fx);"),
+        "Non-empty instantiation expression must wrap the expression in parens.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn instantiation_expression_with_empty_args_emits_bare() {
+    let source = "declare function fx<T>(x: T): T;\nfunction f1() {\n    let f0 = fx<>;\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("let f0 = fx;"),
+        "Empty type-argument list must emit the bare expression with no parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("let f0 = (fx);"),
+        "Empty type-argument list must not retain the wrapping parens.\nOutput:\n{output}"
+    );
+}

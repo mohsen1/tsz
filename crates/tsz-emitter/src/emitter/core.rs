@@ -2045,7 +2045,9 @@ impl<'a> Printer<'a> {
             // ExpressionWithTypeArguments / instantiation expression:
             // Strip type arguments and wrap the expression in parentheses.
             // tsc wraps the result in parens when erasing type arguments,
-            // e.g. `f<string>` becomes `(f)`.
+            // e.g. `f<string>` becomes `(f)`. An *empty* type argument list
+            // (`f<>` — a parser-recovery shape) doesn't need wrapping; tsc
+            // emits it as the bare expression `f`.
             k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
                 if let Some(data) = self.arena.get_expr_type_args(node) {
                     let expression = data.expression;
@@ -2053,9 +2055,14 @@ impl<'a> Printer<'a> {
                         .type_arguments
                         .as_ref()
                         .map_or_else(Vec::new, |ta| ta.nodes.clone());
-                    self.write("(");
+                    let needs_parens = !type_arg_nodes.is_empty();
+                    if needs_parens {
+                        self.write("(");
+                    }
                     self.emit(expression);
-                    self.write(")");
+                    if needs_parens {
+                        self.write(")");
+                    }
                     // Skip comments inside the erased type arguments so they
                     // don't leak into subsequent output.
                     if !self.ctx.options.remove_comments {
