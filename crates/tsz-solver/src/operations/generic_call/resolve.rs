@@ -823,10 +823,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && let Some(direct_target) =
                             self.direct_inference_tracking_target(target_type)
                     {
-                        direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                        placeholder_visited.clear();
+                        direct_param_vars.extend(self.collect_direct_placeholder_vars_in_type(
                             direct_target,
                             &var_map,
-                            &mut placeholder_probe_map,
                             &mut placeholder_visited,
                         ));
                     }
@@ -844,10 +844,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && let Some(direct_target) =
                             self.direct_inference_tracking_target(contextual_target_type)
                     {
-                        direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                        placeholder_visited.clear();
+                        direct_param_vars.extend(self.collect_direct_placeholder_vars_in_type(
                             direct_target,
                             &var_map,
-                            &mut placeholder_probe_map,
                             &mut placeholder_visited,
                         ));
                     }
@@ -901,10 +901,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // This also applies to rest parameters: `foo<T>(...s: T[])` with
                 // heterogeneous args uses first-wins to match tsc behavior.
                 if let Some(direct_target) = self.direct_inference_tracking_target(target_type) {
-                    direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                    placeholder_visited.clear();
+                    direct_param_vars.extend(self.collect_direct_placeholder_vars_in_type(
                         direct_target,
                         &var_map,
-                        &mut placeholder_probe_map,
                         &mut placeholder_visited,
                     ));
                 }
@@ -1305,10 +1305,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if original_has_placeholders
                     && let Some(direct_target) = self.direct_inference_tracking_target(target_type)
                 {
-                    direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                    placeholder_visited.clear();
+                    direct_param_vars.extend(self.collect_direct_placeholder_vars_in_type(
                         direct_target,
                         &var_map,
-                        &mut placeholder_probe_map,
                         &mut placeholder_visited,
                     ));
                 }

@@ -1152,6 +1152,24 @@ impl ParserState {
             // rest so the type displays as `[...?T]` in declaration emit.
             if self.parse_optional(SyntaxKind::QuestionToken) {
                 let end_pos = self.token_end();
+                let (diag_start, suggestion) = if let Some(node) = self.arena.get(element_type) {
+                    (
+                        node.pos,
+                        self.scanner
+                            .source_slice(node.pos as usize, node.end as usize)
+                            .to_string(),
+                    )
+                } else {
+                    (start_pos, String::from("T"))
+                };
+                self.parse_error_at(
+                    diag_start,
+                    end_pos.saturating_sub(diag_start),
+                    &format!(
+                        "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write '{suggestion} | undefined'?"
+                    ),
+                    tsz_common::diagnostics::diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE,
+                );
                 return self.arena.add_wrapped_type(
                     syntax_kind_ext::OPTIONAL_TYPE,
                     start_pos,

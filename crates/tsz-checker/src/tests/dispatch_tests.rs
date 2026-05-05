@@ -1766,6 +1766,23 @@ const result: [string, number] = extractPrimitives({ primitive: "" }, { primitiv
 }
 
 #[test]
+fn generic_tuple_rest_argument_infers_union_from_all_rest_elements() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function f0<T, U>(x: [T, ...U[]]): [T, U];
+f0([1, "hello", true]);
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 when tuple rest inference merges string | boolean, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn reverse_mapped_array_return_rejects_mapped_element_to_type_parameter_array() {
     let diags = check_source_diagnostics(
         r#"

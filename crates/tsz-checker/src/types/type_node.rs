@@ -352,6 +352,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             (wrapped.type_node, false)
                         };
                         let elem_type = self.check(inner_idx);
+                        if is_rest_optional
+                            && !self.is_array_or_tuple_type(elem_type)
+                            && Self::ast_kind_is_obviously_non_array(self.ctx.arena, inner_idx)
+                        {
+                            self.emit_rest_element_type_must_be_array(elem_node.pos, elem_node.end);
+                        }
                         elements.push(TupleElement {
                             type_id: elem_type,
                             name: None,
