@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `conformance/quick-pick-20260505-next`
-- **PR**: TBD
+- **PR**: #2748
 - **Status**: claim
 - **Workstream**: 1 (Conformance fixes)
 
