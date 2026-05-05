@@ -15217,6 +15217,52 @@ var n = F4.staticProp;
 }
 
 #[test]
+fn compile_js_class_static_expando_after_constructor_function_merge() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["file1.js", "file2.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("file1.js"),
+        r#"var SomeClass = function () {
+    this.otherProp = 0;
+};
+
+new SomeClass();
+"#,
+    );
+    write_file(
+        &base.join("file2.js"),
+        r#"class SomeClass { }
+SomeClass.prop = 0;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected JS class static expando after constructor-function merge to avoid TS2339, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_js_enum_cross_file_export_keeps_nested_jsdoc_namespace_properties() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
