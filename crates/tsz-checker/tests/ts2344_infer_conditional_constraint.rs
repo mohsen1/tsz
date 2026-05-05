@@ -90,13 +90,11 @@ type Result<TInjectedProps> =
     );
 }
 
-/// Infer-result conditional used with a concrete (fully resolved) constraint
-/// defers to instantiation time. tsz currently only emits TS2344 for infer
-/// conditionals when the constraint contains type parameters (e.g.,
-/// self-referential constraints). Concrete constraints like `string` are
-/// deferred because tsc can resolve them via restrictive instantiation.
+/// Infer-result conditional used with a concrete constraint should emit TS2344
+/// when the true branch is an unconstrained infer variable. Tsc treats the
+/// infer result's base constraint as `unknown`, which does not satisfy `string`.
 #[test]
-fn test_infer_conditional_with_concrete_constraint_defers() {
+fn test_infer_conditional_with_concrete_constraint_emits_ts2344() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
 interface Array<T> {}
@@ -114,17 +112,19 @@ type Test<T> = MustBeString<ExtractName<T>>;
 "#,
     );
 
-    // NOTE: tsc emits TS2344 here, but tsz defers for concrete constraints.
-    // This is a known limitation — tsz doesn't implement restrictive
-    // instantiation, so it can't distinguish cases where the conditional
-    // resolves to a satisfying type from those where it doesn't.
     let ts2344_errors: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 2344)
         .collect();
     assert!(
-        ts2344_errors.is_empty(),
-        "Expected no TS2344 for concrete constraint (deferred to instantiation), got: {ts2344_errors:?}"
+        ts2344_errors.len() == 1,
+        "Expected exactly one TS2344 for unconstrained infer result against concrete string constraint, got: {ts2344_errors:?}"
+    );
+    assert!(
+        ts2344_errors
+            .iter()
+            .any(|(_, msg)| msg.contains("ExtractName")),
+        "Expected TS2344 message to mention 'ExtractName', got: {ts2344_errors:?}"
     );
 }
 
@@ -156,5 +156,37 @@ type Test<T> = MustBeString<ExtractString<T>>;
     assert!(
         ts2344_errors.is_empty(),
         "Should NOT emit TS2344 when infer constraint satisfies required constraint, got: {ts2344_errors:?}"
+    );
+}
+
+/// A source constraint can make the inferred property type satisfy the concrete
+/// target constraint. This mirrors the issue's accepted control:
+/// `T extends { name: string }` proves `ExtractName<T>` satisfies `string`.
+#[test]
+fn test_source_constraint_satisfying_concrete_constraint_no_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type ExtractName<T> = T extends { name: infer N } ? N : never;
+type MustBeString<T extends string> = T;
+type Test<T extends { name: string }> = MustBeString<ExtractName<T>>;
+"#,
+    );
+
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Should NOT emit TS2344 when the conditional check type's source constraint proves the infer result, got: {ts2344_errors:?}"
     );
 }
