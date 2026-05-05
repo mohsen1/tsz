@@ -1099,11 +1099,59 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let content = get_jsdoc_content(comment, &source_text);
+            let end = (comment.end as usize).min(source_text.len());
+            let comment_text = &source_text[comment.pos as usize..end];
+            for (type_expr, offset_in_comment) in Self::jsdoc_param_return_type_spans(comment_text)
+            {
+                self.validate_jsdoc_param_namespace_member_errors(
+                    &type_expr,
+                    comment.pos,
+                    offset_in_comment,
+                );
+                let line_start = comment_text[..offset_in_comment]
+                    .rfind('\n')
+                    .map_or(0, |idx| idx + 1);
+                let line = comment_text[line_start..]
+                    .trim_start()
+                    .trim_start_matches('*')
+                    .trim_start();
+                let is_return_tag = line.starts_with("@return ")
+                    || line.starts_with("@return\t")
+                    || line.starts_with("@return{")
+                    || line.starts_with("@returns ")
+                    || line.starts_with("@returns\t")
+                    || line.starts_with("@returns{");
+                if !is_return_tag {
+                    continue;
+                }
+                let simple_expr = type_expr
+                    .trim()
+                    .trim_start_matches('!')
+                    .trim_end_matches('=')
+                    .trim();
+                if self
+                    .resolve_jsdoc_implicit_any_builtin_type(simple_expr)
+                    .is_some()
+                    || self.source_file_declares_jsdoc_template(simple_expr)
+                {
+                    continue;
+                }
+                if Self::is_simple_type_name(simple_expr)
+                    && self.resolve_jsdoc_type_str(simple_expr).is_none_or(|ty| {
+                        ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
+                    })
+                {
+                    self.emit_jsdoc_cannot_find_name(
+                        simple_expr,
+                        comment.pos,
+                        comment.end,
+                        &source_text,
+                    );
+                }
+            }
 
             // TS1109: Check for malformed @import tags (bare @import or missing module specifier)
             {
-                let comment_text = &source_text
-                    [comment.pos as usize..(comment.end as usize).min(source_text.len())];
                 let mut search_from = 0;
                 while let Some(idx) = comment_text[search_from..].find("@import") {
                     let abs_idx = search_from + idx;
@@ -2170,6 +2218,38 @@ impl<'a> CheckerState<'a> {
                         && !type_expr.contains(' ')
                         && !type_expr.contains('\t')
                     {
+                        let ws_before = raw_type.len().saturating_sub(raw_type.trim_start().len());
+                        let type_expr_offset = line_offset + open_pos_in_line + 1 + ws_before;
+                        results.push((type_expr.to_string(), type_expr_offset));
+                    }
+                }
+            }
+            line_offset += raw_line.len();
+        }
+        results
+    }
+
+    fn jsdoc_param_return_type_spans(comment_text: &str) -> Vec<(String, usize)> {
+        let mut results = Vec::new();
+        let mut line_offset = 0usize;
+        for raw_line in comment_text.split_inclusive('\n') {
+            let line = raw_line.trim_end_matches('\n').trim_end_matches('\r');
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let is_param_or_return = trimmed.starts_with("@param ")
+                || trimmed.starts_with("@param\t")
+                || trimmed.starts_with("@param{")
+                || trimmed.starts_with("@returns ")
+                || trimmed.starts_with("@returns\t")
+                || trimmed.starts_with("@returns{")
+                || trimmed.starts_with("@return ")
+                || trimmed.starts_with("@return\t")
+                || trimmed.starts_with("@return{");
+            if is_param_or_return && let Some(open_pos_in_line) = line.find('{') {
+                let after_open = &line[open_pos_in_line + 1..];
+                if let Some(close_rel) = after_open.find('}') {
+                    let raw_type = &after_open[..close_rel];
+                    let type_expr = raw_type.trim();
+                    if !type_expr.is_empty() {
                         let ws_before = raw_type.len().saturating_sub(raw_type.trim_start().len());
                         let type_expr_offset = line_offset + open_pos_in_line + 1 + ws_before;
                         results.push((type_expr.to_string(), type_expr_offset));
