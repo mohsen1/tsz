@@ -1296,6 +1296,12 @@ impl<'a> CheckerState<'a> {
                 object_display,
             );
         }
+        if self
+            .array_literal_element_source_widening_required_for_display(anchor_idx, source, target)
+        {
+            let widened = self.widen_type_for_display(source);
+            source_str = self.format_assignability_type_for_message(widened, target);
+        }
         let target_str = self.format_type_for_diagnostic_role(
             target,
             DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
