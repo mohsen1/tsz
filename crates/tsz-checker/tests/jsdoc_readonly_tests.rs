@@ -253,6 +253,40 @@ Derived;
     );
 }
 
+#[test]
+fn invalid_template_prefix_on_constructor_does_not_emit_ts1092() {
+    let source = r#"
+// @ts-check
+class C {
+  /** @templateFoo */
+  constructor() {}
+}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1092),
+        "Expected no TS1092 for @templateFoo, got: {codes:?}",
+    );
+}
+
+#[test]
+fn jsdoc_template_on_constructor_still_emits_ts1092() {
+    let source = r#"
+// @ts-check
+class C {
+  /** @template T */
+  constructor() {}
+}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1092),
+        "Expected TS1092 for a real constructor @template tag, got: {codes:?}",
+    );
+}
+
 /// @typedef with type → no TS8021
 #[test]
 fn test_jsdoc_typedef_with_type_no_ts8021() {
@@ -288,6 +322,59 @@ const person = { name: "" };
         0,
         "Expected no TS8021 for @typedef with @property, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_jsdoc_multiple_typedefs_missing_second_type_emits_ts8021() {
+    let source = r#"
+// @ts-check
+/**
+ * @typedef {object} A
+ * @typedef B
+ */
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8021 = diagnostics.iter().filter(|d| d.code == 8021).count();
+    assert_eq!(
+        ts8021, 1,
+        "Expected exactly one TS8021 for the second @typedef, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_type_tags_are_counted_per_typedef() {
+    let source = r#"
+// @ts-check
+/**
+ * @typedef A
+ * @type {string}
+ * @typedef B
+ * @type {number}
+ */
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 8033 || d.code == 8021),
+        "Expected one @type per @typedef to be valid, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_duplicate_type_tags_within_one_typedef_emits_ts8033() {
+    let source = r#"
+// @ts-check
+/**
+ * @typedef A
+ * @type {string}
+ * @type {number}
+ */
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8033 = diagnostics.iter().filter(|d| d.code == 8033).count();
+    assert_eq!(
+        ts8033, 1,
+        "Expected duplicate @type tags in one @typedef to emit TS8033, got: {diagnostics:?}"
     );
 }
 

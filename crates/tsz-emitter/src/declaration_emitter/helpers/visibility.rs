@@ -900,13 +900,9 @@ impl<'a> DeclarationEmitter<'a> {
                 // Type-only imports are likely needed for type references
                 let is_type_only = clause.is_type_only;
 
-                // Default import - keep when present. Without usage tracking we
-                // cannot tell whether a regular default import is used as a
-                // value or as a type, but it can still be referenced as a type
-                // in the emitted `.d.ts` (e.g. `import Foo from "./dep";
-                // export let x: Foo;`). Mirror the conservative behavior used
-                // for named imports below and preserve the binding so the
-                // declaration file stays self-contained.
+                // Default imports can be used only in declaration types even
+                // when the original import was not written as `import type`.
+                // Without usage tracking, preserve them conservatively.
                 default_count = usize::from(clause.name.is_some());
 
                 // Named bindings: check if there are actually any specifiers

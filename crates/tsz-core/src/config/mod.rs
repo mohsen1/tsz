@@ -591,7 +591,7 @@ impl PathMapping {
     }
 
     pub const fn specificity(&self) -> usize {
-        self.prefix.len() + self.suffix.len()
+        self.prefix.len()
     }
 }
 

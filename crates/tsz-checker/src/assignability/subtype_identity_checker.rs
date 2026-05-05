@@ -7,7 +7,7 @@
 
 use crate::query_boundaries::assignability::{
     is_redeclaration_identical_with_resolver, is_relation_cacheable, is_subtype_with_resolver,
-    subtype_cache_key,
+    mutable_array_element_for_redeclaration, subtype_cache_key,
 };
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -338,10 +338,6 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(prev_type);
         self.ensure_relation_input_ready(current_type);
 
-        if let Some(result) = self.array_var_decl_types_compatible(prev_type, current_type) {
-            return result;
-        }
-
         let prev_type = self.array_application_to_array_for_redeclaration(prev_type);
         let current_type = self.array_application_to_array_for_redeclaration(current_type);
 
@@ -460,50 +456,16 @@ impl<'a> CheckerState<'a> {
     }
 
     fn array_application_to_array_for_redeclaration(&self, type_id: TypeId) -> TypeId {
-        let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
-        else {
+        if crate::query_boundaries::common::application_info(self.ctx.types, type_id).is_none() {
             return type_id;
-        };
-        if args.len() == 1
-            && tsz_solver::TypeDatabase::get_array_base_type(self.ctx.types)
-                .is_some_and(|array_base| base == array_base)
-        {
-            return self.ctx.types.array(args[0]);
         }
-        type_id
-    }
 
-    fn array_var_decl_types_compatible(
-        &mut self,
-        prev_type: TypeId,
-        current_type: TypeId,
-    ) -> Option<bool> {
-        let prev_elem = self.mutable_array_element_for_redeclaration(prev_type)?;
-        let current_elem = self.mutable_array_element_for_redeclaration(current_type)?;
-
-        self.ensure_relation_input_ready(prev_elem);
-        self.ensure_relation_input_ready(current_elem);
-
-        let flags = self.ctx.pack_relation_flags();
-        let env = self.ctx.type_env.borrow();
-        Some(is_redeclaration_identical_with_resolver(
+        mutable_array_element_for_redeclaration(
             self.ctx.types,
-            &*env,
-            prev_elem,
-            current_elem,
-            flags,
-            &self.ctx.inheritance_graph,
-            self.ctx.sound_mode(),
-        ))
-    }
-
-    fn mutable_array_element_for_redeclaration(&self, type_id: TypeId) -> Option<TypeId> {
-        crate::query_boundaries::assignability::mutable_array_element_for_redeclaration(
-            self.ctx.types,
-            self.ctx.definition_store.as_ref(),
             type_id,
+            Some(self.ctx.definition_store.as_ref()),
         )
+        .map_or(type_id, |elem| self.ctx.types.array(elem))
     }
 
     /// Widen literal return types within function signatures for TS2403 comparison.

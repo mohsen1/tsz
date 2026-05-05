@@ -230,23 +230,12 @@ impl<'a> Printer<'a> {
         if let Some(alias) = alias_replacement {
             self.write(&alias);
         } else {
-            let static_this_replacement =
-                self.private_member_info.get(clean_name).and_then(|info| {
-                    if !info.is_static {
-                        return None;
-                    }
-                    let expr_node = self.arena.get(expression)?;
-                    if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
-                        info.state_var.clone()
-                    } else {
-                        None
-                    }
-                });
-            if let Some(alias) = static_this_replacement {
-                self.write(&alias);
-            } else {
-                self.emit(expression);
-            }
+            // Preserve the source-level receiver. For `this.#staticField`,
+            // tsc keeps `this` rather than substituting the class alias —
+            // even though that's a type error, the emitted JS mirrors the
+            // source. The class-name → alias substitution above only fires
+            // when the source explicitly names the class (e.g. `A.#x`).
+            self.emit(expression);
         }
     }
 

@@ -1412,7 +1412,7 @@ impl<'a> CheckerState<'a> {
         let raw_comment = &source_text[comment_pos as usize..comment_end.min(source_text.len())];
 
         // TS1092: Check for @template tag on constructor
-        if let Some(template_offset) = raw_comment.find("@template") {
+        if let Some(template_offset) = Self::jsdoc_tag_offset(raw_comment, "template") {
             let rest = &raw_comment[template_offset + "@template".len()..];
             let trimmed = rest.trim_start();
             // tsc points at the first type parameter name after @template

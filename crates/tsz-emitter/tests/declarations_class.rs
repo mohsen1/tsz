@@ -310,6 +310,29 @@ fn auto_accessor_private_storage_avoids_private_name_collisions_at_es2022() {
 /// statement must not produce an extra blank line. The static field
 /// emission ends with `write_line()` after `ClassName.field = value;`,
 /// so the source-file-level loop must not add a second newline.
+/// `this.#staticField` accessed from an instance method is a TS error,
+/// but tsc still emits the JS verbatim — keeping `this` as the receiver
+/// rather than substituting the class alias. The previous lowering was
+/// rewriting `this` to the static-field state var, producing
+/// `__classPrivateFieldGet(_a, _a, ...)` instead of
+/// `__classPrivateFieldGet(this, _a, ...)`. Lock the source-preserving
+/// behavior so we stay in sync with tsc on this error path.
+#[test]
+fn private_static_field_access_via_this_preserves_this_receiver() {
+    let source = "class A {\n    static #myField = \"hello world\";\n    constructor() {\n        console.log(A.#myField);\n        console.log(this.#myField);\n    }\n}\n";
+
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__classPrivateFieldGet(_a, _a, \"f\", _A_myField)"),
+        "Class-name access (`A.#x`) should still substitute to the class alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(this, _a, \"f\", _A_myField)"),
+        "`this.#x` for a static field must keep `this` as the receiver, matching tsc.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn no_extra_blank_line_after_static_field_lowering() {
     let source = "class Foo {\n    static x = 1;\n}\nconst y = 2;\n";

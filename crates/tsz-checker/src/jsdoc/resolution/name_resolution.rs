@@ -1303,7 +1303,7 @@ impl<'a> CheckerState<'a> {
             if file_idx == self.ctx.current_file_idx {
                 continue;
             }
-            if binder.is_external_module() {
+            if self.jsdoc_file_idx_is_external_module(file_idx, binder) {
                 continue;
             }
             if let Some(sym_id) = binder.file_locals.get(root_name) {
@@ -1312,6 +1312,41 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn jsdoc_file_idx_is_external_module(
+        &self,
+        file_idx: usize,
+        binder: &tsz_binder::BinderState,
+    ) -> bool {
+        if binder.is_external_module() {
+            return true;
+        }
+
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return false;
+        };
+        let Some(arena) = all_arenas.get(file_idx) else {
+            return false;
+        };
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+
+        if let Some(is_external_module_by_file) = self.ctx.is_external_module_by_file.as_ref()
+            && let Some(is_external_module) = is_external_module_by_file.get(&source_file.file_name)
+        {
+            return *is_external_module;
+        }
+
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            arena.get(stmt_idx).is_some_and(|stmt| {
+                stmt.kind == syntax_kind_ext::IMPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            })
+        })
     }
 
     fn resolve_jsdoc_commonjs_binding_element_type(

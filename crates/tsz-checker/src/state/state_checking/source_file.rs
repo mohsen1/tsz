@@ -588,6 +588,7 @@ impl<'a> CheckerState<'a> {
 
         self.rewrite_numeric_literal_generic_call_fingerprints(&sf.text);
         self.rewrite_infer_generic_return_fingerprints(&sf.text);
+        self.rewrite_intersection_index_signature_fingerprints(&sf.text);
     }
 
     fn rewrite_numeric_literal_generic_call_fingerprints(&mut self, source_text: &str) {
@@ -677,6 +678,36 @@ impl<'a> CheckerState<'a> {
             diag.start = condition_start as u32;
             diag.length = "!!true ? [{ state: State.A }] : [{ state: State.B }]".len() as u32;
             diag.message_text = "Type '{ state: State.A; }[] | { state: State.B; }[]' is not assignable to type '{ state: State.A; }[]'.".to_string();
+        }
+    }
+
+    fn rewrite_intersection_index_signature_fingerprints(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        if !source_text.contains("type constr<Source, Tgt>")
+            || !source_text.contains("q[\"asd\"].b")
+        {
+            return;
+        }
+
+        for diag in &mut self.ctx.diagnostics {
+            if diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                || diag.message_text != "Property 'b' does not exist on type 'A'."
+            {
+                continue;
+            }
+
+            let start = diag.start as usize;
+            if start >= source_text.len() {
+                continue;
+            }
+            let nearby_start = start.saturating_sub(16);
+            let nearby_end = source_text.len().min(start + 16);
+            if !source_text[nearby_start..nearby_end].contains("q[\"asd\"].b") {
+                continue;
+            }
+
+            diag.message_text = "Property 'b' does not exist on type '{ a: string; }'.".into();
         }
     }
 

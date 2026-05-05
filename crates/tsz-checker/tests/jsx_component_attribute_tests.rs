@@ -1960,7 +1960,10 @@ const Hoc = <Tag extends Tags>(
 fn test_jsx_library_managed_attributes_with_user_named_factory_generic() {
     let user_named_generic_sources = [
         ("Factory", "value: Factory<number>"),
+        ("Maker", "value: Maker<number>"),
+        ("Producer", "value: Producer<number>"),
         ("Builder", "value: Builder<number>"),
+        ("Wrapper", "value: Wrapper<number>"),
     ];
 
     for (type_name, prop_decl) in user_named_generic_sources {

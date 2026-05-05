@@ -81,6 +81,16 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        {
+            use crate::query_boundaries::common::{TypeQueryKind, classify_type_query};
+
+            if matches!(
+                classify_type_query(self.ctx.types.as_type_database(), type_arg),
+                TypeQueryKind::TypeQuery(_) | TypeQueryKind::ApplicationWithTypeQuery { .. }
+            ) {
+                return true;
+            }
+        }
         if self.format_type_diagnostic(type_arg).starts_with("typeof ") {
             return true;
         }

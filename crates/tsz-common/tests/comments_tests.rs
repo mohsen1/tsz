@@ -817,6 +817,24 @@ fn nocheck_with_bom_prefix_is_directive() {
 }
 
 #[test]
+fn nocheck_after_form_feed_leading_trivia_is_directive() {
+    let src = "\x0C// @ts-nocheck\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_after_comment_form_feed_is_directive() {
+    let src = "//\x0C@ts-nocheck\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_after_comment_vertical_tab_is_directive() {
+    let src = "//\x0B@ts-nocheck\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
 fn empty_and_whitespace_sources_do_not_have_directives() {
     assert!(!has_ts_directive_in_leading_trivia("", "@ts-nocheck"));
     assert!(!has_ts_directive_in_leading_trivia(

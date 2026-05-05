@@ -151,6 +151,7 @@ pub struct AsyncES5Transformer<'a> {
     temp_var_counter: Cell<u32>,
     lexical_this_capture: Cell<bool>,
     capture_this_references: Cell<bool>,
+    loop_exit_placeholder_counter: Cell<u32>,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -165,6 +166,7 @@ impl<'a> AsyncES5Transformer<'a> {
             temp_var_counter: Cell::new(0),
             lexical_this_capture: Cell::new(false),
             capture_this_references: Cell::new(false),
+            loop_exit_placeholder_counter: Cell::new(0),
         }
     }
 
@@ -186,6 +188,16 @@ impl<'a> AsyncES5Transformer<'a> {
 
     pub(super) fn set_capture_this_references(&self, capture: bool) {
         self.capture_this_references.set(capture);
+    }
+
+    fn reset_loop_exit_placeholders(&self) {
+        self.loop_exit_placeholder_counter.set(0);
+    }
+
+    fn next_loop_exit_placeholder(&self) -> u32 {
+        let counter = self.loop_exit_placeholder_counter.get();
+        self.loop_exit_placeholder_counter.set(counter + 1);
+        u32::MAX - counter
     }
 
     pub(super) fn generate_hoisted_temp(&self) -> String {
@@ -443,6 +455,7 @@ impl<'a> AsyncES5Transformer<'a> {
     /// Returns an `IRNode::AwaiterCall` with a nested `IRNode::GeneratorBody`
     pub fn transform_async_function(&mut self, func_idx: NodeIndex) -> IRNode {
         self.state.reset();
+        self.reset_loop_exit_placeholders();
         self.helpers_needed.awaiter = true;
         self.helpers_needed.generator = true;
 
@@ -631,6 +644,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
     pub fn transform_generator_function(&mut self, func_idx: NodeIndex) -> IRNode {
         self.state.reset();
+        self.reset_loop_exit_placeholders();
         self.generator_mode = true;
         self.helpers_needed.generator = true;
         let Some(node) = self.arena.get(func_idx) else {
@@ -741,6 +755,7 @@ impl<'a> AsyncES5Transformer<'a> {
     /// Transform just the generator body (for use by the wrapper)
     pub fn transform_generator_body(&mut self, body_idx: NodeIndex, has_await: bool) -> IRNode {
         self.state.reset();
+        self.reset_loop_exit_placeholders();
         self.state.has_await = has_await;
         self.helpers_needed.generator = true;
 
@@ -809,6 +824,17 @@ impl<'a> AsyncES5Transformer<'a> {
             cases.push(IRGeneratorCase {
                 label: current_label,
                 statements: current_statements,
+            });
+        } else if !cases.is_empty() {
+            cases.push(IRGeneratorCase {
+                label: current_label,
+                statements: vec![IRNode::ReturnStatement(Some(Box::new(
+                    IRNode::GeneratorOp {
+                        opcode: opcodes::RETURN,
+                        value: None,
+                        comment: Some("return".to_string().into()),
+                    },
+                )))],
             });
         } else if cases.is_empty() {
             // Empty async body - still need a return case
@@ -1037,6 +1063,15 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 self.process_if_statement_in_async(idx, cases, current_statements, current_label);
+            }
+
+            k if k == syntax_kind_ext::WHILE_STATEMENT => {
+                self.process_while_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
             }
 
             k if k == syntax_kind_ext::THROW_STATEMENT => {
@@ -1873,6 +1908,99 @@ impl<'a> AsyncES5Transformer<'a> {
             });
         }
         *current_label = end_label;
+    }
+
+    /// Process a while statement inside an async function body.
+    ///
+    /// `await` in the body must be lifted into generator cases before the loop
+    /// body is emitted. A raw `while` statement around `await` would otherwise
+    /// leave invalid `await` syntax inside the ES5 generator callback.
+    fn process_while_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(loop_data) = self.arena.get_loop(node) else {
+            return;
+        };
+
+        let condition_has_await = self.contains_await_recursive(loop_data.condition);
+        let body_has_await = self.contains_await_recursive(loop_data.statement);
+
+        if !body_has_await || condition_has_await {
+            current_statements.push(self.statement_to_ir(idx));
+            return;
+        }
+
+        let loop_label = *current_label;
+        let exit_placeholder = self.next_loop_exit_placeholder();
+        let condition = self.expression_to_ir(loop_data.condition);
+
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(IRNode::PrefixUnaryExpr {
+                operator: "!".to_string().into(),
+                operand: Box::new(condition),
+            }),
+            target_label: exit_placeholder,
+        });
+
+        self.process_block_or_statement_in_async(
+            loop_data.statement,
+            cases,
+            current_statements,
+            current_label,
+        );
+
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::BREAK,
+                value: Some(Box::new(IRNode::NumericLiteral(
+                    loop_label.to_string().into(),
+                ))),
+                comment: Some("break".to_string().into()),
+            },
+        ))));
+
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        let exit_label = self.state.next_label();
+        Self::patch_if_break_target(cases, exit_placeholder, exit_label);
+        *current_label = exit_label;
+    }
+
+    fn patch_if_break_target(
+        cases: &mut [IRGeneratorCase],
+        placeholder_label: u32,
+        target_label: u32,
+    ) {
+        for case in cases {
+            for statement in &mut case.statements {
+                Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
+            }
+        }
+    }
+
+    const fn patch_if_break_target_in_node(
+        node: &mut IRNode,
+        placeholder_label: u32,
+        target_label: u32,
+    ) {
+        if let IRNode::IfBreak {
+            target_label: candidate,
+            ..
+        } = node
+            && *candidate == placeholder_label
+        {
+            *candidate = target_label;
+        }
     }
 
     /// Process a try/catch/finally statement inside an async function body.

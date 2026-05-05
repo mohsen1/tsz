@@ -192,6 +192,7 @@ mod jsdoc;
 mod portability_check;
 mod portability_resolve;
 mod returned_function_initializer;
+mod synthetic_dependencies;
 mod type_inference;
 mod type_param_rewrite;
 mod type_printing;

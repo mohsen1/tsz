@@ -47,6 +47,41 @@ fn test_async_with_await() {
 }
 
 #[test]
+fn test_async_while_with_await_lowers_to_generator_cases() {
+    let output =
+        transform_and_print("async function f(xs) { while (xs.length) { await g(xs.pop()); } }");
+
+    assert!(
+        !output.contains("while ("),
+        "Raw while statement must not remain around suspended body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!xs.length) return [3 /*break*/, 2];"),
+        "Loop condition should branch to the exit case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, g(xs.pop())];"),
+        "Await in the loop body should become a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.sent();"),
+        "Resumed await result should be consumed.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Loop body should jump back to the condition case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [2 /*return*/];"),
+        "Loop exit should have a final generator return case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_return_await() {
     let output = transform_and_print("async function foo() { return await bar(); }");
     assert!(output.contains("[4 /*yield*/"), "Should have yield");

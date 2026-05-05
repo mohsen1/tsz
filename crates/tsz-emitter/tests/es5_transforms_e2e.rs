@@ -282,6 +282,34 @@ fn test_async_function_awaiter() {
     );
 }
 
+#[test]
+fn test_async_while_with_await_lowers_loop_body() {
+    let output = emit_es5(
+        "async function f(xs) {\n    while (xs.length) {\n        await g(xs.pop());\n    }\n}\n",
+    );
+
+    assert!(
+        !output.contains("while (xs.length)"),
+        "Source while loop should be lowered into generator cases.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "await keyword should not appear in ES5.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!xs.length) return [3 /*break*/, 2];"),
+        "Loop condition should branch to the exit case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, g(xs.pop())];"),
+        "Await in the loop body should become a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Loop body should jump back to the condition case.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Template Literals
 // =============================================================================
