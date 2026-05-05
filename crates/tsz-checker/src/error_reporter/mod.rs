@@ -20,6 +20,7 @@ mod fingerprint_policy;
 mod generics;
 mod name_resolution;
 mod operator_errors;
+mod primitive_intersection_display;
 mod properties;
 mod render_failure;
 mod suggestions;
