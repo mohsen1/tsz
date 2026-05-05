@@ -238,7 +238,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn symbol_has_explicit_assertion_annotation(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    fn symbol_has_explicit_assertion_annotation(&mut self, sym_id: tsz_binder::SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return true;
         };
@@ -248,28 +248,34 @@ impl<'a> CheckerState<'a> {
         self.declaration_has_explicit_assertion_annotation(decl_idx)
     }
 
-    fn declaration_has_explicit_assertion_annotation(&self, decl_idx: NodeIndex) -> bool {
+    fn declaration_has_explicit_assertion_annotation(&mut self, decl_idx: NodeIndex) -> bool {
         let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
             return true;
         };
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
             return var_decl.type_annotation.is_some()
-                || self.declaration_has_jsdoc_type_annotation(decl_idx);
+                || self.declaration_has_jsdoc_type_tag(decl_idx);
         }
         if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
-            return param.type_annotation.is_some();
+            return param.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx);
         }
         if let Some(prop) = self.ctx.arena.get_property_decl(decl_node) {
-            return prop.type_annotation.is_some();
+            return prop.type_annotation.is_some() || self.declaration_has_jsdoc_type_tag(decl_idx);
         }
         if let Some(method) = self.ctx.arena.get_method_decl(decl_node) {
-            return method.type_annotation.is_some();
+            return method.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx)
+                || self.declaration_has_jsdoc_assertion_return(decl_idx);
         }
         if let Some(accessor) = self.ctx.arena.get_accessor(decl_node) {
-            return accessor.type_annotation.is_some();
+            return accessor.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx)
+                || self.declaration_has_jsdoc_assertion_return(decl_idx);
         }
         if let Some(func) = self.ctx.arena.get_function(decl_node) {
             return func.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx)
                 || self.declaration_has_jsdoc_assertion_return(decl_idx);
         }
         if let Some(sig) = self.ctx.arena.get_signature(decl_node) {
@@ -278,26 +284,32 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    fn declaration_has_jsdoc_type_annotation(&self, decl_idx: NodeIndex) -> bool {
-        let Some(source_file) = self.source_file_data_for_node(decl_idx) else {
-            return false;
-        };
-        if source_file.comments.is_empty() {
-            return false;
-        }
-        let source_text = source_file.text.to_string();
-        let comments = source_file.comments.clone();
-        self.try_jsdoc_with_ancestor_walk(decl_idx, &comments, &source_text)
-            .as_deref()
-            .and_then(Self::extract_jsdoc_type_expression)
-            .is_some()
+    fn declaration_has_jsdoc_type_tag(&self, decl_idx: NodeIndex) -> bool {
+        self.find_jsdoc_for_assertion_declaration(decl_idx)
+            .is_some_and(|jsdoc| Self::jsdoc_extract_type_tag_expr(&jsdoc).is_some())
     }
 
     fn declaration_has_jsdoc_assertion_return(&self, decl_idx: NodeIndex) -> bool {
-        self.find_jsdoc_for_function(decl_idx)
-            .as_deref()
-            .and_then(Self::jsdoc_returns_type_predicate)
-            .is_some_and(|(asserts, _, _)| asserts)
+        self.find_jsdoc_for_assertion_declaration(decl_idx)
+            .is_some_and(|jsdoc| Self::jsdoc_returns_type_predicate(&jsdoc).is_some())
+    }
+
+    fn find_jsdoc_for_assertion_declaration(&self, decl_idx: NodeIndex) -> Option<String> {
+        if !self.is_js_file() {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if self.ctx.arena.get_function(decl_node).is_some()
+            || self.ctx.arena.get_method_decl(decl_node).is_some()
+            || self.ctx.arena.get_accessor(decl_node).is_some()
+        {
+            return self.find_jsdoc_for_function(decl_idx);
+        }
+
+        let sf = self.source_file_data_for_node(decl_idx)?;
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        self.try_jsdoc_with_ancestor_walk(decl_idx, &comments, &source_text)
     }
 
     fn first_unannotated_callback_param_name_in_call(&self, idx: NodeIndex) -> Option<NodeIndex> {
