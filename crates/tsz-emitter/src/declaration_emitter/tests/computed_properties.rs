@@ -407,6 +407,35 @@ namespace M {
 }
 
 #[test]
+fn test_namespace_non_exported_function_used_by_exported_object_emits_scope_marker() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace foo {
+    function bar(): void {}
+    export const obj = { bar };
+}
+"#,
+    );
+
+    assert!(
+        output.contains("function bar(): void;"),
+        "Expected non-exported function referenced by exported object literal to be emitted: {output}"
+    );
+    assert!(
+        output.contains("export const obj:"),
+        "Expected exported object literal to retain export keyword: {output}"
+    );
+    assert!(
+        output.contains("bar: typeof bar;"),
+        "Expected object member to reference the preserved function: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected namespace scope marker when exported object references local function: {output}"
+    );
+}
+
+#[test]
 fn test_non_ambient_namespace_unused_aliases_are_elided() {
     let output = emit_dts_with_usage_analysis(
         r#"

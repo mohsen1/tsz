@@ -984,6 +984,15 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_recovered_typeof_member_call_after_variable_statement(&mut self, node: &Node) {
+        // Only recover when every declaration in the statement lacks an initializer.
+        // If any declaration has an initializer, .typeof( is a valid property call
+        // in a value expression that was already emitted — not a type-annotation tail.
+        if let Some(var_stmt) = self.arena.get_variable(node) {
+            if !self.all_declarations_lack_initializer(&var_stmt.declarations) {
+                return;
+            }
+        }
+
         let Some(text) = self.source_text else {
             return;
         };
@@ -1792,11 +1801,52 @@ impl<'a> Printer<'a> {
             self.emit(expr_stmt.expression);
         }
         self.ctx.flags.in_statement_expression = prev_stmt_expr;
+        if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
+            self.write_line();
+        }
         self.map_trailing_semicolon(node);
         if !self.output_ends_with_semicolon() {
             self.write_semicolon();
         }
         self.emit_trailing_comment_after_semicolon(node);
+    }
+
+    fn emit_recovered_jsx_unary_trailing_less_than(
+        &mut self,
+        statement: &Node,
+        expression: NodeIndex,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return false;
+        }
+        let Some(unary) = self.arena.get_unary_expr(expr_node) else {
+            return false;
+        };
+        let Some(operand_node) = self.arena.get(unary.operand) else {
+            return false;
+        };
+        if operand_node.kind != syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT {
+            return false;
+        }
+
+        let Ok(source) =
+            crate::safe_slice::slice(text, statement.pos as usize, statement.end as usize)
+        else {
+            return false;
+        };
+        let recovered_source = format!("{}< <", super::super::get_operator_text(unary.operator));
+        if source.trim() != recovered_source {
+            return false;
+        }
+
+        self.write(" <");
+        true
     }
 
     fn emit_import_type_arguments_statement_expression(&mut self, expression: NodeIndex) -> bool {

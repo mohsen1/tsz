@@ -1566,11 +1566,92 @@ impl<'a> CheckerState<'a> {
     }
 
     fn has_package_root_side_effect_import(text: &str) -> bool {
-        let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
-        compact.contains("import'./';")
-            || compact.contains("import\"./\";")
-            || compact.contains("import'.';")
-            || compact.contains("import\".\";")
+        let bytes = text.as_bytes();
+        let mut idx = 0usize;
+        while idx < bytes.len() {
+            idx = Self::skip_js_trivia(text, idx);
+            if idx >= bytes.len() {
+                break;
+            }
+
+            if !text[idx..].starts_with("import") || !Self::is_word_boundary(text, idx + 6) {
+                idx += text[idx..].chars().next().map(char::len_utf8).unwrap_or(1);
+                continue;
+            }
+
+            let mut cursor = Self::skip_js_trivia(text, idx + 6);
+            let Some(quote) = text[cursor..].chars().next() else {
+                break;
+            };
+            if quote != '"' && quote != '\'' {
+                idx += 6;
+                continue;
+            }
+            cursor += quote.len_utf8();
+            let Some(rest) = text.get(cursor..) else {
+                break;
+            };
+            if let Some(after_specifier) = rest
+                .strip_prefix("./")
+                .map(|_| cursor + 2)
+                .or_else(|| rest.strip_prefix('.').map(|_| cursor + 1))
+                && text[after_specifier..].starts_with(quote)
+            {
+                let after_quote = after_specifier + quote.len_utf8();
+                let after_import = Self::skip_js_trivia(text, after_quote);
+                if after_import >= text.len()
+                    || text[after_import..].starts_with(';')
+                    || text[after_import..].starts_with('\n')
+                    || text[after_import..].starts_with('\r')
+                {
+                    return true;
+                }
+            }
+
+            idx += 6;
+        }
+
+        false
+    }
+
+    fn skip_js_trivia(text: &str, mut idx: usize) -> usize {
+        loop {
+            while let Some(ch) = text[idx..].chars().next()
+                && ch.is_whitespace()
+            {
+                idx += ch.len_utf8();
+            }
+
+            if text[idx..].starts_with("//") {
+                idx += 2;
+                while let Some(ch) = text[idx..].chars().next() {
+                    idx += ch.len_utf8();
+                    if ch == '\n' || ch == '\r' {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            if text[idx..].starts_with("/*") {
+                idx += 2;
+                if let Some(end) = text[idx..].find("*/") {
+                    idx += end + 2;
+                } else {
+                    return text.len();
+                }
+                continue;
+            }
+
+            return idx;
+        }
+    }
+
+    fn is_word_boundary(text: &str, idx: usize) -> bool {
+        text[idx..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
     }
 
     fn jsx_runtime_types_package_dir_matches(&self, package_dir: &str) -> bool {

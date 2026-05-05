@@ -1,4 +1,6 @@
+use crate::context::emit::EmitContext;
 use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+use crate::lowering::LoweringPass;
 use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
 
@@ -167,6 +169,78 @@ export = Foo;
     assert!(
         !output.contains("return Foo.a;"),
         "Namespace cross-block export substitution should not qualify a shadowing parameter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_arrow_this_capture_skips_multiple_user_bindings() {
+    let source = r#"export function make(this: { value: string }) {
+  const _this = "first user binding";
+  const _this_1 = "second user binding";
+  return (() => this.value + ":" + _this + ":" + _this_1)();
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _this_2 = this;"),
+        "Arrow lowering should skip both user _this bindings.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return _this_2.value + \":\" + _this + \":\" + _this_1;"),
+        "Rewritten lexical this references should use the fresh capture name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_module_temp_skips_user_binding() {
+    let source = r#"import { value } from "foo";
+
+const foo_1 = "user binding";
+
+export const result = value + ":" + foo_1;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("const foo_2 = require(\"foo\");"),
+        "CommonJS module temp should skip the user foo_1 binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const foo_1 = \"user binding\";"),
+        "User binding should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.result = foo_2.value + \":\" + foo_1;"),
+        "Imported reads should use the fresh module temp while local reads remain local.\nOutput:\n{output}"
     );
 }
 
@@ -417,6 +491,35 @@ export { isValid };
     assert_eq!(
         count, 1,
         "exports.isValid = isValid; should appear exactly once.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn named_export_specifier_for_undefined_only_uses_preamble() {
+    let source = "var undefined;\nexport { undefined };\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.undefined = void 0;"),
+        "undefined export should be initialized in the preamble.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var undefined;"),
+        "local undefined declaration should still be emitted.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.undefined = undefined;"),
+        "undefined self-export should not emit a post-declaration assignment.\nOutput:\n{output}"
     );
 }
 

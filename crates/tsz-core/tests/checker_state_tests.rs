@@ -9789,6 +9789,7 @@ function implicitAnyParam(x) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    checker.enable_source_file_test_pragmas();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
@@ -9897,6 +9898,7 @@ function implicitAnyParam(x) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    checker.enable_source_file_test_pragmas();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
@@ -24936,6 +24938,7 @@ function maybeReturn(x: boolean) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    checker.enable_source_file_test_pragmas();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
@@ -25045,6 +25048,7 @@ class Example {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    checker.enable_source_file_test_pragmas();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
@@ -25105,6 +25109,7 @@ class Example {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    checker.enable_source_file_test_pragmas();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 

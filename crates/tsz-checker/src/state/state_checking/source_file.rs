@@ -31,7 +31,9 @@ impl<'a> CheckerState<'a> {
 
         let node = self.ctx.arena.get(root_idx)?;
         let sf = self.ctx.arena.get_source_file(node)?;
-        self.resolve_compiler_options_from_source(&sf.text);
+        if self.ctx.allow_source_file_test_pragmas {
+            self.resolve_compiler_options_from_source(&sf.text);
+        }
         if self.has_ts_nocheck_pragma(&sf.text) {
             return None;
         }
@@ -299,6 +301,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Type-environment prewarming may construct large alias bodies before
+        // statement checking reaches a concrete diagnostic site. Start the
+        // source-file walk with a clean complexity flag so TS2590 is reported by
+        // the declaration/expression that actually triggered the operation.
+        let _ = self.ctx.types.take_union_too_complex();
+
         // In .d.ts files, emit TS1036 for non-declaration top-level statements.
         // The entire file is an ambient context, so statements like break, continue,
         // return, debugger, if, while, for, etc. are not allowed.
@@ -527,6 +535,28 @@ impl<'a> CheckerState<'a> {
         // survived speculation, this is a no-op.
         let deferred_truthiness = std::mem::take(&mut self.ctx.deferred_truthiness_diagnostics);
         for diag in deferred_truthiness {
+            self.ctx
+                .error(diag.start, diag.length, diag.message_text, diag.code);
+        }
+
+        // Excess-property failures on contextually-typed callbacks are reported
+        // after the property is proven invalid. Earlier speculative callback
+        // checks may already have emitted and rolled back TS7006 while leaving a
+        // stale dedup key, so clear that key before re-emitting the deferred
+        // diagnostic at the end of the file check.
+        let deferred_excess_implicit_any =
+            std::mem::take(&mut self.ctx.deferred_excess_property_implicit_any_diagnostics);
+        for diag in deferred_excess_implicit_any {
+            if self
+                .ctx
+                .diagnostics
+                .iter()
+                .any(|existing| existing.start == diag.start && existing.code == diag.code)
+            {
+                continue;
+            }
+            let key = self.ctx.diagnostic_dedup_key(&diag);
+            self.ctx.emitted_diagnostics.remove(&key);
             self.ctx
                 .error(diag.start, diag.length, diag.message_text, diag.code);
         }

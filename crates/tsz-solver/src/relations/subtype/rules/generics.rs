@@ -1026,26 +1026,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_mapped_id: MappedTypeId,
         target_mapped_id: MappedTypeId,
     ) -> SubtypeResult {
-        // Try the flattened chain approach first: flatten nested homomorphic mapped
-        // types to get the ultimate source type and combined modifiers.
-        // This handles Partial<Readonly<T>> vs Readonly<Partial<T>> vs Partial<T> etc.
         if let (Some(s_flat), Some(t_flat)) = (
             flatten_mapped_chain(self.interner, source_mapped_id),
             flatten_mapped_chain(self.interner, target_mapped_id),
         ) {
-            // Check if both have the same underlying source type
+            let constraints_match =
+                self.mapped_key_constraint_covers(s_flat.key_constraint, t_flat.key_constraint);
             let sources_match = if s_flat.source == t_flat.source {
                 true
             } else {
                 self.check_subtype(s_flat.source, t_flat.source).is_true()
             };
 
-            if sources_match {
-                // Modifier compatibility:
-                // - Source has optional (?) but target doesn't: REJECT
-                //   (source may have missing properties that target requires)
-                // - Readonly differences: always OK
-                //   (readonly is a read-side restriction, not relevant for assignability)
+            if constraints_match && sources_match {
                 if s_flat.has_optional && !t_flat.has_optional {
                     return SubtypeResult::False;
                 }
@@ -1053,27 +1046,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Fallback: single-level mapped type comparison
         let source_mapped = self.interner.get_mapped(source_mapped_id);
         let target_mapped = self.interner.get_mapped(target_mapped_id);
 
-        // Both must have the same constraint for this optimization to apply.
-        // First try identity comparison, then evaluate to normalize.
-        // This handles e.g. keyof(Application(Readonly, [T])) == keyof(T)
-        // because evaluate_keyof simplifies keyof(MappedType) → keyof(source).
-        let constraints_match = if source_mapped.constraint == target_mapped.constraint {
-            true
-        } else {
-            let s_eval = self.evaluate_type(source_mapped.constraint);
-            let t_eval = self.evaluate_type(target_mapped.constraint);
-            s_eval == t_eval
-        };
+        let constraints_match = self
+            .mapped_key_constraint_covers(source_mapped.constraint, target_mapped.constraint)
+            || (self.mapped_name_types_compatible(&source_mapped, &target_mapped)
+                && self
+                    .check_subtype(target_mapped.constraint, source_mapped.constraint)
+                    .is_true());
 
         if !constraints_match {
             return SubtypeResult::False;
         }
 
-        // Check template types.
         let source_template = source_mapped.template;
         let mut target_template = target_mapped.template;
 
@@ -1092,7 +1078,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Handle nested mapped types in templates.
         if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
             mapped_type_id(self.interner, source_template),
             mapped_type_id(self.interner, target_template),
@@ -1105,7 +1090,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             );
         }
 
-        // Compare templates directly
         self.check_subtype(source_template, target_template)
     }
 
@@ -1212,6 +1196,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // The target must be the same type parameter as the constraint source,
         // or assignable to it.
         if constraint_source == target {
+            return true;
+        }
+        if let Some(source_param) = type_param_info(self.interner, constraint_source)
+            && let Some(source_constraint) = source_param.constraint
+            && self.check_subtype(source_constraint, target).is_true()
+        {
             return true;
         }
         if let Some(target_param) = type_param_info(self.interner, target) {
@@ -1866,6 +1856,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 pub(crate) struct FlattenedMapped {
     /// The ultimate source type (e.g., T in Partial<Readonly<T>>)
     pub source: TypeId,
+    /// The outer mapped key constraint (e.g., `keyof T` or `K`).
+    pub key_constraint: TypeId,
     /// Whether any mapped type in the chain adds optional (?)
     pub has_optional: bool,
     /// Whether any mapped type in the chain adds readonly
@@ -1916,6 +1908,7 @@ pub(crate) fn flatten_mapped_chain(
     {
         return Some(FlattenedMapped {
             source: inner.source,
+            key_constraint: mapped.constraint,
             has_optional: if removes_optional {
                 false
             } else {
@@ -1932,6 +1925,7 @@ pub(crate) fn flatten_mapped_chain(
     // Base case: source object is not a mapped type
     Some(FlattenedMapped {
         source: obj,
+        key_constraint: mapped.constraint,
         has_optional,
         has_readonly,
     })

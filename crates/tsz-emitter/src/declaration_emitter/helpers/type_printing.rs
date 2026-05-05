@@ -707,6 +707,96 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn qualify_current_namespace_self_type_text(
+        &self,
+        type_text: &str,
+    ) -> String {
+        let (alias, default_name, export_names);
+        let (alias_ref, default_name_ref, export_names_ref) =
+            if let (Some(alias), Some(default_name)) = (
+                self.current_namespace_self_import_alias.as_deref(),
+                self.current_namespace_shadowed_default_name.as_deref(),
+            ) {
+                (
+                    alias,
+                    default_name,
+                    &self.current_namespace_self_export_names,
+                )
+            } else if self.inside_declare_namespace {
+                let Some(computed_alias) = self.self_namespace_import_alias() else {
+                    return type_text.to_string();
+                };
+                let Some(computed_default_name) = self.default_exported_local_name() else {
+                    return type_text.to_string();
+                };
+                if !self.source_has_namespace_shadowing_name(&computed_default_name) {
+                    return type_text.to_string();
+                }
+                let mut computed_export_names = self.top_level_self_exported_names();
+                computed_export_names.insert(computed_default_name.clone());
+                alias = computed_alias;
+                default_name = computed_default_name;
+                export_names = computed_export_names;
+                (alias.as_str(), default_name.as_str(), &export_names)
+            } else {
+                return type_text.to_string();
+            };
+        if export_names_ref.is_empty() {
+            return type_text.to_string();
+        }
+
+        let bytes = type_text.as_bytes();
+        let mut out = String::with_capacity(type_text.len() + alias_ref.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if ch == '"' || ch == '\'' {
+                let start = i;
+                i += 1;
+                while i < bytes.len() {
+                    let current = bytes[i] as char;
+                    if current == '\\' {
+                        i = (i + 2).min(bytes.len());
+                        continue;
+                    }
+                    i += 1;
+                    if current == ch {
+                        break;
+                    }
+                }
+                out.push_str(&type_text[start..i]);
+                continue;
+            }
+
+            if !Self::is_type_reference_identifier_start(ch) {
+                out.push(ch);
+                i += 1;
+                continue;
+            }
+
+            let start = i;
+            i += 1;
+            while i < bytes.len() && Self::is_type_reference_identifier_continue(bytes[i] as char) {
+                i += 1;
+            }
+            let ident = &type_text[start..i];
+            let already_qualified = start > 0 && bytes[start - 1] == b'.';
+            if already_qualified || !export_names_ref.contains(ident) {
+                out.push_str(ident);
+                continue;
+            }
+
+            out.push_str(alias_ref);
+            out.push('.');
+            if ident == default_name_ref {
+                out.push_str("default");
+            } else {
+                out.push_str(ident);
+            }
+        }
+        out
+    }
+
     fn function_local_type_alias_application_names(
         &self,
         type_id: tsz_solver::types::TypeId,
@@ -914,11 +1004,15 @@ impl<'a> DeclarationEmitter<'a> {
         Some(inner)
     }
 
-    const fn is_type_reference_identifier_start(ch: char) -> bool {
+    pub(in crate::declaration_emitter) const fn is_type_reference_identifier_start(
+        ch: char,
+    ) -> bool {
         ch == '_' || ch == '$' || ch.is_ascii_alphabetic()
     }
 
-    const fn is_type_reference_identifier_continue(ch: char) -> bool {
+    pub(in crate::declaration_emitter) const fn is_type_reference_identifier_continue(
+        ch: char,
+    ) -> bool {
         ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 

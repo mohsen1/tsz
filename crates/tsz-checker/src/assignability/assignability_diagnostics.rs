@@ -541,6 +541,19 @@ impl<'a> CheckerState<'a> {
             );
             return false;
         }
+        if self.same_base_application_to_constrained_type_param_target(source, target) {
+            self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+            return false;
+        }
+        if self
+            .ctx
+            .arena
+            .get(self.ctx.arena.skip_parenthesized_and_assertions(source_idx))
+            .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+            && self.try_report_concrete_remapped_mapped_missing_property(source, target, diag_idx)
+        {
+            return false;
+        }
         if !force_nested_error_nullish_report
             && !exact_optional_mismatch
             && self.should_suppress_assignability_diagnostic(source, target)

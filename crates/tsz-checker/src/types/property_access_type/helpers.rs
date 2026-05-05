@@ -407,17 +407,51 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn finalize_property_access_result(
-        &self,
+        &mut self,
         idx: NodeIndex,
         result_type: TypeId,
         skip_flow_narrowing: bool,
         skip_result_flow_for_result: bool,
     ) -> TypeId {
+        if self.ctx.types.take_union_too_complex()
+            || self.property_access_result_exceeds_complexity_limit(result_type)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                idx,
+                diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+            );
+        }
+
         if skip_flow_narrowing || skip_result_flow_for_result {
             result_type
         } else {
             self.apply_flow_narrowing(idx, result_type)
         }
+    }
+
+    fn property_access_result_exceeds_complexity_limit(&self, type_id: TypeId) -> bool {
+        const UNION_COMPLEXITY_LIMIT: usize = 100_000;
+
+        let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+
+        let mut cross_product_size = 1usize;
+        for member in members {
+            if let Some(union_members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, member)
+            {
+                cross_product_size = cross_product_size.saturating_mul(union_members.len());
+                if cross_product_size >= UNION_COMPLEXITY_LIMIT {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub(crate) fn flow_narrowed_write_receiver_type(

@@ -261,11 +261,21 @@ impl<'a> CheckerState<'a> {
 
                         if exceeded || circular_mapped {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.error_at_node(
-                                idx,
-                                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                            );
+                            let (message, code) = if exceeded
+                                && is_type_alias
+                                && self.type_alias_symbol_contains_tuple_spread(sym_id)
+                            {
+                                (
+                                    diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                    diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                )
+                            } else {
+                                (
+                                    diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                    diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                )
+                            };
+                            self.error_at_node(idx, message, code);
 
                             // TS2615: When a circular mapped type is involved,
                             // also emit the property-circularity diagnostic.
@@ -788,32 +798,43 @@ impl<'a> CheckerState<'a> {
                             // any concrete instantiation is infinitely recursive.
                             // Check unconditionally (even when exceeded) so we can
                             // emit TS2615 alongside TS2589.
-                            let circular_mapped =
+                            let application_alias_symbol =
                                 query::get_application_info(self.ctx.types, result)
                                     .and_then(|(base, _)| {
                                         query::get_lazy_def_id(self.ctx.types, base)
                                     })
-                                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
-                                    .is_some_and(|ref_sym| {
-                                        // The base is a type alias whose body is a mapped
-                                        // type that references itself in its template
-                                        self.ctx.binder.get_symbol(ref_sym).is_some_and(|symbol| {
-                                            symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
-                                                && symbol.declarations.iter().any(|&decl_idx| {
-                                                    self.alias_has_self_referencing_mapped_body(
-                                                        ref_sym, decl_idx,
-                                                    )
-                                                })
+                                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id));
+                            let circular_mapped = application_alias_symbol.is_some_and(|ref_sym| {
+                                // The base is a type alias whose body is a mapped
+                                // type that references itself in its template
+                                self.ctx.binder.get_symbol(ref_sym).is_some_and(|symbol| {
+                                    symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+                                        && symbol.declarations.iter().any(|&decl_idx| {
+                                            self.alias_has_self_referencing_mapped_body(
+                                                ref_sym, decl_idx,
+                                            )
                                         })
-                                    });
+                                })
+                            });
+                            let tuple_spread_alias =
+                                application_alias_symbol.is_some_and(|ref_sym| {
+                                    self.type_alias_symbol_contains_tuple_spread(ref_sym)
+                                });
 
                             if exceeded || circular_mapped {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                                self.error_at_node(
-                                    idx,
-                                    diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                    diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                );
+                                let (message, code) = if exceeded && tuple_spread_alias {
+                                    (
+                                        diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                        diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                    )
+                                } else {
+                                    (
+                                        diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                        diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                    )
+                                };
+                                self.error_at_node(idx, message, code);
 
                                 // TS2615: When a circular mapped type is involved,
                                 // also emit the property-circularity diagnostic.

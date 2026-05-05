@@ -2,6 +2,13 @@ use tsz_solver::{QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId};
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
 
+pub(crate) fn remapped_mapped_type_has_no_outer_type_params(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::remapped_mapped_type_has_no_outer_type_params(db, type_id)
+}
+
 // ---------------------------------------------------------------------------
 // RelationRequest: unified policy descriptor for relation queries
 // ---------------------------------------------------------------------------

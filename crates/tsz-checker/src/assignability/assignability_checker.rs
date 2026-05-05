@@ -678,7 +678,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn application_info_or_display_alias(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
+    pub(crate) fn application_info_or_display_alias(
+        &self,
+        type_id: TypeId,
+    ) -> Option<(TypeId, Vec<TypeId>)> {
         crate::query_boundaries::common::application_info(self.ctx.types, type_id).or_else(|| {
             self.ctx.types.get_display_alias(type_id).and_then(|alias| {
                 crate::query_boundaries::common::application_info(self.ctx.types, alias)
@@ -833,6 +836,50 @@ impl<'a> CheckerState<'a> {
         let prefix = format!("{source_head}<");
         source_arg_str.trim_start().starts_with(&prefix)
             && !target_arg_str.trim_start().starts_with(&prefix)
+    }
+
+    pub(crate) fn same_base_application_to_constrained_type_param_target(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some(((source_base, source_args), (target_base, target_args))) =
+            self.application_info_or_display_alias(source).zip(
+                crate::query_boundaries::common::application_info(self.ctx.types, target),
+            )
+        else {
+            return false;
+        };
+        if source_base != target_base || source_args.len() != target_args.len() {
+            return false;
+        }
+
+        source_args
+            .iter()
+            .copied()
+            .zip(target_args.iter().copied())
+            .any(|(source_arg, target_arg)| {
+                crate::query_boundaries::common::type_param_info(self.ctx.types, target_arg)
+                    .and_then(|param| param.constraint)
+                    .is_some_and(|constraint| {
+                        constraint == source_arg
+                            || (self.is_assignable_to(source_arg, constraint)
+                                && self.is_assignable_to(constraint, source_arg))
+                            || crate::query_boundaries::common::type_param_info(
+                                self.ctx.types,
+                                constraint,
+                            )
+                            .zip(crate::query_boundaries::common::type_param_info(
+                                self.ctx.types,
+                                source_arg,
+                            ))
+                            .is_some_and(
+                                |(constraint_param, source_param)| {
+                                    constraint_param.name == source_param.name
+                                },
+                            )
+                    })
+            })
     }
 
     /// Centralized suppression for TS2322-style assignability diagnostics.
@@ -1988,6 +2035,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if self.same_base_application_to_constrained_type_param_target(source, target) {
+            return false;
+        }
+
         // Variance-aware fast path: when both source and target are Application
         // types with the same base (e.g., Covariant<A> vs Covariant<B>), check
         // type arguments using computed variance BEFORE structural expansion.
@@ -2033,6 +2084,38 @@ impl<'a> CheckerState<'a> {
             && self.is_assignable_to(s_idx, t_idx)
         {
             return true;
+        }
+
+        // Pre-evaluation IndexAccess object-constraint rejection: `T[K]` is not
+        // assignable to `U[K]` when `U extends T`. Evaluating through U's
+        // constraint can erase that distinction and make both sides look like
+        // `T[K]`, but U may be instantiated with narrower property values.
+        if let Some((s_obj, s_idx)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                source,
+            )
+            && let Some((t_obj, t_idx)) =
+                crate::query_boundaries::checkers::generic::index_access_components(
+                    self.ctx.types,
+                    target,
+                )
+            && self.is_assignable_to(s_idx, t_idx)
+            && let Some(t_param) =
+                crate::query_boundaries::common::type_param_info(self.ctx.types, t_obj)
+            && t_param.constraint.is_some_and(|constraint| {
+                constraint == s_obj
+                    || crate::query_boundaries::common::type_param_info(self.ctx.types, constraint)
+                        .zip(crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            s_obj,
+                        ))
+                        .is_some_and(|(constraint_param, source_param)| {
+                            constraint_param.name == source_param.name
+                        })
+            })
+        {
+            return false;
         }
 
         // Pre-evaluation IndexAccess key-identity rejection: when both source and

@@ -278,15 +278,6 @@ fn strip_type_only_content_keeps_object_literal_value_after_colon() {
 }
 
 #[test]
-fn strip_type_only_content_keeps_string_literals_intact() {
-    // `:` inside string literals must not be misread as a type annotation.
-    let src = "const x = \"a:b:Foo\";\n";
-    let stripped = strip_type_only_content(src);
-    // The string content is preserved verbatim, including `Foo`.
-    assert!(stripped.contains("\"a:b:Foo\""));
-}
-
-#[test]
 fn strip_type_only_content_strips_var_decl_without_initializer() {
     // `let x: T;` — no `=`, the colon IS a type annotation.
     let src = "let x: Foo;\n";
@@ -302,6 +293,45 @@ fn strip_type_only_content_skips_line_comments() {
     let stripped = strip_type_only_content(src);
     assert!(!contains_identifier_occurrence(&stripped, "Foo"));
     assert!(contains_identifier_occurrence(&stripped, "x"));
+}
+
+#[test]
+fn strip_type_only_content_ignores_string_literal_identifier_text() {
+    let src = "const x = \"a:b:Foo\";\nconst y = 'Foo';\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Foo"));
+    assert!(contains_identifier_occurrence(&stripped, "x"));
+    assert!(contains_identifier_occurrence(&stripped, "y"));
+}
+
+#[test]
+fn strip_type_only_content_ignores_block_comment_identifier_text() {
+    let src = "/* Foo */\nconst x = 1;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Foo"));
+    assert!(contains_identifier_occurrence(&stripped, "x"));
+}
+
+#[test]
+fn strip_type_only_content_ignores_multiline_block_comment_identifier_text() {
+    let src = "/*\nFoo\n*/\nconst x = 1;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Foo"));
+    assert!(contains_identifier_occurrence(&stripped, "x"));
+}
+
+#[test]
+fn strip_type_only_content_keeps_template_expression_identifier_text() {
+    let src = "const x = `${Foo}`;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(contains_identifier_occurrence(&stripped, "Foo"));
+}
+
+#[test]
+fn strip_type_only_content_ignores_template_literal_text() {
+    let src = "const x = `Foo`;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Foo"));
 }
 
 // ----------------------------------------------------------------------

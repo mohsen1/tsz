@@ -172,6 +172,7 @@ impl<'a> DeclarationEmitter<'a> {
                         name_node.end - name_node.pos,
                     );
                 }
+                let type_text = self.qualify_current_namespace_self_type_text(&type_text);
                 self.write(": ");
                 self.write(&Self::strip_synthetic_anonymous_object_members(&type_text));
             } else if has_initializer
@@ -402,9 +403,11 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
+                let selected_type_text =
+                    self.qualify_current_namespace_self_type_text(selected_type_text);
                 self.write(": ");
                 self.write(&Self::strip_synthetic_anonymous_object_members(
-                    selected_type_text,
+                    &selected_type_text,
                 ));
             } else if let Some(typeof_text) =
                 self.typeof_prefix_for_value_entity(initializer, has_initializer, None)
@@ -644,6 +647,159 @@ impl<'a> DeclarationEmitter<'a> {
         for &stmt_idx in &statements.nodes {
             self.retain_synthetic_class_extends_alias_dependencies_for_statement(stmt_idx);
         }
+    }
+
+    pub(in crate::declaration_emitter) fn retain_export_default_expression_type_dependencies_in_statements(
+        &mut self,
+        statements: &NodeList,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if !export.is_default_export || !export.export_clause.is_some() {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if matches!(
+                clause_node.kind,
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::INTERFACE_DECLARATION
+                    || k == SyntaxKind::Identifier as u16
+            ) {
+                continue;
+            }
+            if let Some(resolved_type) = self
+                .resolve_declaration_type_text(&[export.export_clause], Some(export.export_clause))
+            {
+                self.retain_direct_type_symbols_for_public_api(resolved_type.type_id);
+                self.retain_local_type_names_for_public_api(&resolved_type.canonical_type_text);
+                self.retain_local_type_names_for_public_api(&resolved_type.emitted_type_text);
+            } else if let Some(type_id) = self.get_node_type(export.export_clause) {
+                self.retain_direct_type_symbols_for_public_api(type_id);
+                let type_text = self.print_type_id(type_id);
+                self.retain_local_type_names_for_public_api(&type_text);
+            }
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn retain_local_type_names_for_public_api(
+        &mut self,
+        type_text: &str,
+    ) {
+        let Some(binder) = self.binder else {
+            return;
+        };
+        let Some(used_symbols) = self.used_symbols.as_mut() else {
+            return;
+        };
+
+        for name in Self::type_reference_identifier_names(type_text) {
+            let Some(sym_id) = binder.file_locals.get(name.as_str()) else {
+                continue;
+            };
+            let Some(symbol) = binder.symbols.get(sym_id) else {
+                continue;
+            };
+            if symbol.flags
+                & (symbol_flags::CLASS
+                    | symbol_flags::INTERFACE
+                    | symbol_flags::TYPE_ALIAS
+                    | symbol_flags::ENUM
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::NAMESPACE_MODULE)
+                == 0
+            {
+                continue;
+            }
+            used_symbols
+                .entry(sym_id)
+                .and_modify(|kind| *kind |= super::super::usage_analyzer::UsageKind::TYPE)
+                .or_insert(super::super::usage_analyzer::UsageKind::TYPE);
+        }
+    }
+
+    fn type_reference_identifier_names(type_text: &str) -> Vec<String> {
+        let bytes = type_text.as_bytes();
+        let mut names = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if ch == '"' || ch == '\'' {
+                i += 1;
+                while i < bytes.len() {
+                    let current = bytes[i] as char;
+                    if current == '\\' {
+                        i = (i + 2).min(bytes.len());
+                        continue;
+                    }
+                    i += 1;
+                    if current == ch {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if !Self::is_type_reference_identifier_start(ch) {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            i += 1;
+            while i < bytes.len() && Self::is_type_reference_identifier_continue(bytes[i] as char) {
+                i += 1;
+            }
+            if start > 0 && bytes[start - 1] == b'.' {
+                continue;
+            }
+            let name = &type_text[start..i];
+            if !Self::is_type_reference_keyword(name) {
+                names.push(name.to_string());
+            }
+        }
+        names
+    }
+
+    fn is_type_reference_keyword(name: &str) -> bool {
+        matches!(
+            name,
+            "any"
+                | "as"
+                | "bigint"
+                | "boolean"
+                | "const"
+                | "declare"
+                | "default"
+                | "export"
+                | "extends"
+                | "false"
+                | "function"
+                | "get"
+                | "import"
+                | "infer"
+                | "keyof"
+                | "new"
+                | "never"
+                | "null"
+                | "number"
+                | "object"
+                | "readonly"
+                | "set"
+                | "string"
+                | "symbol"
+                | "this"
+                | "true"
+                | "typeof"
+                | "undefined"
+                | "unknown"
+                | "void"
+        )
     }
 
     pub(in crate::declaration_emitter) fn retain_synthetic_class_extends_alias_dependencies_for_statement(
@@ -1077,6 +1233,10 @@ impl<'a> DeclarationEmitter<'a> {
                     return Some(self.print_type_id_for_inferred_declaration(type_id));
                 }
                 Some(type_text)
+            })
+            .or_else(|| {
+                self.local_variable_initializer_type_text(identifier_idx)
+                    .filter(|text| !text.is_empty() && text != "any")
             })
     }
 

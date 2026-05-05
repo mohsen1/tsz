@@ -22,6 +22,7 @@
 use crate::transforms::emit_utils::{
     identifier_text as get_identifier_text, is_valid_identifier_name, specifier_name_text,
 };
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -780,13 +781,14 @@ fn collect_value_names_from_declaration(
 ///
 /// Returns a list of exported names (e.g., ["foo", "bar"])
 pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<String> {
-    collect_export_names_with_options(arena, statements, false)
+    collect_export_names_with_options(arena, statements, false, &FxHashSet::default())
 }
 
 pub fn collect_export_names_with_options(
     arena: &NodeArena,
     statements: &[NodeIndex],
     preserve_const_enums: bool,
+    type_only_nodes: &FxHashSet<NodeIndex>,
 ) -> Vec<String> {
     let mut exports = Vec::new();
 
@@ -867,6 +869,9 @@ pub fn collect_export_names_with_options(
                                     continue;
                                 };
                                 if spec.is_type_only {
+                                    continue;
+                                }
+                                if type_only_nodes.contains(&spec_idx) {
                                     continue;
                                 }
                                 // The local name is property_name if present, otherwise name
@@ -1001,6 +1006,7 @@ pub fn collect_export_names_categorized(
     arena: &NodeArena,
     statements: &[NodeIndex],
     preserve_const_enums: bool,
+    type_only_nodes: &FxHashSet<NodeIndex>,
 ) -> CategorizedExports {
     let mut func_exports: Vec<(String, String)> = Vec::new(); // (exported_name, local_name)
     let mut other_exports = Vec::new();
@@ -1011,7 +1017,8 @@ pub fn collect_export_names_categorized(
     // surfaced by `exportDefaultInterfaceAndTwoFunctions`); a single shared
     // `"default_1"` would collide and produce identical helper names.
     let mut anonymous_default_counter: u32 = 0;
-    let all = collect_export_names_with_options(arena, statements, preserve_const_enums);
+    let all =
+        collect_export_names_with_options(arena, statements, preserve_const_enums, type_only_nodes);
 
     // First pass: collect all function declaration names in the file (including
     // non-exported ones and `declare function` names) so we can resolve

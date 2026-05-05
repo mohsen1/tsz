@@ -312,6 +312,13 @@ pub struct CheckerContext<'a> {
     /// checker should consume that context and avoid ad-hoc module-existence inference.
     pub report_unresolved_imports: bool,
 
+    /// Whether leading conformance-style source comments may override compiler options.
+    ///
+    /// TypeScript source files can contain comments like `// @strict: false` in
+    /// the conformance suite, but those are not user-facing source directives.
+    /// Normal CLI/LSP/project checking must leave compiler options unchanged.
+    pub allow_source_file_test_pragmas: bool,
+
     /// Whether the current file is an ESM module (per-file determination).
     /// In Node16/NodeNext, `.js`/`.ts` files may be ESM based on the nearest
     /// `package.json` `"type": "module"` field. Set by the driver from module resolver.
@@ -721,6 +728,10 @@ pub struct CheckerContext<'a> {
     /// expression evaluation but lost when call-resolution speculation rolls
     /// back the main diagnostics vector. Flushed once per top-level statement.
     pub deferred_truthiness_diagnostics: Vec<Diagnostic>,
+    /// Deferred TS7006 diagnostics for callback parameters on excess object
+    /// literal properties. These are produced only after EPC proves the
+    /// contextual property invalid, and must survive speculative rollback.
+    pub deferred_excess_property_implicit_any_diagnostics: Vec<Diagnostic>,
 
     // --- Recursion Guards ---
     /// Stack of symbols being resolved.

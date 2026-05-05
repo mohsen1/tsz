@@ -54,6 +54,81 @@ fn test_global_class_name_shadowed_by_type_param_uses_global_this() {
 }
 
 #[test]
+fn test_default_export_type_text_retains_local_type_alias_dependency() {
+    let source = r#"
+type Experiment<Name> = {
+    name: Name;
+};
+declare const createExperiment: <Name extends string>(
+    options: Experiment<Name>
+) => Experiment<Name>;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_used_symbols(FxHashMap::default());
+
+    emitter.retain_local_type_names_for_public_api(r#"Experiment<"foo">"#);
+
+    let experiment_sym = binder
+        .file_locals
+        .get("Experiment")
+        .expect("missing Experiment symbol");
+    let create_sym = binder
+        .file_locals
+        .get("createExperiment")
+        .expect("missing createExperiment symbol");
+    let used = emitter.used_symbols.as_ref().expect("missing used symbols");
+    assert!(
+        used.contains_key(&experiment_sym),
+        "Expected type text to retain local type alias dependency"
+    );
+    assert!(
+        !used.contains_key(&create_sym),
+        "Did not expect type text retention to keep local value helpers"
+    );
+}
+
+#[test]
+fn test_static_super_method_call_preserves_return_type() {
+    let output = emit_dts_with_binding(
+        r#"
+class C1 {
+    protected static sx: number;
+    protected static sf() {
+        return this.sx;
+    }
+}
+class C2 extends C1 {
+    protected static sf() {
+        return super.sf() + this.sx;
+    }
+}
+class C3 extends C2 {
+    static sf() {
+        return super.sf();
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("protected static sf(): number;"),
+        "Expected protected static super method return to be number: {output}"
+    );
+    assert!(
+        output.contains("static sf(): number;"),
+        "Expected public static super method return to be number: {output}"
+    );
+}
+
+#[test]
 fn test_inferred_generic_function_type_omits_synthesized_optional_undefined() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
@@ -136,6 +211,83 @@ const foo = <T,>(x: T) => {
         .expect("missing returned function type");
 
     assert_eq!(type_text, "<T_1>(y: T_1) => readonly [T, T_1]");
+}
+
+#[test]
+fn test_returned_class_expression_preserves_extends_type_parameter() {
+    let source = r#"
+export type Constructor<T = {}> = new (...args: any[]) => T;
+
+export function Timestamped<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+        timestamp = Date.now();
+    };
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let source_file = parser
+        .arena
+        .get(root)
+        .and_then(|node| parser.arena.get_source_file(node))
+        .expect("missing source file");
+    let func = source_file
+        .statements
+        .nodes
+        .iter()
+        .find_map(|&stmt_idx| {
+            let stmt_node = parser.arena.get(stmt_idx)?;
+            if let Some(func) = parser.arena.get_function(stmt_node) {
+                return Some(func);
+            }
+            let export = parser.arena.get_export_decl(stmt_node)?;
+            let clause_node = parser.arena.get(export.export_clause)?;
+            parser.arena.get_function(clause_node)
+        })
+        .expect("missing function");
+    let return_expr = parser
+        .arena
+        .get(func.body)
+        .and_then(|node| parser.arena.get_block(node))
+        .and_then(|block| parser.arena.get(block.statements.nodes[0]))
+        .and_then(|node| parser.arena.get_return_statement(node))
+        .and_then(|ret| ret.expression.is_some().then_some(ret.expression))
+        .expect("missing returned class expression");
+
+    let interner = TypeInterner::new();
+    let type_cache = TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .preferred_expression_type_text(return_expr)
+        .expect("missing class expression type text");
+    assert!(
+        type_text.contains("} & TBase"),
+        "Expected returned class expression to preserve extends type parameter: {type_text}"
+    );
+    assert!(
+        type_text.contains("new (...args: any[]):"),
+        "Expected mixin constructor to forward base constructor args: {type_text}"
+    );
+}
+
+#[test]
+fn test_returned_local_call_preserves_typeof_parameter_return() {
+    let output = emit_dts_with_binding(
+        r#"
+export const g = (v: "outer") => {
+    const f = (v: "inner") => () => null! as typeof v;
+    const r = f(null!);
+    return r;
+};
+"#,
+    );
+
+    assert!(
+        output.contains(r#"export declare const g: (v: "outer") => () => "inner";"#),
+        "Expected returned local call to preserve typeof parameter return: {output}"
+    );
 }
 
 #[test]

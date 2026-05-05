@@ -410,7 +410,12 @@ impl<'a> CheckerState<'a> {
         if let Some(keyof_inner) =
             crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)
         {
-            return keyof_inner == type_param;
+            return self.same_type_param_identity(keyof_inner, type_param)
+                || crate::query_boundaries::common::type_param_info(self.ctx.types, type_param)
+                    .and_then(|param| param.constraint)
+                    .is_some_and(|constraint| {
+                        self.same_type_param_identity(constraint, keyof_inner)
+                    });
         }
         // K extends keyof T (type param whose constraint is keyof T)
         if let Some(param_info) =
@@ -419,7 +424,12 @@ impl<'a> CheckerState<'a> {
             && let Some(keyof_inner) =
                 crate::query_boundaries::common::keyof_inner_type(self.ctx.types, constraint)
         {
-            return keyof_inner == type_param;
+            return self.same_type_param_identity(keyof_inner, type_param)
+                || crate::query_boundaries::common::type_param_info(self.ctx.types, type_param)
+                    .and_then(|param| param.constraint)
+                    .is_some_and(|constraint| {
+                        self.same_type_param_identity(constraint, keyof_inner)
+                    });
         }
         false
     }

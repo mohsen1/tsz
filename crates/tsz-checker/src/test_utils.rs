@@ -29,6 +29,7 @@ pub fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> V
         file_name.to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     checker.ctx.set_lib_contexts(Vec::new());
     checker.check_source_file(source_file);

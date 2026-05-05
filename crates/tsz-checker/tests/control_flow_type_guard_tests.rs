@@ -18,6 +18,55 @@ fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn shadowed_builtin_guard_names_do_not_narrow() {
+    let diagnostics = strict_diagnostics(
+        r#"
+interface ArrayBufferView {
+    byteLength: number;
+}
+
+const Array = {
+    isArray(_value: unknown): boolean {
+        return true;
+    },
+};
+
+declare let maybeArray: string | string[];
+if (Array.isArray(maybeArray)) {
+    const arrayOnly: string[] = maybeArray;
+}
+
+const ArrayBuffer = {
+    isView(_value: unknown): boolean {
+        return true;
+    },
+};
+
+declare let maybeView: string | ArrayBufferView;
+if (ArrayBuffer.isView(maybeView)) {
+    const viewOnly: ArrayBufferView = maybeView;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message == "Type 'string | string[]' is not assignable to type 'string[]'."
+        }),
+        "expected shadowed Array.isArray to avoid array narrowing: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message
+                    == "Type 'string | ArrayBufferView' is not assignable to type 'ArrayBufferView'."
+        }),
+        "expected shadowed ArrayBuffer.isView to avoid ArrayBufferView narrowing: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn overloaded_type_guard_uses_selected_predicate() {
     let diagnostics = strict_diagnostics(
         r#"
@@ -1788,6 +1837,68 @@ if (isFooBlock(foobar)) {
     assert!(
         ts2339.is_empty(),
         "Block body with single return should also infer a predicate; ts2339={ts2339:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_simple_statements_before_return() {
+    let source = r#"
+function isString(value: unknown) {
+  const ignored = 0;
+  ignored;
+  return typeof value === "string";
+}
+
+declare const flag: boolean;
+let input: unknown = flag ? "text" : 1;
+
+if (isString(input)) {
+  const asString: string = input;
+  const asNumber: number = input;
+
+  asString;
+  asNumber;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        !ts2322.iter().any(|(_, message)| {
+            message.contains("Type 'unknown' is not assignable to type 'string'")
+        }),
+        "Inferred predicate should allow assigning input to string; diags={diags:#?}"
+    );
+    assert!(
+        ts2322.len() == 1,
+        "Expected only the remaining number assignment to fail; diags={diags:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_rejects_non_final_return_path() {
+    let source = r#"
+function isString(value: unknown, flag: boolean) {
+  if (flag) {
+    return false;
+  }
+  return typeof value === "string";
+}
+
+declare const flag: boolean;
+let input: unknown = flag ? "text" : 1;
+
+if (isString(input, flag)) {
+  const asString: string = input;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'unknown' is not assignable to type 'string'")
+        }),
+        "A block with an alternate return path must not infer a predicate; diags={diags:#?}"
     );
 }
 
