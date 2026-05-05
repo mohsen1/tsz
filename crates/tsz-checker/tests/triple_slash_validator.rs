@@ -44,6 +44,15 @@ fn test_extract_reference_paths_with_leading_whitespace() {
 }
 
 #[test]
+fn test_extract_reference_paths_after_shebang() {
+    let source =
+        "#!/usr/bin/env node\n/// <reference path=\"f.d.ts\"/>\nimport { x } from \"test\";\n";
+    let refs = extract_reference_paths(source);
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].0, "f.d.ts");
+}
+
+#[test]
 fn test_extract_no_references() {
     let source = "const x = 1;\n// regular comment\n";
     let refs = extract_reference_paths(source);
@@ -197,6 +206,14 @@ fn extract_reference_types_captures_byte_offset_and_length() {
     assert_eq!(*length, 3, "length should be the value length");
     // The value `abc` starts after `/// <reference types="` (22 bytes).
     assert_eq!(*offset, 22);
+}
+
+#[test]
+fn extract_reference_types_after_shebang() {
+    let source = "#!/usr/bin/env node\n/// <reference types=\"node\" />\n";
+    let types = extract_reference_types(source);
+    assert_eq!(types.len(), 1);
+    assert_eq!(types[0].0, "node");
 }
 
 #[test]
