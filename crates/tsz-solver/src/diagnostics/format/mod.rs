@@ -992,7 +992,9 @@ impl<'a> TypeFormatter<'a> {
                     // type parameter names from the definition (like `A<T>`).
                     // The display_alias is set when an Application type is evaluated,
                     // and preserves the concrete type arguments from the instantiation.
-                    if !def.type_params.is_empty() {
+                    let prefer_array_shorthand =
+                        name == "Array" && matches!(&key, TypeData::Array(_));
+                    if !def.type_params.is_empty() && !prefer_array_shorthand {
                         if let Some(alias_origin) = self.interner.get_display_alias(type_id)
                             && self.display_alias_visiting.insert(alias_origin)
                         {

@@ -204,7 +204,10 @@ impl<'a> CheckerState<'a> {
     ) {
         let display_arg_type = common::widen_literal_type(self.ctx.types, arg_type);
         let actual_display = self.format_type_diagnostic(display_arg_type);
-        let target_display = self.format_type_diagnostic(param_type);
+        let mut target_display = self.format_type_diagnostic(param_type);
+        if target_display.contains("Array<") {
+            target_display = Self::normalize_array_generic_to_shorthand(&target_display);
+        }
         let message = format_message(
             diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
             &[&actual_display, &target_display],

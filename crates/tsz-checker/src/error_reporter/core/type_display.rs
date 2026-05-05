@@ -1450,7 +1450,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Do not normalize when the generic array appears directly in a type
     /// parameter `extends` clause; tsc preserves `Array<T>` there.
-    fn normalize_array_generic_to_shorthand(text: &str) -> String {
+    pub(crate) fn normalize_array_generic_to_shorthand(text: &str) -> String {
         if !text.contains("Array<") {
             return text.to_string();
         }
@@ -1518,7 +1518,7 @@ impl<'a> CheckerState<'a> {
     /// Extract content between balanced angle brackets starting at `pos`.
     /// `pos` should point to the character right after the opening `<`.
     /// Returns the inner content (without brackets) if balanced.
-    fn extract_balanced_angle_bracket_content(text: &str, pos: usize) -> Option<String> {
+    pub(crate) fn extract_balanced_angle_bracket_content(text: &str, pos: usize) -> Option<String> {
         let bytes = text.as_bytes();
         let mut depth = 1;
         let mut i = pos;

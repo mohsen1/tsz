@@ -115,6 +115,47 @@ fn tdz_callee_still_checks_argument_type_against_declared_signature() {
 }
 
 #[test]
+fn generic_optional_array_parameter_diagnostic_uses_array_shorthand() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+interface Utils {
+   fold<T, S>(c: Array<T>, folder?: (s: S, t: T) => T, init?: S): T;
+}
+
+declare var utils: Utils;
+
+utils.fold();
+utils.fold(null);
+utils.fold(null, null);
+utils.fold(null, null, null);
+"#,
+    );
+
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        3,
+        "expected three TS2345 diagnostics, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2554),
+        "expected TS2554 for the zero-argument call, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2345
+            .iter()
+            .all(|d| d.message_text.contains("parameter of type 'unknown[]'")),
+        "expected TS2345 parameter display to use `unknown[]`, got: {ts2345:#?}"
+    );
+    assert!(
+        ts2345
+            .iter()
+            .all(|d| !d.message_text.contains("Array<unknown>")),
+        "TS2345 parameter display should not use `Array<unknown>`, got: {ts2345:#?}"
+    );
+}
+
+#[test]
 fn tdz_callee_still_checks_minimum_argument_count() {
     let diagnostics = check_source_with_strict_null(
         "b();\ntype Test = (arg: unknown) => arg is string;\nconst b: Test = null as any;",
