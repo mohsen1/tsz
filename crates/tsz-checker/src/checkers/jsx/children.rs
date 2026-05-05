@@ -119,6 +119,8 @@ impl<'a> CheckerState<'a> {
             && let Some(precise_children_type) = contextual_children_type
             && precise_children_type != TypeId::ANY
             && precise_children_type != children_type
+            && !children_type_is_originally_compound
+            && !self.type_requires_multiple_children(children_type)
             && !self.is_assignable_to(synthesized_children_type, precise_children_type)
         {
             children_type = precise_children_type;
@@ -127,6 +129,18 @@ impl<'a> CheckerState<'a> {
         match child_count {
             0 => {}
             1 => {
+                if self.type_requires_multiple_children(children_type)
+                    && self.single_jsx_child_is_function_like(attributes_idx)
+                {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        tag_name_idx,
+                        diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING,
+                        &[&children_prop_name, &children_type_str],
+                    );
+                    return;
+                }
+
                 if self.single_jsx_child_satisfies_children_type(
                     children_type,
                     synthesized_children_type,
@@ -270,7 +284,66 @@ impl<'a> CheckerState<'a> {
         children_type: TypeId,
     ) -> String {
         self.jsx_children_declared_type_text(props_type)
-            .unwrap_or_else(|| self.format_type(children_type))
+            .unwrap_or_else(|| self.jsx_children_fallback_type_display(children_type))
+    }
+
+    fn jsx_children_fallback_type_display(&mut self, children_type: TypeId) -> String {
+        let children_type = self.evaluate_type_with_env(children_type);
+        let display =
+            if crate::query_boundaries::common::union_members(self.ctx.types, children_type)
+                .is_some()
+                || crate::query_boundaries::common::intersection_members(
+                    self.ctx.types,
+                    children_type,
+                )
+                .is_some()
+            {
+                self.format_type(children_type)
+            } else {
+                self.format_jsx_children_type_without_structural_aliases(children_type)
+            };
+        self.normalize_jsx_children_alias_union_display(display)
+    }
+
+    fn format_jsx_children_type_without_structural_aliases(&self, type_id: TypeId) -> String {
+        let mut formatter =
+            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                .with_diagnostic_mode()
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_display_properties();
+        formatter.format(type_id).into_owned()
+    }
+
+    fn normalize_jsx_children_alias_union_display(&self, display: String) -> String {
+        if !display.contains(" | ") {
+            return display;
+        }
+        display
+            .split(" | ")
+            .map(Self::strip_simple_alias_union_parens)
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
+
+    fn strip_simple_alias_union_parens(member: &str) -> String {
+        if let Some(inner) = member.strip_prefix('(').and_then(|s| s.strip_suffix(")[]"))
+            && Self::is_simple_jsx_children_type_name(inner)
+        {
+            return format!("{inner}[]");
+        }
+        if let Some(inner) = member.strip_prefix('(').and_then(|s| s.strip_suffix(')'))
+            && Self::is_simple_jsx_children_type_name(inner)
+        {
+            return inner.to_string();
+        }
+        member.to_string()
+    }
+
+    fn is_simple_jsx_children_type_name(text: &str) -> bool {
+        !text.is_empty()
+            && text
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$' || c == '.')
     }
 
     fn jsx_children_declared_type_text(&mut self, props_type: TypeId) -> Option<String> {
@@ -284,6 +357,21 @@ impl<'a> CheckerState<'a> {
     fn jsx_children_declared_type_text_from_type(&mut self, props_type: TypeId) -> Option<String> {
         if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, props_type)
+        {
+            let mut seen = FxHashSet::default();
+            let texts: Vec<String> = members
+                .iter()
+                .filter_map(|&member| self.jsx_children_declared_type_text_from_type(member))
+                .filter(|text| seen.insert(text.clone()))
+                .collect();
+            return match texts.as_slice() {
+                [text] => Some(text.clone()),
+                _ => None,
+            };
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)
         {
             let mut seen = FxHashSet::default();
             let texts: Vec<String> = members
@@ -406,11 +494,40 @@ impl<'a> CheckerState<'a> {
         children_type: TypeId,
         actual_child_type: TypeId,
     ) -> bool {
-        if matches!(actual_child_type, TypeId::ANY | TypeId::ERROR) {
+        if actual_child_type == TypeId::ANY {
             return true;
+        }
+        if actual_child_type == TypeId::ERROR {
+            return false;
         }
 
         self.is_assignable_to(actual_child_type, children_type)
+    }
+
+    fn single_jsx_child_is_function_like(&self, attributes_idx: NodeIndex) -> bool {
+        let Some(child_idx) = self
+            .get_jsx_body_child_nodes(attributes_idx)
+            .and_then(|children| children.into_iter().next())
+        else {
+            return false;
+        };
+        let Some(child_node) = self.ctx.arena.get(child_idx) else {
+            return false;
+        };
+        let expr_idx = if child_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+            self.ctx
+                .arena
+                .get_jsx_expression(child_node)
+                .map(|expr| expr.expression)
+                .filter(|&expr_idx| expr_idx != NodeIndex::NONE)
+                .unwrap_or(child_idx)
+        } else {
+            child_idx
+        };
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        })
     }
 
     /// Returns `true` if the children prop's callable signature has a literal
@@ -1012,7 +1129,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let diag_node = if let Some(child_node) = self.ctx.arena.get(child_idx) {
+        let type_node = if let Some(child_node) = self.ctx.arena.get(child_idx) {
             if child_node.kind == syntax_kind_ext::JSX_EXPRESSION {
                 self.ctx
                     .arena
@@ -1026,6 +1143,11 @@ impl<'a> CheckerState<'a> {
         } else {
             child_idx
         };
+        let diag_node = if children_type_is_originally_compound {
+            child_idx
+        } else {
+            type_node
+        };
 
         let child_is_jsx_element_like = self.ctx.arena.get(child_idx).is_some_and(|node| {
             node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
@@ -1037,9 +1159,10 @@ impl<'a> CheckerState<'a> {
 
         let source_text = self.format_type_for_assignability_message(actual_child_type);
         let children_prop_name = self.get_jsx_children_prop_name();
-        if self
-            .get_jsx_component_prop_annotation_text(tag_name_idx, &children_prop_name)
-            .is_some()
+        if children_type_is_originally_compound
+            || self
+                .get_jsx_component_prop_annotation_text(tag_name_idx, &children_prop_name)
+                .is_some()
         {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
@@ -1080,14 +1203,14 @@ impl<'a> CheckerState<'a> {
             self.check_assignable_or_report_at_exact_anchor(
                 actual_child_type,
                 children_type,
-                diag_node,
+                type_node,
                 diag_node,
             )
         } else {
             self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
                 actual_child_type,
                 children_type,
-                diag_node,
+                type_node,
                 diag_node,
             )
         };
