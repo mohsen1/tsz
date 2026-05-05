@@ -115,7 +115,7 @@ function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): v
   if (opts.preserveValueImports) args.push('--preserveValueImports');
   if (opts.removeComments) args.push('--removeComments');
   if (opts.stripInternal) args.push('--stripInternal');
-  if (opts.outFile) args.push('--outFile', opts.outFile);
+  if (opts.outFile) args.push('--outFile', opts.outFile.replace(/^[/\\]+/, ''));
   if (opts.outDir) args.push('--outDir', opts.outDir);
   if (opts.rootDir) args.push('--rootDir', opts.rootDir);
 }
@@ -318,6 +318,9 @@ export class CliTranspiler {
           name: sourceFileName ?? `${testName}.ts`,
           content: source,
         }];
+    const normalizedOutFile = outFile?.replace(/^[/\\]+/, '');
+    const outputFilePath = normalizedOutFile ? path.join(testDir, normalizedOutFile) : null;
+    const outputDtsPath = outputFilePath?.replace(/\.js$/, '.d.ts') ?? null;
 
     const inputFiles: string[] = [];
     const expectedOutputs: OutputPaths[] = [];
@@ -360,6 +363,7 @@ export class CliTranspiler {
       expectedOutputs.push({
         jsPath: sourceDefaultJsPath,
         jsCandidates: [
+          ...(outputFilePath ? [outputFilePath] : []),
           ...(outputRelStem ? [
             ext === '.tsx' || ext === '.jsx' ? `${outputRelStem}.jsx` :
             ext === '.mts' || ext === '.mjs' ? `${outputRelStem}.mjs` :
@@ -374,6 +378,7 @@ export class CliTranspiler {
         ],
         dtsPath: `${stem}.d.ts`,
         dtsCandidates: [
+          ...(outputDtsPath ? [outputDtsPath] : []),
           ...(outputRelStem ? [
             `${outputRelStem}.d.ts`,
             `${outputRelStem}.d.mts`,

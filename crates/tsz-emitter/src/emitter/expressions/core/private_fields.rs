@@ -506,6 +506,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if binary.operator_token == SyntaxKind::SatisfiesKeyword as u16 {
+            self.emit(binary.left);
+            return;
+        }
+
         // Assignment and comma operators accept AssignmentExpression operands,
         // which includes YieldExpression. So yield-from-await doesn't need
         // parens in those positions. Only non-assignment, non-comma binary
