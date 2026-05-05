@@ -1526,3 +1526,126 @@ mod jsdoc_tag_boundary_tests {
         assert_eq!(imports[0].0, "Foo");
     }
 }
+
+#[cfg(test)]
+mod parse_jsdoc_import_tag_alias_tests {
+    use crate::state::CheckerState;
+
+    fn parse(rest: &str) -> Vec<(String, String, String)> {
+        CheckerState::parse_jsdoc_import_tag(rest)
+    }
+
+    #[test]
+    fn named_alias_with_space() {
+        let got = parse(r#" { Foo as LocalFoo } from "./dep""#);
+        assert_eq!(
+            got,
+            vec![(
+                "LocalFoo".to_string(),
+                "./dep".to_string(),
+                "Foo".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn named_alias_with_tab_after_as() {
+        let got = parse("\t{ Foo as\tLocalFoo } from \"./dep\"");
+        assert_eq!(
+            got,
+            vec![(
+                "LocalFoo".to_string(),
+                "./dep".to_string(),
+                "Foo".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn named_alias_with_tab_before_and_after_as() {
+        let got = parse("{ Foo\tas\tLocalFoo } from \"./dep\"");
+        assert_eq!(
+            got,
+            vec![(
+                "LocalFoo".to_string(),
+                "./dep".to_string(),
+                "Foo".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn named_alias_with_multiple_spaces() {
+        let got = parse(r#"{ Foo  as  LocalFoo } from "./dep""#);
+        assert_eq!(
+            got,
+            vec![(
+                "LocalFoo".to_string(),
+                "./dep".to_string(),
+                "Foo".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn named_without_alias() {
+        let got = parse(r#"{ Foo } from "./dep""#);
+        assert_eq!(
+            got,
+            vec![("Foo".to_string(), "./dep".to_string(), "Foo".to_string())]
+        );
+    }
+
+    #[test]
+    fn namespace_alias_with_space() {
+        let got = parse(r#"* as ns from "./dep""#);
+        assert_eq!(
+            got,
+            vec![("ns".to_string(), "./dep".to_string(), "*".to_string())]
+        );
+    }
+
+    #[test]
+    fn namespace_alias_with_tab_around_as() {
+        let got = parse("*\tas\tns from \"./dep\"");
+        assert_eq!(
+            got,
+            vec![("ns".to_string(), "./dep".to_string(), "*".to_string())]
+        );
+    }
+
+    #[test]
+    fn does_not_match_as_inside_identifier() {
+        let got = parse(r#"{ Class } from "./dep""#);
+        assert_eq!(
+            got,
+            vec![(
+                "Class".to_string(),
+                "./dep".to_string(),
+                "Class".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn alias_keyword_named_as() {
+        let got = parse(r#"{ as as Foo } from "./dep""#);
+        assert_eq!(
+            got,
+            vec![("Foo".to_string(), "./dep".to_string(), "as".to_string())]
+        );
+    }
+
+    #[test]
+    fn default_alias() {
+        let got = parse(r#"{ default as Foo } from "./dep""#);
+        assert_eq!(
+            got,
+            vec![(
+                "Foo".to_string(),
+                "./dep".to_string(),
+                "default".to_string()
+            )]
+        );
+    }
+}
