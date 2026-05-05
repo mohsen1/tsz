@@ -1472,20 +1472,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         for &member in members.iter() {
             let evaluated = self.evaluate_compound_member(member);
             // When an Application/Lazy member fails to reduce and falls back to
-            // `unknown` (e.g. depth-limit / cycle / stale cache on the very
-            // first evaluation pass), keep the original opaque member instead.
-            // Letting `unknown` propagate would cause intersection simplification
-            // to drop it via `unknown & T = T`, silently erasing the properties
-            // the unevaluated alias would contribute once expanded. Preserving
+            // `unknown` or to the empty object `{}` (e.g. depth-limit / cycle /
+            // cross-file resolution gap that can't expand the alias body), keep
+            // the original opaque member instead. Letting either propagate
+            // would cause intersection simplification to drop it via
+            // `unknown & T = T` or `{} & T = T` (since `{}` has no
+            // properties), silently erasing the structural shape the
+            // unevaluated alias would contribute once expanded. Preserving
             // the original Application/Lazy keeps the intersection honest so
-            // later passes can see the alias's structural shape.
-            let preserved = if evaluated == TypeId::UNKNOWN
-                && Self::is_opaque_under_bypass_eval(self.interner, member)
-            {
-                member
-            } else {
-                evaluated
-            };
+            // downstream passes can see the alias's structural shape.
+            let opaque_orig = Self::is_opaque_under_bypass_eval(self.interner, member);
+            let evaluated_is_empty_object = evaluated != member
+                && crate::visitors::visitor_predicates::is_empty_object_type(
+                    self.interner,
+                    evaluated,
+                );
+            let preserved =
+                if opaque_orig && (evaluated == TypeId::UNKNOWN || evaluated_is_empty_object) {
+                    member
+                } else {
+                    evaluated
+                };
             evaluated_members.push(preserved);
         }
 
