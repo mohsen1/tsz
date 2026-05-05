@@ -190,3 +190,38 @@ type Test<T extends { name: string }> = MustBeString<ExtractName<T>>;
         "Should NOT emit TS2344 when the conditional check type's source constraint proves the infer result, got: {ts2344_errors:?}"
     );
 }
+
+#[test]
+fn test_tuple_rest_infer_satisfies_array_constraint_no_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {
+    length: number;
+    [n: number]: T;
+}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type UnshiftTuple<T extends [...any[]]> = T extends [T[0], ...infer Tail] ? Tail : never;
+type UseArray<T extends any[]> = T;
+type UseNestedArray<T extends Array<Array<any>>> = T;
+
+type FromRest<T extends [...any[]]> = UseArray<UnshiftTuple<T>>;
+type NestedTuple = UseNestedArray<[[]]>;
+"#,
+    );
+
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Should NOT emit TS2344 for tuple-rest infer results or nested tuple array constraints, got: {ts2344_errors:?}"
+    );
+}

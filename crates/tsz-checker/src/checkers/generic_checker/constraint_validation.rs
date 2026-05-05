@@ -344,6 +344,12 @@ impl<'a> CheckerState<'a> {
                                                         inst_constraint,
                                                     )
                                                 || self
+                                                    .infer_result_satisfies_array_like_constraint(
+                                                        cond_extends,
+                                                        cond_true,
+                                                        inst_constraint,
+                                                    )
+                                                || self
                                                     .infer_result_satisfies_via_application_arg_constraints(
                                                         type_arg,
                                                         inst_constraint,
@@ -746,7 +752,7 @@ impl<'a> CheckerState<'a> {
                                         type_arg_evaluated,
                                     )
                                 });
-                            if let Some((cond_check, _cond_extends, cond_true, cond_false)) =
+                            if let Some((cond_check, cond_extends, cond_true, cond_false)) =
                                 query::full_conditional_type_components(db, type_arg).or_else(
                                     || {
                                         query::full_conditional_type_components(
@@ -787,6 +793,11 @@ impl<'a> CheckerState<'a> {
                                     || self.infer_result_satisfies_via_check_constraint(
                                         type_arg,
                                         cond_check,
+                                        inst_constraint,
+                                    )
+                                    || self.infer_result_satisfies_array_like_constraint(
+                                        cond_extends,
+                                        cond_true,
                                         inst_constraint,
                                     )
                                     || self.infer_result_satisfies_via_application_arg_constraints(
@@ -1749,7 +1760,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let source_elem = self.get_element_access_type(source, TypeId::NUMBER, Some(0));
-        source_elem != TypeId::ERROR && self.is_assignable_to(source_elem, target_elem)
+        source_elem != TypeId::ERROR
+            && (self.is_assignable_to(source_elem, target_elem)
+                || ((source_elem != source || target_elem != target)
+                    && self.satisfies_array_like_constraint(source_elem, target_elem)))
     }
 
     /// Check if a type argument coinductively satisfies a recursive constraint
