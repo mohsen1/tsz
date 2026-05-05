@@ -2458,6 +2458,39 @@ fn compile_with_tsconfig_emits_outputs() {
 }
 
 #[test]
+fn compile_emit_bom_prefixes_output_files() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "emitBOM": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(&base.join("main.ts"), "const x = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    let bytes = std::fs::read(base.join("dist/main.js")).expect("read output");
+    assert!(
+        bytes.starts_with(&[0xef, 0xbb, 0xbf]),
+        "Expected emitted JS to start with UTF-8 BOM, got first bytes: {:?}",
+        &bytes[..bytes.len().min(8)]
+    );
+}
+
+#[test]
 fn compile_single_source_amd_outfile_emits_bundle() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -15179,6 +15212,52 @@ var n = F4.staticProp;
     assert!(
         result.diagnostics.is_empty(),
         "Expected JS static expando reads across files to stay error-free, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_js_class_static_expando_after_constructor_function_merge() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["file1.js", "file2.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("file1.js"),
+        r#"var SomeClass = function () {
+    this.otherProp = 0;
+};
+
+new SomeClass();
+"#,
+    );
+    write_file(
+        &base.join("file2.js"),
+        r#"class SomeClass { }
+SomeClass.prop = 0;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected JS class static expando after constructor-function merge to avoid TS2339, got diagnostics: {:?}",
         result.diagnostics
     );
 }

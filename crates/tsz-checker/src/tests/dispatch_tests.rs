@@ -339,6 +339,25 @@ type R = RT<typeof createReducer<string>>;
 }
 
 #[test]
+fn ts2344_parenthesized_typeof_instantiation_does_not_emit_constraint_diagnostic() {
+    let diags = check_source_diagnostics(
+        r#"
+type Inst<T extends abstract new (...args: any) => any> = T extends abstract new (...args: any) => infer R ? R : any;
+let Anon = class <out T> {
+    foo(): Inst<(typeof Anon<T>)> {
+        return this;
+    }
+};
+"#,
+    );
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert!(
+        ts2344.is_empty(),
+        "Parenthesized typeof-instantiation should not emit TS2344, got: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2635_instantiation_expression_filters_union_members_like_tsc() {
     let diags = check_source_diagnostics(
         r#"
