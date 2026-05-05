@@ -815,6 +815,41 @@ overloaded(true);
     );
 }
 
+#[test]
+fn user_defined_concat_overload_with_generic_array_arg_emits_ts2769() {
+    let source = r#"
+interface Weird {
+    concat(value: number): void;
+    concat(value: string): void;
+}
+
+declare const weird: Weird;
+
+function f<T>(items: T[]) {
+    weird.concat(items);
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2769),
+        "User-defined concat overloads should not use Array.concat suppression. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn array_concat_with_generic_array_arg_keeps_ts2769_suppression() {
+    let source = r#"
+function f<T>(left: T[], right: T[]) {
+    left.concat(right);
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2769),
+        "Array.concat generic-array workaround should still suppress TS2769. Diagnostics: {diags:#?}"
+    );
+}
+
 /// Property call: calling a method via property access on a typed object.
 #[test]
 fn property_call_method_on_interface() {
