@@ -571,6 +571,8 @@ pub(super) fn read_source_files(
     let mut sources: FxHashMap<PathBuf, (Option<String>, bool, bool)> = FxHashMap::default(); // (text, is_binary, suppress_parser_diagnostics)
     let mut dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
     let mut seen = FxHashSet::default();
+    let mut discovery_order: FxHashMap<PathBuf, usize> = FxHashMap::default();
+    let mut next_discovery_order = 0usize;
     let mut pending = VecDeque::new();
     let mut resolution_cache = ModuleResolutionCache::default();
     let mut module_resolver = ModuleResolver::new(options);
@@ -599,6 +601,8 @@ pub(super) fn read_source_files(
     for path in paths {
         let canonical = normalize(path, options);
         if seen.insert(canonical.clone()) {
+            discovery_order.insert(canonical.clone(), next_discovery_order);
+            next_discovery_order += 1;
             pending.push_back(canonical);
         }
     }
@@ -685,6 +689,8 @@ pub(super) fn read_source_files(
                     sources.insert(path.clone(), (None, false, false));
                     for dep in cached_deps {
                         if seen.insert(dep.clone()) {
+                            discovery_order.insert(dep.clone(), next_discovery_order);
+                            next_discovery_order += 1;
                             pending.push_back(dep.clone());
                         }
                     }
@@ -757,6 +763,8 @@ pub(super) fn read_source_files(
                         let canonical = normalize(&resolved, options);
                         entry.insert(canonical.clone());
                         if has_source_file_extension(&canonical) && seen.insert(canonical.clone()) {
+                            discovery_order.insert(canonical.clone(), next_discovery_order);
+                            next_discovery_order += 1;
                             pending.push_back(canonical);
                         }
                     }
@@ -842,6 +850,8 @@ pub(super) fn read_source_files(
                         let canonical = normalize(&resolved, options);
                         entry.insert(canonical.clone());
                         if seen.insert(canonical.clone()) {
+                            discovery_order.insert(canonical.clone(), next_discovery_order);
+                            next_discovery_order += 1;
                             pending.push_back(canonical);
                         }
                     } else if !invalid_mode {
@@ -870,6 +880,8 @@ pub(super) fn read_source_files(
                                 let canonical = normalize(&alt, options);
                                 entry.insert(canonical.clone());
                                 if seen.insert(canonical.clone()) {
+                                    discovery_order.insert(canonical.clone(), next_discovery_order);
+                                    next_discovery_order += 1;
                                     pending.push_back(canonical);
                                 }
                             }
@@ -903,6 +915,8 @@ pub(super) fn read_source_files(
                     };
                     entry.insert(resolved_reference.clone());
                     if seen.insert(resolved_reference.clone()) {
+                        discovery_order.insert(resolved_reference.clone(), next_discovery_order);
+                        next_discovery_order += 1;
                         pending.push_back(resolved_reference);
                     }
                 }
@@ -922,9 +936,19 @@ pub(super) fn read_source_files(
         )
         .collect();
     list.sort_by(|left, right| {
-        left.path
-            .to_string_lossy()
-            .cmp(&right.path.to_string_lossy())
+        let left_order = discovery_order
+            .get(&left.path)
+            .copied()
+            .unwrap_or(usize::MAX);
+        let right_order = discovery_order
+            .get(&right.path)
+            .copied()
+            .unwrap_or(usize::MAX);
+        left_order.cmp(&right_order).then_with(|| {
+            left.path
+                .to_string_lossy()
+                .cmp(&right.path.to_string_lossy())
+        })
     });
     Ok(SourceReadResult {
         sources: list,
@@ -1025,6 +1049,56 @@ mod tests {
     fn has_source_file_extension_rejects_no_extension_or_empty() {
         assert!(!has_source_file_extension(Path::new("README")));
         assert!(!has_source_file_extension(Path::new("")));
+    }
+
+    #[test]
+    fn read_source_files_preserves_reference_discovery_order() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("src/root.ts");
+        let foo = dir.path().join("node_modules/foo/index.d.ts");
+        let foo_alpha = dir
+            .path()
+            .join("node_modules/foo/node_modules/alpha/index.d.ts");
+        let bar = dir.path().join("node_modules/bar/index.d.ts");
+        let bar_alpha = dir
+            .path()
+            .join("node_modules/bar/node_modules/alpha/index.d.ts");
+
+        for path in [&root, &foo, &foo_alpha, &bar, &bar_alpha] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        }
+        std::fs::write(
+            &root,
+            "/// <reference types=\"foo\" />\n/// <reference types=\"bar\" />\n",
+        )
+        .unwrap();
+        std::fs::write(&foo, "/// <reference types=\"alpha\" />\n").unwrap();
+        std::fs::write(&foo_alpha, "declare var alpha: any;\n").unwrap();
+        std::fs::write(&bar, "/// <reference types=\"alpha\" />\n").unwrap();
+        std::fs::write(&bar_alpha, "declare var alpha: {};\n").unwrap();
+
+        let result = read_source_files(
+            &[root],
+            dir.path(),
+            &ResolvedCompilerOptions::default(),
+            None,
+            None,
+        )
+        .expect("read source files");
+        let paths: Vec<_> = result.sources.iter().map(|source| &source.path).collect();
+
+        let foo_alpha_pos = paths
+            .iter()
+            .position(|path| path.ends_with("node_modules/foo/node_modules/alpha/index.d.ts"))
+            .expect("foo alpha loaded");
+        let bar_alpha_pos = paths
+            .iter()
+            .position(|path| path.ends_with("node_modules/bar/node_modules/alpha/index.d.ts"))
+            .expect("bar alpha loaded");
+        assert!(
+            foo_alpha_pos < bar_alpha_pos,
+            "reference discovery order should load foo's alpha before bar's alpha; got {paths:?}"
+        );
     }
 
     // ---------------- should_skip_js_in_node_modules ----------------
