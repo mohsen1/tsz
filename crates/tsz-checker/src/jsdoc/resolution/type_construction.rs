@@ -22,7 +22,7 @@ use tsz_solver::{
     TypePredicate, TypePredicateTarget, Visibility,
 };
 impl<'a> CheckerState<'a> {
-    pub(in crate::jsdoc::resolution) fn jsdoc_enum_annotation_type_for_symbol_decl(
+    pub(crate) fn jsdoc_enum_annotation_type_for_symbol_decl(
         &mut self,
         sym_id: tsz_binder::SymbolId,
         decl: NodeIndex,
