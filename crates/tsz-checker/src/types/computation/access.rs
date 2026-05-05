@@ -718,15 +718,31 @@ impl<'a> CheckerState<'a> {
         let mut report_no_index = false;
         let mut use_index_signature_check = true;
 
-        if result_type.is_none()
-            && let Some(value_type) = self.remapped_mapped_element_access_result(
-                raw_object_type,
-                pre_resolution_object_type,
-                index_type,
-            )
-        {
-            result_type = Some(value_type);
-            use_index_signature_check = false;
+        if result_type.is_none() {
+            let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
+            let mapped_access =
+                crate::query_boundaries::common::remapped_mapped_index_access_result(
+                    self.ctx.types,
+                    raw_object_type,
+                    index_type,
+                )
+                .or_else(|| {
+                    crate::query_boundaries::common::remapped_mapped_index_access_result(
+                        self.ctx.types,
+                        resolved_pre,
+                        index_type,
+                    )
+                });
+            if let Some(mapped_access) = mapped_access {
+                use crate::query_boundaries::common::RemappedMappedIndexAccessResult::{
+                    Deferred, Known,
+                };
+                let value_type = match mapped_access {
+                    Known(value_type) | Deferred(value_type) => value_type,
+                };
+                result_type = Some(value_type);
+                use_index_signature_check = false;
+            }
         }
 
         if let Some(name) = literal_string.as_deref() {

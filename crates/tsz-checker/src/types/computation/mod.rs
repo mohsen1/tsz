@@ -5,7 +5,6 @@
 //! - `assignment_target` — assignment target write-surface helpers
 //! - `helpers` — foundational helpers, contextual typing, relationship queries
 //! - `access` — property/element access type resolution
-//! - `access_mapped` — mapped-type element access helpers
 //! - `binary` — binary expression operators
 //! - `call` — call expression resolution and overload handling
 //! - `call_display` — display skeleton and constructor-propagation helpers for calls
@@ -23,7 +22,6 @@
 pub(crate) mod access;
 pub(crate) mod access_await;
 pub(crate) mod access_helpers;
-pub(crate) mod access_mapped;
 pub(crate) mod access_super;
 #[cfg(test)]
 mod access_tests;
