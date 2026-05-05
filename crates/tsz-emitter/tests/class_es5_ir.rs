@@ -254,6 +254,44 @@ fn test_class_property_jsdoc_moves_with_initializer_into_constructor() {
 }
 
 #[test]
+fn test_constructor_body_preserves_multiline_jsdoc_before_statement() {
+    // Inside the constructor body, a multi-line JSDoc preceding a real
+    // statement (e.g. a `this.field = value` initializer in a JS-style
+    // constructor) must be carried through into the lowered output. The
+    // line-based comment scanner used to reject it because the opening
+    // `/**` line did not also end with `*/`.
+    let source = r#"class Aleph {
+    constructor(a, b) {
+        /**
+         * Field is always null
+         */
+        this.field = b;
+    }
+}"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    let comment_pos = output
+        .find("Field is always null")
+        .expect("multi-line JSDoc body must survive into the lowered output");
+    let init_pos = output
+        .find("this.field = b")
+        .expect("constructor initializer must be emitted");
+    assert!(
+        comment_pos < init_pos,
+        "Multi-line JSDoc must precede the statement it documents.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("/**"),
+        "Opening `/**` must be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("*/"),
+        "Closing `*/` must be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_declare_class_ignored() {
     let source = r#"declare class Foo {
             bar(): void;
