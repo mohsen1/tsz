@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/rest-tuple-elements1-diagnostics`
-- **PR**: pending
+- **PR**: https://github.com/mohsen1/tsz/pull/3358
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
