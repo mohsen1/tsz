@@ -479,6 +479,58 @@ impl<'a> CheckerState<'a> {
                     }
                     return TypeId::ERROR;
                 }
+
+                // Canonical built-in `Array<T>` / `ReadonlyArray<T>` form: lower
+                // via the solver `array` factory (and `readonly_type` for
+                // ReadonlyArray) so the generic-form annotation interns to the
+                // same TypeId as the shorthand `T[]` / `readonly T[]`. Without
+                // this, `Array<T>` becomes `Application(Lazy(GlobalArrayDef),
+                // [T])` and bidirectional identity comparisons against `T[]`
+                // fail (false TS2403 on redeclarations like
+                // `var a: Array<X>; var a: X[]`).
+                //
+                // Skipped when the name is shadowed by a user-defined type
+                // alias (e.g. `type Array<T> = { custom: T };`). The existing
+                // `is_builtin_array` predicate uses `symbol_is_from_actual_lib`
+                // which is unreliable here — the binder often registers a
+                // local proxy symbol for unshadowed lib references — so we
+                // detect shadowing structurally via the resolved symbol's
+                // `TYPE_ALIAS` flag instead. A locally-merged `interface
+                // Array<T> { ... }` is declaration merging with the lib's
+                // Array, not shadowing, so it still canonicalizes.
+                //
+                // ConcatArray is excluded — it's a distinct lib interface, not
+                // an alias for `T[]`.
+                let array_is_unshadowed = (name == "Array" || name == "ReadonlyArray")
+                    && type_param.is_none()
+                    && match sym_id {
+                        None => true,
+                        Some(sid) => {
+                            use tsz_binder::symbols::symbol_flags;
+                            let lib_binders = self.get_lib_binders();
+                            let symbol = self.ctx.binder.get_symbol_with_libs(sid, &lib_binders);
+                            !symbol.is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS))
+                        }
+                    };
+                if array_is_unshadowed
+                    && let Some(args) = &type_ref.type_arguments
+                    && let Some(&first_arg) = args.nodes.first()
+                {
+                    // Process all type-argument nodes so their referenced
+                    // symbols get registered (matching the lowering path's
+                    // side effects). Only the first arg is used semantically.
+                    for &arg_idx in &args.nodes {
+                        let _ = self.get_type_from_type_node(arg_idx);
+                    }
+                    let elem_type = self.get_type_from_type_node(first_arg);
+                    let factory = self.ctx.types.factory();
+                    let array_type = factory.array(elem_type);
+                    if name == "ReadonlyArray" {
+                        return factory.readonly_type(array_type);
+                    }
+                    return array_type;
+                }
+
                 // Compiler-intrinsic types (NoInfer, string manipulation) must go
                 // through the lowering path which creates the correct TypeData
                 // variants (NoInfer, StringIntrinsic). The lib binder fallback
