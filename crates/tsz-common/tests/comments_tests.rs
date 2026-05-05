@@ -268,6 +268,16 @@ fn test_comment_like_text_inside_strings_is_ignored() {
 }
 
 #[test]
+fn test_comment_like_text_inside_template_literal_is_ignored() {
+    let source = "const s = `// not a comment ${/* keep */ value} /* not block */`; // real";
+    let comments = get_comment_ranges(source);
+
+    assert_eq!(comments.len(), 2);
+    assert_eq!(comments[0].get_text(source), "/* keep */");
+    assert_eq!(comments[1].get_text(source), "// real");
+}
+
+#[test]
 fn test_comment_after_unterminated_string_is_found() {
     // JS/TS single-line string literals cannot contain raw newlines. When the
     // scanner encounters an unterminated string (e.g. mid-edit in the LSP),

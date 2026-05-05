@@ -64,76 +64,18 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
             continue;
         }
 
-        // Check for comment start
-        if ch == b'/' && pos + 1 < len {
-            let next = bytes[pos + 1];
-
-            if next == b'/' {
-                // Single-line comment
-                let Ok(start) = u32::try_from(pos) else {
-                    break;
-                };
-                pos += 2;
-
-                // Scan to end of line
-                while pos < len && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
-                    pos += 1;
-                }
-
-                let has_trailing_new_line = pos < len;
-                comments.push(CommentRange::new(
-                    start,
-                    u32::try_from(pos).unwrap_or(u32::MAX),
-                    false,
-                    has_trailing_new_line,
-                ));
-
-                // Skip the newline
-                if pos < len && bytes[pos] == b'\r' {
-                    pos += 1;
-                }
-                if pos < len && bytes[pos] == b'\n' {
-                    pos += 1;
-                }
-                continue;
-            } else if next == b'*' {
-                // Multi-line comment
-                let Ok(start) = u32::try_from(pos) else {
-                    break;
-                };
-                pos += 2;
-
-                // Scan to closing */
-                let mut closed = false;
-                while pos + 1 < len {
-                    if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
-                        pos += 2;
-                        closed = true;
-                        break;
-                    }
-                    pos += 1;
-                }
-
-                if !closed {
-                    pos = len; // Unclosed comment - go to end
-                }
-
-                // Check for trailing newline
-                let has_trailing_new_line =
-                    pos < len && (bytes[pos] == b'\n' || bytes[pos] == b'\r');
-
-                comments.push(CommentRange::new(
-                    start,
-                    u32::try_from(pos).unwrap_or(u32::MAX),
-                    true,
-                    has_trailing_new_line,
-                ));
-                continue;
-            }
+        if let Some(next_pos) = collect_comment_at(bytes, pos, &mut comments) {
+            pos = next_pos;
+            continue;
         }
 
         if ch == b'\'' || ch == b'"' {
             pos = skip_quoted_string(bytes, pos, ch);
+            continue;
+        }
+
+        if ch == b'`' {
+            pos = scan_template_literal_comments(bytes, pos, &mut comments);
             continue;
         }
 
@@ -153,6 +95,132 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
     }
 
     comments
+}
+
+fn collect_comment_at(
+    bytes: &[u8],
+    start_pos: usize,
+    comments: &mut Vec<CommentRange>,
+) -> Option<usize> {
+    let len = bytes.len();
+    if start_pos + 1 >= len || bytes[start_pos] != b'/' {
+        return None;
+    }
+
+    let next = bytes[start_pos + 1];
+    if next == b'/' {
+        let Ok(start) = u32::try_from(start_pos) else {
+            return Some(len);
+        };
+        let mut pos = start_pos + 2;
+        while pos < len && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+            pos += 1;
+        }
+
+        let has_trailing_new_line = pos < len;
+        comments.push(CommentRange::new(
+            start,
+            u32::try_from(pos).unwrap_or(u32::MAX),
+            false,
+            has_trailing_new_line,
+        ));
+
+        if pos < len && bytes[pos] == b'\r' {
+            pos += 1;
+        }
+        if pos < len && bytes[pos] == b'\n' {
+            pos += 1;
+        }
+        Some(pos)
+    } else if next == b'*' {
+        let Ok(start) = u32::try_from(start_pos) else {
+            return Some(len);
+        };
+        let mut pos = start_pos + 2;
+        let mut closed = false;
+        while pos + 1 < len {
+            if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                pos += 2;
+                closed = true;
+                break;
+            }
+            pos += 1;
+        }
+
+        if !closed {
+            pos = len;
+        }
+
+        let has_trailing_new_line = pos < len && (bytes[pos] == b'\n' || bytes[pos] == b'\r');
+        comments.push(CommentRange::new(
+            start,
+            u32::try_from(pos).unwrap_or(u32::MAX),
+            true,
+            has_trailing_new_line,
+        ));
+        Some(pos)
+    } else {
+        None
+    }
+}
+
+fn scan_template_literal_comments(
+    bytes: &[u8],
+    start: usize,
+    comments: &mut Vec<CommentRange>,
+) -> usize {
+    let mut pos = start + 1;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => pos = (pos + 2).min(bytes.len()),
+            b'`' => return pos + 1,
+            b'$' if pos + 1 < bytes.len() && bytes[pos + 1] == b'{' => {
+                pos = scan_template_substitution_comments(bytes, pos + 2, comments);
+            }
+            _ => pos += 1,
+        }
+    }
+    pos
+}
+
+fn scan_template_substitution_comments(
+    bytes: &[u8],
+    start: usize,
+    comments: &mut Vec<CommentRange>,
+) -> usize {
+    let mut pos = start;
+    let mut brace_depth = 1u32;
+    while pos < bytes.len() {
+        if let Some(next_pos) = collect_comment_at(bytes, pos, comments) {
+            pos = next_pos;
+            continue;
+        }
+
+        match bytes[pos] {
+            b'\'' | b'"' => pos = skip_quoted_string(bytes, pos, bytes[pos]),
+            b'`' => pos = scan_template_literal_comments(bytes, pos, comments),
+            b'/' if pos + 1 < bytes.len() && can_start_regex_at(bytes, pos) => {
+                if let Some(next_pos) = skip_regex_literal(bytes, pos) {
+                    pos = next_pos;
+                } else {
+                    pos += 1;
+                }
+            }
+            b'{' => {
+                brace_depth += 1;
+                pos += 1;
+            }
+            b'}' => {
+                brace_depth -= 1;
+                pos += 1;
+                if brace_depth == 0 {
+                    return pos;
+                }
+            }
+            _ => pos += 1,
+        }
+    }
+    pos
 }
 
 /// True when the source text contains a top-level `declare module
