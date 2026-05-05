@@ -7,7 +7,7 @@
 
 use crate::query_boundaries::assignability::{
     is_redeclaration_identical_with_resolver, is_relation_cacheable, is_subtype_with_resolver,
-    subtype_cache_key,
+    mutable_array_element_for_redeclaration, subtype_cache_key,
 };
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -460,7 +460,7 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        crate::query_boundaries::common::mutable_array_element_for_redeclaration(
+        mutable_array_element_for_redeclaration(
             self.ctx.types,
             type_id,
             Some(self.ctx.definition_store.as_ref()),

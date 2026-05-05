@@ -2,8 +2,7 @@
 //!
 //! When a solver query is needed by multiple checker modules, define the
 //! canonical thin-wrapper here and re-export it from the per-module boundary
-//! files. This eliminates duplicate function bodies while preserving the
-//! per-module namespace pattern that callers rely on.
+//! files, preserving the per-module namespace pattern that callers rely on.
 
 use tsz_solver::{
     CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
@@ -805,21 +804,6 @@ pub(crate) fn application_info(
     type_id: TypeId,
 ) -> Option<(TypeId, Vec<TypeId>)> {
     tsz_solver::type_queries::extended::get_application_info(db, type_id)
-}
-
-/// Return the element type when `type_id` is a mutable `Array<T>` form used for
-/// redeclaration identity.
-pub(crate) fn mutable_array_element_for_redeclaration(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    def_store: Option<&tsz_solver::def::DefinitionStore>,
-) -> Option<TypeId> {
-    tsz_solver::type_queries::mutable_array_element_for_redeclaration(
-        db,
-        type_id,
-        db.get_array_base_type(),
-        def_store,
-    )
 }
 
 // ── Literal type classification ──
