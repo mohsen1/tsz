@@ -591,22 +591,20 @@ impl<'a> Printer<'a> {
                     self.decrease_indent();
                     self.write("})");
                 }
+            } else if has_object_rest_param_prologue {
+                self.write_line();
+                self.increase_indent();
+                self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
+                self.write("return ");
+                self.emit_expression(func.body);
+                self.write(";");
+                self.write_line();
+                self.decrease_indent();
+                self.write("})");
             } else {
-                if has_object_rest_param_prologue {
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
-                    self.write("return ");
-                    self.emit_expression(func.body);
-                    self.write(";");
-                    self.write_line();
-                    self.decrease_indent();
-                    self.write("})");
-                } else {
-                    self.write(" return ");
-                    self.emit_expression(func.body);
-                    self.write("; })");
-                }
+                self.write(" return ");
+                self.emit_expression(func.body);
+                self.write("; })");
             }
 
             self.ctx.emit_await_as_yield = saved_yield;

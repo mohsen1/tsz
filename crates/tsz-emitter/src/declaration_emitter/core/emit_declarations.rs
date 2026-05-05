@@ -906,6 +906,9 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     None
                 };
+                let scoped_preferred_return = preferred_return.as_ref().map(|type_text| {
+                    self.function_return_type_text_for_declaration_scope(func, type_text)
+                });
                 // If solver returned `any` OR `undefined` but the function body clearly
                 // returns void (every control-flow exit is a bare `return;` or falls
                 // off the end), prefer void. tsc's rule: an unannotated function whose
@@ -921,25 +924,20 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
-                } else if let Some(type_text) = preferred_return.as_ref()
-                    && self
-                        .should_prefer_source_return_type_text(type_text, effective_return_type_id)
+                } else if let Some((type_text, substituted_parameter_type_query)) =
+                    scoped_preferred_return.as_ref()
+                    && (self.should_prefer_source_return_type_text(
+                        preferred_return.as_deref().unwrap_or(type_text),
+                        effective_return_type_id,
+                    ) || (*substituted_parameter_type_query && !type_text.contains("typeof ")))
                 {
                     self.write(": ");
-                    if let Some(ref tp) = func.type_parameters
-                        && !tp.nodes.is_empty()
-                    {
-                        let outer_names = self.collect_type_param_names(tp);
-                        self.write(&Self::rename_shadowed_type_params_in_text(
-                            type_text,
-                            &outer_names,
-                        ));
-                    } else {
-                        self.write(type_text);
-                    }
+                    self.write(type_text);
                 } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && let Some(type_text) = preferred_return
                 {
+                    let (type_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, &type_text);
                     if let Some(returned_identifier) =
                         self.function_body_unique_return_identifier(func_body)
                         && let Some(return_type_id) =
@@ -976,17 +974,7 @@ impl<'a> DeclarationEmitter<'a> {
                         );
                     }
                     self.write(": ");
-                    if let Some(ref tp) = func.type_parameters
-                        && !tp.nodes.is_empty()
-                    {
-                        let outer_names = self.collect_type_param_names(tp);
-                        self.write(&Self::rename_shadowed_type_params_in_text(
-                            &type_text,
-                            &outer_names,
-                        ));
-                    } else {
-                        self.write(&type_text);
-                    }
+                    self.write(&type_text);
                 } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && func_body.is_some()
                     && self
@@ -1051,6 +1039,8 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(return_text) =
                     self.function_body_preferred_return_type_text(func_body)
                 {
+                    let (return_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, &return_text);
                     if let Some(name_text) = self.get_identifier_text(func_name)
                         && let Some(name_node) = self.arena.get(func_name)
                         && let Some(file_path) = self.current_file_path.clone()
@@ -1086,6 +1076,8 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(return_text) =
                 self.function_body_preferred_return_type_text(func_body)
             {
+                let (return_text, _) =
+                    self.function_return_type_text_for_declaration_scope(func, &return_text);
                 if let Some(name_text) = self.get_identifier_text(func_name)
                     && let Some(name_node) = self.arena.get(func_name)
                     && let Some(file_path) = self.current_file_path.clone()

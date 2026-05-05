@@ -3443,6 +3443,100 @@ impl<'a> DeclarationEmitter<'a> {
         !self.print_type_id(inferred_return_type).contains("typeof ")
     }
 
+    pub(in crate::declaration_emitter) fn function_return_type_text_for_declaration_scope(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> (String, bool) {
+        let (text, substituted_parameter_type_query) =
+            self.substitute_function_parameter_type_queries(func, source_type_text);
+        let Some(ref type_params) = func.type_parameters else {
+            return (text, substituted_parameter_type_query);
+        };
+        if type_params.nodes.is_empty() {
+            return (text, substituted_parameter_type_query);
+        }
+
+        let outer_names = self.collect_type_param_names(type_params);
+        let text = Self::rename_shadowed_type_params_in_text(&text, &outer_names);
+        (
+            Self::rename_shadowed_infer_type_params_in_text(&text, &outer_names),
+            substituted_parameter_type_query,
+        )
+    }
+
+    fn substitute_function_parameter_type_queries(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> (String, bool) {
+        if !source_type_text.contains("typeof ")
+            || !source_type_text.contains(" extends ")
+            || !source_type_text.contains('?')
+        {
+            return (source_type_text.to_string(), false);
+        }
+
+        let mut text = source_type_text.to_string();
+        let mut replaced_any = false;
+        for param_idx in func.parameters.nodes.iter().copied() {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_name) = self.get_identifier_text(param.name) else {
+                continue;
+            };
+            let Some(param_type_text) = self.function_parameter_type_text(func, param.name) else {
+                continue;
+            };
+            if Self::simple_type_reference_name(&param_type_text).is_none() {
+                continue;
+            }
+            let (replaced_text, replaced) =
+                Self::replace_typeof_identifier(&text, &param_name, &param_type_text);
+            text = replaced_text;
+            replaced_any |= replaced;
+        }
+        (text, replaced_any)
+    }
+
+    fn replace_typeof_identifier(
+        text: &str,
+        identifier: &str,
+        replacement: &str,
+    ) -> (String, bool) {
+        let query = format!("typeof {identifier}");
+        let bytes = text.as_bytes();
+        let query_bytes = query.as_bytes();
+        let mut result = String::with_capacity(text.len());
+        let mut replaced = false;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if i + query_bytes.len() <= bytes.len()
+                && &bytes[i..i + query_bytes.len()] == query_bytes
+                && (i == 0 || !Self::is_ident_char(bytes[i - 1]))
+            {
+                let after = i + query_bytes.len();
+                let after_ok = after == bytes.len()
+                    || (!Self::is_ident_char(bytes[after])
+                        && bytes[after] != b'.'
+                        && bytes[after] != b'<');
+                if after_ok {
+                    result.push_str(replacement);
+                    i = after;
+                    replaced = true;
+                    continue;
+                }
+            }
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+        (result, replaced)
+    }
+
     pub(in crate::declaration_emitter) fn collect_unique_return_type_text_from_block(
         &self,
         statements: &NodeList,
