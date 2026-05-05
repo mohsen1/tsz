@@ -509,6 +509,26 @@ interface Derived<T> extends Base {
     );
 }
 
+#[test]
+fn test_generic_construct_property_required_param_against_optional_base_errors() {
+    let source = r#"
+interface Base {
+    make: new <T>(x?: T) => T;
+}
+
+interface Derived extends Base {
+    make: new <T>(x: T) => T;
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| *code == 2430
+            && message.contains("Interface 'Derived' incorrectly extends interface 'Base'")),
+        "Should emit TS2430 when a derived generic construct property makes an optional generic base parameter required. Got: {diags:?}"
+    );
+}
+
 // =========================================================================
 // Regression: `this` type substitution in whole-type assignability check
 // =========================================================================
