@@ -99,6 +99,26 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         &mut self,
         mapped: &crate::types::MappedType,
     ) -> TypeId {
+        if let Some(TypeData::IndexAccess(template_obj, template_idx)) =
+            self.evaluator.interner().lookup(mapped.template)
+            && matches!(
+                self.evaluator.interner().lookup(template_idx),
+                Some(TypeData::TypeParameter(tp)) if tp.name == mapped.type_param.name
+            )
+        {
+            let mut value_type = self
+                .evaluator
+                .interner()
+                .index_access(template_obj, mapped.constraint);
+            if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                value_type = self
+                    .evaluator
+                    .interner()
+                    .union2(value_type, TypeId::UNDEFINED);
+            }
+            return value_type;
+        }
+
         let constrained_key = self.evaluator.interner().type_param(TypeParamInfo {
             name: mapped.type_param.name,
             constraint: Some(mapped.constraint),

@@ -206,6 +206,125 @@ function g<T, U extends T, K extends keyof U>(x: T, y: U, k: K) {
 }
 
 #[test]
+fn test_generic_indexed_write_keeps_declared_rhs_read_surface() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
+        r"
+function f<T, U extends T>(x: T, y: U, k: keyof T) {
+    x[k] = y[k];
+    y[k] = x[k];
+}
+
+function g<T, U extends T, K extends keyof T>(x: T, y: U, k: K) {
+    x[k] = y[k];
+    y[k] = x[k];
+}
+        ",
+    ));
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'T[keyof T]' is not assignable to type 'U[keyof T]'")),
+        "Expected TS2322 for assigning declared T[keyof T] read surface back to U[keyof T].\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'T[K]' is not assignable to type 'U[K]'")),
+        "Expected TS2322 for assigning declared T[K] read surface back to U[K].\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(_, message)| message.contains("Two different types with this name exist")),
+        "Generic indexed writes should not degrade into duplicate-name TS2719 diagnostics.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_partial_indexed_read_preserves_homomorphic_source_display() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
+        r"
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+
+function f<T>(x: T, y: MyPartial<T>, k: keyof T) {
+    x[k] = y[k];
+}
+        ",
+    ));
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message
+                .contains("Type 'T[keyof T] | undefined' is not assignable to type 'T[keyof T]'")),
+        "Expected TS2322 to display the homomorphic indexed source as T[keyof T] | undefined.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_key_constraint_relationship_is_directional() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
+        r"
+function f<T, K extends keyof T>(
+    x: { [P in K]: T[P] },
+    y: { [P in keyof T]: T[P] },
+) {
+    x = y;
+    y = x;
+}
+        ",
+    ));
+
+    let ts2322_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        1,
+        "Expected only the narrower-key mapped type to wider-key mapped type assignment to fail.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages[0].contains(
+            "Type '{ [P in K]: T[P]; }' is not assignable to type '{ [P in keyof T]: T[P]; }'"
+        ),
+        "Expected directional mapped key-space diagnostic for K versus keyof T.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_same_base_mapped_application_to_constrained_type_param_reports_ts2322() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
+        r"
+type Thing = { a: string, b: string };
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+type MyReadonly<T> = { readonly [P in keyof T]: T[P] };
+
+function f<T extends Thing>(x: MyPartial<Thing>, y: MyPartial<T>) {
+    y = x;
+}
+
+function g<T extends Thing>(x: MyReadonly<Thing>, y: MyReadonly<T>) {
+    y = x;
+}
+        ",
+    ));
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message
+                .contains("Type 'MyPartial<Thing>' is not assignable to type 'MyPartial<T>'")),
+        "Expected TS2322 for MyPartial<Thing> assigned to MyPartial<T>.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message
+                .contains("Type 'MyReadonly<Thing>' is not assignable to type 'MyReadonly<T>'")),
+        "Expected TS2322 for MyReadonly<Thing> assigned to MyReadonly<T>.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_element_access_union_receiver_with_noncommon_generic_keys_emits_ts2536() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
