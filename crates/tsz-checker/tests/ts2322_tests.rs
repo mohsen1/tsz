@@ -161,6 +161,38 @@ flattened;
 }
 
 #[test]
+fn local_symbol_call_initializer_uses_local_return_type() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+function test() {
+    const Symbol = () => "local";
+
+    const value = Symbol();
+
+    const asSymbol: symbol = value;
+    const asString: string = value;
+
+    asSymbol;
+    asString;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'string' is not assignable to type 'symbol'.")
+        }),
+        "expected local Symbol() to infer string and reject symbol assignment, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("unique symbol") && message.contains("string")
+        }),
+        "local Symbol() should not infer unique symbol, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_for_index_accesses_with_distinct_key_type_parameters() {
     let diagnostics = get_all_diagnostics(
         r#"

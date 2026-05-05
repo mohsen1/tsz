@@ -556,7 +556,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Skip checks when signature value types are unresolved/cascading errors.
         // This mirrors TS's behavior of avoiding secondary errors after earlier
         // resolution failures, especially for imported module/type alias edges.
         if let Some(number_idx) = &index_info.number_index
@@ -791,15 +790,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Skip computed property names whose expression is an entity name
-            // (identifier or property access chain).  In tsc these are "late-bound"
-            // names and are NOT checked against index signatures for TS2411.
-            // Other computed expressions (e.g. `[+s]`, `[s + n]`, `["literal"]`)
-            // ARE checked normally.
             if let Some(name_node) = self.ctx.arena.get(name_idx)
                 && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                 && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
                 && self.computed_name_uses_entity_expression(computed.expression)
+                && !self.computed_name_is_non_global_symbol_property_access(computed.expression)
             {
                 continue;
             }
@@ -1286,7 +1281,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a property name node refers to a symbol-keyed property.
     fn is_symbol_named_property(&mut self, name_idx: NodeIndex) -> bool {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return false;
@@ -1306,14 +1300,11 @@ impl<'a> CheckerState<'a> {
                 let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
                     return false;
                 };
-                let Some(obj_node) = self.ctx.arena.get(access.expression) else {
-                    return false;
-                };
-                if let Some(ident) = self.ctx.arena.get_identifier(obj_node) {
-                    ident.escaped_text.as_str() == "Symbol"
-                } else {
-                    false
-                }
+                self.ctx
+                    .arena
+                    .get_identifier_at(access.expression)
+                    .is_some_and(|ident| ident.escaped_text.as_str() == "Symbol")
+                    && self.is_identifier_reference_to_global_symbol(access.expression)
             }
             ek if ek == tsz_scanner::SyntaxKind::Identifier as u16 => {
                 let expr_type = self.get_type_of_node(computed.expression);
@@ -1802,6 +1793,25 @@ impl<'a> CheckerState<'a> {
             return self.computed_name_uses_entity_expression(access.expression);
         }
         false
+    }
+
+    fn computed_name_is_non_global_symbol_property_access(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_access_expr(expr_node)
+            .is_some_and(|access| {
+                self.ctx
+                    .arena
+                    .get_identifier_at(access.expression)
+                    .is_some_and(|ident| ident.escaped_text.as_str() == "Symbol")
+                    && !self.is_identifier_reference_to_global_symbol(access.expression)
+            })
     }
 }
 

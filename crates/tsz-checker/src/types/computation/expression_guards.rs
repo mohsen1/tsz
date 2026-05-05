@@ -162,6 +162,31 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    pub(crate) fn is_identifier_reference_to_global_symbol(&self, node_idx: NodeIndex) -> bool {
+        let mut current_idx = node_idx;
+        while let Some(node) = self.ctx.arena.get(current_idx) {
+            if node.kind == tsz_parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(expr) = self.ctx.arena.get_parenthesized(node)
+            {
+                current_idx = expr.expression;
+                continue;
+            }
+            break;
+        }
+
+        if let Some(node) = self.ctx.arena.get(current_idx)
+            && node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(ident) = self.ctx.arena.get_identifier(node)
+            && ident.escaped_text == "Symbol"
+        {
+            if let Some(sym_id) = self.resolve_identifier_symbol(current_idx) {
+                return self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id);
+            }
+            return true;
+        }
+        false
+    }
+
     /// Check if a unary expression node is the direct left-hand side of a `**` binary.
     ///
     /// Used to suppress secondary diagnostics (TS2703 from `delete`, TS2872 from `!`) when

@@ -12,6 +12,25 @@ fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
 }
 
+#[test]
+fn local_symbol_property_access_computed_name_is_string_keyed() {
+    let source = r#"
+const Symbol = { tag: "name" } as const;
+
+interface Bag {
+    [key: string]: number;
+    [Symbol.tag]: string;
+}
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2411 && message.contains("[Symbol.tag]") && message.contains("number")
+        }),
+        "expected TS2411 because local Symbol.tag is a string-keyed computed property, got: {diagnostics:?}"
+    );
+}
+
 // =========================================================================
 // Getter without type annotation vs string index signature
 // =========================================================================
