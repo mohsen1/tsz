@@ -2094,6 +2094,14 @@ impl<'a> CheckerState<'a> {
                 if (ty == TypeId::ERROR || ty == TypeId::UNDEFINED)
                     && !self.is_array_like_type(object_type)
                 {
+                    let index_signature_ty =
+                        self.get_element_access_type(object_type, TypeId::NUMBER, None);
+                    if index_signature_ty != TypeId::ERROR
+                        && index_signature_ty != TypeId::UNDEFINED
+                    {
+                        types.push(index_signature_ty);
+                        continue;
+                    }
                     return None;
                 }
                 types.push(ty);
