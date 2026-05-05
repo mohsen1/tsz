@@ -291,7 +291,34 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 let mut i = 0usize;
                 let bytes = return_type_text.as_bytes();
+                let mut quote: Option<u8> = None;
+                let mut escaped = false;
                 while i < bytes.len() {
+                    if let Some(active_quote) = quote {
+                        if escaped {
+                            escaped = false;
+                            i += 1;
+                            continue;
+                        }
+                        if bytes[i] == b'\\' {
+                            escaped = true;
+                            i += 1;
+                            continue;
+                        }
+                        if bytes[i] == active_quote {
+                            quote = None;
+                        }
+                        i += 1;
+                        continue;
+                    }
+
+                    if matches!(bytes[i], b'\'' | b'"' | b'`') {
+                        quote = Some(bytes[i]);
+                        escaped = false;
+                        i += 1;
+                        continue;
+                    }
+
                     let ch = bytes[i] as char;
                     if !Self::is_type_text_identifier_start(ch) {
                         i += 1;
@@ -305,6 +332,23 @@ impl<'a> DeclarationEmitter<'a> {
                         i += 1;
                     }
                     let ident = &return_type_text[start..i];
+                    if ident == "import"
+                        && let Some((import_module, type_name)) =
+                            self.parse_import_type_text(&return_type_text[start..])
+                    {
+                        let arena_addr = source_arena as *const NodeArena as usize;
+                        if let Some(source_path) = self.arena_to_path.get(&arena_addr)
+                            && !import_module.starts_with('.')
+                            && !import_module.starts_with('/')
+                            && let Some(from_path) =
+                                self.transitive_dependency_from_import(source_path, &import_module)
+                        {
+                            self.emit_non_portable_named_reference_diagnostic(
+                                decl_name, file, pos, length, &from_path, &type_name,
+                            );
+                            return;
+                        }
+                    }
                     if Self::is_non_type_text_identifier_candidate(ident)
                         || Self::type_text_identifier_is_member_name(&return_type_text, i)
                     {
@@ -1156,7 +1200,6 @@ impl<'a> DeclarationEmitter<'a> {
 
         if node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(printed_type_text) = self.emit_type_node_text(node_idx)
-            && printed_type_text.starts_with("import(\"")
             && let Some(sym_id) = self.find_symbol_for_import_type_text(&printed_type_text)
         {
             if let Some(binder) = self.binder

@@ -108,6 +108,124 @@ export const x = foo();
     );
 }
 
+#[test]
+fn declaration_emit_reports_single_quoted_transitive_import_type() {
+    let temp = TempDir::new("single_quoted_transitive_import_type").expect("temp dir");
+
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "outDir": "dist",
+            "rootDir": "r",
+            "target": "es2017",
+            "module": "commonjs",
+            "moduleResolution": "node",
+            "ignoreDeprecations": "6.0",
+            "skipLibCheck": true,
+            "strict": true,
+            "typeRoots": ["./empty-types"]
+          },
+          "files": ["r/entry.ts"]
+        }"#,
+    );
+    std::fs::create_dir_all(temp.path.join("empty-types")).expect("empty typeRoots");
+    write_file(
+        &temp.path.join("r/entry.ts"),
+        r#"import { foo } from "foo";
+
+export const x = foo();
+"#,
+    );
+    write_file(
+        &temp.path.join("r/node_modules/foo/index.d.ts"),
+        r#"export function foo(): [import('nested').NestedProps];
+"#,
+    );
+    write_file(
+        &temp
+            .path
+            .join("r/node_modules/foo/node_modules/nested/index.d.ts"),
+        r#"export interface NestedProps { x: string; }
+"#,
+    );
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["-p", "tsconfig.json"]).expect("tsz should run");
+    assert_ne!(code, 0, "tsz should report TS2883");
+    assert!(
+        output.contains("TS2883") && output.contains("NestedProps"),
+        "expected TS2883 for NestedProps, got:\n{output}",
+    );
+}
+
+#[test]
+fn declaration_emit_preserves_template_literal_type_text_from_dependency() {
+    let temp = TempDir::new("template_literal_type_text_from_dependency").expect("temp dir");
+
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "outDir": "dist",
+            "rootDir": "r",
+            "target": "es2017",
+            "module": "commonjs",
+            "moduleResolution": "node",
+            "ignoreDeprecations": "6.0",
+            "skipLibCheck": true,
+            "strict": true,
+            "typeRoots": ["./empty-types"]
+          },
+          "files": ["r/entry.ts"]
+        }"#,
+    );
+    std::fs::create_dir_all(temp.path.join("empty-types")).expect("empty typeRoots");
+    write_file(
+        &temp.path.join("r/entry.ts"),
+        r#"import { foo } from "foo";
+
+export const x = foo();
+"#,
+    );
+    write_file(
+        &temp.path.join("r/node_modules/foo/index.d.ts"),
+        r#"import { Kind } from "nested";
+export function foo(): `Kind-${string}`;
+"#,
+    );
+    write_file(
+        &temp
+            .path
+            .join("r/node_modules/foo/node_modules/nested/index.d.ts"),
+        r#"export type Kind = "a";
+"#,
+    );
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["-p", "tsconfig.json"]).expect("tsz should run");
+    assert_eq!(code, 0, "tsz should succeed, got output:\n{output}");
+    assert!(
+        !output.contains("TS2883"),
+        "template literal text should not report TS2883:\n{output}",
+    );
+
+    let dts = std::fs::read_to_string(temp.path.join("dist/entry.d.ts"))
+        .expect("Declaration output should be emitted");
+    assert!(
+        dts.contains("export declare const x: `Kind-${string}`;"),
+        "expected original template literal type text, got:\n{dts}",
+    );
+    assert!(
+        !dts.contains("import(\"nested\").Kind"),
+        "template literal text should not be rewritten as an import type: {dts}",
+    );
+}
+
 /// Run tsc and return its stderr output (where diagnostics go) with ANSI codes stripped.
 fn run_tsc(cwd: &Path, args: &[&str]) -> Option<String> {
     let mut cmd = tsc_command()?;

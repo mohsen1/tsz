@@ -93,7 +93,8 @@ impl<'a> DeclarationEmitter<'a> {
                     if printed != "any"
                         && !printed.contains("any")
                         && !expands_mapped_object
-                        && (!rewritten.contains("import(\"") || printed.contains("import(\"")) =>
+                        && (!Self::type_text_contains_import_type(&rewritten)
+                            || Self::type_text_contains_import_type(printed)) =>
                 {
                     printed.clone()
                 }
@@ -115,7 +116,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .strip_prefix('{')
                     .and_then(|inner| inner.strip_suffix('}'))
                     .is_some_and(|inner| {
-                        inner.trim_start().starts_with('[') && inner.contains("import(\"")
+                        inner.trim_start().starts_with('[')
+                            && Self::type_text_contains_import_type(inner)
                     })
             })
     }
@@ -245,14 +247,11 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn parse_import_type_reference(text: &str) -> Option<(String, String)> {
-        let module_start = text.find("import(\"")? + 8;
-        let module_end = text.get(module_start..)?.find("\")")? + module_start;
-        let module_specifier = text.get(module_start..module_end)?.to_string();
-        let export_name = text
-            .get(module_end + 2..)?
-            .trim()
-            .strip_prefix('.')?
-            .to_string();
+        let (start, module_specifier, tail) = Self::next_import_type_text(text)?;
+        if start != 0 {
+            return None;
+        }
+        let export_name = tail.trim().strip_prefix('.')?.to_string();
         Some((module_specifier, export_name))
     }
 
@@ -1021,30 +1020,22 @@ impl<'a> DeclarationEmitter<'a> {
             return text.to_string();
         }
 
+        let protected_spans = Self::protected_type_text_literal_spans(text);
+        let mut protected_idx = 0usize;
         let mut result = String::with_capacity(text.len() + 16);
         let bytes = text.as_bytes();
         let text_len = bytes.len();
         let mut last_copied = 0usize;
-        let mut in_single_quote = false;
-        let mut in_double_quote = false;
         let mut i = 0;
         while i < text_len {
-            match bytes[i] {
-                b'\'' if !in_double_quote => {
-                    in_single_quote = !in_single_quote;
-                    i += 1;
-                    continue;
-                }
-                b'"' if !in_single_quote => {
-                    in_double_quote = !in_double_quote;
-                    i += 1;
-                    continue;
-                }
-                _ => {}
+            while protected_idx < protected_spans.len() && protected_spans[protected_idx].1 <= i {
+                protected_idx += 1;
             }
-
-            if in_single_quote || in_double_quote {
-                i += 1;
+            if let Some((start, end)) = protected_spans.get(protected_idx).copied()
+                && start <= i
+                && i < end
+            {
+                i = end;
                 continue;
             }
 
@@ -1088,26 +1079,18 @@ impl<'a> DeclarationEmitter<'a> {
         let word_bytes = word.as_bytes();
         let word_len = word_bytes.len();
         let text_len = bytes.len();
-        let mut in_single_quote = false;
-        let mut in_double_quote = false;
+        let protected_spans = Self::protected_type_text_literal_spans(text);
+        let mut protected_idx = 0usize;
         let mut i = 0;
         while i < text_len {
-            match bytes[i] {
-                b'\'' if !in_double_quote => {
-                    in_single_quote = !in_single_quote;
-                    i += 1;
-                    continue;
-                }
-                b'"' if !in_single_quote => {
-                    in_double_quote = !in_double_quote;
-                    i += 1;
-                    continue;
-                }
-                _ => {}
+            while protected_idx < protected_spans.len() && protected_spans[protected_idx].1 <= i {
+                protected_idx += 1;
             }
-
-            if in_single_quote || in_double_quote {
-                i += 1;
+            if let Some((start, end)) = protected_spans.get(protected_idx).copied()
+                && start <= i
+                && i < end
+            {
+                i = end;
                 continue;
             }
 
@@ -1123,6 +1106,111 @@ impl<'a> DeclarationEmitter<'a> {
             i += 1;
         }
         false
+    }
+
+    fn protected_type_text_literal_spans(text: &str) -> Vec<(usize, usize)> {
+        fn skip_quoted(bytes: &[u8], mut i: usize, quote: u8) -> usize {
+            i += 1;
+            let mut escaped = false;
+            while i < bytes.len() {
+                if escaped {
+                    escaped = false;
+                    i += 1;
+                    continue;
+                }
+                if bytes[i] == b'\\' {
+                    escaped = true;
+                    i += 1;
+                    continue;
+                }
+                i += 1;
+                if bytes[i - 1] == quote {
+                    break;
+                }
+            }
+            i
+        }
+
+        fn scan_template(bytes: &[u8], start: usize, spans: &mut Vec<(usize, usize)>) -> usize {
+            let mut segment_start = start;
+            let mut i = start + 1;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\\' => {
+                        i = (i + 2).min(bytes.len());
+                    }
+                    b'`' => {
+                        spans.push((segment_start, i + 1));
+                        return i + 1;
+                    }
+                    b'$' if bytes.get(i + 1) == Some(&b'{') => {
+                        spans.push((segment_start, i + 2));
+                        i = scan_template_placeholder(bytes, i + 2, spans);
+                        segment_start = i.saturating_sub(1);
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            spans.push((segment_start, bytes.len()));
+            bytes.len()
+        }
+
+        fn scan_template_placeholder(
+            bytes: &[u8],
+            mut i: usize,
+            spans: &mut Vec<(usize, usize)>,
+        ) -> usize {
+            let mut brace_depth = 1usize;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\'' | b'"' => {
+                        let end = skip_quoted(bytes, i, bytes[i]);
+                        spans.push((i, end));
+                        i = end;
+                    }
+                    b'`' => {
+                        i = scan_template(bytes, i, spans);
+                    }
+                    b'{' => {
+                        brace_depth += 1;
+                        i += 1;
+                    }
+                    b'}' => {
+                        brace_depth = brace_depth.saturating_sub(1);
+                        i += 1;
+                        if brace_depth == 0 {
+                            return i;
+                        }
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            i
+        }
+
+        let bytes = text.as_bytes();
+        let mut spans = Vec::new();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\'' | b'"' => {
+                    let end = skip_quoted(bytes, i, bytes[i]);
+                    spans.push((i, end));
+                    i = end;
+                }
+                b'`' => {
+                    i = scan_template(bytes, i, &mut spans);
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        spans
     }
 
     const fn is_ident_char_in_text(b: u8) -> bool {
@@ -2888,7 +2976,7 @@ impl<'a> DeclarationEmitter<'a> {
                     &type_text,
                     &type_param_names,
                 );
-                if !type_text.contains("import(\"")
+                if !Self::type_text_contains_import_type(&type_text)
                     && let Some(root_name) = Self::leading_type_reference_name(&type_text)
                     && !type_param_names.iter().any(|name| name == root_name)
                     && self.imported_module_exports_name(binder, module_specifier, root_name)
@@ -2901,7 +2989,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             if let Some(source_path) = source_path.as_deref() {
-                if !type_text.contains("import(\"") {
+                if !Self::type_text_contains_import_type(&type_text) {
                     type_text = self.qualify_foreign_exported_names_in_text(
                         source_arena,
                         source_path,
@@ -2915,7 +3003,7 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some_and(|current_path| {
                         !self.paths_refer_to_same_source_file(current_path, source_path)
                             && type_text.starts_with("typeof ")
-                            && !type_text.contains("import(\"")
+                            && !Self::type_text_contains_import_type(&type_text)
                     })
                 {
                     return None;
@@ -3243,7 +3331,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn leading_type_reference_name(type_text: &str) -> Option<&str> {
         let trimmed = type_text.trim_start();
-        if trimmed.starts_with("import(\"") || trimmed.starts_with("typeof ") {
+        if Self::type_text_starts_with_import_type(trimmed) || trimmed.starts_with("typeof ") {
             return None;
         }
         let end = trimmed
@@ -6341,7 +6429,7 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|text| {
                 !text.is_empty()
                     && text != "any"
-                    && (text.contains("import(\"") || text.starts_with("typeof "))
+                    && (Self::type_text_contains_import_type(&text) || text.starts_with("typeof "))
             })
         {
             return true;
@@ -6443,6 +6531,48 @@ mod tests {
         );
 
         assert_eq!(rewritten, "Promise<U> | string");
+    }
+
+    #[test]
+    fn word_replacement_skips_template_literal_text_segments() {
+        let rewritten = DeclarationEmitter::replace_whole_words_in_text(
+            "`Kind-${string}` | Kind | `${Kind}`",
+            &[("Kind".to_string(), "import(\"nested\").Kind".to_string())],
+        );
+
+        assert_eq!(
+            rewritten,
+            "`Kind-${string}` | import(\"nested\").Kind | `${import(\"nested\").Kind}`"
+        );
+    }
+
+    #[test]
+    fn word_search_skips_template_literal_text_segments() {
+        assert!(!DeclarationEmitter::contains_whole_word_in_text(
+            "`Kind-${string}`",
+            "Kind",
+        ));
+        assert!(DeclarationEmitter::contains_whole_word_in_text(
+            "`${Kind}`",
+            "Kind",
+        ));
+    }
+
+    #[test]
+    fn import_type_text_helpers_accept_single_quoted_specifiers() {
+        let parser = ParserState::new("test.ts".to_string(), String::new());
+        let emitter = DeclarationEmitter::new(&parser.arena);
+
+        assert!(DeclarationEmitter::type_text_starts_with_import_type(
+            "import('nested').NestedProps"
+        ));
+        assert!(DeclarationEmitter::type_text_contains_import_type(
+            "[import('nested').NestedProps]"
+        ));
+        assert_eq!(
+            emitter.parse_import_type_text("import('nested').NestedProps"),
+            Some(("nested".to_string(), "NestedProps".to_string()))
+        );
     }
 
     #[test]
