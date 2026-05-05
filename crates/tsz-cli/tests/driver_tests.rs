@@ -7912,6 +7912,61 @@ export function greet(name: string): string {
 }
 
 #[test]
+fn compile_strip_internal_omits_exported_declarations() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "stripInternal": true,
+            "outDir": "dist"
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"/** @internal */
+export const stripped = 2;
+
+/** @internal */
+export function hiddenFunction() {}
+
+/** @internal */
+export interface HiddenInterface {
+  value: string;
+}
+
+export const visible = 3;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    let dts = std::fs::read_to_string(base.join("dist/index.d.ts")).expect("read d.ts");
+    assert!(
+        dts.contains("visible"),
+        "Expected visible declaration to remain: {dts}"
+    );
+    for stripped_name in ["stripped", "hiddenFunction", "HiddenInterface", "@internal"] {
+        assert!(
+            !dts.contains(stripped_name),
+            "Expected {stripped_name} to be stripped from declaration output: {dts}"
+        );
+    }
+}
+
+#[test]
 fn compile_declaration_false_no_dts_files() {
     // Test that declaration: false (or absent) does NOT produce .d.ts files
     let temp = TempDir::new().expect("temp dir");

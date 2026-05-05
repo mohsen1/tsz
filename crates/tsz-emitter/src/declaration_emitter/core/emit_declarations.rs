@@ -555,6 +555,11 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        if self.has_internal_annotation(stmt_node.pos) {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+
         let is_variable_like_export = kind == syntax_kind_ext::VARIABLE_STATEMENT
             || (kind == syntax_kind_ext::EXPORT_DECLARATION
                 && self
