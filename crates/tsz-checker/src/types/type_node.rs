@@ -1930,7 +1930,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(type_node) = arena.get(type_annotation) else {
             return false;
         };
-
         match type_node.kind {
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 arena.get_type_operator(type_node).is_some_and(|op| {
@@ -1953,11 +1952,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
             return false;
         }
-
         let Some(type_ref) = arena.get_type_ref(type_node) else {
             return false;
         };
-
         let Some(name_node) = arena.get(type_ref.type_name) else {
             return false;
         };
@@ -1978,7 +1975,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if node.kind != syntax_kind_ext::CALL_EXPRESSION {
             return false;
         }
-
         let Some(call) = arena.get_call_expr(node) else {
             return false;
         };
