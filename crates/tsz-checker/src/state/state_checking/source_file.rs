@@ -663,7 +663,6 @@ impl<'a> CheckerState<'a> {
                 "Identifier expected. 'await' is a reserved word at the top-level of a module.",
                 crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
             );
-            break;
         }
 
         self.emit_top_level_await_text_fallback(source_file);
