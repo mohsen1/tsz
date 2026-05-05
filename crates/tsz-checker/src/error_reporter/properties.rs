@@ -395,6 +395,47 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(format!("typeof {owner}"));
             }
+            if let Some(owner) = self
+                .find_enclosing_non_arrow_function(receiver)
+                .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
+                .and_then(|lhs_idx| {
+                    let lhs_node = self.ctx.arena.get(lhs_idx)?;
+                    if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let lhs_access = self.ctx.arena.get_access_expr(lhs_node)?;
+                    if self
+                        .ctx
+                        .arena
+                        .get(lhs_access.expression)
+                        .and_then(|owner_node| self.ctx.arena.get_access_expr(owner_node))
+                        .and_then(|owner_access| {
+                            self.ctx
+                                .arena
+                                .get_identifier_at(owner_access.name_or_argument)
+                        })
+                        .is_some_and(|ident| ident.escaped_text == "prototype")
+                    {
+                        return None;
+                    }
+                    let owner_text = self.expression_text(lhs_access.expression)?;
+                    let owner_sym = self
+                        .resolve_identifier_symbol(lhs_access.expression)
+                        .or_else(|| self.resolve_qualified_symbol(lhs_access.expression))?;
+                    let owner_symbol = self.ctx.binder.get_symbol(owner_sym)?;
+                    if owner_symbol.has_any_flags(
+                        tsz_binder::symbol_flags::FUNCTION | tsz_binder::symbol_flags::CLASS,
+                    ) {
+                        Some(format!("typeof {owner_text}"))
+                    } else {
+                        None
+                    }
+                })
+            {
+                return Some(owner);
+            }
             // Fallback: a top-level (or nested) JS function with expando
             // assignments uses the function's own name as the apparent type
             // for `this`. tsc displays `Property 'X' does not exist on type
