@@ -35,6 +35,7 @@ impl<'a> Printer<'a> {
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
+        let class_name_is_real = class.name.is_some();
         let class_name = if class.name.is_none() {
             assignment_prefix
                 .as_ref()
@@ -236,7 +237,7 @@ impl<'a> Printer<'a> {
                 };
                 auto_accessor_members.push((member_idx, storage_name.clone(), init, is_static));
                 if is_static {
-                    if auto_accessor_class_alias.is_none() {
+                    if lower_auto_accessors_to_weakmap && auto_accessor_class_alias.is_none() {
                         auto_accessor_class_alias = Some(self.make_unique_name());
                     }
                     auto_accessor_static_inits.push((storage_name, init));
@@ -649,6 +650,13 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
+        let class_expr_set_function_name = class_expr_static_temp.as_ref().and_then(|_| {
+            if class.name.is_none() {
+                self.resolve_class_expr_binding_name(_idx)
+            } else {
+                None
+            }
+        });
 
         // Computed property name hoisting for targets < ES2022.
         // tsc hoists non-constant computed property name expressions to temp variables
@@ -1306,6 +1314,7 @@ impl<'a> Printer<'a> {
         let prev_scoped_class_expression_self_alias =
             self.scoped_class_expression_self_alias.take();
         if let Some(temp) = class_expr_temp.as_ref()
+            && class_name_is_real
             && !class_name.is_empty()
             && class_name != *temp
         {
@@ -1991,14 +2000,20 @@ impl<'a> Printer<'a> {
             // they're emitted in their existing trailing batch instead.
             let interleave_blocks = !self.defer_class_static_blocks;
             enum CommaItem {
+                SetFunctionName(String),
                 Field(StaticFieldInit),
                 Block(NodeIndex, usize),
             }
             let owned_field_inits = std::mem::take(&mut static_field_inits);
-            let mut comma_items: Vec<(u32, CommaItem)> = owned_field_inits
-                .into_iter()
-                .map(|init| (init.2, CommaItem::Field(init)))
-                .collect();
+            let mut comma_items: Vec<(u32, CommaItem)> = Vec::new();
+            if let Some(name) = class_expr_set_function_name.as_ref() {
+                comma_items.push((node.pos, CommaItem::SetFunctionName(name.clone())));
+            }
+            comma_items.extend(
+                owned_field_inits
+                    .into_iter()
+                    .map(|init| (init.2, CommaItem::Field(init))),
+            );
             if interleave_blocks {
                 let blocks = std::mem::take(&mut deferred_static_blocks);
                 for (block_idx, comment_idx) in blocks {
@@ -2010,6 +2025,9 @@ impl<'a> Printer<'a> {
 
             for (_pos, item) in comma_items {
                 match item {
+                    CommaItem::SetFunctionName(name) => {
+                        self.emit_class_expr_set_function_name_comma_item(temp, &name);
+                    }
                     CommaItem::Field((
                         name_emit,
                         init_idx,
@@ -2118,9 +2136,32 @@ impl<'a> Printer<'a> {
                 self.write(";");
                 self.write_line();
             }
+            let mut next_static_block = 0usize;
             for (name_emit, init_idx, _member_pos, leading_comments, trailing_comments) in
                 &static_field_inits
             {
+                if !self.defer_class_static_blocks {
+                    while next_static_block < deferred_static_blocks.len() {
+                        let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
+                        let block_pos = self.arena.get(block_idx).map_or(u32::MAX, |node| node.pos);
+                        if block_pos >= *_member_pos {
+                            break;
+                        }
+                        let prev_this_alias = self.scoped_static_this_alias.clone();
+                        let prev_super_alias = self.scoped_static_super_base_alias.clone();
+                        self.scoped_static_this_alias =
+                            static_initializer_this_binding.map(std::sync::Arc::from);
+                        self.scoped_static_super_base_alias =
+                            static_initializer_super_base.map(std::sync::Arc::from);
+                        self.emit_static_block_iife_expression(block_idx, comment_idx);
+                        self.scoped_static_this_alias = prev_this_alias;
+                        self.scoped_static_super_base_alias = prev_super_alias;
+                        self.write(";");
+                        self.write_line();
+                        next_static_block += 1;
+                    }
+                }
+
                 // Emit saved leading comments from the original static property declaration
                 for (comment_text, source_pos) in leading_comments {
                     self.write_comment_with_reindent(comment_text, Some(*source_pos));
@@ -2214,6 +2255,26 @@ impl<'a> Printer<'a> {
                     self.write_comment(comment_text);
                 }
                 self.write_line();
+            }
+            if !self.defer_class_static_blocks {
+                while next_static_block < deferred_static_blocks.len() {
+                    let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
+                    let prev_this_alias = self.scoped_static_this_alias.clone();
+                    let prev_super_alias = self.scoped_static_super_base_alias.clone();
+                    self.scoped_static_this_alias =
+                        static_initializer_this_binding.map(std::sync::Arc::from);
+                    self.scoped_static_super_base_alias =
+                        static_initializer_super_base.map(std::sync::Arc::from);
+                    self.emit_static_block_iife_expression(block_idx, comment_idx);
+                    self.scoped_static_this_alias = prev_this_alias;
+                    self.scoped_static_super_base_alias = prev_super_alias;
+                    self.write(";");
+                    self.write_line();
+                    next_static_block += 1;
+                }
+                if next_static_block > 0 {
+                    deferred_static_blocks.clear();
+                }
             }
         }
 
@@ -2510,6 +2571,9 @@ impl<'a> Printer<'a> {
             && !self.defer_class_static_blocks
             && !deferred_static_blocks.is_empty()
         {
+            if let Some(name) = class_expr_set_function_name.as_ref() {
+                self.emit_class_expr_set_function_name_comma_item(temp, name);
+            }
             self.emit_static_block_iife_comma_items_with_context(
                 deferred_static_blocks,
                 static_initializer_this_binding,

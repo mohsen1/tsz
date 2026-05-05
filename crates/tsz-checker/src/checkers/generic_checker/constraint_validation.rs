@@ -1,8 +1,4 @@
 //! Generic type argument constraint validation (TS2344).
-//!
-//! Contains `validate_type_args_against_params` and its helper methods for
-//! constraint checking, callable detection, heritage-chain coinductive checks,
-//! and array-like constraint satisfaction.
 
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
@@ -10,11 +6,10 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Validate each type argument against its corresponding type parameter constraint.
-    /// Reports TS2344 when a type argument doesn't satisfy its constraint.
-    ///
-    /// Shared implementation used by call expressions, new expressions, and type references.
-    pub(super) fn validate_type_args_against_params(
+    /// Validate each type argument against its corresponding type parameter
+    /// constraint. Reports TS2344 when a type argument doesn't satisfy its
+    /// constraint. Shared by call expressions, new expressions, and type refs.
+    pub(crate) fn validate_type_args_against_params(
         &mut self,
         type_params: &[tsz_solver::TypeParamInfo],
         type_args_list: &tsz_parser::parser::NodeList,
@@ -122,6 +117,13 @@ impl<'a> CheckerState<'a> {
                             arg_idx,
                         );
                     }
+                    continue;
+                }
+                if self.skip_constraint_for_typeof_instantiation(
+                    type_arg,
+                    constraint,
+                    type_args_list.nodes.get(i).copied(),
+                ) {
                     continue;
                 }
 

@@ -94,6 +94,177 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn node_is_empty_array_literal_for_evolving_call(&self, idx: NodeIndex) -> bool {
+        self.ctx.arena.get(idx).is_some_and(|node| {
+            node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                && self
+                    .ctx
+                    .arena
+                    .get_literal_expr(node)
+                    .is_some_and(|lit| lit.elements.nodes.is_empty())
+        })
+    }
+
+    fn reference_has_reachable_empty_array_assignment_for_call(
+        &self,
+        reference: NodeIndex,
+    ) -> bool {
+        let Some(flow_node) = self.flow_node_for_reference_usage(reference) else {
+            return false;
+        };
+        let analyzer = self.flow_analyzer();
+        let mut worklist = vec![flow_node];
+        let mut visited = rustc_hash::FxHashSet::default();
+        while let Some(current) = worklist.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            let Some(flow) = self.ctx.binder.flow_nodes.get(current) else {
+                continue;
+            };
+            if flow.has_any_flags(tsz_binder::flow_flags::ASSIGNMENT)
+                && let Some(rhs) = analyzer.assignment_rhs_for_reference(flow.node, reference)
+                && self.node_is_empty_array_literal_for_evolving_call(rhs)
+            {
+                return true;
+            }
+            for &antecedent in flow.antecedent.iter().rev() {
+                if antecedent.is_some() {
+                    worklist.push(antecedent);
+                }
+            }
+        }
+        false
+    }
+
+    pub(crate) fn receiver_reference_for_evolving_array_mutation(
+        &self,
+        receiver: NodeIndex,
+    ) -> NodeIndex {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let receiver = self.ctx.arena.skip_parenthesized_and_assertions(receiver);
+        let Some(node) = self.ctx.arena.get(receiver) else {
+            return receiver;
+        };
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+        {
+            if binary.operator_token == SyntaxKind::CommaToken as u16 {
+                return self.receiver_reference_for_evolving_array_mutation(binary.right);
+            }
+            if crate::query_boundaries::common::is_assignment_operator(binary.operator_token) {
+                return self.receiver_reference_for_evolving_array_mutation(binary.left);
+            }
+        }
+        receiver
+    }
+
+    pub(crate) fn reference_has_direct_empty_array_initializer_for_evolving_mutation(
+        &self,
+        reference: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(sym_id) = self.resolve_identifier_symbol(reference) else {
+            return false;
+        };
+        self.ctx
+            .binder
+            .get_symbol(sym_id)
+            .and_then(|symbol| {
+                let decl_idx = symbol.value_declaration;
+                let mut decl_node = self.ctx.arena.get(decl_idx)?;
+                if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && let Some(parent_idx) = self.ctx.arena.parent_of(decl_idx)
+                    && let Some(parent_node) = self.ctx.arena.get(parent_idx)
+                    && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                {
+                    decl_node = parent_node;
+                }
+                let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+                if decl.type_annotation.is_some() || decl.initializer.is_none() {
+                    return Some(false);
+                }
+                Some(self.node_is_empty_array_literal_for_evolving_call(decl.initializer))
+            })
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn reference_is_reachable_evolving_array_mutation_target(
+        &mut self,
+        reference: NodeIndex,
+    ) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(reference) else {
+            return false;
+        };
+        (self.assignment_target_is_control_flow_typed_any_symbol(sym_id)
+            && self.reference_has_reachable_empty_array_assignment_for_call(reference))
+            || self.reference_has_direct_empty_array_initializer_for_evolving_mutation(reference)
+    }
+
+    fn type_is_array_or_union_of_arrays(&self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::common;
+
+        if common::array_element_type(self.ctx.types, type_id).is_some() {
+            return true;
+        }
+        common::union_members(self.ctx.types, type_id).is_some_and(|members| {
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&member| common::array_element_type(self.ctx.types, member).is_some())
+        })
+    }
+
+    fn call_is_simple_evolving_array_mutation(&mut self, callee_expr: NodeIndex) -> bool {
+        use crate::query_boundaries::common;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let callee_expr = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(callee_expr);
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && callee_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(method_name) = self.get_property_name(access.name_or_argument) else {
+            return false;
+        };
+        if method_name != "push" && method_name != "unshift" {
+            return false;
+        }
+
+        let receiver_ref = self.receiver_reference_for_evolving_array_mutation(access.expression);
+        let Some(sym_id) = self.resolve_identifier_symbol(receiver_ref) else {
+            return false;
+        };
+        let is_control_flow_any = self.assignment_target_is_control_flow_typed_any_symbol(sym_id)
+            && self.reference_has_reachable_empty_array_assignment_for_call(receiver_ref);
+        let is_direct_empty_array =
+            self.reference_has_direct_empty_array_initializer_for_evolving_mutation(receiver_ref);
+        if !is_control_flow_any && !is_direct_empty_array {
+            return false;
+        }
+
+        let receiver_type = self.get_type_of_node(access.expression);
+        if is_direct_empty_array {
+            self.type_is_array_or_union_of_arrays(receiver_type)
+        } else {
+            common::union_members(self.ctx.types, receiver_type).is_none()
+                && common::array_element_type(self.ctx.types, receiver_type).is_some()
+        }
+    }
+
     /// Determine whether a call/new callee that resolved to `TypeId::ERROR`
     /// emitted a name/value resolution diagnostic at the callee site. Used to
     /// suppress contextual `any` for callback arguments so TS7006 still fires
@@ -610,6 +781,15 @@ impl<'a> CheckerState<'a> {
             && !forced_binding_pattern_unknown_context_mismatch
             && fallback_return != TypeId::ERROR
         {}
+
+        if let crate::query_boundaries::common::CallResult::ArgumentTypeMismatch {
+            fallback_return,
+            ..
+        } = result
+            && self.call_is_simple_evolving_array_mutation(callee_expr)
+        {
+            result = crate::query_boundaries::common::CallResult::Success(fallback_return);
+        }
 
         let call_context = super::call_result::CallResultContext {
             callee_expr,

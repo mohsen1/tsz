@@ -227,7 +227,7 @@ impl<'a> CheckerState<'a> {
     // -----------------------------------------------------------------
 
     /// Check if a JSDoc comment string contains a specific `@tag`.
-    pub(super) fn jsdoc_contains_tag(jsdoc: &str, tag_name: &str) -> bool {
+    pub(crate) fn jsdoc_contains_tag(jsdoc: &str, tag_name: &str) -> bool {
         let needle = format!("@{tag_name}");
         for pos_match in jsdoc.match_indices(&needle) {
             let after = pos_match.0 + needle.len();
@@ -238,7 +238,7 @@ impl<'a> CheckerState<'a> {
                 .chars()
                 .next()
                 .expect("after < jsdoc.len() checked above");
-            if !next_ch.is_ascii_alphanumeric() {
+            if !next_ch.is_ascii_alphanumeric() && next_ch != '_' {
                 return true;
             }
         }

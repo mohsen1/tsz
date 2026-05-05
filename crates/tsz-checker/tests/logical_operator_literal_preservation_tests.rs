@@ -10,20 +10,7 @@
 //! and the switch discriminant is `"foo"`.
 //! See conformance test
 //! `tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements03.ts`.
-use crate::context::CheckerOptions;
-
-fn check_strict(source: &str) -> Vec<u32> {
-    let options = CheckerOptions {
-        strict: true,
-        strict_null_checks: true,
-        no_implicit_any: true,
-        ..Default::default()
-    };
-    crate::test_utils::check_source(source, "test.ts", options)
-        .into_iter()
-        .map(|d| d.code)
-        .collect()
-}
+use crate::test_utils::check_source_strict_codes as check_strict;
 
 /// `"baz" || z` (where z is a non-literal identifier) should produce the
 /// literal type `"baz"`, not the widened `string`.

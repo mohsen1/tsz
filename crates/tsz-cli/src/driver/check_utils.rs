@@ -1201,10 +1201,15 @@ pub(super) fn js_file_has_ts_check_pragma(file: &BoundFile) -> bool {
     };
     let text: &str = source.text.as_ref();
     // When both directives are present in leading trivia, the last one wins.
-    // Re-scan to find the byte positions of both within comments only.
-    leading_trivia_last_directive(text)
-        .map(|d| d == TsFileDirective::Check)
-        .unwrap_or(false)
+    let ts_check_pos =
+        tsz_common::comments::last_ts_directive_offset_in_leading_trivia(text, "@ts-check");
+    let ts_nocheck_pos =
+        tsz_common::comments::last_ts_directive_offset_in_leading_trivia(text, "@ts-nocheck");
+    match (ts_check_pos, ts_nocheck_pos) {
+        (Some(check), Some(nocheck)) => check > nocheck,
+        (Some(_), None) => true,
+        _ => false,
+    }
 }
 
 pub(super) fn js_file_has_ts_nocheck_pragma(file: &BoundFile) -> bool {
@@ -1212,74 +1217,7 @@ pub(super) fn js_file_has_ts_nocheck_pragma(file: &BoundFile) -> bool {
         return false;
     };
     let text: &str = source.text.as_ref();
-    tsz_common::comments::has_ts_directive_in_leading_trivia(text, "@ts-nocheck")
-}
-
-#[derive(PartialEq)]
-enum TsFileDirective {
-    Check,
-    NoCheck,
-}
-
-/// Return which of `@ts-check` / `@ts-nocheck` appears **last** in the leading
-/// trivia comments of `source`, or `None` if neither is present.  This matches
-/// TypeScript's behaviour: the last pragma in the leading trivia wins.
-fn leading_trivia_last_directive(source: &str) -> Option<TsFileDirective> {
-    let bytes = source.as_bytes();
-    let len = bytes.len();
-    let mut pos = 0;
-    let mut result: Option<TsFileDirective> = None;
-
-    // Skip UTF-8 BOM
-    if bytes.get(..3) == Some(&[0xEF, 0xBB, 0xBF]) {
-        pos = 3;
-    }
-
-    while pos < len {
-        match bytes[pos] {
-            b' ' | b'\t' | b'\r' | b'\n' => {
-                pos += 1;
-            }
-            b'/' if pos + 1 < len => match bytes[pos + 1] {
-                b'/' => {
-                    let comment_start = pos + 2;
-                    let line_end = bytes[pos..]
-                        .iter()
-                        .position(|&b| b == b'\n')
-                        .map(|off| pos + off)
-                        .unwrap_or(len);
-                    let text_lower = source[comment_start..line_end].to_ascii_lowercase();
-                    if text_lower.contains("@ts-nocheck") {
-                        result = Some(TsFileDirective::NoCheck);
-                    } else if text_lower.contains("@ts-check") {
-                        result = Some(TsFileDirective::Check);
-                    }
-                    pos = line_end;
-                }
-                b'*' => {
-                    let comment_start = pos + 2;
-                    let close = source[comment_start..]
-                        .find("*/")
-                        .map(|off| comment_start + off)
-                        .unwrap_or(len.saturating_sub(2));
-                    let text_lower = source[comment_start..close].to_ascii_lowercase();
-                    if text_lower.contains("@ts-nocheck") {
-                        result = Some(TsFileDirective::NoCheck);
-                    } else if text_lower.contains("@ts-check") {
-                        result = Some(TsFileDirective::Check);
-                    }
-                    pos = close + 2;
-                    if pos > len {
-                        pos = len;
-                    }
-                }
-                _ => break,
-            },
-            _ => break,
-        }
-    }
-
-    result
+    tsz_common::comments::source_has_ts_nocheck_directive(text)
 }
 
 /// Convert specific parser diagnostics to `TS8xxx` equivalents for JS files.

@@ -25,11 +25,43 @@ impl<'a> Printer<'a> {
             self.emit_exponentiation_assignment(binary.left, left, right);
         } else {
             self.write("Math.pow(");
+            self.emit_replayed_leading_exponentiation_comment(left);
             self.emit(left);
             self.write(", ");
             self.emit(right);
             self.write(")");
         }
+    }
+
+    fn emit_replayed_leading_exponentiation_comment(&mut self, left: NodeIndex) {
+        let Some(left_node) = self.arena.get(left) else {
+            return;
+        };
+        if left_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return;
+        }
+        let left_start = self.skip_trivia_forward(left_node.pos, left_node.end);
+        let Some(text) = self.source_text_for_map() else {
+            return;
+        };
+        let Some(comment) = self.all_comments.iter().rev().find(|comment| {
+            !comment.is_multi_line
+                && comment.has_trailing_new_line
+                && comment.end <= left_start
+                && text
+                    .get(comment.end as usize..left_start as usize)
+                    .is_some_and(|between| between.chars().all(char::is_whitespace))
+        }) else {
+            return;
+        };
+        let Some(comment_text) = text
+            .get(comment.pos as usize..comment.end as usize)
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        self.write(&comment_text);
+        self.write_line();
     }
 
     /// Emit `lhs **= rhs` as `lhs = Math.pow(lhs, rhs)` with temp variables

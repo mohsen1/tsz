@@ -878,6 +878,35 @@ f.x;
     );
 }
 
+#[test]
+fn test_jsdoc_constructor_without_assignments_is_constructable_and_checks_this_reads() {
+    let source = r#"
+/**
+ * @constructor
+ */
+function Actual() {
+    return this.missing;
+}
+
+new Actual();
+"#;
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("'missing'")),
+        "Expected TS2339 for missing @constructor instance property, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 7009),
+        "Expected @constructor function to avoid TS7009, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2683),
+        "Expected @constructor function to suppress TS2683, got: {diagnostics:?}"
+    );
+}
+
 /// Plain function constructor: prototype methods should be accessible on instances
 #[test]
 fn test_plain_function_constructor_prototype_method_accessible() {

@@ -28,6 +28,32 @@ fn rebase_spread_display_property_order(props: &[PropertyInfo], base: u32) -> Ve
     props
 }
 
+fn remove_synthetic_missing_union_spread_props(member_props: &mut [Vec<PropertyInfo>]) {
+    let mut required_names = rustc_hash::FxHashSet::default();
+    for props in member_props.iter() {
+        for prop in props {
+            if !prop.optional {
+                required_names.insert(prop.name);
+            }
+        }
+    }
+    if required_names.is_empty() {
+        return;
+    }
+
+    // Conditional object literal unions are completed with `p?: undefined`
+    // placeholders for display/type-union balance. In an object spread, that
+    // placeholder means the branch omits `p`; it should not materialize as a
+    // spread property when another branch supplies a required `p`.
+    for props in member_props {
+        props.retain(|prop| {
+            !(prop.optional
+                && prop.type_id == TypeId::UNDEFINED
+                && required_names.contains(&prop.name))
+        });
+    }
+}
+
 /// Whether a contextual type is "literal-permissive" — i.e., does not
 /// constrain literal property types and therefore should not suppress
 /// the object-literal property widening that tsc performs for non-fresh
@@ -2513,10 +2539,11 @@ impl<'a> CheckerState<'a> {
 
                         // Collect properties from each union member for TS2783
                         // and branching.
-                        let all_member_props: Vec<Vec<PropertyInfo>> = members
+                        let mut all_member_props: Vec<Vec<PropertyInfo>> = members
                             .iter()
                             .map(|m| self.collect_object_spread_properties(*m))
                             .collect();
+                        remove_synthetic_missing_union_spread_props(&mut all_member_props);
 
                         // TS2783: When a property is required (non-optional)
                         // in ALL members of the union spread, it will always
