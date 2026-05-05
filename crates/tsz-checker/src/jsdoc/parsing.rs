@@ -141,6 +141,23 @@ impl<'a> CheckerState<'a> {
         parts
     }
 
+    pub(super) fn split_jsdoc_type_param_constraint(type_param: &str) -> (&str, Option<&str>) {
+        let trimmed = type_param.trim();
+        for (idx, _) in trimmed.match_indices("extends") {
+            let after_idx = idx + "extends".len();
+            let before = trimmed[..idx].chars().next_back();
+            let after = trimmed[after_idx..].chars().next();
+            if before.is_some_and(char::is_whitespace) && after.is_some_and(char::is_whitespace) {
+                let name = trimmed[..idx].trim();
+                let constraint = trimmed[after_idx..].trim();
+                if !name.is_empty() && !constraint.is_empty() {
+                    return (name, Some(constraint));
+                }
+            }
+        }
+        (trimmed, None)
+    }
+
     /// Split parameter list by commas at the top level.
     pub(super) fn split_top_level_params(s: &str) -> Vec<&str> {
         let mut parts = Vec::new();

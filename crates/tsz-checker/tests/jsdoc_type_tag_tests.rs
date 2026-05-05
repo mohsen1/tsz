@@ -698,6 +698,35 @@ inJsArrow(2);
     );
 }
 
+#[test]
+fn test_jsdoc_type_tag_arrow_generic_constraint_accepts_tab_whitespace() {
+    let source = "\
+// @ts-check
+
+/** @type {<T extends\tstring>(value: T) => T} */
+const echo = (value) => value;
+
+echo(123);
+";
+    let diagnostics = check_js(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2345 for number argument against tab-whitespace JSDoc generic constraint, got: {:?}",
+                diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+            )
+        });
+    assert!(
+        ts2345
+            .message_text
+            .contains("Argument of type 'number' is not assignable to parameter of type 'string'."),
+        "TS2345 should report the string constraint, got: {}",
+        ts2345.message_text
+    );
+}
+
 /// Inline generic JSDoc `@type` (no typedef alias) on a function declaration
 /// must also inherit the contextual `<T>`.
 #[test]
