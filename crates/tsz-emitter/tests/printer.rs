@@ -2151,3 +2151,27 @@ fn esm_import_helpers_no_alias_when_no_collision() {
         "Don't rename when there's no local shadowing.\nOutput:\n{output}"
     );
 }
+
+/// Regression: a single-line `// comment` between two class members of an
+/// ES5-lowered namespace IIFE was being dropped. The trailing-standalone
+/// comment extraction was skipped for class-like members on the (now
+/// incorrect) assumption that the class sub-emitter would handle them, so
+/// comments after the class's `}` but before the next member fell through
+/// the cracks. tsc preserves them on their own line.
+#[test]
+fn namespace_es5_iife_preserves_line_comment_between_classes() {
+    let source =
+        "namespace m {\n    export class b {}\n\n    // class d\n    export class d {}\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("// class d"),
+        "Single-line comment between sibling classes in a namespace IIFE must survive ES5 lowering.\nOutput:\n{output}"
+    );
+}

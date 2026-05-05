@@ -590,22 +590,6 @@ impl<'a> NamespaceES5Transformer<'a> {
         })
     }
 
-    fn is_class_like_member(&self, member_idx: NodeIndex) -> bool {
-        let Some(member_node) = self.arena.get(member_idx) else {
-            return false;
-        };
-        if member_node.kind == syntax_kind_ext::CLASS_DECLARATION {
-            return true;
-        }
-        if member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-            && let Some(export_data) = self.arena.get_export_decl(member_node)
-            && let Some(inner) = self.arena.get(export_data.export_clause)
-        {
-            return inner.kind == syntax_kind_ext::CLASS_DECLARATION;
-        }
-        false
-    }
-
     fn is_stray_export_keyword_member(&self, member_idx: NodeIndex) -> bool {
         self.arena
             .get(member_idx)
@@ -820,11 +804,8 @@ impl<'a> NamespaceES5Transformer<'a> {
                 // before the next declaration. Capture those comments here so they can
                 // be emitted immediately after the current statement.
                 let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
-                let trailing_standalone = if self.is_class_like_member(stmt_idx) {
-                    Vec::new()
-                } else {
-                    self.extract_standalone_comments_in_range(code_end, stmt_node.end)
-                };
+                let trailing_standalone =
+                    self.extract_standalone_comments_in_range(code_end, stmt_node.end);
 
                 // Extract leading comments between previous end and this statement.
                 let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
