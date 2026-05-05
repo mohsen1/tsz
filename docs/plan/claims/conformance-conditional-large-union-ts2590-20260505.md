@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `conformance/conditional-large-union-ts2590-20260505`
-- **PR**: TBD
+- **PR**: #3208
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
