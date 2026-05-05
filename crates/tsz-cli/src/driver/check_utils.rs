@@ -66,9 +66,9 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
 
         // When the file is a `tslib.d.ts` that contains `declare module "tslib" { ... }`,
         // the file-level exports are empty but the module declarations contain the helpers.
-        // Check if the tslib module has non-empty ambient exports, OR if the source text
-        // of the file contains actual helper function declarations (the binder may not
-        // always register ambient module function declarations as module exports).
+        // Check if the tslib module has non-empty ambient exports. If not, fall through
+        // to the declaration scan below; raw helper-name mentions in comments or strings
+        // must not satisfy tslib helper requirements.
         if program.declared_modules.contains("tslib") {
             let tslib_ambient_has_exports = program
                 .module_exports
@@ -76,23 +76,6 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
                 .is_some_and(|exports| !exports.is_empty());
             if tslib_ambient_has_exports {
                 return emit_tslib_helper_diagnostics(program, options, "tslib", file_is_esm_map);
-            }
-            // Scan the source text for helper function declarations.
-            // A `declare module "tslib" { export {}; }` with no helpers will not match.
-            let source = &tslib_file.arena.source_files.first().map(|sf| &sf.text);
-            if let Some(source) = source
-                && (source.contains("__importStar")
-                    || source.contains("__importDefault")
-                    || source.contains("__extends")
-                    || source.contains("__rest")
-                    || source.contains("__decorate")
-                    || source.contains("__metadata")
-                    || source.contains("__awaiter")
-                    || source.contains("__generator")
-                    || source.contains("__spread")
-                    || source.contains("__values"))
-            {
-                return Vec::new();
             }
         }
 
@@ -406,6 +389,8 @@ fn source_tslib_helper_parameter_counts(
     let mut counts = rustc_hash::FxHashMap::default();
     for helper_name in [
         "__extends",
+        "__awaiter",
+        "__generator",
         "__asyncGenerator",
         "__classPrivateFieldGet",
         "__classPrivateFieldSet",
@@ -429,7 +414,7 @@ fn source_tslib_helper_parameter_counts(
 
 fn extract_declared_function_parameter_count(source: &str, helper_name: &str) -> Option<usize> {
     let marker = format!("function {helper_name}");
-    let marker_idx = source.find(&marker)?;
+    let marker_idx = find_source_marker_outside_trivia(source, &marker)?;
     let mut idx = marker_idx + marker.len();
 
     while let Some(ch) = source[idx..].chars().next() {
@@ -515,6 +500,85 @@ fn extract_declared_function_parameter_count(source: &str, helper_name: &str) ->
     }
 
     None
+}
+
+fn find_source_marker_outside_trivia(source: &str, marker: &str) -> Option<usize> {
+    let mut search_start = 0usize;
+    loop {
+        let rel_idx = source[search_start..].find(marker)?;
+        let marker_idx = search_start + rel_idx;
+        if !source_offset_is_in_comment_or_string(source, marker_idx) {
+            return Some(marker_idx);
+        }
+        search_start = marker_idx + marker.len();
+    }
+}
+
+fn source_offset_is_in_comment_or_string(source: &str, target: usize) -> bool {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Code,
+        LineComment,
+        BlockComment,
+        SingleQuote,
+        DoubleQuote,
+        Template,
+    }
+
+    let bytes = source.as_bytes();
+    let mut idx = 0usize;
+    let mut state = State::Code;
+    while idx < target && idx < bytes.len() {
+        let byte = bytes[idx];
+        let next = bytes.get(idx + 1).copied();
+        match state {
+            State::Code => match (byte, next) {
+                (b'/', Some(b'/')) => {
+                    state = State::LineComment;
+                    idx += 2;
+                    continue;
+                }
+                (b'/', Some(b'*')) => {
+                    state = State::BlockComment;
+                    idx += 2;
+                    continue;
+                }
+                (b'\'', _) => state = State::SingleQuote,
+                (b'"', _) => state = State::DoubleQuote,
+                (b'`', _) => state = State::Template,
+                _ => {}
+            },
+            State::LineComment => {
+                if byte == b'\n' || byte == b'\r' {
+                    state = State::Code;
+                }
+            }
+            State::BlockComment => {
+                if byte == b'*' && next == Some(b'/') {
+                    state = State::Code;
+                    idx += 2;
+                    continue;
+                }
+            }
+            State::SingleQuote | State::DoubleQuote | State::Template => {
+                if byte == b'\\' {
+                    idx += 2;
+                    continue;
+                }
+                let terminator = match state {
+                    State::SingleQuote => b'\'',
+                    State::DoubleQuote => b'"',
+                    State::Template => b'`',
+                    _ => unreachable!(),
+                };
+                if byte == terminator {
+                    state = State::Code;
+                }
+            }
+        }
+        idx += 1;
+    }
+    state != State::Code
 }
 
 fn program_appears_filesystem_backed(program: &MergedProgram) -> bool {
@@ -771,12 +835,21 @@ fn required_tslib_helpers(
         }];
     }
     if let Some((start, length)) = first_async_function.or(saw_await) {
-        return vec![TslibHelperRequirement {
+        let mut helpers = vec![TslibHelperRequirement {
             name: "__awaiter",
             start,
             length,
             required_parameter_count: None,
         }];
+        if !target.supports_es2015() {
+            helpers.push(TslibHelperRequirement {
+                name: "__generator",
+                start,
+                length,
+                required_parameter_count: None,
+            });
+        }
+        return helpers;
     }
 
     if !is_esm {
@@ -2657,6 +2730,89 @@ texts.push(100);
                 .iter()
                 .any(|diag| diag.code == 2343 || diag.code == 2354),
             "Did not expect tslib helper diagnostics when index.d.ts declares __decorate. Got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn ambient_tslib_helper_comments_do_not_satisfy_missing_helpers() {
+        let program = merged_program(&[
+            (
+                "main.ts",
+                "export async function load(): Promise<number> {\n    await Promise.resolve();\n    return 1;\n}\n",
+            ),
+            (
+                "node_modules/tslib/tslib.d.ts",
+                r#"declare module "tslib" {
+  // Mentioning __importStar in a comment should not provide any helper export.
+  // export declare function __awaiter(thisArg: any, _arguments: any, P: any, generator: any): any;
+  export {};
+}
+"#,
+            ),
+        ]);
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            ..Default::default()
+        };
+        options.checker.target = tsz_common::ScriptTarget::ES5;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            Path::new("/"),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2343
+                    && diag.file == "main.ts"
+                    && diag.message_text.contains("__awaiter")
+            }),
+            "Expected TS2343 for missing __awaiter. Got: {diagnostics:#?}"
+        );
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2343
+                    && diag.file == "main.ts"
+                    && diag.message_text.contains("__generator")
+            }),
+            "Expected TS2343 for missing __generator. Got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn ambient_tslib_helper_declarations_satisfy_async_helpers() {
+        let program = merged_program(&[
+            (
+                "main.ts",
+                "export async function load(): Promise<number> {\n    await Promise.resolve();\n    return 1;\n}\n",
+            ),
+            (
+                "node_modules/tslib/tslib.d.ts",
+                r#"declare module "tslib" {
+  export declare function __awaiter(thisArg: any, _arguments: any, P: any, generator: any): any;
+  export declare function __generator(thisArg: any, body: any): any;
+}
+"#,
+            ),
+        ]);
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            ..Default::default()
+        };
+        options.checker.target = tsz_common::ScriptTarget::ES5;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            Path::new("/"),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2343),
+            "Did not expect missing-helper diagnostics when ambient tslib declares async helpers. Got: {diagnostics:#?}"
         );
     }
 
