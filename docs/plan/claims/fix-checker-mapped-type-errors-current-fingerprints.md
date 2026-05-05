@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-mapped-type-errors-current-fingerprints`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/2971
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
