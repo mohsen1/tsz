@@ -337,6 +337,16 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                     // tripping during deep recursive type resolution). Fall through to
                     // the type environment, which may have the correct resolved type from
                     // an earlier successful resolution.
+                } else if ty == tsz_solver::TypeId::UNKNOWN {
+                    // Skip placeholder UNKNOWN entries written by recursion guards
+                    // / stub registrations during cross-file alias body lowering.
+                    // Returning UNKNOWN here would let the evaluator collapse a
+                    // generic application like `Pick<member, ...>` to bare
+                    // unknown, silently erasing the alias's structural shape
+                    // for downstream object spreads / intersections. A real
+                    // resolved body is reachable through the later
+                    // `type_env.get_def` and `DefinitionStore::get_body`
+                    // fallbacks, so let the function continue past this entry.
                 } else if crate::query_boundaries::common::lazy_def_id(self.types, ty)
                     == Some(def_id)
                 {
@@ -371,6 +381,8 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         if !is_atomics
             && let Ok(env) = self.type_env.try_borrow()
             && let Some(body) = env.get_def(def_id)
+            && body != tsz_solver::TypeId::UNKNOWN
+            && body != tsz_solver::TypeId::ERROR
         {
             // For lib interfaces, check if the heritage-merged version is available.
             if let Some(override_ty) = self.lib_heritage_cache_override(sym_id, body) {
@@ -450,6 +462,23 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 "resolve_lazy: found in SYMBOL_TYPE bucket"
             );
             return Some(resolved);
+        }
+
+        // Final fallback: consult the shared `DefinitionStore` for a body
+        // registered by a sibling file's checker (e.g., `Pick`/`Exclude` from
+        // `helpers/util.ts` referenced by another file's alias body). Without
+        // this, cross-file type-alias bodies that reference file-local
+        // helpers from their declaring file evaluate to `None` and the
+        // downstream evaluator collapses them to `unknown`, silently
+        // erasing the alias's structural contributions in object spreads,
+        // intersections, and other consumers.
+        if let Some(body) = self.definition_store.get_body(def_id) {
+            tracing::trace!(
+                def_id = def_id.0,
+                type_id = body.0,
+                "resolve_lazy: found in DefinitionStore body"
+            );
+            return Some(body);
         }
 
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");
