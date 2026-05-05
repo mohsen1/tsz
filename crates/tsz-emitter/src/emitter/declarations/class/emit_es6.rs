@@ -74,6 +74,8 @@ impl<'a> Printer<'a> {
                     if mod_node.kind == SyntaxKind::AbstractKeyword as u16
                         || mod_node.kind == SyntaxKind::DeclareKeyword as u16
                         || mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                        || (self.ctx.options.legacy_decorators
+                            && mod_node.kind == syntax_kind_ext::DECORATOR)
                     {
                         continue;
                     }
