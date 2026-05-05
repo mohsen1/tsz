@@ -69,6 +69,7 @@ impl<'a> CheckerState<'a> {
                         )
                         && !self.is_function_constraint(constraint_resolved)
                         && !query::contains_type_parameters(self.ctx.types, constraint_resolved)
+                        && !self.type_arg_evaluates_to_infer_result_conditional(type_arg)
                     {
                         continue;
                     }
@@ -302,16 +303,14 @@ impl<'a> CheckerState<'a> {
                                             cond_true,
                                         );
                                         if cond_true_is_infer && !is_key_filtering_pattern {
-                                            // Get the infer variable's own constraint (if any).
-                                            // Unconstrained infer → base is `unknown`.
+                                            // Unconstrained infer has `unknown` as its base.
                                             let infer_base = query::get_type_parameter_constraint(
                                                 self.ctx.types.as_type_database(),
                                                 cond_true,
                                             )
                                             .unwrap_or(TypeId::UNKNOWN);
 
-                                            // Instantiate the required constraint with provided
-                                            // type arguments for accurate error messages.
+                                            // Instantiate for accurate error messages.
                                             let mut subst =
                                                 crate::query_boundaries::common::TypeSubstitution::new(
                                                 );
@@ -330,33 +329,23 @@ impl<'a> CheckerState<'a> {
                                                 )
                                             };
 
-                                            // When the instantiated constraint is fully
-                                            // concrete (no type parameters), tsc can use
-                                            // "restrictive instantiation" — substituting
-                                            // the check type's constraint into the
-                                            // conditional to resolve the infer variable.
-                                            // This often proves satisfaction (e.g.,
-                                            // `Parameters<F>` where `F extends Function`
-                                            // resolves infer to `any[]` which satisfies
-                                            // `ReadonlyArray<any>`). We can't easily
-                                            // replicate this, so defer for concrete
-                                            // constraints.
-                                            if !query::contains_type_parameters(
-                                                self.ctx.types,
-                                                inst_constraint,
-                                            ) {
-                                                continue;
-                                            }
-
-                                            // Constraint still has type parameters (e.g.,
-                                            // self-referential `Shared<T, GetProps<C>>`).
-                                            // Check if the infer base satisfies it.
-                                            // For unconstrained infer (base=unknown), this
-                                            // fails → TS2344.
+                                            // Concrete constraints are checked here too:
+                                            // `unknown` infer bases fail constraints like `string`.
                                             let is_satisfied = inst_constraint == TypeId::UNKNOWN
                                                 || inst_constraint == TypeId::ANY
                                                 || self
-                                                    .is_assignable_to(infer_base, inst_constraint);
+                                                    .is_assignable_to(infer_base, inst_constraint)
+                                                || self
+                                                    .infer_result_satisfies_via_check_constraint(
+                                                        base,
+                                                        cond_check,
+                                                        inst_constraint,
+                                                    )
+                                                || self
+                                                    .infer_result_satisfies_via_application_arg_constraints(
+                                                        type_arg,
+                                                        inst_constraint,
+                                                    );
 
                                             if !is_satisfied
                                                 && let Some(&arg_idx) = type_args_list.nodes.get(i)
@@ -730,16 +719,16 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         }
-                        // When base_constraint_type is None (composite type with type params
-                        // that can't be simplified further), check if the required constraint
-                        // is callable. Tsc eagerly emits TS2344 when the constraint is a
+                        // When base_constraint_type is None or UNKNOWN (composite type with
+                        // type params that can't be simplified further), check if the required
+                        // constraint is callable. Tsc eagerly emits TS2344 when the constraint is a
                         // callable signature and the composite type arg is not provably callable.
                         // Example: `ReturnType<TypeHardcodedAsParameterWithoutReturnType<T,F>>`
                         // where `TypeHardcodedAsParameterWithoutReturnType<T,F>` = `DataFetchFns[T][F]`.
                         //
                         // The constraint TypeId may come from a lib arena (cross-arena). Resolve
                         // it fully and evaluate before checking callability.
-                        if base_constraint_type.is_none() {
+                        if base_constraint_type.is_none_or(|base| base == TypeId::UNKNOWN) {
                             // When the type argument is (or evaluates to) a conditional
                             // type like `Extract<T, C>` (= `T extends C ? T : never`),
                             // the result is always a subtype of C (or never). If C
@@ -755,6 +744,69 @@ impl<'a> CheckerState<'a> {
                                         type_arg_evaluated,
                                     )
                                 });
+                            if let Some((cond_check, _cond_extends, cond_true, cond_false)) =
+                                query::full_conditional_type_components(db, type_arg).or_else(
+                                    || {
+                                        query::full_conditional_type_components(
+                                            self.ctx.types.as_type_database(),
+                                            type_arg_evaluated,
+                                        )
+                                    },
+                                )
+                                && cond_false == TypeId::NEVER
+                                && query::is_infer_type(db, cond_true)
+                            {
+                                let constraint_resolved = self.resolve_lazy_type(constraint);
+                                let mut subst =
+                                    crate::query_boundaries::common::TypeSubstitution::new();
+                                for (j, p) in type_params.iter().enumerate() {
+                                    if let Some(&arg) = type_args.get(j) {
+                                        subst.insert(p.name, arg);
+                                    }
+                                }
+                                let inst_constraint = if subst.is_empty() {
+                                    constraint_resolved
+                                } else {
+                                    crate::query_boundaries::common::instantiate_type(
+                                        self.ctx.types,
+                                        constraint_resolved,
+                                        &subst,
+                                    )
+                                };
+                                let infer_base =
+                                    query::get_type_parameter_constraint(db, cond_true)
+                                        .unwrap_or(TypeId::UNKNOWN);
+                                let is_satisfied = inst_constraint == TypeId::UNKNOWN
+                                    || inst_constraint == TypeId::ANY
+                                    || self.is_assignable_to(infer_base, inst_constraint)
+                                    || (type_arg_evaluated != type_arg
+                                        && self
+                                            .is_assignable_to(type_arg_evaluated, inst_constraint))
+                                    || self.infer_result_satisfies_via_check_constraint(
+                                        type_arg,
+                                        cond_check,
+                                        inst_constraint,
+                                    )
+                                    || self.infer_result_satisfies_via_application_arg_constraints(
+                                        type_arg,
+                                        inst_constraint,
+                                    );
+
+                                if !is_satisfied
+                                    && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                                    && !self.type_argument_is_narrowed_by_conditional_true_branch(
+                                        arg_idx,
+                                        inst_constraint,
+                                    )
+                                {
+                                    self.error_type_constraint_not_satisfied(
+                                        type_arg,
+                                        inst_constraint,
+                                        arg_idx,
+                                    );
+                                }
+                                continue;
+                            }
                             if let Some((extends_type, false_type)) = cond_components {
                                 let constraint_resolved = self.resolve_lazy_type(constraint);
                                 let extends_resolved = self.resolve_lazy_type(extends_type);
@@ -1942,58 +1994,5 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    /// Return `true` when `type_arg` is the type of an instantiation expression
-    /// `typeof fn<TArgs>` whose `TArgs` do not match the type-parameter arity
-    /// of any call/construct signature on the underlying function. Such
-    /// expressions also raise TS2635 at the instantiation site; tsc treats the
-    /// resulting type as `errorType`, which then fails any non-trivial
-    /// type-parameter constraint check (TS2344).
-    ///
-    /// Implementation note: the Application produced by the typeof-instantiation
-    /// path (`type_node_advanced.rs`) wraps a `TypeQuery(SymbolRef)` as the
-    /// base, which only yields callable signatures after evaluation through
-    /// `TypeEnvironment`. Generic-type-alias / class / interface references use
-    /// a `Lazy(DefId)` base instead, so we filter those out before evaluating.
-    fn is_failed_typeof_instantiation_arg(&mut self, type_arg: TypeId) -> bool {
-        let db = self.ctx.types.as_type_database();
-        let Some((base, args)) = query::application_base_and_args(db, type_arg) else {
-            return false;
-        };
-
-        // Generic-type-reference Applications (`Foo<X>` for a type alias /
-        // class / interface) use a `Lazy(DefId)` / `Recursive` / `BoundParameter`
-        // base. Their arity mismatches are reported elsewhere (TS2305 / TS2558)
-        // — not the typeof-instantiation flow.
-        if query::is_named_type_reference(db, base) {
-            return false;
-        }
-
-        let num_args = args.len();
-        // Evaluate the base through the type environment so `TypeQuery(sym)`
-        // resolves to the underlying function/constructor type. The evaluation
-        // path is necessary — `get_callable_shape_for_type` does not look
-        // through `TypeQuery` itself — but we limit it to typeof-instantiation
-        // shapes (filtered above) so unrelated assignability checks are not
-        // disturbed.
-        let resolved = self.resolve_lazy_type(base);
-        let resolved = self.evaluate_type_for_assignability(resolved);
-        let db = self.ctx.types.as_type_database();
-        let Some(shape) =
-            crate::query_boundaries::common::get_callable_shape_for_type(db, resolved)
-        else {
-            return false;
-        };
-
-        let call_match = shape
-            .call_signatures
-            .iter()
-            .any(|s| s.type_params.len() == num_args);
-        let construct_match = shape
-            .construct_signatures
-            .iter()
-            .any(|s| s.type_params.len() == num_args);
-        !(call_match || construct_match)
     }
 }
