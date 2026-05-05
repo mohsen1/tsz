@@ -443,6 +443,23 @@ fn namespace_reference_to_later_dotted_child_is_qualified() {
 }
 
 #[test]
+fn nested_namespace_qualifies_grandparent_export_when_name_collides() {
+    let source = "namespace M {\n    export var x = 3;\n    namespace m4 {\n        namespace M {\n            var p = x;\n        }\n    }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("var p = M_1.x;"),
+        "Nested colliding namespace should qualify grandparent export through \
+         the outer IIFE parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var p = x;"),
+        "Bare `x` would resolve against the nested namespace scope, not the \
+         exported grandparent value.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_module_temp_vars_do_not_collide() {
     let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\nconsole.log(x);\n";
     let output = parse_lower_print(
