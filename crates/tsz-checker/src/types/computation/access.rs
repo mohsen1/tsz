@@ -62,7 +62,7 @@ pub(crate) fn optional_chain_root(arena: &NodeArena, idx: NodeIndex) -> NodeInde
 }
 
 impl<'a> CheckerState<'a> {
-    fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
+    pub(crate) fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(key_expr_idx)?;
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
@@ -148,17 +148,22 @@ impl<'a> CheckerState<'a> {
             .binder
             .expando_properties
             .get(&obj_key)
-            .is_some_and(|props| props.contains(&prop_key))
+            .is_some_and(|props| {
+                props
+                    .iter()
+                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+            })
         {
             return true;
         }
 
         // Use global expando index for O(1) lookup instead of O(N) binder scan
         if let Some(expando_idx) = &self.ctx.global_expando_index {
-            if expando_idx
-                .get(&obj_key)
-                .is_some_and(|props| props.contains(&prop_key))
-            {
+            if expando_idx.get(&obj_key).is_some_and(|props| {
+                props
+                    .iter()
+                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+            }) {
                 return true;
             }
         } else if let Some(all_binders) = &self.ctx.all_binders {
@@ -166,7 +171,11 @@ impl<'a> CheckerState<'a> {
                 if binder
                     .expando_properties
                     .get(&obj_key)
-                    .is_some_and(|props| props.contains(&prop_key))
+                    .is_some_and(|props| {
+                        props
+                            .iter()
+                            .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+                    })
                 {
                     return true;
                 }
@@ -230,6 +239,13 @@ impl<'a> CheckerState<'a> {
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall
         // back to the flow-narrowed receiver so subtype-based writes still work.
+        let expando_write_property_name =
+            if skip_flow_narrowing && self.is_js_file() && self.ctx.compiler_options.check_js {
+                self.expando_element_key_name(access.name_or_argument)
+            } else {
+                None
+            };
+
         let (object_type, raw_object_type, write_presence_only) = if skip_flow_narrowing {
             let object_type_no_flow =
                 self.get_type_of_write_target_base_expression(access.expression);
@@ -240,16 +256,19 @@ impl<'a> CheckerState<'a> {
                 && self
                     .ctx
                     .arena
-                    .get_identifier_at(access.name_or_argument)
-                    .is_some_and(|member_ident| {
+                    .get(access.name_or_argument)
+                    .is_some_and(|_| {
+                        let Some(member_name) = expando_write_property_name.as_deref() else {
+                            return false;
+                        };
                         property_access_chain_text_in_arena(self.ctx.arena, access.expression)
                             .is_some_and(|object_key| {
                                 self.collect_expando_properties_for_root(&object_key)
-                                    .contains(&member_ident.escaped_text)
+                                    .contains(member_name)
                                     || object_key.rsplit_once('.').is_some_and(
                                         |(_, last_segment)| {
                                             self.collect_expando_properties_for_root(last_segment)
-                                                .contains(&member_ident.escaped_text)
+                                                .contains(member_name)
                                         },
                                     )
                             })
@@ -1692,6 +1711,9 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     object_type_for_access,
                 ) || is_js_expando_object_write);
+            if is_expando_write {
+                result_type = TypeId::ANY;
+            }
             // Suppress TS7053 for expando reads with unique symbol keys on function
             // types. When `func[symKey]` where symKey is a const Symbol() variable
             // and `func[symKey] = value` was assigned as an expando property, tsc

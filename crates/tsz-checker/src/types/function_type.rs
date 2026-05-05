@@ -2686,7 +2686,16 @@ impl<'a> CheckerState<'a> {
             is_constructor: js_constructor_instance_type.is_some(),
             is_method: false,
         };
-        let function_type = self.ctx.types.factory().function(shape);
+        let mut function_type = self.ctx.types.factory().function(shape);
+        if self.is_js_file()
+            && is_function_declaration
+            && let (Some(name), Some(sym_id)) = (
+                name_for_error.as_deref(),
+                self.ctx.binder.get_node_symbol(idx),
+            )
+        {
+            function_type = self.augment_callable_type_with_expandos(name, sym_id, function_type);
+        }
 
         self.pop_type_parameters(jsdoc_type_param_updates);
         self.pop_type_parameters(contextual_signature_type_param_updates);
