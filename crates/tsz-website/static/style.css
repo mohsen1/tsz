@@ -146,8 +146,25 @@ body {
   border-bottom-color: var(--link);
 }
 
-.nav-github {
+.nav-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 0 0 auto;
+}
+
+.github-star-button {
+  display: block;
+  width: 110px;
+  height: 20px;
+  border: 0 !important;
+  outline: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.nav-github {
   color: var(--text-secondary);
   display: flex;
   align-items: center;
@@ -890,9 +907,21 @@ tr:nth-child(even) { background: var(--table-stripe); }
     height: auto;
     padding: 0 1rem;
   }
-  .nav-logo { grid-column: 1; }
-  .nav-hamburger { grid-column: 3; display: flex; }
-  .nav-github { grid-column: 4; margin-left: 0.5rem; }
+  .nav-logo { grid-column: 1; grid-row: 1; }
+  .nav-actions {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    gap: 0.5rem;
+    margin-left: 0.5rem;
+  }
+  .nav-hamburger {
+    grid-column: 4;
+    grid-row: 1;
+    display: flex;
+    justify-self: end;
+    margin-left: 0.5rem;
+  }
   .nav-links {
     display: grid;
     grid-column: 1 / -1;
