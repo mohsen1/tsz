@@ -16,15 +16,13 @@ use tsz_scanner::SyntaxKind;
 /// to a real newline.  This function converts them back to escape sequences.
 fn escape_template_literal_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
-    for ch in s.chars() {
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
         match ch {
             '\\' => out.push_str("\\\\"),
             '`' => out.push_str("\\`"),
-            '$' => {
-                // Only escape $ when followed by { (but we don't have lookahead here,
-                // so just push as-is; actual ${...} is handled structurally)
-                out.push('$');
-            }
+            '$' if chars.peek() == Some(&'{') => out.push_str("\\$"),
+            '$' => out.push('$'),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),

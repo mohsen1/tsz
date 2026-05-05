@@ -111,6 +111,27 @@ fn fix_template_literal_with_types() {
 }
 
 #[test]
+fn fix_template_literal_escaped_substitution_preserved() {
+    let output = emit_dts(
+        r#"export type EscapedSubstitution = `prefix-\${notAType}-suffix`;
+export type EscapedOnly = `\${}`;"#,
+    );
+    println!("template escaped substitution:\n{output}");
+    assert!(
+        output.contains(r#"export type EscapedSubstitution = `prefix-\${notAType}-suffix`;"#),
+        "escaped substitution should remain literal text: {output}"
+    );
+    assert!(
+        output.contains(r#"export type EscapedOnly = `\${}`;"#),
+        "escaped empty substitution should remain literal text: {output}"
+    );
+    assert!(
+        !output.contains(r#"`prefix-${notAType}-suffix`"#) && !output.contains(r#"`${}`;"#),
+        "escaped template text should not become structural substitution: {output}"
+    );
+}
+
+#[test]
 fn fix_numeric_sep_negative() {
     // Negative number with separator
     let output = emit_dts("export declare const x: -1_000;");
