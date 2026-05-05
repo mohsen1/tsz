@@ -552,7 +552,7 @@ pub fn last_ts_directive_offset_in_leading_trivia(source: &str, directive: &str)
     while pos < len {
         match bytes[pos] {
             // Skip whitespace
-            b' ' | b'\t' | b'\r' | b'\n' => {
+            b if is_ts_directive_whitespace_byte(b) => {
                 pos += 1;
             }
             b'/' if pos + 1 < len => match bytes[pos + 1] {
@@ -615,12 +615,14 @@ fn last_directive_offset_in_comment(
         }
 
         let mut candidate = line_start;
-        while candidate < line_end && matches!(bytes[candidate], b' ' | b'\t') {
+        while candidate < line_end && is_ts_directive_horizontal_whitespace_byte(bytes[candidate]) {
             candidate += 1;
         }
         if candidate < line_end && bytes[candidate] == b'*' {
             candidate += 1;
-            while candidate < line_end && matches!(bytes[candidate], b' ' | b'\t') {
+            while candidate < line_end
+                && is_ts_directive_horizontal_whitespace_byte(bytes[candidate])
+            {
                 candidate += 1;
             }
         }
@@ -667,6 +669,14 @@ fn source_byte_at_word_boundary(bytes: &[u8], pos: usize, line_end: usize) -> bo
 
 const fn is_directive_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
+}
+
+const fn is_ts_directive_whitespace_byte(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | 0x0B | 0x0C)
+}
+
+const fn is_ts_directive_horizontal_whitespace_byte(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | 0x0B | 0x0C)
 }
 
 /// Extract the content of a `JSDoc` comment (without the delimiters).
