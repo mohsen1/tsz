@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `fix/no-implicit-any-indexing-fingerprint`
 - **PR**: #3189
-- **Status**: claim
+- **Status**: abandoned
 - **Workstream**: 1 (Conformance / diagnostic fingerprint)
 
 ## Intent
@@ -18,11 +18,13 @@ before rerunning the targeted conformance test.
 
 ## Files Touched
 
-- TBD after root-cause analysis.
+- `docs/plan/claims/fix-no-implicit-any-indexing-fingerprint.md`
 
 ## Verification
 
-- Baseline target command:
-  `./scripts/conformance/conformance.sh run --filter "noImplicitAnyIndexing" --verbose`
-- Planned: owning-crate Rust regression test.
-- Planned: targeted conformance rerun for `noImplicitAnyIndexing`.
+- Abandoned before production changes because the claim was created from a
+  stale snapshot. Current `origin/main` already has
+  `TypeScript/tests/cases/compiler/noImplicitAnyIndexing.ts` as PASS in
+  `scripts/conformance/conformance-baseline.txt`, and the test is absent from
+  `scripts/conformance/conformance-detail.json`.
+- No checker/solver code was changed.
