@@ -1059,6 +1059,23 @@ impl<'a> TypeFormatter<'a> {
                     self.interner.lookup(alias_origin),
                     Some(TypeData::Application(_))
                 )
+                && !if let TypeData::Union(member_list_id) = &key {
+                    let members = self.interner.type_list(*member_list_id);
+                    !members.is_empty()
+                        && members.iter().all(|&m| {
+                            matches!(
+                                self.interner.lookup(m),
+                                Some(
+                                    TypeData::TemplateLiteral(_)
+                                        | TypeData::StringIntrinsic { .. }
+                                        | TypeData::Literal(_)
+                                        | TypeData::Intrinsic(_)
+                                )
+                            )
+                        })
+                } else {
+                    false
+                }
                 && if let TypeData::Union(member_list_id) = &key {
                     let members = self.interner.type_list(*member_list_id);
                     members.iter().any(|&m| {

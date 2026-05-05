@@ -257,8 +257,19 @@ impl<'a> Printer<'a> {
                             "bigint" => return "BigInt".to_string(),
                             "void" | "undefined" | "null" | "never" => return "void 0".to_string(),
                             "any" | "unknown" | "object" => return "Object".to_string(),
-                            _ => return name,
+                            _ => {}
                         }
+                        // Apply CJS named-import substitution (e.g., `Observable` →
+                        // `observable_1.Observable`). The metadata callsite is a
+                        // *value* position; without substitution the emitted name
+                        // would be undefined at runtime.
+                        if !self.suppress_commonjs_named_import_substitution
+                            && let Some(substituted) =
+                                self.commonjs_named_import_substitutions.get(&name)
+                        {
+                            return substituted.clone();
+                        }
+                        return name;
                     }
                 }
                 "Object".to_string()

@@ -109,6 +109,36 @@ fn module_detection_force_emits_use_strict_for_cjs() {
 }
 
 #[test]
+fn cjs_exported_var_rewrite_respects_function_parameter_shadow() {
+    let source = r#"export const obj = { value: 1 };
+export function f(obj: { value: number }) {
+    return obj;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("return obj;"),
+        "Function parameter should shadow the exported variable inside the body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return exports.obj;"),
+        "Function parameter should not be rewritten through exports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn malformed_import_numeric_operand_emits_recovered_expression() {
     let source = "import 10;";
 
@@ -241,6 +271,42 @@ export const result = value + ":" + foo_1;
     assert!(
         output.contains("exports.result = foo_2.value + \":\" + foo_1;"),
         "Imported reads should use the fresh module temp while local reads remain local.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_named_import_substitution_skips_object_property_keys() {
+    let source = r#"import { value } from "foo";
+
+const local = { value: "local property" };
+
+export const result = value + ":" + local.value;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("const local = { value: \"local property\" };"),
+        "Object literal property key should not be import-substituted.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.result = foo_1.value + \":\" + local.value;"),
+        "Value references should still be import-substituted.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{ foo_1.value:"),
+        "CommonJS substitution must not create an invalid property key.\nOutput:\n{output}"
     );
 }
 

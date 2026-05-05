@@ -1075,14 +1075,6 @@ pub(crate) fn find_number_length(s: &str) -> usize {
         i += 1;
     }
 
-    // Check for special values
-    if s.len() > i && s[i..].starts_with("Infinity") {
-        return i + 8;
-    }
-    if s.len() > i && s[i..].starts_with("NaN") {
-        return i + 3;
-    }
-
     // Check for 0x/0o/0b prefixes (valid JS number literals)
     if i < chars.len() && chars[i] == '0' && i + 1 < chars.len() {
         match chars[i + 1] {
@@ -1176,10 +1168,6 @@ fn template_prefix_lengths(s: &str) -> Vec<usize> {
 pub(crate) fn is_valid_number(s: &str) -> bool {
     if s.is_empty() {
         return false;
-    }
-    // Handle special values
-    if s == "NaN" || s == "Infinity" || s == "-Infinity" || s == "+Infinity" {
-        return true;
     }
     // Handle hex/octal/binary prefixes (Rust's f64 parse doesn't accept these)
     if s.len() >= 3 && s.starts_with('0') {

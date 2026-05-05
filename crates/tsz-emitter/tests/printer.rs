@@ -1884,3 +1884,51 @@ fn export_default_class_declaration_unchanged() {
         "Bare default-class export must not be wrapped in parens.\nOutput:\n{output}"
     );
 }
+
+/// Regression: `({ foo, bar } = foo)` reassigns the same identifier on
+/// both sides. Inlining as `(foo = foo.foo, bar = foo.bar)` reads
+/// `foo.bar` AFTER `foo` has been clobbered. tsc captures the RHS in a
+/// temp first: `_a = foo, foo = _a.foo, bar = _a.bar`.
+#[test]
+fn es5_assignment_destructuring_reassigning_rhs_uses_temp() {
+    let source = "var foo: any = { foo: 1, bar: 2 };\nvar bar: any;\n({ foo, bar } = foo);\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("(_a = foo, foo = _a.foo, bar = _a.bar);"),
+        "RHS reassigned by LHS must capture in `_a` first.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(foo = foo.foo, bar = foo.bar);"),
+        "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
+    );
+}
+
+/// Same hazard for `var { foo, baz } = foo;` — must lower to
+/// `var _a = foo, foo = _a.foo, baz = _a.baz;`.
+#[test]
+fn es5_var_destructuring_reassigning_rhs_uses_temp() {
+    let source = "var foo: any = { foo: 1, baz: 2 };\nvar { foo, baz } = foo;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a = foo, foo = _a.foo, baz = _a.baz;"),
+        "Var declaration whose pattern reassigns the RHS identifier must capture in a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var foo = foo.foo, baz = foo.baz;"),
+        "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
+    );
+}

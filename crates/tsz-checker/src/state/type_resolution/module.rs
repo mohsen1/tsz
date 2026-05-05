@@ -365,9 +365,23 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Check if the exported value's type has a property matching the import name
+        // Check if the exported value's type has a property matching the import name.
+        // In a type-reference position, a constructor-valued property denotes the
+        // constructed instance type (`import { C } ...; let x: C`), not the
+        // constructor object type itself.
         match self.resolve_property_access_with_env(export_type, import_name) {
-            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+            PropertyAccessResult::Success { type_id, .. } => {
+                if let Some(construct_sigs) =
+                    crate::query_boundaries::common::construct_signatures_for_type(
+                        self.ctx.types,
+                        type_id,
+                    )
+                    && let Some(sig) = construct_sigs.first()
+                {
+                    return Some(sig.return_type);
+                }
+                Some(type_id)
+            }
             _ => None,
         }
     }

@@ -43,17 +43,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // PERF: Pre-evaluate all type spans once and cache results.
         // This avoids double evaluation in the size-check loop and expansion loop.
-        let mut evaluated_spans = Vec::with_capacity(span_list.len());
+        let mut evaluated_strings = Vec::with_capacity(span_list.len());
+        let mut normalized_spans = Vec::with_capacity(span_list.len());
         let mut total_combinations: usize = 1;
 
         let mut can_fully_expand = true;
         for span in span_list.iter() {
             match span {
-                TemplateSpan::Text(_atom) => {
-                    evaluated_spans.push(None); // Marker for text span
+                TemplateSpan::Text(atom) => {
+                    evaluated_strings.push(None); // Marker for text span
+                    normalized_spans.push(TemplateSpan::Text(*atom));
                 }
                 TemplateSpan::Type(type_id) => {
                     let evaluated = self.evaluate(*type_id);
+                    normalized_spans.push(TemplateSpan::Type(evaluated));
                     let strings = self.extract_literal_strings(evaluated);
                     let span_count = self
                         .template_span_complexity_cardinality(evaluated)
@@ -71,16 +74,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Contains non-literal types. Keep scanning the remaining
                         // spans first so mixed template unions can still trip TS2590.
                         can_fully_expand = false;
-                        evaluated_spans.push(None);
+                        evaluated_strings.push(None);
                     } else {
-                        evaluated_spans.push(Some(strings));
+                        evaluated_strings.push(Some(strings));
                     }
                 }
             }
         }
 
         if !can_fully_expand {
-            return self.interner().template_literal(span_list.to_vec());
+            return self.interner().template_literal(normalized_spans);
         }
 
         // Check if we can fully evaluate to a union of literals
@@ -95,7 +98,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 TemplateSpan::Type(_) => {
-                    let string_values = evaluated_spans[i]
+                    let string_values = evaluated_strings[i]
                         .as_ref()
                         .expect("Type spans always have evaluated values at matching index");
                     let new_size = combinations.len() * string_values.len();
