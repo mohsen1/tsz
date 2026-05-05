@@ -1724,6 +1724,20 @@ impl<'a> DeclarationEmitter<'a> {
                     };
                     let type_text = self
                         .rewrite_recursive_static_class_expression_type(prop_idx, effective_type);
+                    let has_object_literal_initializer =
+                        self.arena.get(prop.initializer).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        });
+                    let type_text = if has_object_literal_initializer
+                        && (type_text == "any"
+                            || type_text.contains(": any;")
+                            || self.object_literal_prefers_syntax_type_text(prop.initializer))
+                    {
+                        self.allowlisted_initializer_type_text(prop.initializer)
+                            .unwrap_or(type_text)
+                    } else {
+                        type_text
+                    };
                     let mut emitted_any_for_truncation = false;
                     if let Some(name_node) = self.arena.get(prop.name)
                         && let Some(file_path) = self.current_file_path.clone()
