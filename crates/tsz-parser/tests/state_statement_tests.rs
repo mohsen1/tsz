@@ -1056,27 +1056,64 @@ fn class_field_initializer_does_not_asi_before_computed_member() {
 
 #[test]
 fn class_field_initializer_comma_continuation_prefers_semicolon_error() {
-    let source =
-        "class Game {\n    private position = new DisplayPosition([), 3, 3, 0], NoMove, 0);\n}";
+    let source = "class Game {\n    private position = new DisplayPosition([), 3, 3, 3, 3, 3, 0, 3, 3, 3, 3, 3, 3, 0], NoMove, 0);\n}";
     let (parser, _root) = parse_source(source);
     let diags = parser.get_diagnostics();
-    let first_comma = source.find(", 3").expect("first comma") as u32;
+    let mut expected_semicolon_positions: Vec<u32> = source
+        .match_indices(',')
+        .take_while(|(pos, _)| *pos < source.find("], NoMove").expect("close bracket"))
+        .filter_map(|(pos, _)| {
+            let tail = &source[pos..];
+            (tail.starts_with(", 3") || tail.starts_with(", 0")).then_some(pos as u32)
+        })
+        .collect();
+    expected_semicolon_positions.push(source.find("], NoMove").expect("close bracket") as u32);
+    expected_semicolon_positions.push(source.find(");").expect("final close paren") as u32);
 
+    for expected_pos in expected_semicolon_positions {
+        assert!(
+            diags
+                .iter()
+                .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                    && diag.start == expected_pos
+                    && diag.message == "';' expected."),
+            "expected TS1005 at malformed initializer continuation position {expected_pos}, got {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|diag| {
+                diag.code
+                    == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+                    && diag.start == expected_pos
+            }),
+            "should not recover continuation position {expected_pos} as TS1068, got {diags:?}"
+        );
+    }
+
+    let no_move_pos = source.find("NoMove").expect("NoMove") as u32;
+    let no_move_comma_pos =
+        source.find("NoMove,").expect("NoMove comma") as u32 + "NoMove".len() as u32;
     assert!(
-        diags
-            .iter()
-            .any(|diag| diag.code == diagnostic_codes::EXPECTED
-                && diag.start == first_comma
-                && diag.message == "';' expected."),
-        "expected TS1005 at the first comma after the malformed initializer, got {diags:?}"
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER
+                && diag.start == no_move_pos
+        }),
+        "expected identifier-style recovery at NoMove, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+                && diag.start == no_move_comma_pos
+        }),
+        "expected TS1068 at the NoMove comma, got {diags:?}"
     );
     assert!(
         !diags.iter().any(|diag| {
-            diag.code
-                == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
-                && diag.start == first_comma
+            diag.code == diagnostic_codes::EXPECTED
+                && diag.start == no_move_comma_pos
+                && diag.message == "';' expected."
         }),
-        "should not recover the first comma as TS1068, got {diags:?}"
+        "should not convert the NoMove comma into TS1005, got {diags:?}"
     );
 }
 
