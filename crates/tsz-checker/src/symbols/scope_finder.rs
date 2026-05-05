@@ -755,7 +755,10 @@ impl<'a> CheckerState<'a> {
         if self.is_js_file()
             && self
                 .get_jsdoc_for_function(enclosing_fn)
-                .is_some_and(|jsdoc| jsdoc.contains("@this") || jsdoc.contains("@constructor"))
+                .is_some_and(|jsdoc| {
+                    Self::jsdoc_contains_tag(&jsdoc, "this")
+                        || Self::jsdoc_contains_tag(&jsdoc, "constructor")
+                })
         {
             return true;
         }

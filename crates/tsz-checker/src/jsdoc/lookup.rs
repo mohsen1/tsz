@@ -110,7 +110,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let text = &source_file.text;
-        if !text.contains("@typedef") && !text.contains("@callback") && !text.contains("@import") {
+        if !Self::jsdoc_contains_tag(text, "typedef")
+            && !Self::jsdoc_contains_tag(text, "callback")
+            && !Self::jsdoc_contains_tag(text, "import")
+        {
             return false;
         }
         if !name.is_empty() && !text.contains(name) {
@@ -1154,7 +1157,7 @@ impl<'a> CheckerState<'a> {
         let type_expr = Self::extract_jsdoc_satisfies_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
         let raw_comment = source_text.get(jsdoc_start as usize..)?;
-        let tag_offset = raw_comment.find("@satisfies")? as u32;
+        let tag_offset = Self::jsdoc_tag_offset(raw_comment, "satisfies")? as u32;
         let keyword_pos = jsdoc_start + tag_offset + 1;
         let resolved = self.resolve_jsdoc_type_str(type_expr)?;
         Some((self.judge_evaluate(resolved), keyword_pos))

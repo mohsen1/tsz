@@ -401,7 +401,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn find_jsdoc_typedef_name_offset(comment_text: &str, name: &str) -> Option<usize> {
-        let typedef_idx = comment_text.find("@typedef")?;
+        let typedef_idx = Self::jsdoc_tag_offset(comment_text, "typedef")?;
         let after_typedef = typedef_idx + "@typedef".len();
         let rest = &comment_text[after_typedef..];
         let name_offset = rest.find(name)?;
@@ -461,7 +461,7 @@ impl<'a> CheckerState<'a> {
             let comment_text = comment.get_text(source_text);
 
             // Check if this comment contains @typedef
-            if !comment_text.contains("@typedef") {
+            if !Self::jsdoc_contains_tag(comment_text, "typedef") {
                 continue;
             }
 
@@ -544,8 +544,8 @@ impl<'a> CheckerState<'a> {
 
             let comment_text = comment.get_text(source_text);
 
-            // Find @typedef tag
-            let Some(typedef_pos) = comment_text.find("@typedef") else {
+            // Find @typedef tag (must be the real `@typedef`, not e.g. `@typedefx`)
+            let Some(typedef_pos) = Self::jsdoc_tag_offset(comment_text, "typedef") else {
                 continue;
             };
 
@@ -566,14 +566,14 @@ impl<'a> CheckerState<'a> {
                     .trim_start_matches('*')
                     .trim();
                 line = line.trim_end_matches("*/").trim();
-                if line.starts_with("@typedef") {
+                if Self::jsdoc_line_starts_with_tag(line, "typedef") {
                     after_this_typedef = true;
                     continue;
                 }
                 if !after_this_typedef {
                     continue;
                 }
-                if line.starts_with("@template") {
+                if Self::jsdoc_line_starts_with_tag(line, "template") {
                     break;
                 }
                 if line.starts_with("@property")
@@ -2173,14 +2173,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn jsdoc_satisfies_keyword_positions(jsdoc: &str, jsdoc_start: u32) -> Vec<u32> {
-        let mut positions = Vec::new();
-        let mut search_from = 0usize;
-        while let Some(rel) = jsdoc[search_from..].find("@satisfies") {
-            let absolute = search_from + rel;
-            positions.push(jsdoc_start + absolute as u32 + 1);
-            search_from = absolute + "@satisfies".len();
-        }
-        positions
+        Self::jsdoc_tag_offsets(jsdoc, "satisfies")
+            .into_iter()
+            .map(|absolute| jsdoc_start + absolute as u32 + 1)
+            .collect()
     }
 
     fn emit_duplicate_jsdoc_satisfies_positions(&mut self, positions: &[u32]) {
@@ -2286,9 +2282,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<(u32, u32)> {
         let raw = &source_text[comment_pos as usize..comment_end as usize];
         let mut result = Vec::new();
-        let mut search_from = 0usize;
-        while let Some(rel) = raw[search_from..].find("@satisfies") {
-            let tag_start = search_from + rel;
+        for tag_start in Self::jsdoc_tag_offsets(raw, "satisfies") {
             let after_tag = tag_start + "@satisfies".len();
             let ws_trimmed = raw[after_tag..].trim_start_matches(char::is_whitespace);
             let skipped = raw[after_tag..].len() - ws_trimmed.len();
@@ -2297,7 +2291,6 @@ impl<'a> CheckerState<'a> {
                 let close_pos = comment_end.saturating_sub(2);
                 result.push((open_pos, close_pos));
             }
-            search_from = after_tag;
         }
         result
     }

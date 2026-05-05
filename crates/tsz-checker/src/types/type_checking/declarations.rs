@@ -1048,7 +1048,7 @@ impl<'a> CheckerState<'a> {
             let jsdoc = self.try_leading_jsdoc(&source_file.comments, node.pos, &source_file.text);
             if jsdoc
                 .as_ref()
-                .is_some_and(|content| content.contains("@constructor"))
+                .is_some_and(|content| Self::jsdoc_contains_tag(content, "constructor"))
             {
                 return true;
             }
@@ -1066,7 +1066,7 @@ impl<'a> CheckerState<'a> {
             let jsdoc = self.try_leading_jsdoc(&source_file.comments, node.pos, &source_file.text);
             if jsdoc
                 .as_ref()
-                .is_some_and(|content| content.contains("@constructor"))
+                .is_some_and(|content| Self::jsdoc_contains_tag(content, "constructor"))
             {
                 return true;
             }

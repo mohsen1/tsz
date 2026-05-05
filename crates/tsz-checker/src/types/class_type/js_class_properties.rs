@@ -523,7 +523,7 @@ impl CheckerState<'_> {
             .get_extended(body_idx)
             .map(|ext| ext.parent)
             .and_then(|func_idx| self.get_jsdoc_for_function(func_idx))
-            .is_some_and(|jsdoc| jsdoc.contains("@this"));
+            .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"));
 
         // Phase 1: Detect `var/let/const alias = this` patterns
         let this_aliases = self.collect_this_aliases(&stmts);

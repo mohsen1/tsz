@@ -1709,7 +1709,9 @@ impl<'a> CheckerState<'a> {
             }
 
             // Match JSDoc import with whitespace: `@import { Type } from ...`.
-            if comment_text.contains(&import_brace_pattern) && comment_text.contains("@import") {
+            if comment_text.contains(&import_brace_pattern)
+                && Self::jsdoc_contains_tag(comment_text, "import")
+            {
                 return true;
             }
         }

@@ -134,6 +134,15 @@ impl BinderState {
                 let Some(rest) = trimmed.strip_prefix("@import") else {
                     continue;
                 };
+                // Tag-boundary check: `@importx { Foo } from "./x"` must not
+                // be parsed as `@import`. Issue #2916.
+                if rest
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    continue;
+                }
                 let has_attributes = rest.contains(" with ");
                 for (local_name, specifier, import_name) in Self::parse_jsdoc_import_tag(rest) {
                     if local_name.is_empty() || specifier.is_empty() {
