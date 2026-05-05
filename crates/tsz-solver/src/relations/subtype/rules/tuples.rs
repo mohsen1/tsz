@@ -244,9 +244,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// The ONLY exception is `never[]` which represents an empty array and can be
     /// assigned to any tuple that allows empty (has no required elements).
     ///
-    /// Note: `any[]` is NOT assignable to tuples — only `any` itself bypasses
-    /// structural checks. `Array<any>.length` is `number`, which is not
-    /// assignable to a tuple's literal length type.
+    /// Note: `any[]` is generally NOT assignable to tuples — only `any` itself
+    /// bypasses structural checks. The narrow exception is an all-unknown/all-any
+    /// fixed tuple target, which tsc accepts during overload inference for APIs
+    /// such as `new Map(Object.keys(obj).map(...))`.
     ///
     /// ## Cases:
     /// - `any[]` -> `[string, number]` : No (array, not tuple)
@@ -261,10 +262,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_elem: TypeId,
         target: &[TupleElement],
     ) -> SubtypeResult {
-        // Only never[] can potentially be assigned to tuples (represents empty array)
-        // Note: any[] is NOT assignable to tuples in tsc. While each element access
-        // on any[] returns any, the structural comparison fails because Array<any>.length
-        // (type number) is not assignable to a tuple's literal length type (e.g., 2).
+        if source_elem == TypeId::ANY && Self::tuple_is_fixed_all_top_types(target) {
+            return SubtypeResult::True;
+        }
+
+        // Only never[] can otherwise be assigned to tuples (represents empty array).
         // The any TYPE (not any[]) is already handled earlier in the subtype check
         // and bypasses all structural checks.
         if source_elem != TypeId::NEVER {
@@ -277,6 +279,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             SubtypeResult::False
         }
+    }
+
+    fn tuple_is_fixed_all_top_types(target: &[TupleElement]) -> bool {
+        !target.is_empty()
+            && target
+                .iter()
+                .all(|elem| !elem.rest && matches!(elem.type_id, TypeId::ANY | TypeId::UNKNOWN))
     }
 
     /// Check if a tuple type allows empty arrays.
