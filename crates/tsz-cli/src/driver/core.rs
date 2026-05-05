@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, Target};
+use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, NewLine, Target};
 use crate::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
     load_tsconfig_with_diagnostics, parse_tsconfig_with_diagnostics, resolve_compiler_options,
@@ -27,7 +27,7 @@ use tsz::lib_loader::LibFile;
 use tsz::module_resolver::ModuleResolver;
 use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
-use tsz_common::common::ModuleKind;
+use tsz_common::common::{ModuleKind, NewLineKind};
 use tsz_common::file_extensions::{
     JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_json_file,
 };
@@ -2593,6 +2593,12 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(target) = args.target {
         options.printer.target = target.to_script_target();
         options.checker.target = checker_target_from_emitter(options.printer.target);
+    }
+    if let Some(new_line) = args.new_line {
+        options.printer.new_line = match new_line {
+            NewLine::Lf => NewLineKind::LineFeed,
+            NewLine::Crlf => NewLineKind::CarriageReturnLineFeed,
+        };
     }
     if let Some(module) = args.module {
         options.printer.module = module.to_module_kind();

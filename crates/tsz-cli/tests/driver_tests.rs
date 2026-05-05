@@ -8508,6 +8508,143 @@ export const visible = 3;
 }
 
 #[test]
+fn compile_config_no_emit_helpers_reaches_printer() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "noEmitHelpers": true,
+            "ignoreDeprecations": "6.0",
+            "outDir": "dist"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        "class Base {}\nclass Derived extends Base {}\nexport const value = new Derived();\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read JS output");
+    assert!(
+        js.contains("__extends(Derived, _super);"),
+        "Expected helper call to remain: {js}"
+    );
+    assert!(
+        !js.contains("var __extends ="),
+        "Expected noEmitHelpers from config to suppress helper declaration: {js}"
+    );
+}
+
+#[test]
+fn compile_config_remove_comments_reaches_printer() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "esnext",
+            "removeComments": true,
+            "outDir": "dist"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        "/* leading block comment */\nexport const value = 1; // trailing comment\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read JS output");
+    assert!(
+        !js.contains("leading block comment") && !js.contains("trailing comment"),
+        "Expected removeComments from config to strip comments: {js}"
+    );
+    assert!(
+        js.contains("export const value = 1;"),
+        "Expected emitted statement to remain: {js}"
+    );
+}
+
+#[test]
+fn compile_config_and_cli_new_line_reach_printer() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "esnext",
+            "newLine": "crlf",
+            "outDir": "dist-config"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        "export const x = 1;\nexport const y = 2;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("config compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    let js = std::fs::read(base.join("dist-config/main.js")).expect("read config JS output");
+    assert!(
+        js.windows(2).any(|pair| pair == b"\r\n"),
+        "Expected config newLine=crlf to emit CRLF: {js:?}"
+    );
+
+    let mut args = default_args();
+    args.target = Some(crate::args::Target::Es2020);
+    args.module = Some(crate::args::Module::EsNext);
+    args.new_line = Some(crate::args::NewLine::Crlf);
+    args.out_dir = Some(PathBuf::from("dist-cli"));
+    args.files = vec![PathBuf::from("main.ts")];
+    let result = compile(&args, base).expect("CLI compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    let js = std::fs::read(base.join("dist-cli/main.js")).expect("read CLI JS output");
+    assert!(
+        js.windows(2).any(|pair| pair == b"\r\n"),
+        "Expected CLI --newLine crlf to emit CRLF: {js:?}"
+    );
+}
+
+#[test]
 fn compile_declaration_no_check_no_lib_keeps_default_type_import() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
