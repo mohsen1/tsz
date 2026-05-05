@@ -2,25 +2,24 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix-ts2430-construct-signature-optional-params`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2761
+- **Status**: abandoned
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
 
-Investigate and fix the TS2430 fingerprint-only mismatch in
+Investigated the TS2430 fingerprint-only mismatch in
 `subtypingWithGenericConstructSignaturesWithOptionalParameters.ts`.
-The picked failure reports the same diagnostic code as `tsc`, so this slice
-is scoped to the exact message/fingerprint divergence around generic construct
-signatures with optional parameters.
+The picked failure reports the same diagnostic code as `tsc` in the stale
+snapshot, but a targeted verbose run on current `origin/main` passes. This
+claim is abandoned because there is no current failure to fix for the picked
+test.
 
 ## Files Touched
 
 - `docs/plan/claims/fix-ts2430-construct-signature-optional-params.md`
-- Production and test files TBD after root-cause diagnosis.
+- No production or test files changed.
 
 ## Verification
 
-- Planned: targeted verbose conformance run for `subtypingWithGenericConstructSignaturesWithOptionalParameters`.
-- Planned: owning-crate unit tests for the fixed invariant.
-- Planned: relevant `cargo check`, `cargo nextest run`, and conformance regression checks before marking ready.
+- `./scripts/conformance/conformance.sh run --filter "subtypingWithGenericConstructSignaturesWithOptionalParameters" --verbose` (1/1 passed; no fingerprint-only mismatch).
