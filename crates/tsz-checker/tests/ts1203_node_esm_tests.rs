@@ -20,13 +20,22 @@ fn get_diagnostics(
     module: ModuleKind,
     file_is_esm: Option<bool>,
 ) -> Vec<tsz_checker::diagnostics::Diagnostic> {
+    get_diagnostics_with_file_name(source, module, file_is_esm, "test.ts")
+}
+
+fn get_diagnostics_with_file_name(
+    source: &str,
+    module: ModuleKind,
+    file_is_esm: Option<bool>,
+    file_name: &str,
+) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     let options = CheckerOptions {
         module,
         ..CheckerOptions::default()
     };
 
     let mut parser =
-        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+        tsz_parser::parser::ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = tsz_binder::BinderState::new();
@@ -37,7 +46,7 @@ fn get_diagnostics(
         parser.get_arena(),
         &binder,
         &types,
-        "test.ts".to_string(),
+        file_name.to_string(),
         options,
     );
 
@@ -49,6 +58,7 @@ fn get_diagnostics(
 }
 
 const EXPORT_ASSIGNMENT_SRC: &str = "const a = {}; export = a;";
+const NON_IDENTIFIER_EXPORT_ASSIGNMENT_SRC: &str = "const value = 1;\nexport = value + 1;\n";
 
 #[test]
 fn ts1203_emitted_for_node16_esm_file() {
@@ -120,5 +130,35 @@ export as namespace React;
     assert!(
         diagnostics.iter().all(|diag| diag.code != 2686),
         "TS2686 should not fire on `export = React` in the defining UMD file, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn export_assignment_in_d_dot_directory_is_not_ambient() {
+    let diagnostics = get_diagnostics_with_file_name(
+        NON_IDENTIFIER_EXPORT_ASSIGNMENT_SRC,
+        ModuleKind::CommonJS,
+        None,
+        "/tmp/pkg.d.folder/main.ts",
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2714),
+        "TS2714 should not fire for a normal .ts file under a .d. directory, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn export_assignment_in_declaration_file_still_checks_ambient_expression() {
+    let diagnostics = get_diagnostics_with_file_name(
+        NON_IDENTIFIER_EXPORT_ASSIGNMENT_SRC,
+        ModuleKind::CommonJS,
+        None,
+        "/tmp/pkg.d.folder/main.d.ts",
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2714),
+        "TS2714 should still fire for non-identifier export assignment expressions in .d.ts files, got: {diagnostics:?}"
     );
 }
