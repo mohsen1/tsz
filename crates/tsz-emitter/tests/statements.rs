@@ -1,3 +1,4 @@
+use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
 use crate::output::printer::{PrintOptions, Printer, lower_and_print};
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::ParserState;
@@ -15,6 +16,26 @@ fn parse_and_lower_print(source: &str, opts: PrintOptions) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     lower_and_print(&parser.arena, root, opts).code
+}
+
+#[test]
+fn recovered_jsx_unary_type_assertion_preserves_trailing_less_than() {
+    let source = "~< <\n";
+    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(output.trim_end(), "\"use strict\";\n~< /> <\n;");
 }
 
 /// Case clause with a single non-block statement on the same source line
