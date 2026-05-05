@@ -1457,7 +1457,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let mut evaluated_members = Vec::with_capacity(members.len());
         for &member in members.iter() {
-            evaluated_members.push(self.evaluate_compound_member(member));
+            let evaluated = self.evaluate_compound_member(member);
+            // When an Application/Lazy member fails to reduce and falls back to
+            // `unknown` (e.g. depth-limit / cycle / stale cache on the very
+            // first evaluation pass), keep the original opaque member instead.
+            // Letting `unknown` propagate would cause intersection simplification
+            // to drop it via `unknown & T = T`, silently erasing the properties
+            // the unevaluated alias would contribute once expanded. Preserving
+            // the original Application/Lazy keeps the intersection honest so
+            // later passes can see the alias's structural shape.
+            let preserved = if evaluated == TypeId::UNKNOWN
+                && Self::is_opaque_under_bypass_eval(self.interner, member)
+            {
+                member
+            } else {
+                evaluated
+            };
+            evaluated_members.push(preserved);
         }
 
         self.suppress_this_binding = prev_suppress;
@@ -1680,7 +1696,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // lose those property declarations from the intersection type.
                         // This matters for optional properties: {a: string} <: {b?: number}
                         // but {a: string} & {b?: number} must preserve both properties.
-                        checker.is_subtype_of(members[j], members[i])
+                        //
+                        // Opaque Application/Lazy guard: when bypass_evaluation prevents
+                        // SubtypeChecker from expanding an unreduced Application or Lazy
+                        // member, that member appears empty to the checker. A concrete
+                        // sibling like `{path?: _}` would then trivially "subsume" it and
+                        // get the Application dropped, even though the Application would
+                        // contribute additional union/object members once expanded.
+                        // Skip the drop so `Application(stripPath<U>) & {path?: _}` keeps
+                        // both members and downstream property collection sees the union.
+                        !Self::is_opaque_under_bypass_eval(self.interner, members[i])
+                            && checker.is_subtype_of(members[j], members[i])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                             // Branded-primitive idiom: keep `{}` paired with a widening
                             // primitive intrinsic so `string & {}` (and friends) stay as
@@ -1738,6 +1764,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> bool {
         crate::visitors::visitor_predicates::is_empty_object_type(db, candidate)
             && crate::visitors::visitor_predicates::is_widening_primitive_intrinsic(db, subsuming)
+    }
+
+    /// Returns true when `type_id` is an unreduced `Application` or `Lazy`
+    /// whose structural shape cannot be inspected while `bypass_evaluation`
+    /// is on. Such members must not be dropped from intersections via
+    /// subtype-redundancy: under bypass eval the `SubtypeChecker` treats them
+    /// as empty, so a concrete sibling object can falsely subsume them.
+    fn is_opaque_under_bypass_eval(
+        db: &dyn crate::caches::db::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        matches!(
+            db.lookup(type_id),
+            Some(TypeData::Application(_) | TypeData::Lazy(_))
+        )
     }
 
     fn is_primitive_or_primitive_union(
