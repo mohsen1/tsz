@@ -1610,9 +1610,6 @@ impl<'a> Printer<'a> {
                 .and_then(|&next_idx| self.arena.get(next_idx));
 
             if is_erased {
-                if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
-                    self.emit_recovered_interface_body_statements(stmt_node);
-                }
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                     let scan_end = next_stmt_node.map_or_else(
                         || {
