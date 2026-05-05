@@ -94,6 +94,59 @@ fn parse_namespace_import_with_while_yields_to_while_statement_recovery() {
 }
 
 #[test]
+fn parse_namespace_import_reserved_statement_starters_yield_to_statement_recovery() {
+    let (parser, root) = parse_source(
+        "import * as do from \"m\";\nimport * as try from \"m\";\nimport * as return from \"m\";\nconst after = 1;\n",
+    );
+    let diags = parser.get_diagnostics();
+
+    const TS1359: u32 =
+        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE;
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+
+    for word in ["do", "try", "return"] {
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == TS1359 && d.message.contains(word)),
+            "expected TS1359 for `{word}`, got {diags:?}"
+        );
+    }
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.message.contains("'while'")),
+        "expected `do` recovery to emit TS1005 `'while' expected`, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.message.contains("'{'")),
+        "expected `try` recovery to emit TS1005 `'{{' expected`, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.message.contains("';'")),
+        "expected `return` recovery to emit TS1005 `';' expected`, got {diags:?}"
+    );
+
+    let sf = parser.get_arena().get_source_file_at(root).unwrap();
+    let kinds: Vec<u16> = sf
+        .statements
+        .nodes
+        .iter()
+        .filter_map(|idx| parser.get_arena().get(*idx).map(|node| node.kind))
+        .collect();
+    assert!(
+        kinds.contains(&syntax_kind_ext::DO_STATEMENT)
+            && kinds.contains(&syntax_kind_ext::TRY_STATEMENT)
+            && kinds.contains(&syntax_kind_ext::RETURN_STATEMENT),
+        "reserved namespace import names should be re-parsed as statements, got statement kinds {kinds:?}"
+    );
+}
+
+#[test]
 fn parse_trailing_comma_before_from_recovers_as_next_statement() {
     let (parser, _root) = parse_source("import { a }, from \"m\";");
     let diags = parser.get_diagnostics();
