@@ -1,9 +1,9 @@
-# [WIP] fix(checker): display private-name missing property source base
+# fix(checker): display private-name missing property source base
 
 - **Date**: 2026-05-05
 - **Branch**: `fix-ts2741-private-name-base-display`
 - **PR**: #2780
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
@@ -16,10 +16,14 @@ private `#something` missing in source type `A1`; tsz currently reports `A2`.
 ## Files Touched
 
 - `docs/plan/claims/fix-ts2741-private-name-base-display.md`
-- Production and regression-test files TBD after root-cause diagnosis.
+- `crates/tsz-checker/src/error_reporter/render_failure.rs`
+- `crates/tsz-checker/tests/private_brands.rs`
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter "privateNamesUnique-4" --verbose`.
-- Planned: focused checker regression for TS2741 private-name source display.
-- Planned: relevant `cargo check`, `cargo nextest run`, and conformance smoke before marking ready.
+- `cargo nextest run -p tsz-checker --test private_brands private_name_missing_property_source_display_uses_base_class` - passed.
+- `cargo nextest run -p tsz-checker --test private_brands` - passed, 28/28.
+- `cargo check -p tsz-checker` - passed.
+- `./scripts/conformance/conformance.sh run --filter "privateNamesUnique-4" --verbose` - passed, 1/1.
+- `./scripts/conformance/conformance.sh run --max 200` - passed, 200/200.
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep -E "FINAL RESULTS|Fingerprint-only|Known failures|Crashed|Timeout|passed"` - passed, 12,444/12,582 (98.9%), fingerprint-only 95.
