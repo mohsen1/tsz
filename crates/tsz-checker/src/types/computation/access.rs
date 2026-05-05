@@ -1720,6 +1720,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if self.ctx.types.take_union_too_complex() {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                idx,
+                diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+            );
+        }
+
         if let Some(cause) = nullish_cause {
             if access.question_dot_token {
                 result_type = self

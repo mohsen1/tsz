@@ -978,7 +978,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             let lowering = make_lowering(bindings);
 
+            let _ = self.ctx.types.take_union_too_complex();
             let body = lowering.lower_type(type_alias.type_node);
+            let _ = self.ctx.types.take_union_too_complex();
 
             // Register body in both type environments so resolve_lazy
             // and flow-analysis narrowing can both find it

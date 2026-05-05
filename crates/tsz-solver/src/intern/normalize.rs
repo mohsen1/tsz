@@ -812,7 +812,6 @@ impl TypeInterner {
                 LiteralValue::BigInt(_) => Some(PrimitiveClass::Bigint),
             },
             TypeData::UniqueSymbol(_) => Some(PrimitiveClass::Symbol),
-            TypeData::TemplateLiteral(_) => Some(PrimitiveClass::String),
             _ => None,
         }
     }

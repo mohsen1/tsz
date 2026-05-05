@@ -67,17 +67,37 @@ impl TypeInterner {
         for span in spans {
             let span_count = match span {
                 TemplateSpan::Text(_) => Some(1),
-                TemplateSpan::Type(type_id) => self.template_span_cardinality(*type_id),
+                TemplateSpan::Type(type_id) => self.template_span_complexity_cardinality(*type_id),
             };
             let Some(span_count) = span_count else {
                 return false;
             };
             total = total.saturating_mul(span_count);
-            if total > TEMPLATE_LITERAL_EXPANSION_LIMIT {
+            if total >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
                 return true;
             }
         }
         false
+    }
+
+    fn template_span_complexity_cardinality(&self, type_id: TypeId) -> Option<usize> {
+        if let Some(count) = self.template_span_cardinality(type_id) {
+            return Some(count);
+        }
+
+        match self.lookup(type_id) {
+            Some(TypeData::Union(list_id)) => {
+                let members = self.type_list(list_id);
+                let mut count = 0usize;
+                for member in members.iter() {
+                    count =
+                        count.checked_add(self.template_span_complexity_cardinality(*member)?)?;
+                }
+                Some(count)
+            }
+            Some(TypeData::TemplateLiteral(_)) | Some(TypeData::StringIntrinsic { .. }) => Some(1),
+            _ => None,
+        }
     }
 
     /// Check if a template literal can be expanded to a union of string literals.
@@ -412,6 +432,7 @@ impl TypeInterner {
 
         // Check if expansion would exceed the limit
         if self.template_literal_exceeds_limit(&normalized) {
+            self.set_union_too_complex();
             return TypeId::STRING;
         }
 

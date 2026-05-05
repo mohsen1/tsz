@@ -2031,6 +2031,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// to avoid exponential blowup with recursive conditional types that
     /// produce tuples.
     fn visit_tuple(&mut self, tuple_list_id: TupleListId, original_type_id: TypeId) -> TypeId {
+        use crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT;
+
         let elements = self.interner.tuple_list(tuple_list_id);
 
         // Quick check: does any element need evaluation?
@@ -2043,6 +2045,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let mut result: Vec<TupleElement> = Vec::with_capacity(elements.len());
         let mut changed = false;
+        let mut spread_product = 1usize;
 
         for elem in elements.iter() {
             // Only evaluate element types that are meta-types (IndexAccess,
@@ -2060,6 +2063,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // For rest/spread elements, if the evaluated type is a tuple,
             // flatten its elements inline (spreading the inner tuple).
             if elem.rest {
+                if let Some(count) = self.tuple_spread_alternative_count(evaluated) {
+                    spread_product = spread_product.saturating_mul(count);
+                    if spread_product >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                        self.interner.mark_union_too_complex();
+                        return TypeId::ERROR;
+                    }
+                }
+
                 if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated) {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
                     for inner_elem in inner_elements.iter() {
@@ -2096,6 +2107,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         self.interner.tuple(result)
+    }
+
+    fn tuple_spread_alternative_count(&self, type_id: TypeId) -> Option<usize> {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Tuple(_)) => Some(1),
+            Some(TypeData::Union(list_id)) => Some(self.interner.type_list(list_id).len()),
+            _ => None,
+        }
     }
 
     /// Check if a type is a meta-type that would benefit from evaluation

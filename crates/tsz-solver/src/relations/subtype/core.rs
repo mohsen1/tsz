@@ -19,7 +19,8 @@ use crate::objects::{PropertyCollectionResult, collect_properties};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, SymbolRef, TypeData, TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, SymbolRef, TemplateSpan, TypeData,
+    TypeId, TypeListId,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -549,6 +550,72 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    fn constrained_projection_for_template_source(&mut self, source: TypeId) -> Option<TypeId> {
+        let template_id = template_literal_id(self.interner, source)?;
+        let spans = self.interner.template_list(template_id);
+        let mut projected = Vec::with_capacity(spans.len());
+        let mut changed = false;
+
+        for span in spans.iter() {
+            match span {
+                TemplateSpan::Text(atom) => projected.push(TemplateSpan::Text(*atom)),
+                TemplateSpan::Type(type_id) => {
+                    let projected_type =
+                        self.constrained_projection_for_template_span_type(*type_id);
+                    changed |= projected_type != *type_id;
+                    projected.push(TemplateSpan::Type(projected_type));
+                }
+            }
+        }
+
+        if !changed {
+            return None;
+        }
+
+        let projected = self.interner.template_literal(projected);
+        Some(self.evaluate_type(projected))
+    }
+
+    fn constrained_projection_for_template_span_type(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(info) = type_param_info(self.interner, type_id)
+            && let Some(constraint) = info.constraint
+        {
+            return self.evaluate_type(constraint);
+        }
+
+        match self.interner.lookup(type_id) {
+            Some(TypeData::StringIntrinsic { kind, type_arg }) => {
+                let projected_arg = self.constrained_projection_for_template_span_type(type_arg);
+                if projected_arg != type_arg {
+                    return self.evaluate_type(self.interner.string_intrinsic(kind, projected_arg));
+                }
+                type_id
+            }
+            Some(TypeData::TemplateLiteral(template_id)) => {
+                let spans = self.interner.template_list(template_id);
+                let mut projected = Vec::with_capacity(spans.len());
+                let mut changed = false;
+                for span in spans.iter() {
+                    match span {
+                        TemplateSpan::Text(atom) => projected.push(TemplateSpan::Text(*atom)),
+                        TemplateSpan::Type(inner) => {
+                            let projected_inner =
+                                self.constrained_projection_for_template_span_type(*inner);
+                            changed |= projected_inner != *inner;
+                            projected.push(TemplateSpan::Type(projected_inner));
+                        }
+                    }
+                }
+                if changed {
+                    self.evaluate_type(self.interner.template_literal(projected))
+                } else {
+                    type_id
+                }
+            }
+            _ => type_id,
+        }
+    }
+
     fn object_shape_def_id(&self, type_id: TypeId) -> Option<DefId> {
         let shape_id = object_shape_id(self.interner, type_id)
             .or_else(|| object_with_index_shape_id(self.interner, type_id))?;
@@ -871,6 +938,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if evaluated != source && self.check_subtype(evaluated, target).is_true() {
                     return SubtypeResult::True;
                 }
+            }
+
+            if let Some(projected) = self.constrained_projection_for_template_source(source)
+                && projected != source
+                && self.check_subtype(projected, target).is_true()
+            {
+                return SubtypeResult::True;
             }
 
             // Distributive intersection factoring:
@@ -2294,6 +2368,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 return SubtypeResult::False;
             }
+        }
+
+        if let Some(projected) = self.constrained_projection_for_template_source(source)
+            && projected != source
+            && self.check_subtype(projected, target).is_true()
+        {
+            return SubtypeResult::True;
         }
 
         // =======================================================================

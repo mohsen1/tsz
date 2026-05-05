@@ -299,6 +299,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Type-environment prewarming may construct large alias bodies before
+        // statement checking reaches a concrete diagnostic site. Start the
+        // source-file walk with a clean complexity flag so TS2590 is reported by
+        // the declaration/expression that actually triggered the operation.
+        let _ = self.ctx.types.take_union_too_complex();
+
         // In .d.ts files, emit TS1036 for non-declaration top-level statements.
         // The entire file is an ambient context, so statements like break, continue,
         // return, debugger, if, while, for, etc. are not allowed.
