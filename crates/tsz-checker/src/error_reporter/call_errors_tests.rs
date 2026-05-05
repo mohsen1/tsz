@@ -35,8 +35,9 @@ foo(c);
         .expect("expected TS2345");
 
     assert!(
-        diag.message_text
-            .contains("Argument of type '{ x: number; }' is not assignable to parameter of type '{ xy: number; }'."),
+        diag.message_text.contains(
+            "Argument of type '{ x: 1; }' is not assignable to parameter of type '{ xy: number; }'."
+        ),
         "expected remapped constraint shape in TS2345, got: {diag:?}"
     );
 }
