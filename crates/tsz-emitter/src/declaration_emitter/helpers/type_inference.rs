@@ -3188,6 +3188,17 @@ impl<'a> DeclarationEmitter<'a> {
                     .cloned()
             });
             type_text = self.qualify_foreign_imported_names_in_text(source_arena, &type_text);
+            if let (Some(source_path), Some(module_specifier)) =
+                (source_path.as_deref(), imported_module.as_deref())
+                && let Some(rewritten) = self.rewrite_typeof_import_default_return_type(
+                    source_path,
+                    module_specifier,
+                    &type_text,
+                    binder,
+                )
+            {
+                type_text = rewritten;
+            }
             if let Some(module_specifier) = imported_module.as_deref() {
                 type_text = self.qualify_ambient_module_exported_names_in_text(
                     source_arena,
@@ -3237,6 +3248,76 @@ impl<'a> DeclarationEmitter<'a> {
             }
             Some(type_text)
         })
+    }
+
+    fn rewrite_typeof_import_default_return_type(
+        &self,
+        source_path: &str,
+        imported_module: &str,
+        type_text: &str,
+        binder: &BinderState,
+    ) -> Option<String> {
+        let import_text = type_text.trim().strip_prefix("typeof ")?;
+        let (start, module_specifier, tail) = Self::next_import_type_text(import_text)?;
+        if start != 0 || tail.trim() != ".default" {
+            return None;
+        }
+
+        let target_module_path = self
+            .matching_module_export_paths(binder, source_path, &module_specifier)
+            .into_iter()
+            .next()?;
+        let default_sym = binder
+            .module_exports
+            .get(target_module_path)?
+            .get("default")?;
+        let declared_type = self.declared_type_annotation_text_for_symbol(default_sym)?;
+        let public_module =
+            Self::combine_public_module_specifier(imported_module, &module_specifier)?;
+        let exported_name = Self::leading_type_reference_name(&declared_type)?;
+        if binder
+            .module_exports
+            .get(target_module_path)
+            .is_some_and(|exports| exports.get(exported_name).is_some())
+        {
+            return Some(format!(
+                "import(\"{public_module}\").{}{}",
+                exported_name,
+                &declared_type[exported_name.len()..]
+            ));
+        }
+
+        None
+    }
+
+    fn combine_public_module_specifier(base: &str, relative: &str) -> Option<String> {
+        if base.starts_with('.') || base.starts_with('/') {
+            return None;
+        }
+        let mut parts = base.split('/').collect::<Vec<_>>();
+        if parts.is_empty() {
+            return None;
+        }
+        let package_len = if parts[0].starts_with('@') { 2 } else { 1 };
+        if parts.len() < package_len {
+            return None;
+        }
+        if parts.len() > package_len {
+            parts.pop();
+        }
+
+        for segment in relative.split('/') {
+            match segment {
+                "" | "." => {}
+                ".." if parts.len() > package_len => {
+                    parts.pop();
+                }
+                ".." => return None,
+                text => parts.push(text),
+            }
+        }
+
+        Some(parts.join("/"))
     }
 
     fn imported_value_module_specifier(
@@ -4960,6 +5041,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> bool {
         if source_type_text.contains("{\n    new ")
             && source_type_text.contains(" & ")
+            && self.print_type_id(inferred_return_type) != source_type_text
+        {
+            return true;
+        }
+        if Self::type_text_starts_with_import_type(source_type_text)
             && self.print_type_id(inferred_return_type) != source_type_text
         {
             return true;
@@ -6990,5 +7076,21 @@ mod tests {
             "/repo/node_modules/umd/sub/index.d.ts",
             "umd"
         ));
+    }
+
+    #[test]
+    fn public_module_specifier_combines_relative_default_import_target() {
+        assert_eq!(
+            DeclarationEmitter::combine_public_module_specifier("@ts-bug/core/utils", "./SvgIcon"),
+            Some("@ts-bug/core/SvgIcon".to_string())
+        );
+        assert_eq!(
+            DeclarationEmitter::combine_public_module_specifier("pkg/sub/utils", "../Icon"),
+            Some("pkg/Icon".to_string())
+        );
+        assert_eq!(
+            DeclarationEmitter::combine_public_module_specifier("./utils", "./SvgIcon"),
+            None
+        );
     }
 }
