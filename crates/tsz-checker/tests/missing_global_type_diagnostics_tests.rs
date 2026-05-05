@@ -6,6 +6,10 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn check_without_lib(source: &str) -> Vec<Diagnostic> {
+    check_without_lib_with_options(source, CheckerOptions::default())
+}
+
+fn check_without_lib_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -24,7 +28,7 @@ fn check_without_lib(source: &str) -> Vec<Diagnostic> {
         &binder,
         &types,
         "test.ts".to_string(),
-        CheckerOptions::default(),
+        options,
     );
 
     checker.check_source_file(root);
@@ -48,41 +52,28 @@ fn check_without_lib_with_minimal_core_globals(source: &str) -> Vec<Diagnostic> 
     check_without_lib_with_minimal_core_globals_except(&[], source)
 }
 
-fn check_with_no_lib_and_minimal_core_globals(source: &str) -> Vec<Diagnostic> {
+fn check_without_lib_with_minimal_core_globals_and_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<Diagnostic> {
     let mut full_source = String::new();
     for &(_, decl) in MINIMAL_CORE_GLOBAL_DECLS {
         full_source.push_str(decl);
         full_source.push('\n');
     }
     full_source.push_str(source);
+    check_without_lib_with_options(&full_source, options)
+}
 
-    let mut parser = ParserState::new("test.ts".to_string(), full_source);
-    let root = parser.parse_source_file();
-
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+fn check_with_no_lib_and_minimal_core_globals(source: &str) -> Vec<Diagnostic> {
+    check_without_lib_with_minimal_core_globals_and_options(
+        source,
         CheckerOptions {
             no_lib: true,
             strict: true,
             ..CheckerOptions::default()
         },
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    )
 }
 
 fn check_without_lib_with_minimal_core_globals_except(
@@ -142,6 +133,43 @@ fn promise_type_reference_emits_ts2583_with_minimal_core_globals() {
             .iter()
             .any(|d| d.code == 2583 && d.message_text.contains("'Promise'")),
         "Expected TS2583 for Promise type reference without ES2015 libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nolib_mapped_utility_reference_emits_ts2304() {
+    let diagnostics = check_without_lib_with_minimal_core_globals_and_options(
+        r#"
+type Source = {
+  value: string;
+  other: number;
+};
+
+type OnlyValue = Pick<Source, "value">;
+
+const result: OnlyValue = { value: 123 };
+"#,
+        CheckerOptions {
+            no_lib: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let pick_ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("'Pick'"))
+        .collect();
+    assert_eq!(
+        pick_ts2304.len(),
+        1,
+        "Expected TS2304 for missing Pick under noLib, got: {diagnostics:?}"
+    );
+
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected missing Pick to avoid synthesized assignability diagnostics, got: {diagnostics:?}"
     );
 }
 
