@@ -335,7 +335,7 @@ fn find_directive_attr_assignment(line: &str, attr: &str) -> Option<usize> {
     None
 }
 
-fn is_directive_attr_name_char(ch: char) -> bool {
+const fn is_directive_attr_name_char(ch: char) -> bool {
     ch == '-' || ch == '_' || ch.is_ascii_alphanumeric()
 }
 
