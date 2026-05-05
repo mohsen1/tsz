@@ -780,8 +780,23 @@ impl CheckerState<'_> {
             if let Some(property) = properties.get_mut(&name_atom) {
                 if implicit_type == "any[]" {
                     let any_array = self.ctx.types.factory().array(TypeId::ANY);
-                    property.type_id = any_array;
-                    property.write_type = any_array;
+                    let is_nullable_array = crate::query_boundaries::common::is_nullish_type(
+                        self.ctx.types.as_type_database(),
+                        property.type_id,
+                    ) && {
+                        let non_nullish = crate::query_boundaries::common::remove_nullish(
+                            self.ctx.types.as_type_database(),
+                            property.type_id,
+                        );
+                        crate::query_boundaries::common::array_element_type(
+                            self.ctx.types,
+                            non_nullish,
+                        ) == Some(TypeId::ANY)
+                    };
+                    if !is_nullable_array {
+                        property.type_id = any_array;
+                        property.write_type = any_array;
+                    }
                 } else {
                     property.type_id = TypeId::ANY;
                     property.write_type = TypeId::ANY;
