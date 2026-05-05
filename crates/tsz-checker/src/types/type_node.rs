@@ -1,7 +1,10 @@
 //! Type Node Checking
 //!
-//! This module handles type resolution from AST type nodes and follows the
-//! "Check Fast, Explain Slow" pattern: resolve first, explain failures later.
+//! This module handles type resolution from AST type nodes (type annotations,
+//! type references, union types, intersection types, etc.).
+//!
+//! It follows the "Check Fast, Explain Slow" pattern where we first
+//! resolve types, then use the solver to explain any failures.
 
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
