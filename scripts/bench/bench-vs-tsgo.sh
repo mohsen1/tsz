@@ -273,7 +273,7 @@ hyperfine_exit_status_for() {
 
 sum_ts_lines() {
     local src_dir="$1"
-    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' \) -type f -print0 2>/dev/null \
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print0 2>/dev/null \
         | while IFS= read -r -d '' file; do
             wc -l < "$file" 2>/dev/null || true
         done \
@@ -282,8 +282,33 @@ sum_ts_lines() {
 
 sum_ts_bytes() {
     local src_dir="$1"
-    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' \) -type f -print0 2>/dev/null \
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print0 2>/dev/null \
         | xargs -0 cat 2>/dev/null | wc -c | tr -d ' '
+}
+
+count_ts_files() {
+    local src_dir="$1"
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print 2>/dev/null \
+        | wc -l | tr -d ' '
+}
+
+project_tsconfig_stats() {
+    local tsconfig="$1"
+    local fallback_src_dir="$2"
+    local stats
+
+    if stats="$(TSC_TOOL_DIR_VALUE="$TSC_TOOL_DIR" TSC_BIN_VALUE="$TSC" node "$SCRIPT_DIR/project-file-stats.mjs" "$tsconfig" 2>/dev/null)"; then
+        echo "$stats"
+        return
+    fi
+
+    local lines
+    local bytes
+    local file_count
+    lines=$(sum_ts_lines "$fallback_src_dir")
+    bytes=$(sum_ts_bytes "$fallback_src_dir")
+    file_count=$(count_ts_files "$fallback_src_dir")
+    echo "$lines $bytes $file_count"
 }
 
 # Timeout for pre-validation checks (seconds). Generous enough for heavy
@@ -744,13 +769,15 @@ run_project_benchmark() {
 
     BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
 
-    # Count total TS/TSX source lines in the project
+    # Count TS-family files from the same tsconfig used for project-mode
+    # compilation. This keeps full-project metadata aligned with the files
+    # passed to `tsz/tsgo --noEmit -p`.
     local lines
     local bytes
-    lines=$(sum_ts_lines "$src_dir")
-    bytes=$(sum_ts_bytes "$src_dir")
+    local file_count
+    read -r lines bytes file_count < <(project_tsconfig_stats "$tsconfig" "$src_dir")
     local kb=$((bytes / 1024))
-    local info="${lines} lines, ${kb}KB (project)"
+    local info="${lines} lines, ${kb}KB (${file_count} project files)"
 
     # Set project-level Node options for large-ts-repo so tsc/tsgo/tsz can
     # run with a larger heap during compilation.
@@ -1062,12 +1089,57 @@ export_results_json() {
     TSZ_BIN_VALUE="$TSZ" \
     TSGO_BIN_VALUE="$TSGO" \
     TSC_BIN_VALUE="$TSC" \
+    LARGE_TS_DIR_VALUE="$LARGE_TS_DIR" \
+    NEXTJS_DIR_VALUE="$NEXTJS_DIR" \
+    NEXT_APP_BENCH_DIR_VALUE="$NEXT_APP_BENCH_DIR" \
+    RXJS_DIR_VALUE="$RXJS_DIR" \
+    TYPE_FEST_DIR_VALUE="$TYPE_FEST_DIR" \
+    ZOD_DIR_VALUE="$ZOD_DIR" \
+    UTILITY_TYPES_DIR_VALUE="$UTILITY_TYPES_DIR" \
+    TS_TOOLBELT_DIR_VALUE="$TS_TOOLBELT_DIR" \
+    TS_ESSENTIALS_DIR_VALUE="$TS_ESSENTIALS_DIR" \
     BENCHMARKS_RUN_VALUE="$BENCHMARKS_RUN" \
     node - "$out_file" <<'NODE'
 const fs = require("node:fs");
+const path = require("node:path");
 const outFile = process.argv[2];
 
+function readProjectReadmes() {
+  const candidates = {
+    "large-ts-repo": [[process.env.LARGE_TS_DIR_VALUE, "README.md"]],
+    nextjs: [[process.env.NEXTJS_DIR_VALUE, "README.md"]],
+    "nextjs-fresh-app": [[process.env.NEXT_APP_BENCH_DIR_VALUE, "README.md"]],
+    "rxjs-project": [[process.env.RXJS_DIR_VALUE, "README.md"]],
+    "type-fest-project": [
+      [process.env.TYPE_FEST_DIR_VALUE, "readme.md"],
+      [process.env.TYPE_FEST_DIR_VALUE, "README.md"],
+    ],
+    "zod-project": [[process.env.ZOD_DIR_VALUE, "README.md"]],
+    "utility-types-project": [[process.env.UTILITY_TYPES_DIR_VALUE, "README.md"]],
+    "ts-toolbelt-project": [[process.env.TS_TOOLBELT_DIR_VALUE, "README.md"]],
+    "ts-essentials-project": [[process.env.TS_ESSENTIALS_DIR_VALUE, "README.md"]],
+  };
+
+  const readmes = new Map();
+  for (const [name, paths] of Object.entries(candidates)) {
+    for (const [dir, file] of paths) {
+      if (!dir) continue;
+      try {
+        const text = fs.readFileSync(path.join(dir, file), "utf8").trim();
+        if (text) {
+          readmes.set(name, text.length > 18000 ? `${text.slice(0, 18000).trimEnd()}\n\n...` : text);
+          break;
+        }
+      } catch {
+        // README is optional for fixtures that were not prepared in this run.
+      }
+    }
+  }
+  return readmes;
+}
+
 const csv = process.env.RESULTS_CSV_EXPANDED || "";
+const projectReadmes = readProjectReadmes();
 const rows = csv
   .split(/\r?\n/)
   .map((line) => line.trim())
@@ -1092,6 +1164,7 @@ const rows = csv
       winner: winner || null,
       factor: toNumber(factor),
       status: status || null,
+      ...(projectReadmes.has(name) ? { readme: projectReadmes.get(name) } : {}),
     };
   });
 
