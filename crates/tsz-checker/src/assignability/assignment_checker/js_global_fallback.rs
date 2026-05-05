@@ -50,7 +50,8 @@ impl<'a> CheckerState<'a> {
         if self
             .ctx
             .arena
-            .get(fallback_idx).is_none_or(|node| node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            .get(fallback_idx)
+            .is_none_or(|node| node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
         {
             return false;
         }
