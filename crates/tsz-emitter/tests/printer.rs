@@ -1951,3 +1951,76 @@ fn es5_var_destructuring_reassigning_rhs_uses_temp() {
         "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
     );
 }
+
+/// Regression: ESM `--importHelpers` was not aliasing helper imports
+/// when the helper name collides with a local declaration. tsc emits
+/// `import { __decorate as __decorate_1 } from "tslib";` and uses
+/// `__decorate_1(...)` at call sites to avoid shadowing.
+#[test]
+fn esm_import_helpers_aliases_when_helper_name_shadowed() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var dec: any, __decorate: any;\n@dec export class A {}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        import_helpers: true,
+        legacy_decorators: true,
+        emit_decorator_metadata: false,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import { __decorate as __decorate_1 } from \"tslib\";"),
+        "Local `__decorate` shadowing must trigger import alias rename.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__decorate_1("),
+        "Decorator call site must use the renamed alias.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: no local collision means no alias renaming.
+#[test]
+fn esm_import_helpers_no_alias_when_no_collision() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var dec: any;\n@dec export class A {}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        import_helpers: true,
+        legacy_decorators: true,
+        emit_decorator_metadata: false,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import { __decorate } from \"tslib\";"),
+        "No local collision: import name should stay unaliased.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("as __decorate_1"),
+        "Don't rename when there's no local shadowing.\nOutput:\n{output}"
+    );
+}
