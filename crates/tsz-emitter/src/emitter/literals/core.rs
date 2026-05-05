@@ -696,7 +696,7 @@ fn format_js_number(value: f64) -> String {
     if value == value.trunc() && abs < 1e21 {
         return (value as i128).to_string();
     }
-    if value == 0.0 || (abs >= 1e-6 && abs < 1e21) {
+    if value == 0.0 || (1e-6..1e21).contains(&abs) {
         return value.to_string();
     }
 
