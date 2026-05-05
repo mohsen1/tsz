@@ -2689,13 +2689,9 @@ impl<'a> CheckerState<'a> {
             else {
                 continue;
             };
-            let rest = rest.trim_start();
-            if !rest.starts_with('{') {
+            let Some(type_expr) = Self::jsdoc_balanced_braced_type_expr(rest) else {
                 continue;
-            }
-            let after_open = &rest[1..];
-            let end = after_open.find('}')?;
-            let type_expr = after_open[..end].trim();
+            };
             if !type_expr.is_empty()
                 && type_expr
                     .chars()
@@ -2717,13 +2713,9 @@ impl<'a> CheckerState<'a> {
             else {
                 continue;
             };
-            let rest = rest.trim_start();
-            if !rest.starts_with('{') {
+            let Some(type_expr) = Self::jsdoc_balanced_braced_type_expr(rest) else {
                 continue;
-            }
-            let after_open = &rest[1..];
-            let end = after_open.find('}')?;
-            let type_expr = after_open[..end].trim();
+            };
             if !type_expr.is_empty() {
                 return Some(type_expr.to_string());
             }
@@ -2747,13 +2739,9 @@ impl<'a> CheckerState<'a> {
             else {
                 continue;
             };
-            let rest = rest.trim_start();
-            if !rest.starts_with('{') {
+            let Some(type_expr) = Self::jsdoc_balanced_braced_type_expr(rest) else {
                 continue;
-            }
-            let after_open = &rest[1..];
-            let end = after_open.find('}')?;
-            let type_expr = after_open[..end].trim();
+            };
 
             let (is_asserts, remainder) = Self::split_jsdoc_asserts_prefix(type_expr);
 
