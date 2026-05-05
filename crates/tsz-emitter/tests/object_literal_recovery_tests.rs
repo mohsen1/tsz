@@ -163,3 +163,28 @@ fn object_rest_with_recovered_property_name_uses_initializer_directly() {
         "only-rest recovery should not use an unassigned temp; output:\n{output}"
     );
 }
+
+/// When an object property's value is an array containing nested objects with
+/// their own trailing comma, the `find_token_end_before_trivia` boundary scan
+/// must not stop at the inner objects' `}` — otherwise the subsequent
+/// `find_comma_pos_after` scan starts inside the array and treats the array's
+/// own trailing comma as a property-level trailing comma, producing
+/// `items: [...],` after a single-property outer object.
+///
+/// Source has no trailing comma after `items: [...]`; the array does have one.
+/// Output must preserve this asymmetry.
+#[test]
+fn object_property_with_nested_array_does_not_inherit_array_trailing_comma() {
+    let source =
+        "const TEST_VALUE = {\n    items: [\n        { id: 1 },\n        { id: 2 },\n    ]\n};\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("    ]\n};"),
+        "object's closing `}}` must follow the array close `]` directly with no trailing comma.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("    ],\n};"),
+        "outer object must not pick up the array's trailing comma as its own.\nOutput:\n{output}"
+    );
+}
