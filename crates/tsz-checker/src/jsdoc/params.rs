@@ -197,7 +197,9 @@ impl<'a> CheckerState<'a> {
                     let search_region = &source_text[comment_start..];
                     let mut name_pos = None;
                     let mut search_from = (*tag_offset).min(search_region.len());
-                    while let Some(at_param) = search_region[search_from..].find("@param") {
+                    while let Some(at_param) =
+                        Self::find_jsdoc_tag(&search_region[search_from..], "param")
+                    {
                         let after_param = search_from + at_param + "@param".len();
                         // Find the name after the @param tag (skip {type} if present)
                         if let Some(n) = Self::find_param_name_in_source(
@@ -252,7 +254,7 @@ impl<'a> CheckerState<'a> {
         let mut line_start = comment_start;
         for chunk in comment_text.split_inclusive('\n') {
             let raw_line = chunk.trim_end_matches('\n').trim_end_matches('\r');
-            let Some(at_param) = raw_line.find("@param") else {
+            let Some(at_param) = Self::find_jsdoc_tag(raw_line, "param") else {
                 line_start += chunk.len();
                 continue;
             };
@@ -414,7 +416,7 @@ impl<'a> CheckerState<'a> {
 
         for (param_name, tag_offset) in Self::extract_jsdoc_param_names(jsdoc) {
             let search_start = tag_offset;
-            let Some(rel_tag) = comment_text[search_start..].find("@param") else {
+            let Some(rel_tag) = Self::find_jsdoc_tag(&comment_text[search_start..], "param") else {
                 continue;
             };
             let tag_start = search_start + rel_tag;
@@ -1116,7 +1118,7 @@ impl<'a> CheckerState<'a> {
 
             let effective = Self::skip_backtick_quoted(trimmed);
 
-            if let Some(rest) = effective.strip_prefix("@param")
+            if let Some(rest) = Self::strip_jsdoc_tag_prefix(effective, "param")
                 && let Some(param) = Self::parse_jsdoc_param_tag(rest)
                 && param.name == param_name
                 && !param.optional
@@ -1148,7 +1150,7 @@ impl<'a> CheckerState<'a> {
                     }
                     param_text.clear();
                 }
-                if let Some(rest) = effective.strip_prefix("@param") {
+                if let Some(rest) = Self::strip_jsdoc_tag_prefix(effective, "param") {
                     in_param = true;
                     param_text = rest.to_string();
                 } else {
@@ -1678,7 +1680,7 @@ impl<'a> CheckerState<'a> {
             let trimmed = line.trim();
             let effective = Self::skip_backtick_quoted(trimmed);
 
-            let Some(rest) = effective.strip_prefix("@param") else {
+            let Some(rest) = Self::strip_jsdoc_tag_prefix(effective, "param") else {
                 continue;
             };
             let rest = rest.trim();
@@ -1759,7 +1761,7 @@ impl<'a> CheckerState<'a> {
         for line in jsdoc.lines() {
             let trimmed = line.trim();
             let effective = Self::skip_backtick_quoted(trimmed);
-            if let Some(rest) = effective.strip_prefix("@param") {
+            if let Some(rest) = Self::strip_jsdoc_tag_prefix(effective, "param") {
                 let rest = rest.trim();
                 // Check the name part after optional {type}
                 let name_part_str = if rest.starts_with('{') {
@@ -1811,14 +1813,15 @@ impl<'a> CheckerState<'a> {
                     }
                     param_text.clear();
                 }
-                if let Some(rest) = effective.strip_prefix("@param") {
+                if let Some(rest) = Self::strip_jsdoc_tag_prefix(effective, "param") {
                     in_param = true;
                     // Calculate offset of this @param in the original JSDoc string
                     // Find this line in the original to get byte offset
                     if let Some(line_start) = jsdoc.find(line)
-                        && let Some(tag_pos) = line[..].find("@param")
+                        && let Some(effective_pos) = line.find(effective)
+                        && let Some(tag_pos) = Self::find_jsdoc_tag(effective, "param")
                     {
-                        param_offset = line_start + tag_pos;
+                        param_offset = line_start + effective_pos + tag_pos;
                     }
                     param_text = rest.to_string();
                 } else {
@@ -1964,6 +1967,37 @@ impl<'a> CheckerState<'a> {
         rest
     }
 
+    fn strip_jsdoc_tag_prefix<'s>(text: &'s str, tag_name: &str) -> Option<&'s str> {
+        let needle = format!("@{tag_name}");
+        let rest = text.strip_prefix(&needle)?;
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            return None;
+        }
+        Some(rest)
+    }
+
+    fn find_jsdoc_tag(text: &str, tag_name: &str) -> Option<usize> {
+        let needle = format!("@{tag_name}");
+        let mut search_from = 0usize;
+        while let Some(relative) = text[search_from..].find(&needle) {
+            let offset = search_from + relative;
+            let after = offset + needle.len();
+            if text[after..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_')
+            {
+                return Some(offset);
+            }
+            search_from = after;
+        }
+        None
+    }
+
     /// Like `extract_jsdoc_param_type_expr_from_param_tag`, but returns the matching type expression
     /// and its byte offset within a full JSDoc block.
     fn extract_jsdoc_param_type_expr_with_span(
@@ -1989,12 +2023,11 @@ impl<'a> CheckerState<'a> {
                     }
                     param_text.clear();
                 }
-                if let Some(rest) = effective.strip_prefix("@param") {
+                if let Some(rest) = Self::strip_jsdoc_tag_prefix(effective, "param") {
                     in_param = true;
                     param_text = rest.to_string();
-                    let at_pos = raw_line
-                        .find("@param")
-                        .unwrap_or_else(|| effective.find("@param").unwrap_or(0));
+                    let at_pos = raw_line.find(effective).unwrap_or(0)
+                        + Self::find_jsdoc_tag(effective, "param").unwrap_or(0);
                     text_offset = line_start + at_pos + "@param".len();
                 } else {
                     in_param = false;
@@ -2155,7 +2188,7 @@ impl<'a> CheckerState<'a> {
         for line in jsdoc.lines() {
             let trimmed = line.trim();
             // @param {type} name
-            if let Some(rest) = trimmed.strip_prefix("@param")
+            if let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "param")
                 && rest.trim().starts_with('{')
             {
                 return true;
