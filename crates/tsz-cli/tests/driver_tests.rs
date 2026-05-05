@@ -5211,6 +5211,55 @@ fn compile_resolves_paths_mappings() {
 }
 
 #[test]
+fn compile_paths_wildcard_priority_uses_prefix_length() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "ESNext",
+            "moduleResolution": "Bundler",
+            "baseUrl": ".",
+            "ignoreDeprecations": "6.0",
+            "paths": {
+              "@/*/suffix-long": ["bad/*"],
+              "@/foo/*": ["good/*"]
+            },
+            "strict": true
+          },
+          "files": ["main.ts", "good/bar/suffix-long.ts", "bad/foo/bar.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"
+import { value } from "@/foo/bar/suffix-long";
+
+const n: 1 = value;
+"#,
+    );
+    write_file(
+        &base.join("good/bar/suffix-long.ts"),
+        "export const value = 1 as const;",
+    );
+    write_file(
+        &base.join("bad/foo/bar.ts"),
+        "export const value = 2 as const;",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected longer-prefix paths pattern to win, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_paths_without_base_url_resolve_before_ts_extension_diagnostic() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
