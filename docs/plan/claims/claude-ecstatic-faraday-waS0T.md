@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `claude/ecstatic-faraday-waS0T`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2950
+- **Status**: ready
 - **Workstream**: conformance / false-positive reduction
 
 ## Intent
