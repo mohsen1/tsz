@@ -677,3 +677,56 @@ fn test_comment_range_debug() {
     assert!(debug.contains("pos"));
     assert!(debug.contains("end"));
 }
+
+// =============================================================================
+// `source_declares_ambient_module` (regression coverage for #2834)
+// =============================================================================
+
+#[test]
+fn ambient_module_double_quoted_in_code_matches() {
+    let src = "export const x: number;\ndeclare module \"ext/other\" { export const y: number; }\n";
+    assert!(source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_single_quoted_in_code_matches() {
+    let src = "declare module 'ext/other' { export const y: number; }\n";
+    assert!(source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_in_line_comment_does_not_match() {
+    let src = r#"// Example docs might mention: declare module "ext/other" { ... }
+export const root: number;
+"#;
+    assert!(!source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_in_block_comment_does_not_match() {
+    let src = r#"/*
+ * declare module "ext/other" { ... }
+ */
+export const root: number;
+"#;
+    assert!(!source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_in_string_literal_does_not_match() {
+    let src = r#"const example = "declare module \"ext/other\" { ... }";
+"#;
+    assert!(!source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_in_template_literal_does_not_match() {
+    let src = "const example = `declare module \"ext/other\" { ... }`;\n";
+    assert!(!source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_specifier_mismatch_does_not_match() {
+    let src = "declare module \"ext/other\" { export const y: number; }\n";
+    assert!(!source_declares_ambient_module(src, "ext/different"));
+}
