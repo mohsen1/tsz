@@ -731,7 +731,7 @@ impl<'a> TypePrinter<'a> {
             }
 
             // Type annotation
-            part.push_str(&self.print_type(elem.type_id));
+            part.push_str(&self.print_tuple_element_type(elem.type_id, elem.rest));
 
             // Optional marker for unlabeled non-rest tuples (comes after type): [T?]
             if elem.name.is_none() && elem.optional && !elem.rest {
@@ -754,6 +754,17 @@ impl<'a> TypePrinter<'a> {
         }
 
         format!("[{}]", parts.join(", "))
+    }
+
+    fn print_tuple_element_type(&self, type_id: TypeId, is_rest: bool) -> String {
+        if is_rest
+            && let Some(param_info) = visitor::type_param_info(self.interner, type_id)
+            && !visitor::is_infer_type(self.interner, type_id)
+        {
+            return self.print_type_parameter(&param_info);
+        }
+
+        self.print_type(type_id)
     }
 
     pub(crate) fn print_function_type(
@@ -1220,6 +1231,36 @@ impl<'a> TypePrinter<'a> {
         param_info: &tsz_solver::types::TypeParamInfo,
     ) -> String {
         self.resolve_type_param_name(param_info.name)
+    }
+
+    pub(crate) fn replace_type_param_name_with_any(text: &str, name: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        let bytes = text.as_bytes();
+        let name_bytes = name.as_bytes();
+        let mut last_copied = 0usize;
+        let mut i = 0usize;
+
+        while i + name_bytes.len() <= bytes.len() {
+            if &bytes[i..i + name_bytes.len()] == name_bytes
+                && (i == 0 || !Self::is_identifier_continue(bytes[i - 1]))
+                && (i + name_bytes.len() == bytes.len()
+                    || !Self::is_identifier_continue(bytes[i + name_bytes.len()]))
+            {
+                result.push_str(&text[last_copied..i]);
+                result.push_str("any");
+                i += name_bytes.len();
+                last_copied = i;
+                continue;
+            }
+            i += 1;
+        }
+
+        result.push_str(&text[last_copied..]);
+        result
+    }
+
+    const fn is_identifier_continue(byte: u8) -> bool {
+        byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
     }
 
     /// Print a type parameter declaration with constraint and default.
@@ -2067,5 +2108,46 @@ impl<'a> TypePrinter<'a> {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tsz_solver::TypeInterner;
+    use tsz_solver::types::{TypeId, TypeParamInfo};
+
+    use super::TypePrinter;
+
+    #[test]
+    fn unscoped_type_parameter_prints_constraint_or_unknown() {
+        let interner = TypeInterner::new();
+        let s = interner.intern_string("S");
+
+        let unconstrained = interner.type_param(TypeParamInfo {
+            name: s,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        assert_eq!(
+            TypePrinter::new(&interner).print_type(unconstrained),
+            "unknown"
+        );
+
+        let constrained = interner.type_param(TypeParamInfo {
+            name: s,
+            constraint: Some(TypeId::NUMBER),
+            default: None,
+            is_const: false,
+        });
+        assert_eq!(
+            TypePrinter::new(&interner).print_type(constrained),
+            "number"
+        );
+
+        assert_eq!(
+            TypePrinter::replace_type_param_name_with_any("S[]", "S"),
+            "any[]"
+        );
     }
 }
