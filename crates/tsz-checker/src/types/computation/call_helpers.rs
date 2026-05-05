@@ -1442,6 +1442,21 @@ impl<'a> CheckerState<'a> {
                         prop.initializer,
                     )
                 {
+                    // Conditional-return callbacks can still contribute their
+                    // concrete branch return without unresolved contextual T.
+                    let conditional_branch_can_seed = self
+                        .callback_first_conditional_branch(prop.initializer)
+                        .is_some_and(|branch_idx| !is_contextually_sensitive(self, branch_idx));
+                    let zero_param_can_seed = self
+                        .unannotated_zero_param_callback_return_expression(prop.initializer)
+                        .is_some_and(|return_idx| !is_contextually_sensitive(self, return_idx));
+                    if conditional_branch_can_seed || zero_param_can_seed {
+                        let value_type =
+                            self.speculative_type_of_node(prop.initializer, &TypingRequest::NONE);
+                        if !self.type_contains_any_type_param(value_type, type_param_names) {
+                            properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                        }
+                    }
                     continue;
                 }
 
@@ -1459,7 +1474,7 @@ impl<'a> CheckerState<'a> {
                 // being inferred, skip it. Including such types in the partial can
                 // poison Round 1 inference by creating self-referential constraints
                 // (e.g., T appearing in both source and target positions).
-                // This happens when a zero-param callback's return type references T
+                // This happens when a callback's return type references T
                 // through the un-instantiated contextual return type.
                 if self.type_contains_any_type_param(value_type, type_param_names) {
                     continue;

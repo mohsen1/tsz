@@ -1521,10 +1521,10 @@ const r = apply(42, (x: string) => x);
     );
 }
 
-/// Generic call with conditional return in zero-param callback.
-/// Exercises `zero_param_callback_first_conditional_branch` path.
+/// Generic call with conditional return in callback.
+/// Exercises `callback_first_conditional_branch` path.
 #[test]
-fn test_zero_param_callback_conditional_branch() {
+fn test_callback_conditional_branch() {
     let source = r#"
 declare function lazy<T>(fn: () => T): T;
 declare const cond: boolean;
@@ -1534,7 +1534,36 @@ const val: string = lazy(() => cond ? "yes" : "no");
     let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
     assert!(
         ts2322.is_empty(),
-        "Expected no TS2322 for conditional return in zero-param callback, got {ts2322:?}"
+        "Expected no TS2322 for conditional return in callback, got {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_intra_expression_conditional_return_seeds_receiver_context() {
+    let source = r#"
+declare const console: { log(value: any): void };
+declare function simplified<T>(props: { generator: () => T, receiver: (t: T) => any }): void;
+declare function withProps<T>(props: { generator: (bob: any) => T, receiver: (t: T) => void }): void;
+declare function withArgs<T>(generator: (bob: any) => T, receiver: (t: T) => void): void;
+
+simplified({ generator: () => 123, receiver: t => console.log(t + 2) });
+withProps({ generator: bob => bob ? 1 : 2, receiver: t => console.log(t + 2) });
+withArgs(bob => bob ? 1 : 2, t => console.log(t + 2));
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let inference_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 18046)
+        .collect();
+    assert!(
+        inference_errors.is_empty(),
+        "Expected conditional callback return to seed receiver context, got {inference_errors:?}"
     );
 }
 

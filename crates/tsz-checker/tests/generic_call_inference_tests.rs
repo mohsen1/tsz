@@ -932,15 +932,15 @@ const k = keys(Direction);
     );
 }
 
-// ─── Zero-param callback conditional branch ──────────────────────────
+// ─── Callback conditional branch ─────────────────────────────────────
 
 #[test]
-fn zero_param_callback_conditional_branch_used_for_contextual_type() {
-    // A zero-parameter callback whose body is a conditional expression
-    // should use the true branch for contextual typing
+fn callback_conditional_branch_used_for_contextual_type() {
+    // An unannotated callback whose body is a conditional expression should use
+    // the true branch for contextual typing, even when it has contextual params.
     let source = r#"
-declare function lazy<T>(fn: () => T): T;
-const result = lazy(() => true ? 42 : "hello");
+declare function lazy<T>(fn: (flag: boolean) => T): T;
+const result = lazy(flag => flag ? 42 : "hello");
 "#;
     let diags = relevant_diagnostics(source);
     assert!(

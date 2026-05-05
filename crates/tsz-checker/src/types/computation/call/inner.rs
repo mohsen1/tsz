@@ -919,6 +919,50 @@ impl<'a> CheckerState<'a> {
                         )
                     };
 
+                    // Partial object literals can expose inference from callback
+                    // returns before the full Round 2 contextual pass.
+                    for (i, &arg_type) in round1_arg_types.iter().enumerate() {
+                        if !extracted_round1_partials.get(i).copied().unwrap_or(false)
+                            || arg_type == TypeId::UNKNOWN
+                            || arg_type == TypeId::ERROR
+                        {
+                            continue;
+                        }
+                        let Some(param_type) = evaluated_shape.params.get(i).map(|p| p.type_id)
+                        else {
+                            continue;
+                        };
+                        let mut partial_substitution =
+                            crate::query_boundaries::common::TypeSubstitution::new();
+                        let mut visited = FxHashSet::default();
+                        self.collect_return_context_substitution(
+                            param_type,
+                            arg_type,
+                            &tracked_type_params,
+                            &mut partial_substitution,
+                            &mut visited,
+                        );
+                        for (&name, &ty) in partial_substitution.map() {
+                            if ty == TypeId::UNKNOWN
+                                || ty == TypeId::ERROR
+                                || self.target_contains_blocking_return_context_type_params(
+                                    ty,
+                                    &tracked_type_params,
+                                )
+                            {
+                                continue;
+                            }
+                            if substitution.get(name).is_none_or(|existing| {
+                                existing == TypeId::UNKNOWN
+                                    || existing == TypeId::ERROR
+                                    || common::contains_type_parameters(self.ctx.types, existing)
+                                    || common::contains_infer_types(self.ctx.types, existing)
+                            }) {
+                                substitution.insert(name, ty);
+                            }
+                        }
+                    }
+
                     // Extract ThisType<T> marker from raw parameter types and
                     // instantiate with the Round 1 substitution. Push to
                     // this_type_stack so nested object literal methods resolve
@@ -1277,7 +1321,7 @@ impl<'a> CheckerState<'a> {
                         for (i, &arg_idx) in args.iter().enumerate() {
                             if sensitive_args.get(i).copied().unwrap_or(false)
                                 && let Some(first_branch_idx) =
-                                    self.zero_param_callback_first_conditional_branch(arg_idx)
+                                    self.callback_first_conditional_branch(arg_idx)
                                 && let Some(param_type) = shape.params.get(i).map(|p| p.type_id)
                                 && let Some(callback_shape) =
                                     query::function_shape_for_type(self.ctx.types, param_type)

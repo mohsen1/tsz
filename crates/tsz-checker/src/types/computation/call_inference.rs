@@ -1274,7 +1274,7 @@ impl<'a> CheckerState<'a> {
         substitution
     }
 
-    pub(crate) fn zero_param_callback_first_conditional_branch(
+    pub(crate) fn callback_first_conditional_branch(
         &self,
         arg_idx: NodeIndex,
     ) -> Option<NodeIndex> {
@@ -1282,7 +1282,7 @@ impl<'a> CheckerState<'a> {
             .callback_function_index(arg_idx)
             .and_then(|idx| self.ctx.arena.get(idx))?;
         let func = self.ctx.arena.get_function(node)?;
-        if !func.parameters.nodes.is_empty() || func.type_annotation.is_some() {
+        if func.type_annotation.is_some() {
             return None;
         }
 
@@ -1317,6 +1317,36 @@ impl<'a> CheckerState<'a> {
             .arena
             .get_conditional_expr(body_node)
             .map(|cond| cond.when_true)
+    }
+
+    pub(crate) fn unannotated_zero_param_callback_return_expression(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let node = self
+            .callback_function_index(arg_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))?;
+        let func = self.ctx.arena.get_function(node)?;
+        if !func.parameters.nodes.is_empty() || func.type_annotation.is_some() {
+            return None;
+        }
+
+        let body_node = self.ctx.arena.get(func.body)?;
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return Some(func.body);
+        }
+
+        let block = self.ctx.arena.get_block(body_node)?;
+        block.statements.nodes.iter().find_map(|&stmt_idx| {
+            let stmt_node = self.ctx.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                return None;
+            }
+            self.ctx
+                .arena
+                .get_return_statement(stmt_node)
+                .and_then(|ret| (ret.expression != NodeIndex::NONE).then_some(ret.expression))
+        })
     }
 
     pub(crate) fn sanitize_generic_inference_arg_type(
