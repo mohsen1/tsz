@@ -38,6 +38,36 @@ fn test_namespace_with_content() {
 }
 
 #[test]
+fn test_namespace_exported_destructuring_uses_single_temp() {
+    let output = emit_namespace("namespace M { export var [a, b] = [1, 2]; }");
+    assert!(
+        output.contains("var _a;"),
+        "Exported destructuring should hoist a temp. Got:\n{output}"
+    );
+    assert!(
+        output.contains("_a = [1, 2], M.a = _a[0], M.b = _a[1];"),
+        "Exported destructuring should read the initializer once. Got:\n{output}"
+    );
+    assert!(
+        !output.contains("M.a = [1, 2]"),
+        "Exported destructuring should not repeat the initializer. Got:\n{output}"
+    );
+}
+
+#[test]
+fn test_namespace_exported_object_destructuring_uses_single_temp() {
+    let output = emit_namespace("namespace M { export var { a, b } = make(); }");
+    assert!(
+        output.contains("var _a;"),
+        "Exported object destructuring should hoist a temp. Got:\n{output}"
+    );
+    assert!(
+        output.contains("_a = make(), M.a = _a.a, M.b = _a.b;"),
+        "Exported object destructuring should read the initializer once. Got:\n{output}"
+    );
+}
+
+#[test]
 fn test_namespace_with_function() {
     let output = emit_namespace("namespace M { export function foo() { return 1; } }");
     assert!(output.contains("var M;"), "Should declare var M");

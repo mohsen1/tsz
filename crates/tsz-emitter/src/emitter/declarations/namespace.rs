@@ -832,6 +832,72 @@ impl<'a> Printer<'a> {
         names
     }
 
+    fn reserve_namespace_destructuring_export_temps(
+        &mut self,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> (rustc_hash::FxHashMap<NodeIndex, String>, Vec<String>) {
+        let mut temps_by_decl = rustc_hash::FxHashMap::default();
+        let mut temps = Vec::new();
+        let Some(body_node) = self.arena.get(module.body) else {
+            return (temps_by_decl, temps);
+        };
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return (temps_by_decl, temps);
+        };
+        let Some(ref stmts) = block.statements else {
+            return (temps_by_decl, temps);
+        };
+
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            let Some(var_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if var_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(var_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    if decl.initializer.is_none() {
+                        continue;
+                    }
+                    if let Some(name_node) = self.arena.get(decl.name)
+                        && name_node.is_binding_pattern()
+                    {
+                        let temp = self.get_temp_var_name();
+                        temps_by_decl.insert(decl_idx, temp.clone());
+                        temps.push(temp);
+                    }
+                }
+            }
+        }
+
+        (temps_by_decl, temps)
+    }
+
     /// Emit body statements of a namespace IIFE, handling exports.
     fn emit_namespace_body_statements(
         &mut self,
@@ -942,6 +1008,8 @@ impl<'a> Printer<'a> {
             }
             self.namespace_exported_names = local_exports;
             self.namespace_parent_exported_names = parent_exports;
+            let (destructuring_export_temps, destructuring_export_temp_names) =
+                self.reserve_namespace_destructuring_export_temps(module);
 
             // Skip comments on the same line as the opening `{` of the module block.
             // When the namespace is transformed to an IIFE, tsc drops trailing
@@ -977,6 +1045,18 @@ impl<'a> Printer<'a> {
                         break;
                     }
                 }
+            }
+
+            if !destructuring_export_temp_names.is_empty() {
+                self.write("var ");
+                for (i, temp) in destructuring_export_temp_names.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.write(temp);
+                }
+                self.write(";");
+                self.write_line();
             }
 
             for (stmt_i, &stmt_idx) in stmts.nodes.iter().enumerate() {
@@ -1055,6 +1135,7 @@ impl<'a> Printer<'a> {
                                 &ns_name,
                                 stmt_node,
                                 upper_bound,
+                                &destructuring_export_temps,
                             );
                         } else if inner_kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                             // export import X = Y; → ns.X = Y;
@@ -1693,6 +1774,7 @@ impl<'a> Printer<'a> {
         ns_name: &str,
         outer_stmt: &Node,
         comment_upper_bound: u32,
+        destructuring_export_temps: &rustc_hash::FxHashMap<NodeIndex, String>,
     ) {
         let Some(var_node) = self.arena.get(var_stmt_idx) else {
             return;
@@ -1701,9 +1783,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Collect all initialized (name, initializer) pairs across declaration lists.
-        // TSC emits multiple exports as a comma expression: `ns.a = 1, ns.c = 2;`
-        let mut assignments: Vec<(String, NodeIndex)> = Vec::new();
+        let mut wrote_any = false;
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -1725,31 +1805,128 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                let mut names = Vec::new();
-                self.collect_binding_names(decl.name, &mut names);
-                for name in names {
-                    assignments.push((name, decl.initializer));
+                if let Some(temp) = destructuring_export_temps.get(&decl_idx) {
+                    self.write_namespace_export_separator(&mut wrote_any);
+                    self.write(temp);
+                    self.write(" = ");
+                    self.emit_expression(decl.initializer);
+                    self.emit_namespace_binding_pattern_assignments(
+                        ns_name,
+                        temp,
+                        decl.name,
+                        &mut wrote_any,
+                    );
+                } else {
+                    let mut names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut names);
+                    for name in names {
+                        self.write_namespace_export_separator(&mut wrote_any);
+                        self.write(ns_name);
+                        self.write(".");
+                        self.write(&name);
+                        self.write(" = ");
+                        self.emit_expression(decl.initializer);
+                    }
                 }
             }
         }
 
-        // Emit as comma expression: ns.a = 1, ns.c = 2;
-        if !assignments.is_empty() {
-            for (i, (name, init)) in assignments.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.write(ns_name);
-                self.write(".");
-                self.write(name);
-                self.write(" = ");
-                self.emit_expression(*init);
-            }
+        if wrote_any {
             self.write(";");
             let token_end = self.find_token_end_before_trivia(outer_stmt.pos, comment_upper_bound);
             self.emit_trailing_comments_before(token_end, comment_upper_bound);
             self.write_line();
         }
+    }
+
+    fn emit_namespace_binding_pattern_assignments(
+        &mut self,
+        ns_name: &str,
+        source: &str,
+        pattern_idx: NodeIndex,
+        wrote_any: &mut bool,
+    ) {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            for (index, &element_idx) in pattern.elements.nodes.iter().enumerate() {
+                let Some(element_node) = self.arena.get(element_idx) else {
+                    continue;
+                };
+                if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                    continue;
+                }
+                let Some(element) = self.arena.get_binding_element(element_node) else {
+                    continue;
+                };
+                if element.dot_dot_dot_token {
+                    continue;
+                }
+                let Some(name) = self.binding_element_export_name(element.name) else {
+                    continue;
+                };
+                self.write_namespace_export_separator(wrote_any);
+                self.write(ns_name);
+                self.write(".");
+                self.write(&name);
+                self.write(" = ");
+                self.write(source);
+                self.write("[");
+                self.write(&index.to_string());
+                self.write("]");
+            }
+        } else if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            for &element_idx in &pattern.elements.nodes {
+                let Some(element_node) = self.arena.get(element_idx) else {
+                    continue;
+                };
+                let Some(element) = self.arena.get_binding_element(element_node) else {
+                    continue;
+                };
+                if element.dot_dot_dot_token {
+                    continue;
+                }
+                let prop_idx = if element.property_name.is_some() {
+                    element.property_name
+                } else {
+                    element.name
+                };
+                let Some(prop_name) = self.binding_element_export_name(prop_idx) else {
+                    continue;
+                };
+                let Some(name) = self.binding_element_export_name(element.name) else {
+                    continue;
+                };
+                self.write_namespace_export_separator(wrote_any);
+                self.write(ns_name);
+                self.write(".");
+                self.write(&name);
+                self.write(" = ");
+                self.write(source);
+                self.write(".");
+                self.write(&prop_name);
+            }
+        }
+    }
+
+    fn write_namespace_export_separator(&mut self, wrote_any: &mut bool) {
+        if *wrote_any {
+            self.write(", ");
+        }
+        *wrote_any = true;
+    }
+
+    fn binding_element_export_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if let Some(ident) = self.arena.get_identifier(node) {
+            return Some(ident.escaped_text.clone());
+        }
+        self.arena.get_literal(node).map(|lit| lit.text.clone())
     }
 
     /// Returns true when a variable statement node has no initializers in any of its
@@ -1866,6 +2043,51 @@ mod tests {
         assert!(
             output.contains("class C {"),
             "Class C should be emitted inside namespace M2.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
+        let source = "namespace M {\n    export var [a, b] = [1, 2];\n}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var _a;\n    _a = [1, 2], M.a = _a[0], M.b = _a[1];"),
+            "Exported namespace destructuring should use one temp.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("M.a = [1, 2]"),
+            "Exported namespace destructuring should not repeat the initializer.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn namespace_exported_destructuring_temp_hoists_before_class() {
+        let source =
+            "namespace m {\n    export class c {}\n    export var [x, y] = [10, new c()];\n}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        let temp_pos = output.find("var _a;").expect("expected temp hoist");
+        let class_pos = output.find("class c").expect("expected class emit");
+        assert!(
+            temp_pos < class_pos,
+            "Namespace destructuring temp should hoist before class declarations.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a = [10, new c()], m.x = _a[0], m.y = _a[1];"),
+            "Exported namespace destructuring should use the hoisted temp.\nOutput:\n{output}"
         );
     }
 
