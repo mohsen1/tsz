@@ -189,6 +189,24 @@ export function Timestamped<TBase extends Constructor>(Base: TBase) {
 }
 
 #[test]
+fn test_returned_local_call_preserves_typeof_parameter_return() {
+    let output = emit_dts_with_binding(
+        r#"
+export const g = (v: "outer") => {
+    const f = (v: "inner") => () => null! as typeof v;
+    const r = f(null!);
+    return r;
+};
+"#,
+    );
+
+    assert!(
+        output.contains(r#"export declare const g: (v: "outer") => () => "inner";"#),
+        "Expected returned local call to preserve typeof parameter return: {output}"
+    );
+}
+
+#[test]
 fn test_function_variable_type_preserves_inline_parameter_comments() {
     let output = emit_dts(
         r#"

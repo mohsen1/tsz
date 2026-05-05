@@ -3331,10 +3331,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut function_decl_count = 0usize;
         for decl_idx in symbol.declarations.iter().copied() {
-            let Some(decl_node) = source_arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(func) = source_arena.get_function(decl_node) else {
+            let Some(func) = self.callable_function_from_symbol_decl(source_arena, decl_idx) else {
                 continue;
             };
             if func
@@ -3351,10 +3348,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         for decl_idx in symbol.declarations.iter().copied() {
-            let Some(decl_node) = source_arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(func) = source_arena.get_function(decl_node) else {
+            let Some(func) = self.callable_function_from_symbol_decl(source_arena, decl_idx) else {
                 continue;
             };
             if func
@@ -3404,7 +3398,12 @@ impl<'a> DeclarationEmitter<'a> {
                     scratch.current_arena = self.current_arena.clone();
                     scratch.arena_to_path = self.arena_to_path.clone();
                     scratch.indent_level = self.indent_level;
-                    scratch.function_body_preferred_return_type_text(func.body)
+                    let type_text = scratch.source_function_return_type_text(func)?;
+                    let type_text =
+                        scratch.substitute_call_result_parameter_type_queries(func, &type_text);
+                    let (type_text, _) =
+                        scratch.function_return_type_text_for_declaration_scope(func, &type_text);
+                    Some(type_text)
                 }
             {
                 return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
@@ -3412,6 +3411,99 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn substitute_call_result_parameter_type_queries(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> String {
+        if !source_type_text.contains("typeof ") {
+            return source_type_text.to_string();
+        }
+
+        let mut text = source_type_text.to_string();
+        for param_idx in func.parameters.nodes.iter().copied() {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_name) = self.get_identifier_text(param.name) else {
+                continue;
+            };
+            let Some(param_type_text) = self.function_parameter_type_text(func, param.name) else {
+                continue;
+            };
+            if !Self::type_text_can_substitute_type_query_parameter(&param_type_text) {
+                continue;
+            }
+            text = Self::replace_typeof_identifier(&text, &param_name, &param_type_text).0;
+        }
+        text
+    }
+
+    fn type_text_can_substitute_type_query_parameter(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        if Self::simple_type_reference_name(trimmed).is_some() {
+            return true;
+        }
+        if matches!(trimmed, "true" | "false" | "null" | "undefined") {
+            return true;
+        }
+        if trimmed.parse::<f64>().is_ok() {
+            return true;
+        }
+        if trimmed.len() >= 2 {
+            let bytes = trimmed.as_bytes();
+            return (bytes[0] == b'"' && bytes[trimmed.len() - 1] == b'"')
+                || (bytes[0] == b'\'' && bytes[trimmed.len() - 1] == b'\'');
+        }
+        false
+    }
+
+    fn callable_function_from_symbol_decl<'b>(
+        &self,
+        source_arena: &'b NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<&'b tsz_parser::parser::node::FunctionData> {
+        if let Some(func) = source_arena
+            .get(decl_idx)
+            .and_then(|node| source_arena.get_function(node))
+        {
+            return Some(func);
+        }
+
+        let mut current = decl_idx;
+        for _ in 0..8 {
+            let node = source_arena.get(current)?;
+            if let Some(var_decl) = source_arena.get_variable_declaration(node) {
+                let initializer_node = source_arena.get(var_decl.initializer)?;
+                if initializer_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || initializer_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                {
+                    return source_arena.get_function(initializer_node);
+                }
+            }
+            current = source_arena.parent_of(current)?;
+        }
+
+        None
+    }
+
+    fn source_function_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        let body_node = self.arena.get(func.body)?;
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return self.function_body_preferred_return_type_text(func.body);
+        }
+
+        self.preferred_expression_type_text(func.body)
+            .or_else(|| self.infer_fallback_type_text_at(func.body, 0))
+            .filter(|text| !text.is_empty() && text != "any")
     }
 
     fn source_return_type_annotation_is_reusable(
@@ -4348,7 +4440,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn local_variable_initializer_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn local_variable_initializer_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != SyntaxKind::Identifier as u16 {
             return None;
