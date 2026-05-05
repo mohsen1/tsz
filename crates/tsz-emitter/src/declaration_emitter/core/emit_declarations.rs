@@ -1025,6 +1025,11 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         let printed_type_text =
                             self.print_type_id_with_outer_type_params(effective_return_type_id, tp);
+                        let printed_type_text = self
+                            .rewrite_returned_auto_accessor_parameter_unknowns(
+                                func,
+                                &printed_type_text,
+                            );
                         self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
@@ -1040,6 +1045,11 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     } else {
                         let printed_type_text = self.print_type_id(effective_return_type_id);
+                        let printed_type_text = self
+                            .rewrite_returned_auto_accessor_parameter_unknowns(
+                                func,
+                                &printed_type_text,
+                            );
                         self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)

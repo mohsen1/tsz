@@ -5152,6 +5152,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> (String, bool) {
         let (text, substituted_parameter_type_query) =
             self.substitute_function_parameter_type_queries(func, source_type_text);
+        let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
         let Some(ref type_params) = func.type_parameters else {
             return (text, substituted_parameter_type_query);
         };
@@ -5165,6 +5166,106 @@ impl<'a> DeclarationEmitter<'a> {
             Self::rename_shadowed_infer_type_params_in_text(&text, &outer_names),
             substituted_parameter_type_query,
         )
+    }
+
+    pub(in crate::declaration_emitter) fn inferred_function_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        return_type_id: tsz_solver::types::TypeId,
+    ) -> String {
+        let text = if let Some(ref type_params) = func.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.print_type_id_with_outer_type_params(return_type_id, type_params)
+        } else {
+            self.print_type_id(return_type_id)
+        };
+        self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text)
+    }
+
+    pub(in crate::declaration_emitter) fn rewrite_returned_auto_accessor_parameter_unknowns(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> String {
+        if !source_type_text.contains(": unknown;") {
+            return source_type_text.to_string();
+        }
+
+        let Some(class_expr_idx) = self.direct_returned_class_expression(func.body) else {
+            return source_type_text.to_string();
+        };
+        let Some(class_node) = self.arena.get(class_expr_idx) else {
+            return source_type_text.to_string();
+        };
+        let Some(class) = self.arena.get_class(class_node) else {
+            return source_type_text.to_string();
+        };
+
+        let mut rewritten = source_type_text.to_string();
+        for member_idx in class.members.nodes.iter().copied() {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if !self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+            {
+                continue;
+            }
+            if !prop.initializer.is_some() {
+                continue;
+            }
+            let Some(name_text) = self.get_identifier_text(prop.name) else {
+                continue;
+            };
+            let Some(type_text) = self.function_parameter_type_text(func, prop.initializer) else {
+                continue;
+            };
+            if type_text == "unknown" {
+                continue;
+            }
+
+            let get_unknown = format!("get {name_text}(): unknown;");
+            let get_replacement = format!("get {name_text}(): {type_text};");
+            rewritten = rewritten.replace(&get_unknown, &get_replacement);
+
+            let set_unknown = format!("set {name_text}(arg: unknown);");
+            let set_replacement = format!("set {name_text}(arg: {type_text});");
+            rewritten = rewritten.replace(&set_unknown, &set_replacement);
+        }
+
+        rewritten
+    }
+
+    fn direct_returned_class_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let mut returned_class = None;
+        for stmt_idx in block.statements.nodes.iter().copied() {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                continue;
+            }
+            let ret = self.arena.get_return_statement(stmt_node)?;
+            if !ret.expression.is_some() {
+                return None;
+            }
+            let expr_idx = self.skip_parenthesized_expression(ret.expression)?;
+            let expr_node = self.arena.get(expr_idx)?;
+            if expr_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+                return None;
+            }
+            if returned_class.replace(expr_idx).is_some() {
+                return None;
+            }
+        }
+        returned_class
     }
 
     fn substitute_function_parameter_type_queries(

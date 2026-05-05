@@ -1277,6 +1277,58 @@ namespace A.B.D {
     );
 }
 
+#[test]
+fn test_returned_auto_accessor_parameter_unknown_uses_parameter_type() {
+    let source = r#"
+function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {
+    return class extends superclass {};
+}
+
+export function wrapper<T>(value: T) {
+    class BaseClass {
+        accessor name = value;
+    }
+    return class MyClass extends mixin(BaseClass) {
+        accessor name = value;
+    };
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let wrapper = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            parser
+                .arena
+                .get_function(node)
+                .filter(|func| parser.arena.get_identifier_text(func.name) == Some("wrapper"))
+        })
+        .expect("missing wrapper function");
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let rewritten = emitter.rewrite_returned_auto_accessor_parameter_unknowns(
+        wrapper,
+        "{\n    new (): {\n        get name(): unknown;\n        set name(arg: unknown);\n    };\n}",
+    );
+
+    assert!(
+        rewritten.contains("get name(): T;"),
+        "Expected getter type to come from the accessor initializer parameter: {rewritten}"
+    );
+    assert!(
+        rewritten.contains("set name(arg: T);"),
+        "Expected setter type to come from the accessor initializer parameter: {rewritten}"
+    );
+}
+
 /// Regression test for `declarationEmitShadowingInferNotRenamed`: a single
 /// non-abstract construct signature must render as `new (...) => T` (matching
 /// tsc), and an `Infer(T)` placeholder appearing inside the extends clause of
