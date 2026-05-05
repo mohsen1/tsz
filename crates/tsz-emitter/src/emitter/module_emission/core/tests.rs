@@ -434,6 +434,51 @@ fn async_arguments_capture_skips_user_binding() {
 }
 
 #[test]
+fn commonjs_import_helpers_tslib_binding_skips_user_binding() {
+    let source = r#"const tslib_1 = "user binding";
+
+export async function f() {
+  await 0;
+  return tslib_1;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        import_helpers: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("const tslib_2 = require(\"tslib\");"),
+        "Helper import should skip the user tslib_1 binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const tslib_1 = \"user binding\";"),
+        "User binding should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return tslib_2.__awaiter("),
+        "Helper call should use the renamed tslib import binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return tslib_1;"),
+        "Source reads should still use the user binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_arguments_capture_skips_parameter_and_pattern_bindings() {
     let source = r#"export async function f({ arguments_1 }: { arguments_1: string }) {
   const [arguments_2] = ["user binding"];

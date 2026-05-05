@@ -76,6 +76,7 @@ pub struct ClassES5Emitter<'a> {
     remove_comments: bool,
     /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
     tslib_prefix: bool,
+    tslib_import_binding: String,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     printer_options: Option<crate::emitter::PrinterOptions>,
 }
@@ -93,6 +94,7 @@ impl<'a> ClassES5Emitter<'a> {
             leading_comment: None,
             remove_comments: false,
             tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             printer_options: None,
         }
@@ -100,6 +102,10 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub const fn set_tslib_prefix(&mut self, enable: bool) {
         self.tslib_prefix = enable;
+    }
+
+    pub fn set_tslib_import_binding(&mut self, binding: String) {
+        self.tslib_import_binding = binding;
     }
 
     pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
@@ -224,6 +230,7 @@ impl<'a> ClassES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_remove_comments(self.remove_comments);
         printer.set_tslib_prefix(self.tslib_prefix);
+        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
         printer.set_target_es5(true);
         if let Some(source_text) = self.source_text {
             printer.set_source_text(source_text);

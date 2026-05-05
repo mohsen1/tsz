@@ -85,6 +85,7 @@ impl<'a> Printer<'a> {
             self.wrapped_export_module_substitutions.clear();
         }
         self.generated_temp_names.clear();
+        self.commonjs_tslib_import_binding = "tslib_1".to_string();
         self.ctx.arguments_capture_counter = 0;
         self.first_for_of_emitted = false;
 
@@ -1268,11 +1269,15 @@ impl<'a> Printer<'a> {
 
             // Emit CJS tslib require after exports preamble
             if self.ctx.options.import_helpers && helpers.any_needed() {
+                self.commonjs_tslib_import_binding = self.next_commonjs_module_var("tslib");
                 if self.ctx.options.target.is_es5() {
-                    self.write("var tslib_1 = require(\"tslib\");");
+                    self.write("var ");
                 } else {
-                    self.write("const tslib_1 = require(\"tslib\");");
+                    self.write("const ");
                 }
+                let binding = self.commonjs_tslib_import_binding.clone();
+                self.write(&binding);
+                self.write(" = require(\"tslib\");");
                 self.write_line();
             }
         }
