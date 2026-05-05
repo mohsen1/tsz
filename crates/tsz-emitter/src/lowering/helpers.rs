@@ -613,6 +613,41 @@ impl<'a> LoweringPass<'a> {
             let start = body_node.pos;
             let end = body_node.end;
 
+            // First pass: collect indices of private-field property accesses that
+            // appear as assignment LHS or unary mutation operands. These are
+            // already classified by the binary/unary handling and must not be
+            // double-counted as standalone reads.
+            let mut consumed_pa: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            for i in 0..self.arena.len() {
+                let nidx = NodeIndex(i as u32);
+                let Some(n) = self.arena.get(nidx) else {
+                    continue;
+                };
+                if n.pos < start || n.end > end {
+                    continue;
+                }
+                if n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(bin) = self.arena.get_binary_expr(n)
+                    && tsz_solver::is_assignment_operator(bin.operator_token)
+                {
+                    let left = self.unwrap_parens(bin.left);
+                    if self.is_private_field_access(left) {
+                        consumed_pa.insert(left.0);
+                    }
+                }
+                if (n.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    || n.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+                    && let Some(unary) = self.arena.get_unary_expr(n)
+                    && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                        || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                {
+                    let operand = self.unwrap_parens(unary.operand);
+                    if self.is_private_field_access(operand) {
+                        consumed_pa.insert(operand.0);
+                    }
+                }
+            }
+
             for i in 0..self.arena.len() {
                 let nidx = NodeIndex(i as u32);
                 let Some(n) = self.arena.get(nidx) else {
@@ -668,6 +703,17 @@ impl<'a> LoweringPass<'a> {
                         earliest_pos = Some(n.pos);
                         earliest_is_write_only = false;
                     }
+                }
+                // Standalone private-field read (e.g., `return this.#foo;`,
+                // `f(this.#foo)`, `x.#m()`). Skip ones we already classified as
+                // assignment targets or ++/-- operands.
+                if n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && self.is_private_field_access(nidx)
+                    && !consumed_pa.contains(&nidx.0)
+                    && (earliest_pos.is_none() || n.pos < earliest_pos.unwrap())
+                {
+                    earliest_pos = Some(n.pos);
+                    earliest_is_write_only = false;
                 }
             }
         }
