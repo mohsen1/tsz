@@ -821,8 +821,12 @@ impl<'a> NamespaceES5Transformer<'a> {
                 // before the next declaration. Capture those comments here so they can
                 // be emitted immediately after the current statement.
                 let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
-                let trailing_standalone =
-                    self.extract_standalone_comments_in_range(code_end, stmt_node.end);
+                let is_class_like = self.is_class_like_member(stmt_idx);
+                let trailing_standalone = if is_class_like {
+                    Vec::new()
+                } else {
+                    self.extract_standalone_comments_in_range(code_end, stmt_node.end)
+                };
 
                 // Extract leading comments between previous end and this statement.
                 // We compute them up-front but defer pushing until we know whether
@@ -923,7 +927,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                 // leading-comment extraction picks them up. For other members
                 // `trailing_standalone` already drained that gap, so advancing
                 // to `stmt_node.end` is safe and keeps current behavior.
-                prev_end = if self.is_class_like_member(stmt_idx) {
+                prev_end = if is_class_like {
                     code_end
                 } else {
                     stmt_node.end
