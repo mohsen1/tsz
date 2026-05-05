@@ -287,6 +287,39 @@ type Cache<QR> = {
 }
 
 #[test]
+fn ts2635_instantiation_expression_displays_evaluated_indexed_parameter_type() {
+    let diags = check_source_diagnostics(
+        r#"
+type RT<T extends (...args: any) => any> = any;
+const createCacheReducer = <N extends string, QR>(
+    queries: Cache<N, QR>["queries"],
+) => {
+    const queriesMap = {} as QR;
+    const initialState = { queries: queriesMap };
+    return (state = initialState) => state;
+};
+type Cache<N extends string, QR> = {
+    queries: {
+        [QK in keyof QR]: RT<typeof createCacheReducer<QR>>;
+    };
+};
+"#,
+    );
+
+    let ts2635: Vec<_> = diags.iter().filter(|d| d.code == 2635).collect();
+    assert_eq!(ts2635.len(), 1, "Expected one TS2635, got: {diags:?}");
+    let message = &ts2635[0].message_text;
+    assert!(
+        message.contains("queries: { [QK in keyof QR]: any; }"),
+        "Expected TS2635 to display the evaluated indexed-access parameter type, got: {message:?}"
+    );
+    assert!(
+        !message.contains("Lazy("),
+        "TS2635 display must not leak Lazy(...) internals, got: {message:?}"
+    );
+}
+
+#[test]
 fn ts2344_valid_typeof_instantiation_does_not_emit_constraint_diagnostic() {
     // Sanity check: a *successful* typeof-instantiation expression must not
     // trigger TS2344 against a callable constraint. Use a concrete type arg

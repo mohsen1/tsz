@@ -19,11 +19,17 @@ targeted conformance test.
 
 ## Files Touched
 
-- TBD after root-cause analysis.
+- `crates/tsz-checker/src/state/type_environment/formatting.rs`
+- `crates/tsz-checker/src/tests/dispatch_tests.rs`
+- `docs/plan/claims/fix-checker-instantiation-expression-nocrash-fingerprint.md`
 
 ## Verification
 
 - Baseline target command:
   `./scripts/conformance/conformance.sh run --filter "instantiationExpressionErrorNoCrash" --verbose`
-- Planned: owning-crate Rust regression test.
+- `CARGO_BUILD_JOBS=1 cargo nextest run -p tsz-checker --lib ts2635`
+  - 2 tests passed.
 - Planned: targeted conformance rerun for `instantiationExpressionErrorNoCrash`.
+  - Attempted twice, but the local `dist-fast` build was interrupted by
+    repeated workspace disk exhaustion and one external SIGTERM before the
+    filtered case could run.
