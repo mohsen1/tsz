@@ -466,10 +466,10 @@ impl<'a> FlowAnalyzer<'a> {
                 let ctor_expr = self.skip_parens_and_assertions(bin.right);
                 if let Some(ident) = self.arena.get_identifier_at(ctor_expr) {
                     let name = &ident.escaped_text;
-                    if name == "Object" {
+                    if name == "Object" && self.is_builtin_global_reference(ctor_expr) {
                         return Some((TypeGuard::Instanceof(TypeId::OBJECT, true), target, false));
                     }
-                    if name == "Function" {
+                    if name == "Function" && self.is_builtin_global_reference(ctor_expr) {
                         return Some((
                             TypeGuard::Instanceof(TypeId::FUNCTION, true),
                             target,

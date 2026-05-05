@@ -117,6 +117,43 @@ const unused = 1;
     );
 }
 
+#[test]
+fn instanceof_rhs_validation_uses_lib_function_when_local_type_shadows_function() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"export {};
+
+type Function = { tag: string };
+
+declare const value: object;
+declare const fakeConstructor: { tag: string };
+
+value instanceof fakeConstructor;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 2359),
+        "expected TS2359 for non-callable instanceof RHS despite local Function type alias, got: {:?}",
+        result.diagnostics
+    );
+}
+
 fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_loader::LibFile>> {
     let lib_paths = crate::config::resolve_default_lib_files(target).expect("default libs");
     let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
