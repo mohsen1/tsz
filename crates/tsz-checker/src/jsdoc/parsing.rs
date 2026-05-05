@@ -984,7 +984,7 @@ impl<'a> CheckerState<'a> {
         last_from
     }
 
-    fn is_jsdoc_import_keyword_part(ch: char) -> bool {
+    const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
         ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
