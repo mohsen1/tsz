@@ -343,8 +343,11 @@ export class Derived extends mixin(Base) {}
 #[test]
 fn test_default_export_class_extends_expression_uses_synthetic_base_alias() {
     let source = r#"
+interface Greeter {
+    getGreeting(): string;
+}
 interface GreeterConstructor {
-    new (): {};
+    new (): Greeter;
 }
 declare function getGreeterBase(): GreeterConstructor;
 export default class extends getGreeterBase() {}
@@ -380,6 +383,10 @@ export default class extends getGreeterBase() {}
         DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
     let output = emitter.emit(root);
 
+    assert!(
+        output.contains("interface Greeter {"),
+        "Expected synthetic base alias dependencies to retain constructor return interface: {output}"
+    );
     assert!(
         output.contains("declare const default_base: GreeterConstructor;"),
         "Expected default export class extends expression to synthesize a default_base alias: {output}"
