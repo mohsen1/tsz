@@ -681,6 +681,46 @@ export const msg = "Hello!";
 }
 
 #[test]
+fn consecutive_triple_slash_refs_emit_together_before_cjs_preamble() {
+    let source = r#"/// <reference path="O.d.ts" />
+/// <reference path="O2.d.ts" />
+
+import { x } from "M";
+export const y = x;
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    let o_idx = output
+        .find("/// <reference path=\"O.d.ts\" />")
+        .expect("O.d.ts ref should be emitted");
+    let o2_idx = output
+        .find("/// <reference path=\"O2.d.ts\" />")
+        .expect("O2.d.ts ref should be emitted");
+    let preamble_idx = output
+        .find("Object.defineProperty(exports")
+        .expect("CJS preamble should be emitted");
+
+    assert!(
+        o_idx < preamble_idx,
+        "First triple-slash ref must appear before __esModule preamble.\nOutput:\n{output}"
+    );
+    assert!(
+        o2_idx < preamble_idx,
+        "Second triple-slash ref must appear before __esModule preamble.\nOutput:\n{output}"
+    );
+    assert!(
+        o_idx < o2_idx,
+        "Triple-slash refs must preserve source order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn namespace_function_expression_parameter_shadows_exported_name_es2015() {
     let source = r#"namespace Foo {
     export function a() {}
