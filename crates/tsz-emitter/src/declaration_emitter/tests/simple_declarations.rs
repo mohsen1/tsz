@@ -3144,6 +3144,29 @@ class Foo {
 }
 
 #[test]
+fn test_class_property_initializer_same_name_enum_uses_typeof_with_inferred_shape() {
+    let output = emit_dts_with_binding(
+        r#"
+enum Hello {
+    World
+}
+class Foo {
+    Hello = Hello;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("Hello: typeof Hello;"),
+        "Expected same-name enum initializer to emit typeof enum: {output}"
+    );
+    assert!(
+        !output.contains("readonly [x: number]"),
+        "Did not expect enum value object shape to leak into property type: {output}"
+    );
+}
+
+#[test]
 fn test_returned_local_conditional_annotation_uses_function_generic_scope() {
     let output = emit_dts_with_binding(
         r#"
