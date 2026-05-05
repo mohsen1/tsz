@@ -649,6 +649,13 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
+        let class_expr_set_function_name = class_expr_static_temp.as_ref().and_then(|_| {
+            if class.name.is_none() {
+                self.resolve_class_expr_binding_name(_idx)
+            } else {
+                None
+            }
+        });
 
         // Computed property name hoisting for targets < ES2022.
         // tsc hoists non-constant computed property name expressions to temp variables
@@ -1991,14 +1998,20 @@ impl<'a> Printer<'a> {
             // they're emitted in their existing trailing batch instead.
             let interleave_blocks = !self.defer_class_static_blocks;
             enum CommaItem {
+                SetFunctionName(String),
                 Field(StaticFieldInit),
                 Block(NodeIndex, usize),
             }
             let owned_field_inits = std::mem::take(&mut static_field_inits);
-            let mut comma_items: Vec<(u32, CommaItem)> = owned_field_inits
-                .into_iter()
-                .map(|init| (init.2, CommaItem::Field(init)))
-                .collect();
+            let mut comma_items: Vec<(u32, CommaItem)> = Vec::new();
+            if let Some(name) = class_expr_set_function_name.as_ref() {
+                comma_items.push((node.pos, CommaItem::SetFunctionName(name.clone())));
+            }
+            comma_items.extend(
+                owned_field_inits
+                    .into_iter()
+                    .map(|init| (init.2, CommaItem::Field(init))),
+            );
             if interleave_blocks {
                 let blocks = std::mem::take(&mut deferred_static_blocks);
                 for (block_idx, comment_idx) in blocks {
@@ -2010,6 +2023,9 @@ impl<'a> Printer<'a> {
 
             for (_pos, item) in comma_items {
                 match item {
+                    CommaItem::SetFunctionName(name) => {
+                        self.emit_class_expr_set_function_name_comma_item(temp, &name);
+                    }
                     CommaItem::Field((
                         name_emit,
                         init_idx,
@@ -2510,6 +2526,9 @@ impl<'a> Printer<'a> {
             && !self.defer_class_static_blocks
             && !deferred_static_blocks.is_empty()
         {
+            if let Some(name) = class_expr_set_function_name.as_ref() {
+                self.emit_class_expr_set_function_name_comma_item(temp, name);
+            }
             self.emit_static_block_iife_comma_items_with_context(
                 deferred_static_blocks,
                 static_initializer_this_binding,

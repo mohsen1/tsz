@@ -31,6 +31,23 @@ impl<'a> Printer<'a> {
         None
     }
 
+    pub(in crate::emitter) fn emit_class_expr_set_function_name_comma_item(
+        &mut self,
+        temp: &str,
+        name: &str,
+    ) {
+        self.write(",");
+        self.write_line();
+        self.increase_indent();
+        self.write_helper("__setFunctionName");
+        self.write("(");
+        self.write(temp);
+        self.write(", ");
+        self.emit_string_literal_text(name);
+        self.write(")");
+        self.decrease_indent();
+    }
+
     /// Emit deferred static block IIFEs as `(() => { ... })();`.
     /// Check if a computed property name expression is side-effect-free.
     /// Looks through type assertions and parenthesized expressions to find
