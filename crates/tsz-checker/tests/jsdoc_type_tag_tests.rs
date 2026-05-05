@@ -298,6 +298,27 @@ tagCounts["x"] = 1;
     );
 }
 
+#[test]
+fn test_jsdoc_object_record_preserves_nested_value_type() {
+    let source = r#"
+// @ts-check
+
+/** @type {Object.<string, Object.<string, number>>} */
+const table = {
+  row: {
+    count: "wrong",
+  },
+};
+"#;
+    let diagnostics = check_js(source);
+    let codes = diagnostics.iter().map(|d| d.code).collect::<Vec<_>>();
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 for nested Object value type, got: {:?}",
+        codes
+    );
+}
+
 /// Broad @type {function} should not suppress implicit-any on function expressions.
 #[test]
 fn test_jsdoc_type_lowercase_function_does_not_contextually_type_params() {

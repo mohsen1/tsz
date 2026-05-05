@@ -445,9 +445,12 @@ impl<'a> CheckerState<'a> {
                             .and_then(|rest| rest.strip_suffix(">"))
                     });
                 if let Some(inner) = obj_map_inner {
-                    let mut parts = inner.split(',');
-                    let key_str = parts.next().unwrap_or("").trim();
-                    let value_str = parts.next().unwrap_or("").trim();
+                    let parts = Self::split_type_args_respecting_nesting(inner);
+                    if parts.len() != 2 {
+                        return None;
+                    }
+                    let key_str = parts[0].trim();
+                    let value_str = parts[1].trim();
                     if let (Some(key_type), Some(value_type)) = (
                         self.jsdoc_type_from_expression(key_str),
                         self.jsdoc_type_from_expression(value_str),
