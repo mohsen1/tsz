@@ -267,17 +267,21 @@ impl<'a> Printer<'a> {
         idx: NodeIndex,
     ) {
         // For anonymous default function/class declarations, tsc assigns a
-        // synthetic name (`default_1`) and hoists `exports.default = default_1;`
-        // BEFORE the declaration. This works because function declarations are
-        // hoisted in JS.
+        // synthetic name (`default_1`, `default_2`, ...) and hoists
+        // `exports.default = default_N;` BEFORE the declaration. Multiple
+        // anonymous defaults are an error case (see
+        // `exportDefaultInterfaceAndTwoFunctions`) but tsc still emits each
+        // with its own counter rather than colliding on a single name.
         let is_function = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+        self.next_anonymous_default_index += 1;
+        let synthetic_name = format!("default_{}", self.next_anonymous_default_index);
         let prev = self.anonymous_default_export_name.take();
-        self.anonymous_default_export_name = Some("default_1".to_string());
+        self.anonymous_default_export_name = Some(synthetic_name.clone());
         if is_function {
             // Function: exports.default before declaration (functions hoist)
             if !self.ctx.module_state.default_func_export_hoisted {
                 self.write_export_binding_start("default");
-                self.write("default_1");
+                self.write(&synthetic_name);
                 self.write_export_binding_end();
                 self.write_line();
             }
@@ -301,7 +305,7 @@ impl<'a> Printer<'a> {
                 self.emit_node_default(node, idx);
                 self.write_line();
                 self.write_export_binding_start("default");
-                self.write("default_1");
+                self.write(&synthetic_name);
                 self.write_export_binding_end();
             }
         }
