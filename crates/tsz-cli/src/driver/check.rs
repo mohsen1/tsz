@@ -4530,15 +4530,15 @@ let x2: string = f;
         let options = ResolvedCompilerOptions {
             allow_js: true,
             check_js: true,
-            module_resolution: Some(crate::config::ModuleResolutionKind::NodeNext),
+            module_resolution: Some(crate::config::ModuleResolutionKind::Node16),
             module_suffixes: vec![String::new()],
             printer: tsz::emitter::PrinterOptions {
-                module: ModuleKind::Node20,
+                module: ModuleKind::Node18,
                 target: tsz_common::common::ScriptTarget::ES2023,
                 ..Default::default()
             },
             checker: tsz::checker::context::CheckerOptions {
-                module: ModuleKind::Node20,
+                module: ModuleKind::Node18,
                 target: tsz_common::common::ScriptTarget::ES2023,
                 ..Default::default()
             },
@@ -4563,6 +4563,84 @@ let x2: string = f;
             importer_diags.iter().any(|diag| diag.code == 1362),
             "expected TS1362 for checked CommonJS require() of a type-only \
              \"module.exports\" binding, got: {importer_diags:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_collect_diagnostics_rejects_exports_in_cjs_file_with_esm_syntax() {
+        let dir = std::env::temp_dir().join("tsz_check_js_cjs_exports_with_esm_syntax");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let two_path = dir.join("2.cjs");
+        let three_path = dir.join("3.cjs");
+        let four_path = dir.join("4.cjs");
+        let five_path = dir.join("5.cjs");
+
+        let two_source = "exports.foo = 0;\n";
+        let three_source = "import \"foo\";\nexports.foo = {};\n";
+        let four_source = ";\n";
+        let five_source =
+            "import two from \"./2.cjs\";\nimport three from \"./3.cjs\";\ntwo.foo;\nthree.foo;\n";
+
+        let options = ResolvedCompilerOptions {
+            allow_js: true,
+            check_js: true,
+            module_resolution: Some(crate::config::ModuleResolutionKind::NodeNext),
+            module_suffixes: vec![String::new()],
+            printer: tsz::emitter::PrinterOptions {
+                module: ModuleKind::Node20,
+                target: tsz_common::common::ScriptTarget::ES2022,
+                ..Default::default()
+            },
+            checker: tsz::checker::context::CheckerOptions {
+                module: ModuleKind::Node20,
+                target: tsz_common::common::ScriptTarget::ES2022,
+                no_types_and_symbols: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (two_path.to_str().unwrap(), two_source),
+                (three_path.to_str().unwrap(), three_source),
+                (four_path.to_str().unwrap(), four_source),
+                (five_path.to_str().unwrap(), five_source),
+            ],
+            &options,
+            &dir,
+        );
+
+        let three_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| Path::new(&diag.file) == three_path.as_path())
+            .collect();
+        let five_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| Path::new(&diag.file) == five_path.as_path())
+            .collect();
+
+        assert!(
+            three_diags.iter().any(|diag| {
+                diag.code == 2304 && diag.message_text.contains("Cannot find name 'exports'")
+            }),
+            "expected TS2304 for exports in a .cjs file with ESM syntax, got: {three_diags:?}"
+        );
+        assert!(
+            five_diags
+                .iter()
+                .any(|diag| { diag.code == 1192 && diag.message_text.contains("Module '\"3\"'") }),
+            "expected TS1192 for default import from the ESM-syntax .cjs file, got file diagnostics: {five_diags:?}; all diagnostics: {diagnostics:?}"
+        );
+        assert!(
+            five_diags.iter().all(|diag| {
+                !(diag.code == 1192 && diag.message_text.contains("Module '\"2\"'"))
+            }),
+            "did not expect TS1192 for default import from plain CommonJS .cjs, got: {five_diags:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);

@@ -1005,7 +1005,11 @@ impl<'a> CheckerState<'a> {
             let Some(literal) = self.ctx.arena.get_literal(spec_node) else {
                 continue;
             };
-            if !self.module_exists_cross_file(&literal.text) {
+            let resolved_target = self
+                .ctx
+                .resolve_import_target_from_file(self.ctx.current_file_idx, &literal.text)
+                .or_else(|| self.ctx.resolve_import_target(&literal.text));
+            if resolved_target.is_none() && !self.module_exists_cross_file(&literal.text) {
                 continue;
             }
 
