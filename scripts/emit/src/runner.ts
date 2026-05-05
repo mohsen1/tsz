@@ -640,13 +640,14 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     // only handles `out.js` by default, so we fix up the expected output for
     // custom outFile names (e.g., dummy.js, output.js).
     const outFile = typeof directives.outfile === 'string' ? directives.outfile : undefined;
+    const normalizedOutFile = outFile?.replace(/^[/\\]+/, '');
     const outDir = typeof tsconfigOptions.outDir === 'string' ? tsconfigOptions.outDir : undefined;
     const rootDir = typeof tsconfigOptions.rootDir === 'string' ? tsconfigOptions.rootDir : undefined;
-    if (outFile && outFile !== 'out.js' && baseline.files.has(outFile)) {
-      baseline.js = baseline.files.get(outFile) ?? baseline.js;
-      baseline.jsFileName = outFile;
+    if (normalizedOutFile && normalizedOutFile !== 'out.js' && baseline.files.has(normalizedOutFile)) {
+      baseline.js = baseline.files.get(normalizedOutFile) ?? baseline.js;
+      baseline.jsFileName = normalizedOutFile;
     }
-    const outDtsFile = outFile?.replace(/\.js$/, '.d.ts');
+    const outDtsFile = normalizedOutFile?.replace(/\.js$/, '.d.ts');
     if (outDtsFile && outDtsFile !== 'out.d.ts' && baseline.files.has(outDtsFile)) {
       baseline.dts = baseline.files.get(outDtsFile) ?? baseline.dts;
       baseline.dtsFileName = outDtsFile;
