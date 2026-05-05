@@ -823,7 +823,18 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 })?;
         }
 
-        Some(self.get_or_create_def_id(current_sym))
+        let def_id = self.get_or_create_def_id(current_sym);
+        // Cache the resolution into `type_env` so the next solver-side
+        // evaluator pass (which uses `TypeEnvironment` as resolver) can
+        // reduce `Application(UnresolvedTypeName(name), args)` without
+        // having to bounce back into the wider CheckerContext path. The
+        // first-pass evaluator runs with `&*self.type_env`, so without
+        // this cache share every nested Application keeps producing
+        // opaque results for the rest of an instantiated body.
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            env.insert_unresolved_resolution(name.to_string(), def_id);
+        }
+        Some(def_id)
     }
 
     /// Check if a `TypeId` represents a full Enum type (not a specific member).
