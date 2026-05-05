@@ -382,7 +382,7 @@ impl<'a> CheckerState<'a> {
         let rest = expr.strip_prefix("import(")?;
         let mut rest = rest.trim_start();
         let quote = rest.chars().next()?;
-        if quote != '"' && quote != '\'' && quote != '`' {
+        if quote != '"' && quote != '\'' {
             return None;
         }
         rest = &rest[quote.len_utf8()..];
@@ -432,7 +432,7 @@ impl<'a> CheckerState<'a> {
             cursor += 1;
         }
         let quote = *bytes.get(cursor)?;
-        if quote != b'"' && quote != b'\'' && quote != b'`' {
+        if quote != b'"' && quote != b'\'' {
             return None;
         }
         cursor += 1;
@@ -485,6 +485,21 @@ impl<'a> CheckerState<'a> {
         }
 
         Some((module_specifier, segments))
+    }
+
+    pub(super) fn jsdoc_backtick_import_argument_offset(type_expr: &str) -> Option<usize> {
+        let mut search_from = 0usize;
+        while let Some(import_offset) = type_expr[search_from..].find("import(") {
+            let mut cursor = search_from + import_offset + "import(".len();
+            while cursor < type_expr.len() && type_expr.as_bytes()[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if type_expr.as_bytes().get(cursor).copied() == Some(b'`') {
+                return Some(cursor);
+            }
+            search_from = cursor.saturating_add(1);
+        }
+        None
     }
 
     pub(super) fn jsdoc_template_constraints(jsdoc: &str) -> Vec<(String, Option<String>)> {

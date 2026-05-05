@@ -456,6 +456,9 @@ impl<'a> CheckerState<'a> {
             &source_text,
         );
         // Set the anchor position for typedef scoping.
+        if Self::jsdoc_backtick_import_argument_offset(type_expr).is_some() {
+            return Some(TypeId::ERROR);
+        }
         let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
         let prev_file_name = self.ctx.file_name.clone();
         let prev_file_idx = self.ctx.current_file_idx;

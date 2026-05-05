@@ -182,6 +182,95 @@ const value = { value: 123 };
 }
 
 #[test]
+fn checked_js_jsdoc_import_type_rejects_backtick_module_specifier() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "dep.d.ts",
+                r#"
+export interface Foo {
+  x: string;
+}
+                "#,
+            ),
+            (
+                "index.js",
+                r#"
+// @ts-check
+
+/** @type {import(`./dep`).Foo} */
+const value = { x: "ok" };
+
+value.x.toUpperCase();
+value.y;
+                "#,
+            ),
+        ],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1141),
+        "Expected TS1141 for backtick JSDoc import type module specifier. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Invalid JSDoc import syntax should not resolve Foo and emit downstream TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_jsdoc_typeof_import_rejects_backtick_module_specifier() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "dep.d.ts",
+                r#"
+export const value: string;
+                "#,
+            ),
+            (
+                "index.js",
+                r#"
+// @ts-check
+
+/** @type {typeof import(`./dep`)} */
+const ns = {};
+
+ns.value;
+                "#,
+            ),
+        ],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1141),
+        "Expected TS1141 for backtick JSDoc typeof import module specifier. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Invalid JSDoc typeof import syntax should not resolve the module namespace and emit downstream TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn checked_js_cross_file_typedef_and_script_globals_duplicate() {
     let files = &[
         ("mod1.js", "/** @typedef {number} Foo */\nclass Bar {}\n"),
