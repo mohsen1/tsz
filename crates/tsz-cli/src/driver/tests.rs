@@ -2,6 +2,7 @@ use super::FileReadResult;
 use super::check_module_resolution_compatibility;
 use super::check_module_resolution_compatibility_mut;
 use super::compile;
+use super::find_tsconfig;
 use super::no_input_diagnostics_for_config;
 use super::read_source_file;
 use crate::args::CliArgs;
@@ -66,6 +67,17 @@ const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
                 | 1489
         )
         || matches!(code, 2458 | 2754)
+}
+
+#[test]
+fn find_tsconfig_walks_up_from_project_subdirectory() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let config = dir.path().join("tsconfig.json");
+    fs::write(&config, "{}").expect("write tsconfig");
+    let nested = dir.path().join("packages/zod/src");
+    fs::create_dir_all(&nested).expect("create nested project dir");
+
+    assert_eq!(find_tsconfig(&nested), Some(config));
 }
 
 #[test]
