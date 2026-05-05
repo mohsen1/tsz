@@ -17,6 +17,83 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn first_unannotated_callback_param_name_in_call(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let call = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|node| self.ctx.arena.get_call_expr(node))?;
+        let args = call.arguments.as_ref()?;
+        for &arg_idx in &args.nodes {
+            if let Some(param_name) = self.first_unannotated_callback_param_name_in_node(arg_idx) {
+                return Some(param_name);
+            }
+        }
+        None
+    }
+
+    fn first_unannotated_callback_param_name_in_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::METHOD_DECLARATION
+            || node.kind == syntax_kind_ext::GET_ACCESSOR
+            || node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            let params = if let Some(func) = self.ctx.arena.get_function(node) {
+                Some(func.parameters.nodes.as_slice())
+            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                Some(method.parameters.nodes.as_slice())
+            } else {
+                self.ctx
+                    .arena
+                    .get_accessor(node)
+                    .map(|accessor| accessor.parameters.nodes.as_slice())
+            }?;
+
+            for &param_idx in params {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if param.type_annotation.is_some() || self.is_this_parameter_name(param.name) {
+                    continue;
+                }
+                return Some(param.name);
+            }
+            return None;
+        }
+
+        if let Some(literal) = self.ctx.arena.get_literal_expr(node) {
+            for &element_idx in &literal.elements.nodes {
+                let Some(element) = self.ctx.arena.get(element_idx) else {
+                    continue;
+                };
+                let child_idx = if let Some(prop) = self.ctx.arena.get_property_assignment(element)
+                {
+                    prop.initializer
+                } else if let Some(spread) = self.ctx.arena.get_spread(element) {
+                    spread.expression
+                } else {
+                    element_idx
+                };
+                if let Some(param_name) =
+                    self.first_unannotated_callback_param_name_in_node(child_idx)
+                {
+                    return Some(param_name);
+                }
+            }
+        }
+
+        None
+    }
+
     /// Determine whether a call/new callee that resolved to `TypeId::ERROR`
     /// emitted a name/value resolution diagnostic at the callee site. Used to
     /// suppress contextual `any` for callback arguments so TS7006 still fires
@@ -583,11 +660,24 @@ impl<'a> CheckerState<'a> {
         // diagnostic at the call expression that triggered it.
         if self.ctx.types.take_union_too_complex() {
             use crate::diagnostics::diagnostic_messages;
+            let diagnostic_idx = self
+                .first_unannotated_callback_param_name_in_call(idx)
+                .unwrap_or(idx);
             self.error_at_node(
-                idx,
+                diagnostic_idx,
                 diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
                 diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
             );
+            if diagnostic_idx != idx
+                && self.ctx.no_implicit_any()
+                && let Some(param_name) = self.get_parameter_name(diagnostic_idx)
+            {
+                self.error_at_node_msg(
+                    diagnostic_idx,
+                    diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+                    &[&param_name, "any"],
+                );
+            }
         }
 
         self.ctx.call_depth.borrow_mut().leave();
