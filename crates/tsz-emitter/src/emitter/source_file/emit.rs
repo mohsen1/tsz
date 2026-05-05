@@ -893,8 +893,37 @@ impl<'a> Printer<'a> {
         if self.ctx.options.import_helpers && !self.ctx.is_commonjs() && helpers.any_needed() {
             let names = helpers.needed_names();
             if !names.is_empty() {
+                // When a helper name collides with a local identifier (e.g.
+                // `declare var __decorate`), tsc renames the import alias to
+                // `__decorate_1` and uses the alias at call sites. Detect
+                // those collisions and emit `import { name as name_1 } from
+                // "tslib"`. The aliases are stored on the printer so later
+                // helper-call emission picks them up.
                 self.write("import { ");
-                self.write(&names.join(", "));
+                let mut first = true;
+                for name in &names {
+                    if !first {
+                        self.write(", ");
+                    }
+                    first = false;
+                    self.write(name);
+                    let name_str: &str = name;
+                    let collides = self.file_identifiers.contains(name_str);
+                    if collides {
+                        let mut suffix = 1u32;
+                        let mut alias = format!("{name_str}_{suffix}");
+                        while self.file_identifiers.contains(alias.as_str())
+                            || self.helper_import_aliases.values().any(|v| v == &alias)
+                        {
+                            suffix += 1;
+                            alias = format!("{name_str}_{suffix}");
+                        }
+                        self.write(" as ");
+                        self.write(&alias);
+                        self.helper_import_aliases
+                            .insert(name_str.to_string(), alias);
+                    }
+                }
                 self.write(" } from \"tslib\";");
                 self.write_line();
                 emitted_tslib_esm_import = true;
