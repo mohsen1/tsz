@@ -1402,6 +1402,10 @@ impl<'a> CheckerState<'a> {
         info: JsdocTypedefInfo,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let factory = self.ctx.types.factory();
+        let import_alias_body = info
+            .base_type
+            .as_deref()
+            .is_some_and(|expr| expr.trim_start().starts_with("import("));
         let mut type_param_infos = Vec::with_capacity(info.template_params.len());
         let mut scope_updates = Vec::with_capacity(info.template_params.len());
         for template in &info.template_params {
@@ -1439,7 +1443,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        result.map(|type_id| (type_id, type_param_infos))
+        if result.is_none() && import_alias_body {
+            return None;
+        }
+        Some((result.unwrap_or(TypeId::ANY), type_param_infos))
     }
 
     fn type_from_jsdoc_callback(

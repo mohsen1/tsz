@@ -1133,14 +1133,20 @@ impl<'a> CheckerState<'a> {
                     .resolve_jsdoc_implicit_any_builtin_type(simple_expr)
                     .is_some()
                     || self.source_file_declares_jsdoc_template(simple_expr)
+                    || Self::parse_jsdoc_typedefs(&source_text)
+                        .iter()
+                        .any(|(name, _)| name == simple_expr)
                 {
                     continue;
                 }
-                if Self::is_simple_type_name(simple_expr)
-                    && self.resolve_jsdoc_type_str(simple_expr).is_none_or(|ty| {
+                let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
+                let unresolved_return_type =
+                    self.resolve_jsdoc_type_str(simple_expr).is_none_or(|ty| {
                         ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
-                    })
-                {
+                    });
+                self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+                if Self::is_simple_type_name(simple_expr) && unresolved_return_type {
                     self.emit_jsdoc_cannot_find_name(
                         simple_expr,
                         comment.pos,

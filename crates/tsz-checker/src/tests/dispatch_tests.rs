@@ -1413,6 +1413,36 @@ const options = { value: null };
 }
 
 #[test]
+fn jsdoc_broken_typedef_body_recovers_alias_as_any() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/** @typedef {U} T */
+/**
+ * @returns {T}
+ */
+function f() {
+    return 1;
+}
+/** @type {T} */
+const x = 3;
+"#,
+    );
+    let ts2304_messages: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2304)
+        .map(|d| d.message_text.to_string())
+        .collect();
+    assert!(
+        ts2304_messages.iter().any(|m| m.contains("'U'")),
+        "Expected TS2304 for unresolved typedef body name, got: {diags:?}"
+    );
+    assert!(
+        !ts2304_messages.iter().any(|m| m.contains("'T'")),
+        "Broken typedef body should not make the alias name unresolved, got: {diags:?}"
+    );
+}
+
+#[test]
 fn tagged_template_contextual_typing_flows_through_request_path() {
     let diags = check_source_diagnostics(
         r#"

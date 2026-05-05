@@ -91,12 +91,18 @@ impl<'a> CheckerState<'a> {
         // returning `None` for mixed-arity overload sets and falling back to a
         // signature-less single pass.
         let total_arg_count = 1 + substitution_exprs.len();
-        let callee_shape = call_checker::get_contextual_signature_for_arity(
-            self.ctx.types,
-            resolved_tag_type,
-            total_arg_count,
-        )
-        .or_else(|| call_checker::get_contextual_signature(self.ctx.types, resolved_tag_type));
+        let callee_shape =
+            call_checker::get_call_signature(self.ctx.types, resolved_tag_type, total_arg_count)
+                .or_else(|| {
+                    call_checker::get_contextual_signature_for_arity(
+                        self.ctx.types,
+                        resolved_tag_type,
+                        total_arg_count,
+                    )
+                })
+                .or_else(|| {
+                    call_checker::get_contextual_signature(self.ctx.types, resolved_tag_type)
+                });
 
         // Detect constructor-only callable types (classes, interfaces with only `new` sigs).
         // `get_contextual_signature` falls back to construct signatures when call
@@ -188,9 +194,34 @@ impl<'a> CheckerState<'a> {
         // So substitution expression at index `i` corresponds to param at index `i + 1`.
 
         // Create contextual context from tag function type
+        let contextual_callee_type = if tagged.type_arguments.is_some() {
+            call_checker::get_call_signature(self.ctx.types, call_target_type, total_arg_count)
+                .or_else(|| {
+                    call_checker::get_contextual_signature_for_arity(
+                        self.ctx.types,
+                        call_target_type,
+                        total_arg_count,
+                    )
+                })
+                .or_else(|| {
+                    call_checker::get_contextual_signature(self.ctx.types, call_target_type)
+                })
+                .map(|shape| self.ctx.types.factory().function(shape))
+                .unwrap_or(call_target_type)
+        } else {
+            callee_shape
+                .as_ref()
+                .map(|shape| self.ctx.types.factory().function(shape.clone()))
+                .unwrap_or(callee_type_for_context)
+        };
+        let selected_callee_type = if tagged.type_arguments.is_some() {
+            call_target_type
+        } else {
+            contextual_callee_type
+        };
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
-            callee_type_for_context,
+            contextual_callee_type,
             self.ctx.compiler_options.no_implicit_any,
         );
 
@@ -214,7 +245,14 @@ impl<'a> CheckerState<'a> {
 
                 for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
                     let ctx_type = ctx_helper.get_parameter_type_for_call(i + 1, total_args);
-                    let arg_request = request.read().contextual_opt(ctx_type);
+                    let is_nullish_literal = self
+                        .literal_type_from_initializer(expr_idx)
+                        .is_some_and(|ty| ty == TypeId::UNDEFINED || ty == TypeId::NULL);
+                    let arg_request = if is_nullish_literal {
+                        request.read().contextual_opt(None)
+                    } else {
+                        request.read().contextual_opt(ctx_type)
+                    };
                     let arg_type = self.get_type_of_node_with_request(expr_idx, &arg_request);
                     arg_types.push(arg_type);
                 }
@@ -228,6 +266,7 @@ impl<'a> CheckerState<'a> {
                     force_bivariant_callbacks,
                     request.contextual_type,
                     actual_this_type,
+                    selected_callee_type,
                 );
             }
 
@@ -260,7 +299,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let ctx_type = ctx_helper
                             .get_parameter_type_for_call(i + 1, 1 + substitution_exprs.len());
-                        let arg_request = request.read().contextual_opt(ctx_type);
+                        let is_nullish_literal = self
+                            .literal_type_from_initializer(expr_idx)
+                            .is_some_and(|ty| ty == TypeId::UNDEFINED || ty == TypeId::NULL);
+                        let arg_request = if is_nullish_literal {
+                            request.read().contextual_opt(None)
+                        } else {
+                            request.read().contextual_opt(ctx_type)
+                        };
                         let arg_type = self.get_type_of_node_with_request(expr_idx, &arg_request);
                         round1_arg_types.push(arg_type);
                     }
@@ -329,6 +375,7 @@ impl<'a> CheckerState<'a> {
                     force_bivariant_callbacks,
                     request.contextual_type,
                     actual_this_type,
+                    selected_callee_type,
                 );
             }
         }
@@ -353,6 +400,7 @@ impl<'a> CheckerState<'a> {
             force_bivariant_callbacks,
             request.contextual_type,
             actual_this_type,
+            selected_callee_type,
         )
     }
 
@@ -382,10 +430,27 @@ impl<'a> CheckerState<'a> {
         force_bivariant_callbacks: bool,
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
+        selected_callee_type: TypeId,
     ) -> TypeId {
         let mut args = Vec::with_capacity(1 + substitution_exprs.len());
         args.push(tagged.template);
         args.extend_from_slice(substitution_exprs);
+
+        let selected_return = if selected_callee_type != callee_type {
+            let (selected_result, _, _) = self.resolve_call_with_checker_adapter(
+                selected_callee_type,
+                &arg_types,
+                force_bivariant_callbacks,
+                contextual_type,
+                actual_this_type,
+            );
+            match selected_result {
+                tsz_solver::operations::CallResult::Success(return_type) => Some(return_type),
+                _ => None,
+            }
+        } else {
+            None
+        };
 
         let (result, _instantiated_predicate, _instantiated_params) = self
             .resolve_call_with_checker_adapter(
@@ -395,8 +460,18 @@ impl<'a> CheckerState<'a> {
                 contextual_type,
                 actual_this_type,
             );
+        let full_resolution_succeeded =
+            matches!(result, tsz_solver::operations::CallResult::Success(_));
+        if let tsz_solver::operations::CallResult::NoOverloadMatch { failures, .. } = &result
+            && selected_callee_type != callee_type
+            && let Some(selected_return) = self
+                .selected_tagged_template_nullish_overload_return(selected_callee_type, &arg_types)
+        {
+            self.error_no_overload_matches_at(idx, failures);
+            return selected_return;
+        }
 
-        self.handle_call_result(
+        let return_type = self.handle_call_result(
             result,
             super::call_result::CallResultContext {
                 callee_expr: tagged.tag,
@@ -408,7 +483,34 @@ impl<'a> CheckerState<'a> {
                 is_optional_chain: false,
                 allow_contextual_mismatch_deferral: true,
             },
-        )
+        );
+
+        if full_resolution_succeeded && let Some(selected_return) = selected_return {
+            return selected_return;
+        }
+
+        return_type
+    }
+
+    fn selected_tagged_template_nullish_overload_return(
+        &self,
+        selected_callee_type: TypeId,
+        arg_types: &[TypeId],
+    ) -> Option<TypeId> {
+        let shape = crate::query_boundaries::common::function_shape_for_type(
+            self.ctx.types,
+            selected_callee_type,
+        )?;
+        if !shape.type_params.is_empty()
+            || arg_types.len() != 2
+            || !matches!(
+                arg_types.get(1).copied(),
+                Some(TypeId::NULL | TypeId::UNDEFINED)
+            )
+        {
+            return None;
+        }
+        Some(shape.return_type)
     }
 
     /// Collect template substitution expression `NodeIndex` values from a tagged template.

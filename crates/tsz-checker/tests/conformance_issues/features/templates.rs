@@ -1074,6 +1074,59 @@ var h = tempFun `${ (x => x) } ${ (((x => x))) } ${ undefined }`;
 }
 
 #[test]
+fn test_tagged_template_overload_context_uses_first_applicable_signature() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+function fn2(strs: TemplateStringsArray, s: string, n: number): number;
+function fn2<T>(strs: TemplateStringsArray, n: number, t: T): T;
+function fn2() { return undefined; }
+
+function fn1(strs: TemplateStringsArray, s: string): string;
+function fn1(strs: TemplateStringsArray, n: number): number;
+function fn1() { return null; }
+
+var s: string = fn1 `${ undefined }`;
+var d2 = fn2 `${ 0 }${ undefined }`;
+d2();
+
+function fn5(strs: TemplateStringsArray, f: (n: string) => void): string;
+function fn5(strs: TemplateStringsArray, f: (n: number) => void): number;
+function fn5() { return undefined; }
+
+fn5 `${ (n) => n.toFixed() }`;
+fn5 `${ (n) => n.substr(0) }`;
+        "#,
+        CheckerOptions {
+            no_implicit_any: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2551
+            && message.contains("toFixed")
+            && message.contains("string")),
+        "Expected the first overload to contextually type n as string and report TS2551. Actual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2722),
+        "Expected generic overload result inference to preserve possibly-undefined d2(). Actual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Tagged-template callback substitutions should be contextually typed by the first applicable overload. Actual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("number")
+            && message.contains("string")),
+        "Ambiguous tagged-template overloads should use the first overload result, not report number-to-string TS2322. Actual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_tagged_template_generic_unresolved_type_params_display_as_unknown() {
     let diagnostics = compile_and_get_diagnostics_with_lib(
         r#"

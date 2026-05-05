@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `fix/tagged-template-overload-diagnostics`
 - **PR**: #2760
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: Conformance / tagged template overload diagnostics
 
 ## Intent
@@ -33,3 +33,14 @@ claim covers the remaining diagnostics behavior.
 ## Verification
 
 - `./scripts/conformance/conformance.sh run --filter "taggedTemplateStringsWithOverloadResolution3" --verbose` currently fails 0/2 with missing `TS2551`/`TS2722`, extra `TS7006`, and additional `TS2769`/`TS2322` fingerprint drift.
+- `./scripts/conformance/conformance.sh run --filter "taggedTemplateStringsWithOverloadResolution3" --verbose` passes 2/2 with no fingerprint-only drift.
+- Regression filters pass for `genericTemplateOverloadResolution`, `taggedTemplatesWithTypeArguments1`, `jsDeclarationsTypeAliases`, `typedefTagTypeResolution`, and `importTag17`.
+- `cargo nextest run --package tsz-checker --lib ts2769_tagged_template_anchors_after_nullish_recovery jsdoc_broken_typedef_body_recovers_alias_as_any` passes 2/2.
+- `cargo nextest run --package tsz-checker --test conformance_issues test_tagged_template` passes 7/7.
+- `cargo check --package tsz-checker` passes.
+- `./scripts/safe-run.sh ./scripts/conformance/conformance.sh run` passes with no regressions and improves full conformance from `12436 -> 12441` (+5):
+  - `TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithOverloadResolution3.ts`
+  - `TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithOverloadResolution3_ES6.ts`
+  - `TypeScript/tests/cases/conformance/salsa/prototypePropertyAssignmentMergeWithInterfaceMethod.ts`
+  - `TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithGenericConstructSignaturesWithOptionalParameters.ts`
+  - `TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts`

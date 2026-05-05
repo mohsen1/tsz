@@ -837,6 +837,34 @@ let r = tag`${true}`;
 }
 
 #[test]
+fn ts2769_tagged_template_anchors_after_nullish_recovery() {
+    let source = r#"
+declare function fn1(strs: TemplateStringsArray, s: string): string;
+declare function fn1(strs: TemplateStringsArray, n: number): number;
+let s: string = fn1`${undefined}`;
+fn1`${{}}`;
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let ts2769: Vec<_> = diagnostics.iter().filter(|d| d.code == 2769).collect();
+    let undefined_start = source.find("undefined").expect("expected undefined") as u32;
+    let object_start = source.find("{}").expect("expected object literal") as u32;
+
+    assert!(
+        ts2769.iter().any(|d| d.start == undefined_start),
+        "expected TS2769 at undefined substitution, got: {ts2769:?}"
+    );
+    assert!(
+        ts2769.iter().any(|d| d.start == object_start),
+        "expected TS2769 at object substitution, got: {ts2769:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "nullish overload recovery should not leave TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn ts2769_bind_call_with_non_undefined_this_arg_anchors_bind_member() {
     let source = r#"
 function bar<T extends unknown[]>(callback: (this: 1, ...args: T) => void) {
