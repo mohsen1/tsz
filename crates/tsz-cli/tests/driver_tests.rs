@@ -4836,6 +4836,50 @@ fn compile_with_root_dir_flattens_output_paths() {
 }
 
 #[test]
+fn compile_elides_unused_default_import_but_keeps_used_named_import() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "target": "es2022",
+            "outDir": "dist"
+          },
+          "files": ["main.ts", "dep.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("dep.ts"),
+        "export default class Foo {}\nexport function bar() {}\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        "import Foo, { bar } from \"./dep\";\nbar();\nexport {};\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read main.js");
+    assert!(
+        js.contains("import { bar } from \"./dep\";"),
+        "Expected named import to remain without unused default binding: {js}"
+    );
+    assert!(
+        !js.contains("Foo"),
+        "Expected unused default import to be elided: {js}"
+    );
+}
+
+#[test]
 fn compile_respects_no_emit_on_error() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
