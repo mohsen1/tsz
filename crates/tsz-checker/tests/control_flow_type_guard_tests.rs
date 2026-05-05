@@ -18,6 +18,54 @@ fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn overloaded_type_guard_uses_selected_predicate() {
+    let diagnostics = strict_diagnostics(
+        r#"
+interface S {
+  s: string;
+}
+interface N {
+  n: number;
+}
+
+function guard(x: unknown): x is S;
+function guard(x: unknown, flag: true): x is N;
+function guard(_x: unknown, _flag?: true): _x is S | N {
+  return true;
+}
+function takesS(value: S): void {
+  value;
+}
+function takesN(value: N): void {
+  value;
+}
+
+let value = {} as S | N;
+
+if (guard(value, true)) {
+  takesN(value);
+  takesS(value);
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message == "Argument of type 'N' is not assignable to parameter of type 'S'."
+        }),
+        "expected selected two-argument overload to narrow value to N: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, message)| {
+            *code != 2345
+                || message != "Argument of type 'S' is not assignable to parameter of type 'N'."
+        }),
+        "overloaded type guard used the first predicate instead of the selected overload: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn instanceof_symbol_hasinstance_generic_predicate_erases_to_any() {
     let source = r#"
 interface SymbolConstructor {
