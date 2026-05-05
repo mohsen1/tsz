@@ -109,6 +109,36 @@ fn module_detection_force_emits_use_strict_for_cjs() {
 }
 
 #[test]
+fn cjs_exported_var_rewrite_respects_function_parameter_shadow() {
+    let source = r#"export const obj = { value: 1 };
+export function f(obj: { value: number }) {
+    return obj;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("return obj;"),
+        "Function parameter should shadow the exported variable inside the body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return exports.obj;"),
+        "Function parameter should not be rewritten through exports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn malformed_import_numeric_operand_emits_recovered_expression() {
     let source = "import 10;";
 
