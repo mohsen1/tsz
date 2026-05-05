@@ -1130,8 +1130,18 @@ impl<'a> CheckerState<'a> {
     ) {
         let is_async = func.is_async;
         let is_generator = func.asterisk_token;
-        let mut check_return_type =
-            self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
+        let generator_return_type_for_completeness = if is_generator {
+            self.generator_return_type_for_implicit_return_check(return_type)
+        } else {
+            None
+        };
+        let has_generator_return_type_for_completeness =
+            generator_return_type_for_completeness.is_some();
+        let mut check_return_type = if is_generator {
+            generator_return_type_for_completeness.unwrap_or(TypeId::UNKNOWN)
+        } else {
+            self.return_type_for_implicit_return_check(return_type, is_async, false)
+        };
         // For async functions, if we couldn't unwrap Promise<T> (e.g. lib files not loaded),
         // fall back to the annotation syntax. If it looks like Promise<...>, suppress TS2355
         // since we can't verify the inner type anyway.
@@ -1153,15 +1163,17 @@ impl<'a> CheckerState<'a> {
         // still emits TS2355 when the body has no returns at all and falls
         // through (e.g. empty body). requires_return_value returns false for
         // UNKNOWN to skip TS2366; this scan supports the empty-body TS2355
-        // check below. Generators must be excluded — `return_type_for_implicit_return_check`
-        // returns UNKNOWN as a stub for any generator, and generators legitimately
-        // have no `return` statement (they `yield`).
-        let needs_unknown_empty_body_scan =
-            check_explicit_return_paths && check_return_type == TypeId::UNKNOWN && !is_generator;
+        // check below. Generators use the same rule only when we successfully
+        // extracted the declared `TReturn` from a generator-like annotation.
+        let can_check_generator_completion =
+            !is_generator || has_generator_return_type_for_completeness;
+        let needs_unknown_empty_body_scan = check_explicit_return_paths
+            && check_return_type == TypeId::UNKNOWN
+            && can_check_generator_completion;
         // TS2355 for `undefined | T` unions: requires_return is false (to skip TS2366),
         // but we still need flow analysis to check falls_through for the stricter TS2355.
         let needs_ts2355_undefined_union_scan = check_explicit_return_paths
-            && !is_generator
+            && can_check_generator_completion
             && self.type_requires_return_ts2355(check_return_type);
         let need_return_flow_scan = (check_explicit_return_paths && requires_return)
             || check_no_implicit_returns
@@ -1204,7 +1216,7 @@ impl<'a> CheckerState<'a> {
         // check (since `undefined` is assignable to `unknown`), but tsc still
         // requires at least one return statement when the annotation is `unknown`.
         if has_type_annotation
-            && !is_generator
+            && can_check_generator_completion
             && check_return_type == TypeId::UNKNOWN
             && self.function_body_falls_through(func.body)
             && !self.body_has_return_with_value(func.body)
@@ -1279,7 +1291,7 @@ impl<'a> CheckerState<'a> {
             && !requires_return
             && !has_return
             && falls_through
-            && !is_generator
+            && can_check_generator_completion
             && self.type_requires_return_ts2355(check_return_type)
         {
             let jsdoc_span = if !has_type_annotation && has_jsdoc_return_type {
@@ -1314,7 +1326,7 @@ impl<'a> CheckerState<'a> {
             && has_type_annotation
             && !has_return
             && falls_through
-            && !is_generator
+            && can_check_generator_completion
         {
             // tsc treats `unknown` as undefined-assignable for TS2366 (no error
             // when SOME paths return), but it still emits TS2355 when the body
@@ -1330,6 +1342,7 @@ impl<'a> CheckerState<'a> {
         } else if check_no_implicit_returns
             && has_return
             && falls_through
+            && (!is_generator || has_generator_return_type_for_completeness || !has_declared_return)
             && !self.should_skip_no_implicit_return_check(check_return_type, has_declared_return)
         {
             // TS7030: noImplicitReturns - not all code paths return a value
