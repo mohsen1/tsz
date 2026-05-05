@@ -1127,6 +1127,44 @@ module.exports = a;
 }
 
 #[test]
+fn test_export_equals_namespace_keeps_local_type_dependencies() {
+    let source = r#"
+namespace X {
+    interface A {
+        kind: 'a';
+    }
+
+    interface B {
+        kind: 'b';
+    }
+
+    export type C = A | B;
+}
+
+export = X;
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("interface A {\n        kind: 'a';\n    }"),
+        "Expected local namespace interface A used by exported alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("interface B {\n        kind: 'b';\n    }"),
+        "Expected local namespace interface B used by exported alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("export type C = A | B;"),
+        "Expected exported namespace alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected mixed exported and local namespace members to emit a scope marker: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_emits_named_exports_and_filters_locals() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
