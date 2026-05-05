@@ -499,6 +499,36 @@ let p: Passport = passport.use();
     );
 }
 
+#[test]
+fn test_polymorphic_this_subtype_assignment_to_base_is_allowed() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class Base {
+  clone(): this {
+    return this;
+  }
+}
+
+class Derived extends Base {
+  derivedOnly = 1;
+}
+
+const derived = new Derived();
+const base: Base = derived.clone();
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Subtype assignment from inherited polymorphic-this call should not emit TS2322. Got: {diagnostics:#?}"
+    );
+}
+
 /// Simpler variant: named interface import from an ambient module without
 /// polymorphic this.
 #[test]
