@@ -278,6 +278,10 @@ name = "js_jsdoc_diagnostics_tests"
 path = "tests/js_jsdoc_diagnostics_tests.rs"
 
 [[test]]
+name = "js_arguments_reference_tests"
+path = "tests/js_arguments_reference_tests.rs"
+
+[[test]]
 name = "static_member_access_types"
 path = "tests/static_member_access_types.rs"
 
