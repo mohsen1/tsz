@@ -12551,6 +12551,44 @@ namespace SomeOther.Thing {
 }
 
 #[test]
+fn global_nan_equality_condition_reports_ts2845_in_project_compile() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "noEmit": true
+  },
+  "files": ["test.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"declare const x: number;
+
+if (x === NaN) {}
+if (NaN !== x) {}
+
+function t1(value: number, NaN: number) {
+    return value === NaN;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2845_count = result.diagnostics.iter().filter(|d| d.code == 2845).count();
+
+    assert_eq!(
+        ts2845_count, 2,
+        "Expected global NaN conditions, but not the shadowed parameter, to report TS2845; got: {result:?}"
+    );
+}
+
+#[test]
 fn export_import_qualified_type_only_namespace_reports_ts2708() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;

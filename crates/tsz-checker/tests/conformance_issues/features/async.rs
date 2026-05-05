@@ -768,6 +768,32 @@ export {};
 }
 
 #[test]
+fn test_global_nan_before_later_parameter_shadow_still_triggers_ts2845() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+declare const x: number;
+
+if (x === NaN) {}
+if (NaN !== x) {}
+
+function t1(value: number, NaN: number) {
+    return value === NaN;
+}
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert_eq!(
+        ts2845.len(),
+        2,
+        "Expected global NaN comparisons to emit TS2845 despite later parameter shadowing, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
