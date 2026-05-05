@@ -940,6 +940,8 @@ fn compile_inner(
             || d.code == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
             || d.code
                 == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+            || d.code
+                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
     }) {
         return Ok(CompilationResult {
             diagnostics: config_diagnostics,
