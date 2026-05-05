@@ -259,6 +259,95 @@ fn batch_mode_uses_project_cwd_for_jsdoc_required_constructor_types() {
     );
 }
 
+#[test]
+fn declaration_emit_keyword_destructuring_rest_omits_keyword_key() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("keyword_destructuring_rest_dts").expect("temp dir");
+    let base = temp.path.as_path();
+    let out_dir = base.join("out");
+
+    write_file(
+        &base.join("input.ts"),
+        r#"
+type P = {
+    enum: boolean;
+    function: boolean;
+    abstract: boolean;
+    async: boolean;
+    await: boolean;
+    one: boolean;
+};
+
+function f1({ enum: _enum, ...rest }: P) {
+    return rest;
+}
+
+function f2({ function: _function, ...rest }: P) {
+    return rest;
+}
+
+function f3({ abstract: _abstract, ...rest }: P) {
+    return rest;
+}
+
+function f4({ async: _async, ...rest }: P) {
+    return rest;
+}
+
+function f5({ await: _await, ...rest }: P) {
+    return rest;
+}
+"#,
+    );
+
+    let output = Command::new(&tsz_bin)
+        .args([
+            "--ignoreConfig",
+            "--declaration",
+            "--emitDeclarationOnly",
+            "--target",
+            "es2015",
+            "--outDir",
+            out_dir.to_str().expect("utf-8 temp path"),
+            "input.ts",
+        ])
+        .current_dir(base)
+        .output()
+        .expect("failed to run tsz");
+    assert!(
+        output.status.success(),
+        "tsz failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let dts = std::fs::read_to_string(out_dir.join("input.d.ts")).expect("declaration output");
+    for (function_name, omitted_key) in [
+        ("f1", "enum"),
+        ("f2", "function"),
+        ("f3", "abstract"),
+        ("f4", "async"),
+        ("f5", "await"),
+    ] {
+        let signature = format!("declare function {function_name}");
+        let start = dts
+            .find(&signature)
+            .unwrap_or_else(|| panic!("Expected {signature} in declaration output: {dts}"));
+        let end = dts[start..]
+            .find("};")
+            .map_or(dts.len(), |offset| start + offset);
+        let emitted_function = &dts[start..end];
+
+        assert!(
+            !emitted_function.contains(&format!("    {omitted_key}: boolean;")),
+            "Expected `{omitted_key}` to be omitted from {function_name} rest return type: {dts}"
+        );
+    }
+}
+
 /// Normalize output: strip ANSI codes, normalize line endings to \n.
 fn normalize_output(s: &str) -> String {
     // Strip ANSI escape codes

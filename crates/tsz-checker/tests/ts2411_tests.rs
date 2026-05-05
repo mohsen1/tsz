@@ -199,6 +199,24 @@ var x: { z: I; [s: string]: { x: any; y: any; } };
     );
 }
 
+#[test]
+fn test_type_literal_union_function_property_vs_index_signature() {
+    let source = r#"
+function test(arg: string | number, whatever: any) {
+  if (typeof arg === "string") {
+    const o: { [k: string]: () => typeof arg; x: (() => boolean) | (() => void) } = whatever;
+  }
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2411
+            && d.1.contains("Property 'x' of type")
+            && d.1.contains("index type '() => string | number'")),
+        "Should emit TS2411 for union function property not assignable to index, got: {diags:?}"
+    );
+}
+
 // Note: Inherited member vs index signature is tested via conformance tests
 // (e.g. inheritedMembersAndIndexSignaturesFromDifferentBases.ts) since it
 // requires full lib type resolution that unit tests don't provide.

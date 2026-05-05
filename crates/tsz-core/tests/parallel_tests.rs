@@ -1020,6 +1020,76 @@ const y: OriginalB = x;
 }
 
 #[test]
+fn test_check_files_parallel_imported_value_wins_over_same_named_type_alias() {
+    let files = vec![
+        (
+            "util.ts".to_string(),
+            r#"
+export namespace util {
+    export const arrayToEnum = <T extends string, U extends [T, ...T[]]>(
+        items: U
+    ): { [k in U[number]]: k } => {
+        const obj: any = {};
+        for (const item of items) obj[item] = item;
+        return obj as any;
+    };
+}
+"#
+            .to_string(),
+        ),
+        (
+            "parseUtil.ts".to_string(),
+            r#"
+import { util } from "./util";
+
+export const ParsedType = util.arrayToEnum([
+    "string",
+    "undefined",
+]);
+
+export type ParsedType = keyof typeof ParsedType;
+"#
+            .to_string(),
+        ),
+        (
+            "types.ts".to_string(),
+            r#"
+import { ParsedType } from "./parseUtil";
+
+const direct: ParsedType = ParsedType.string;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let types_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "types.ts")
+        .expect("expected types.ts result");
+    assert!(
+        !types_file
+            .diagnostics
+            .iter()
+            .any(|diag| matches!(diag.code, 2339 | 2322 | 2345)),
+        "Expected imported enum-like const to remain usable in value position. Actual diagnostics: {:#?}",
+        types_file.diagnostics
+    );
+}
+
+#[test]
 fn test_check_files_parallel_keeps_namespace_local_component_for_create_element_inference() {
     let files = vec![(
         "test.ts".to_string(),

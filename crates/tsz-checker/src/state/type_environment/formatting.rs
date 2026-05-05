@@ -125,6 +125,204 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    pub(crate) fn format_type_diagnostic_for_instantiation_expression(
+        &self,
+        type_id: TypeId,
+    ) -> String {
+        let mut formatter =
+            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                .with_diagnostic_mode()
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_exact_optional_property_types(
+                    self.ctx.compiler_options.exact_optional_property_types,
+                )
+                .with_display_properties()
+                .with_namespace_module_names(&self.ctx.namespace_module_names)
+                .with_module_specifiers(&self.ctx.module_specifiers)
+                .with_module_path_specifiers(&self.ctx.module_path_specifiers)
+                .with_current_file_id(self.ctx.current_file_idx as u32);
+        let display = formatter.format(type_id).into_owned();
+        let application_base =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+                .map(|(base, _)| base)
+                .or_else(|| {
+                    self.ctx.types.get_display_alias(type_id).and_then(|alias| {
+                        crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                            .map(|(base, _)| base)
+                    })
+                });
+        if display.contains('<') {
+            if let Some(name) = display.split('<').next()
+                && let Some(overloads) =
+                    self.format_function_overloads_for_instantiation_expression(name)
+            {
+                return overloads;
+            }
+            let shape_base = application_base
+                .map(|base| {
+                    crate::query_boundaries::common::type_query_symbol(self.ctx.types, base)
+                        .and_then(|sym| {
+                            self.ctx
+                                .symbol_types
+                                .get(&tsz_binder::SymbolId(sym.0))
+                                .copied()
+                        })
+                        .unwrap_or(base)
+                })
+                .or_else(|| {
+                    let name = display.split('<').next()?;
+                    if name
+                        .chars()
+                        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+                    {
+                        self.ctx
+                            .binder
+                            .file_locals
+                            .get(name)
+                            .and_then(|sym| self.ctx.symbol_types.get(&sym))
+                            .copied()
+                            .or_else(|| {
+                                self.ctx
+                                    .binder
+                                    .symbols
+                                    .find_all_by_name(name)
+                                    .iter()
+                                    .find_map(|sym| self.ctx.symbol_types.get(sym).copied())
+                            })
+                    } else {
+                        None
+                    }
+                });
+            if let Some(shape) = shape_base.and_then(|base| {
+                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, base)
+            }) && !shape.call_signatures.is_empty()
+                && shape.construct_signatures.is_empty()
+            {
+                let mut anonymous = (*shape).clone();
+                anonymous.symbol = None;
+                anonymous.properties = Vec::new();
+                let anonymous_type = self.ctx.types.factory().callable(anonymous);
+                let mut structural_formatter = tsz_solver::TypeFormatter::with_symbols(
+                    self.ctx.types,
+                    &self.ctx.binder.symbols,
+                )
+                .with_diagnostic_mode()
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_exact_optional_property_types(
+                    self.ctx.compiler_options.exact_optional_property_types,
+                )
+                .with_display_properties();
+                return structural_formatter.format(anonymous_type).into_owned();
+            }
+            if let Some(sigs) =
+                crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
+                && !sigs.is_empty()
+            {
+                let anonymous_type = self
+                    .ctx
+                    .types
+                    .factory()
+                    .callable(tsz_solver::CallableShape {
+                        call_signatures: sigs.to_vec(),
+                        construct_signatures: Vec::new(),
+                        properties: Vec::new(),
+                        string_index: None,
+                        number_index: None,
+                        symbol: None,
+                        is_abstract: false,
+                    });
+                let mut structural_formatter = tsz_solver::TypeFormatter::with_symbols(
+                    self.ctx.types,
+                    &self.ctx.binder.symbols,
+                )
+                .with_diagnostic_mode()
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_exact_optional_property_types(
+                    self.ctx.compiler_options.exact_optional_property_types,
+                )
+                .with_display_properties();
+                return structural_formatter.format(anonymous_type).into_owned();
+            }
+        }
+        display
+    }
+
+    fn format_function_overloads_for_instantiation_expression(&self, name: &str) -> Option<String> {
+        if !name
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        {
+            return None;
+        }
+        fn clean_signature_part(text: &str) -> &str {
+            text.trim()
+                .trim_start_matches(',')
+                .trim()
+                .trim_end_matches(['>', ')', ',', ';'])
+                .trim()
+        }
+        let source = &self.ctx.arena.source_files.first()?.text;
+        let mut signatures = Vec::new();
+        for sym_id in self.ctx.binder.symbols.find_all_by_name(name) {
+            let Some(symbol) = self.ctx.binder.get_symbol(*sym_id) else {
+                continue;
+            };
+            for &decl in &symbol.declarations {
+                let Some(node) = self.ctx.arena.get(decl) else {
+                    continue;
+                };
+                let Some(func) = self.ctx.arena.get_function(node) else {
+                    continue;
+                };
+                let type_params = func
+                    .type_parameters
+                    .as_ref()
+                    .filter(|params| !params.nodes.is_empty())
+                    .map(|params| {
+                        let params = params
+                            .nodes
+                            .iter()
+                            .filter_map(|&param| self.ctx.arena.get(param))
+                            .map(|node| {
+                                clean_signature_part(&source[node.pos as usize..node.end as usize])
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("<{params}>")
+                    })
+                    .unwrap_or_default();
+                let params = func
+                    .parameters
+                    .nodes
+                    .iter()
+                    .filter_map(|&param| self.ctx.arena.get(param))
+                    .map(|node| clean_signature_part(&source[node.pos as usize..node.end as usize]))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let return_type = if func.type_annotation.is_some() {
+                    self.ctx
+                        .arena
+                        .get(func.type_annotation)
+                        .map(|node| {
+                            format!(
+                                ": {}",
+                                clean_signature_part(&source[node.pos as usize..node.end as usize])
+                            )
+                        })
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                signatures.push(format!("{type_params}({params}){return_type}"));
+            }
+        }
+        if signatures.len() > 1 {
+            Some(format!("{{ {}; }}", signatures.join("; ")))
+        } else {
+            None
+        }
+    }
+
     /// Format a type for assignability error messages WITHOUT display properties.
     /// tsc shows widened property types in assignability messages:
     /// `{ two: number }` not `{ two: 1 }`.

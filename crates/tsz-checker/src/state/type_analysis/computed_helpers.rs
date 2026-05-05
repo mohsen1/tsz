@@ -604,6 +604,10 @@ impl<'a> CheckerState<'a> {
                 {
                     return true;
                 }
+                if self.typeof_parameter_flow_predicate_refs_resolution_chain(entity_idx, type_node)
+                {
+                    return true;
+                }
             }
         }
 
@@ -877,6 +881,183 @@ impl<'a> CheckerState<'a> {
             self.ctx.definition_store.mark_circular_def(did);
         }
         true
+    }
+
+    fn typeof_parameter_flow_predicate_refs_resolution_chain(
+        &mut self,
+        entity_idx: NodeIndex,
+        type_node: NodeIndex,
+    ) -> bool {
+        let Some(entity_node) = self.ctx.arena.get(entity_idx) else {
+            return false;
+        };
+        if entity_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(param_sym) = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, entity_idx)
+        else {
+            return false;
+        };
+        let Some(param_symbol) = self.ctx.binder.get_symbol(param_sym) else {
+            return false;
+        };
+        let is_parameter = param_symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind == syntax_kind_ext::PARAMETER {
+                return true;
+            }
+            decl_node.kind == SyntaxKind::Identifier as u16
+                && self
+                    .ctx
+                    .arena
+                    .get_extended(decl_idx)
+                    .and_then(|ext| self.ctx.arena.get(ext.parent))
+                    .is_some_and(|parent| parent.kind == syntax_kind_ext::PARAMETER)
+        });
+        if !is_parameter {
+            return false;
+        }
+
+        let Some(alias_decl_idx) = self.ctx.arena.get_extended(type_node).map(|ext| ext.parent)
+        else {
+            return false;
+        };
+        let Some(alias_decl_node) = self.ctx.arena.get(alias_decl_idx) else {
+            return false;
+        };
+        let alias_pos = alias_decl_node.pos;
+        let mut current = alias_decl_idx;
+        let mut block_idx = NodeIndex::NONE;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent)
+                && parent_node.kind == syntax_kind_ext::BLOCK
+            {
+                block_idx = parent;
+                break;
+            }
+            current = parent;
+        }
+        if block_idx.is_none() {
+            return false;
+        }
+        let Some(block_node) = self.ctx.arena.get(block_idx) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(block_node) else {
+            return false;
+        };
+
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.pos >= alias_pos {
+                break;
+            }
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                continue;
+            }
+            let Some(call) = self.ctx.arena.get_call_expr(expr_node) else {
+                continue;
+            };
+            let Some(callee_node) = self.ctx.arena.get(call.expression) else {
+                continue;
+            };
+            if callee_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(callee_raw) = self.resolve_value_symbol_for_lowering(call.expression) else {
+                continue;
+            };
+            if self.value_symbol_type_predicate_refs_resolution_chain(SymbolId(callee_raw)) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn value_symbol_type_predicate_refs_resolution_chain(&self, value_sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(value_sym_id) else {
+            return false;
+        };
+        for &decl_idx in &symbol.declarations {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                continue;
+            }
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if var_decl.type_annotation.is_some()
+                && self.annotation_type_predicate_refs_resolution_chain(var_decl.type_annotation)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn annotation_type_predicate_refs_resolution_chain(&self, annotation_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(annotation_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::TYPE_PREDICATE
+            && let Some(pred) = self.ctx.arena.get_type_predicate(node)
+        {
+            return pred.type_node.is_some()
+                && self
+                    .ast_finds_resolution_chain_alias(pred.type_node)
+                    .is_some();
+        }
+        if node.kind == syntax_kind_ext::FUNCTION_TYPE
+            && let Some(func) = self.ctx.arena.get_function_type(node)
+            && func.type_annotation.is_some()
+        {
+            return self.annotation_type_predicate_refs_resolution_chain(func.type_annotation);
+        }
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && let Some(sym_raw) = self.resolve_type_symbol_for_lowering(type_ref.type_name)
+            && let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_raw))
+            && symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+        {
+            for &decl_idx in &symbol.declarations {
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                    continue;
+                }
+                let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                    continue;
+                };
+                if self.annotation_type_predicate_refs_resolution_chain(alias.type_node) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Check if a non-generic type alias with a mapped type body is circular.

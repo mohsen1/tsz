@@ -964,7 +964,31 @@ impl<'a> CheckerState<'a> {
                         } else {
                             // Try to get the type of the expression to check if it's a constructor
                             let expr_type = self.get_type_of_node(expr_idx);
-                            self.is_constructor_type(expr_type)
+                            let evaluated_type = self.evaluate_type_for_assignability(expr_type);
+                            if self.is_constructor_type(evaluated_type) {
+                                true
+                            } else {
+                                if is_extends_clause
+                                    && is_class_declaration
+                                    && evaluated_type != TypeId::ERROR
+                                    && evaluated_type != TypeId::ANY
+                                {
+                                    use crate::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages, format_message,
+                                    };
+                                    let type_name = self.format_type(evaluated_type);
+                                    let message = format_message(
+                                        diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                        &[&type_name],
+                                    );
+                                    self.error_at_node(
+                                        expr_idx,
+                                        &message,
+                                        diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                    );
+                                }
+                                false
+                            }
                         }
                     } else {
                         false

@@ -11,8 +11,8 @@ use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
     is_typeof_global_this_type_node,
 };
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -597,6 +597,160 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // Type Query (typeof)
     // =========================================================================
 
+    fn apply_instantiation_expression_type_arguments(
+        &mut self,
+        expr_type: TypeId,
+        type_arguments: &NodeList,
+    ) -> TypeId {
+        if self
+            .instantiation_expression_applicability_error_type(
+                expr_type,
+                type_arguments.nodes.len(),
+            )
+            .is_some()
+        {
+            return TypeId::ERROR;
+        }
+
+        let type_args: Vec<TypeId> = type_arguments
+            .nodes
+            .iter()
+            .map(|&arg_idx| self.check(arg_idx))
+            .collect();
+        if type_args.is_empty() {
+            return expr_type;
+        }
+
+        let application = self.ctx.types.application(expr_type, type_args);
+        let evaluated = crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+            self.ctx.types,
+            &*self.ctx,
+            application,
+            std::iter::empty(),
+            false,
+            self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+        )
+        .result;
+        if evaluated != TypeId::ERROR && evaluated != application {
+            evaluated
+        } else {
+            application
+        }
+    }
+
+    fn instantiation_expression_applicability_error_type(
+        &self,
+        expr_type: TypeId,
+        type_argument_count: usize,
+    ) -> Option<TypeId> {
+        if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
+            return None;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, expr_type)
+        {
+            let mut invalid = Vec::new();
+            let mut saw_applicable = false;
+            let mut saw_signature = false;
+            for member in members.iter().copied() {
+                let has_applicable =
+                    self.instantiation_type_has_applicable_signature(member, type_argument_count);
+                saw_applicable |= has_applicable;
+                let has_signature = self.instantiation_type_has_signature(member);
+                saw_signature |= has_signature;
+                if !has_applicable && has_signature {
+                    invalid.push(member);
+                }
+            }
+            if saw_applicable && invalid.is_empty() {
+                return None;
+            }
+            if saw_applicable {
+                return if invalid.len() == 1 {
+                    invalid.first().copied()
+                } else {
+                    Some(self.ctx.types.union(invalid))
+                };
+            }
+            return if !saw_signature || invalid.len() == members.len() {
+                Some(expr_type)
+            } else if invalid.len() == 1 {
+                invalid.first().copied()
+            } else {
+                Some(self.ctx.types.union(invalid))
+            };
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, expr_type)
+        {
+            if members.iter().copied().any(|member| {
+                self.instantiation_type_has_applicable_signature(member, type_argument_count)
+            }) {
+                return None;
+            }
+            return Some(expr_type);
+        }
+
+        if self.instantiation_type_has_applicable_signature(expr_type, type_argument_count) {
+            None
+        } else {
+            Some(expr_type)
+        }
+    }
+
+    fn instantiation_type_has_applicable_signature(
+        &self,
+        type_id: TypeId,
+        type_argument_count: usize,
+    ) -> bool {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            && shape.type_params.len() == type_argument_count
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
+            && sigs
+                .iter()
+                .any(|sig| sig.type_params.len() == type_argument_count)
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, type_id)
+            && sigs
+                .iter()
+                .any(|sig| sig.type_params.len() == type_argument_count)
+        {
+            return true;
+        }
+        false
+    }
+
+    fn instantiation_type_has_signature(&self, type_id: TypeId) -> bool {
+        if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            .is_some()
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
+            && !sigs.is_empty()
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, type_id)
+            && !sigs.is_empty()
+        {
+            return true;
+        }
+        false
+    }
+
     /// Get type from a type query node (typeof X).
     ///
     /// Creates a `TypeQuery` type that captures the type of a value.
@@ -616,11 +770,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // so that constraint checking (TS2344) sees the instantiated type rather
         // than the raw function type. This matches tsc behavior: `typeof fn<Args>`
         // produces an instantiation expression type, not the original function type.
-        let type_arg_node_indices: Vec<NodeIndex> = type_query
-            .type_arguments
-            .as_ref()
-            .map(|args| args.nodes.clone())
-            .unwrap_or_default();
+        let type_arguments = type_query.type_arguments.clone();
         let use_flow_sensitive_query =
             !is_type_query_in_non_flow_sensitive_signature_parameter(self.ctx.arena, idx);
 
@@ -716,24 +866,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
             && let Some(&param_type) = self.ctx.typeof_param_scope.get(ident.escaped_text.as_str())
         {
-            if !type_arg_node_indices.is_empty() {
-                let type_args: Vec<TypeId> = type_arg_node_indices
-                    .iter()
-                    .map(|&arg_idx| self.check(arg_idx))
-                    .collect();
-                return self.ctx.types.application(param_type, type_args);
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(param_type, type_arguments);
             }
             return param_type;
         }
 
         if let Some(object_type) = self.const_array_to_enum_object_type_query(type_query.expr_name)
         {
-            if !type_arg_node_indices.is_empty() {
-                let type_args: Vec<TypeId> = type_arg_node_indices
-                    .iter()
-                    .map(|&arg_idx| self.check(arg_idx))
-                    .collect();
-                return self.ctx.types.application(object_type, type_args);
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(object_type, type_arguments);
             }
             return object_type;
         }
@@ -741,12 +885,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if let Some(literal_type) =
             self.const_object_member_literal_type_query(type_query.expr_name)
         {
-            if !type_arg_node_indices.is_empty() {
-                let type_args: Vec<TypeId> = type_arg_node_indices
-                    .iter()
-                    .map(|&arg_idx| self.check(arg_idx))
-                    .collect();
-                return self.ctx.types.application(literal_type, type_args);
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(literal_type, type_arguments);
             }
             return literal_type;
         }
@@ -758,12 +899,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             && expr_type != TypeId::ERROR
         {
             // Apply type arguments from `typeof expr<Args>` instantiation expressions.
-            if !type_arg_node_indices.is_empty() {
-                let type_args: Vec<TypeId> = type_arg_node_indices
-                    .iter()
-                    .map(|&arg_idx| self.check(arg_idx))
-                    .collect();
-                return self.ctx.types.application(expr_type, type_args);
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(expr_type, type_arguments);
             }
             return expr_type;
         }
@@ -814,6 +952,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         if var_decl.type_annotation.is_some() {
                             return Some(var_decl.type_annotation);
                         }
+                    } else if decl_node.kind == syntax_kind_ext::PARAMETER {
+                        let param = self.ctx.arena.get_parameter(decl_node)?;
+                        if param.type_annotation.is_some() {
+                            return Some(param.type_annotation);
+                        }
+                    } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        && let Some(ext) = self.ctx.arena.get_extended(decl)
+                        && ext.parent.is_some()
+                        && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                        && parent_node.kind == syntax_kind_ext::PARAMETER
+                    {
+                        let param = self.ctx.arena.get_parameter(parent_node)?;
+                        if param.name == decl && param.type_annotation.is_some() {
+                            return Some(param.type_annotation);
+                        }
                     }
                     None
                 });
@@ -830,12 +983,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && declared_type != TypeId::ERROR
             {
                 if !use_flow_sensitive_query {
-                    if !type_arg_node_indices.is_empty() {
-                        let type_args: Vec<TypeId> = type_arg_node_indices
-                            .iter()
-                            .map(|&arg_idx| self.check(arg_idx))
-                            .collect();
-                        return self.ctx.types.application(declared_type, type_args);
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            declared_type,
+                            type_arguments,
+                        );
                     }
                     return declared_type;
                 }
@@ -891,12 +1043,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     let narrowed =
                         analyzer.get_flow_type(type_query.expr_name, declared_type, flow_node);
                     if narrowed != TypeId::ERROR {
-                        if !type_arg_node_indices.is_empty() {
-                            let type_args: Vec<TypeId> = type_arg_node_indices
-                                .iter()
-                                .map(|&arg_idx| self.check(arg_idx))
-                                .collect();
-                            return self.ctx.types.application(narrowed, type_args);
+                        if let Some(type_arguments) = &type_arguments {
+                            return self.apply_instantiation_expression_type_arguments(
+                                narrowed,
+                                type_arguments,
+                            );
                         }
                         return narrowed;
                     }
@@ -905,12 +1056,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             let factory = self.ctx.types.factory();
             let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
-            if !type_arg_node_indices.is_empty() {
-                let type_args: Vec<TypeId> = type_arg_node_indices
-                    .iter()
-                    .map(|&arg_idx| self.check(arg_idx))
-                    .collect();
-                return self.ctx.types.application(base, type_args);
+            if let Some(type_arguments) = &type_arguments {
+                return self.apply_instantiation_expression_type_arguments(base, type_arguments);
             }
             return base;
         }
@@ -982,23 +1129,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if !use_flow_sensitive_query
                     && let Some(declared_type) = self.declared_type_for_type_query_symbol(sym_id)
                 {
-                    if !type_arg_node_indices.is_empty() {
-                        let type_args: Vec<TypeId> = type_arg_node_indices
-                            .iter()
-                            .map(|&arg_idx| self.check(arg_idx))
-                            .collect();
-                        return self.ctx.types.application(declared_type, type_args);
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            declared_type,
+                            type_arguments,
+                        );
                     }
                     return declared_type;
                 }
                 let factory = self.ctx.types.factory();
                 let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
-                if !type_arg_node_indices.is_empty() {
-                    let type_args: Vec<TypeId> = type_arg_node_indices
-                        .iter()
-                        .map(|&arg_idx| self.check(arg_idx))
-                        .collect();
-                    return self.ctx.types.application(base, type_args);
+                if let Some(type_arguments) = &type_arguments {
+                    return self
+                        .apply_instantiation_expression_type_arguments(base, type_arguments);
                 }
                 return base;
             }
@@ -1342,6 +1485,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .type_annotation
                 .is_some()
                 .then_some(param.type_annotation)
+        } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let parent = self.ctx.arena.get_extended(decl)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::PARAMETER {
+                let param = self.ctx.arena.get_parameter(parent_node)?;
+                (param.name == decl && param.type_annotation.is_some())
+                    .then_some(param.type_annotation)
+            } else {
+                None
+            }
         } else {
             None
         }?;
