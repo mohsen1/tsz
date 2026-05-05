@@ -592,9 +592,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This fixes the "Ref(5)<error>" diagnostic issue where generic types
         // aren't expanded to their underlying function/object types
         // Note: Ref(SymbolRef) was migrated to Lazy(DefId)
+        //
+        // Also: an `Application(UnresolvedTypeName(name), args)` residue from
+        // cross-file lowering can now resolve through the merged binder
+        // graph at evaluation time. Try the resolver before giving up so
+        // qualified names like `util.OmitKeys` (whose lowering pass missed
+        // the imported namespace's def_id) don't permanently strand
+        // downstream consumers on an opaque application.
         let def_id = match base_key {
             TypeData::Lazy(def_id) => Some(def_id),
             TypeData::TypeQuery(sym_ref) => self.resolver.symbol_to_def_id(sym_ref),
+            TypeData::UnresolvedTypeName(atom) => {
+                let name = self.interner.resolve_atom(atom);
+                self.resolver.resolve_unresolved_type_name(&name)
+            }
             _ => None,
         };
 

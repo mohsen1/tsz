@@ -751,6 +751,81 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         self.get_existing_def_id(sym_id)
     }
 
+    /// Resolve an `UnresolvedTypeName(name)` text to a `DefId` using the
+    /// merged binder graph. This recovers cross-file qualified names whose
+    /// lowering pass landed `Application(UnresolvedTypeName(name), args)`
+    /// because the alias body was lowered before the merged binder was
+    /// available. Mirrors `resolve_entity_name_text_to_def_id_for_lowering`
+    /// from `CheckerState` but lives on `CheckerContext` so the solver-side
+    /// type evaluator can call it via the `TypeResolver` trait.
+    fn resolve_unresolved_type_name(&self, name: &str) -> Option<tsz_solver::def::DefId> {
+        let mut segments = name.split('.');
+        let root_name = segments.next()?;
+        // Prefer a non-alias entry from `global_file_locals_index` so we
+        // walk the actual declaration symbol directly. Fall back to the
+        // current binder's local entry (typically an import alias) only
+        // when no concrete declaration is reachable cross-file.
+        let global_concrete = self
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(root_name))
+            .and_then(|entries| {
+                entries.iter().find(|(file_idx, sym)| {
+                    self.all_binders
+                        .as_ref()
+                        .and_then(|b| b.as_ref().get(*file_idx))
+                        .and_then(|binder| binder.get_symbol(*sym))
+                        .is_some_and(|symbol| {
+                            !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+                        })
+                })
+            })
+            .map(|&(_, sym)| sym);
+        let mut current_sym = global_concrete
+            .or_else(|| self.binder.file_locals.get(root_name))
+            .or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|ctx| ctx.binder.file_locals.get(root_name))
+            })?;
+
+        for segment in segments {
+            // Walk through alias chains (e.g. `import { util } from "..."` ->
+            // the actual namespace symbol).
+            let mut visited = 0u32;
+            while let Some(symbol) = self.binder.get_symbol(current_sym) {
+                if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+                    break;
+                }
+                let Some(target) = self.binder.resolve_import_symbol(current_sym) else {
+                    break;
+                };
+                if target == current_sym || visited >= 8 {
+                    break;
+                }
+                current_sym = target;
+                visited += 1;
+            }
+            let symbol = self.binder.get_symbol(current_sym).or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|ctx| ctx.binder.get_symbol(current_sym))
+            })?;
+            current_sym = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })?;
+        }
+
+        Some(self.get_or_create_def_id(current_sym))
+    }
+
     /// Check if a `TypeId` represents a full Enum type (not a specific member).
     ///
     /// Used to distinguish between:
