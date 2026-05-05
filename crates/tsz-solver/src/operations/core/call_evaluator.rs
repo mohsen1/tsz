@@ -182,6 +182,9 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// Contextual type for the call expression's expected result
     /// Used for contextual type inference in generic functions
     pub(crate) contextual_type: Option<TypeId>,
+    /// Per-argument marker for sources whose type came from an explicit type
+    /// annotation/assertion rather than a fresh expression.
+    pub(crate) arg_source_is_type_annotation: Vec<bool>,
     /// The `this` type provided by the caller (e.g. `obj` in `obj.method()`)
     pub(crate) actual_this_type: Option<TypeId>,
     /// Current recursion depth for `constrain_types` to prevent infinite loops
@@ -268,6 +271,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             defaulted_placeholders: FxHashSet::default(),
             force_bivariant_callbacks: false,
             contextual_type: None,
+            arg_source_is_type_annotation: Vec::new(),
             actual_this_type: None,
             constraint_recursion_depth: Cell::new(0),
             constraint_step_count: Cell::new(0),
@@ -293,6 +297,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Example: `let x: string = id(42)` should infer `T = string` from the context.
     pub const fn set_contextual_type(&mut self, ctx_type: Option<TypeId>) {
         self.contextual_type = ctx_type;
+    }
+
+    pub fn set_arg_source_is_type_annotation(&mut self, markers: &[bool]) {
+        self.arg_source_is_type_annotation.clear();
+        self.arg_source_is_type_annotation
+            .extend_from_slice(markers);
     }
 
     pub const fn set_force_bivariant_callbacks(&mut self, enabled: bool) {

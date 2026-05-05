@@ -17,6 +17,31 @@ use super::{
 };
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn constrain_types_for_arg_source(
+        &mut self,
+        arg_index: usize,
+        infer_ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source: TypeId,
+        target: TypeId,
+        priority: crate::types::InferencePriority,
+    ) {
+        if !self
+            .arg_source_is_type_annotation
+            .get(arg_index)
+            .copied()
+            .unwrap_or(false)
+        {
+            self.constrain_types(infer_ctx, var_map, source, target, priority);
+            return;
+        }
+
+        let was_type_annotation = infer_ctx.source_is_type_annotation;
+        infer_ctx.source_is_type_annotation = true;
+        self.constrain_types(infer_ctx, var_map, source, target, priority);
+        infer_ctx.source_is_type_annotation = was_type_annotation;
+    }
+
     fn type_param_name_if_generic_rest_tuple_param(
         &self,
         func: &FunctionShape,
@@ -995,7 +1020,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
 
             // arg_type <: target_type
-            self.constrain_types(
+            self.constrain_types_for_arg_source(
+                i,
                 &mut infer_ctx,
                 &var_map,
                 source_for_inference,
@@ -1056,7 +1082,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 {
                     for (arg_inner, target_inner) in arg_app.args.iter().zip(target_app.args.iter())
                     {
-                        self.constrain_types(
+                        self.constrain_types_for_arg_source(
+                            i,
                             &mut infer_ctx,
                             &var_map,
                             *arg_inner,
