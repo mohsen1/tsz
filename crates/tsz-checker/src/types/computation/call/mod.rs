@@ -238,7 +238,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn symbol_has_explicit_assertion_annotation(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    fn symbol_has_explicit_assertion_annotation(&mut self, sym_id: tsz_binder::SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return true;
         };
@@ -248,12 +248,13 @@ impl<'a> CheckerState<'a> {
         self.declaration_has_explicit_assertion_annotation(decl_idx)
     }
 
-    fn declaration_has_explicit_assertion_annotation(&self, decl_idx: NodeIndex) -> bool {
+    fn declaration_has_explicit_assertion_annotation(&mut self, decl_idx: NodeIndex) -> bool {
         let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
             return true;
         };
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
-            return var_decl.type_annotation.is_some();
+            return var_decl.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_annotation(decl_idx);
         }
         if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
             return param.type_annotation.is_some();
@@ -268,12 +269,29 @@ impl<'a> CheckerState<'a> {
             return accessor.type_annotation.is_some();
         }
         if let Some(func) = self.ctx.arena.get_function(decl_node) {
-            return func.type_annotation.is_some();
+            return func.type_annotation.is_some()
+                || self.get_jsdoc_for_function(decl_idx).is_some_and(|jsdoc| {
+                    Self::jsdoc_returns_type_predicate(&jsdoc).is_some()
+                        || Self::extract_jsdoc_type_expression(&jsdoc).is_some()
+                });
         }
         if let Some(sig) = self.ctx.arena.get_signature(decl_node) {
             return sig.type_annotation.is_some();
         }
         true
+    }
+
+    fn declaration_has_jsdoc_type_annotation(&self, decl_idx: NodeIndex) -> bool {
+        let Some(sf) = self.source_file_data_for_node(decl_idx) else {
+            return false;
+        };
+        if sf.comments.is_empty() || !sf.comments.iter().any(|comment| comment.is_multi_line) {
+            return false;
+        }
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        self.try_jsdoc_with_ancestor_walk(decl_idx, &comments, &source_text)
+            .is_some_and(|jsdoc| Self::extract_jsdoc_type_expression(&jsdoc).is_some())
     }
 
     fn first_unannotated_callback_param_name_in_call(&self, idx: NodeIndex) -> Option<NodeIndex> {
