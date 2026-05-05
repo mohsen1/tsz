@@ -152,7 +152,7 @@ impl<'a> CheckerState<'a> {
                 && let Some((target, member_name)) =
                     self.commonjs_define_property_target_and_name(stmt.expression)
             {
-                if self.is_current_file_commonjs_export_base(target) {
+                if self.is_current_file_commonjs_export_base_for_redeclaration(target) {
                     explicit_exports
                         .entry(member_name)
                         .or_default()
@@ -200,7 +200,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if self.is_current_file_commonjs_export_base(access.expression) {
+            if self.is_current_file_commonjs_export_base_for_redeclaration(access.expression) {
                 explicit_exports
                     .entry(member_name)
                     .or_default()
@@ -250,6 +250,83 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn is_current_file_commonjs_export_base_for_redeclaration(&self, idx: NodeIndex) -> bool {
+        if self.current_source_file_has_esm_syntax() {
+            return false;
+        }
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier_at(idx)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+                && !self.identifier_has_nonambient_binding_for_redeclaration(idx, "exports");
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && !self
+                .identifier_has_nonambient_binding_for_redeclaration(access.expression, "module")
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+    }
+
+    fn identifier_has_nonambient_binding_for_redeclaration(
+        &self,
+        ident_idx: NodeIndex,
+        expected_name: &str,
+    ) -> bool {
+        let Some(ident) = self.ctx.arena.get_identifier_at(ident_idx) else {
+            return false;
+        };
+        if ident.escaped_text != expected_name {
+            return false;
+        }
+
+        self.ctx
+            .binder
+            .node_symbols
+            .get(&ident_idx.0)
+            .copied()
+            .or_else(|| self.resolve_identifier_symbol_without_tracking(ident_idx))
+            .is_some_and(|sym_id| self.symbol_has_nonambient_binding_for_redeclaration(sym_id))
+    }
+
+    fn symbol_has_nonambient_binding_for_redeclaration(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+            let declaration_arena = if symbol.decl_file_idx != u32::MAX {
+                self.ctx.get_arena_for_file(symbol.decl_file_idx)
+            } else {
+                self.ctx.arena
+            };
+
+            symbol.declarations.iter().any(|&decl_idx| {
+                declaration_arena.get(decl_idx).is_some()
+                    && !declaration_arena.is_in_ambient_context(decl_idx)
+            })
+        })
     }
 
     fn json_value_type(&mut self, value: &JsonValue) -> TypeId {
