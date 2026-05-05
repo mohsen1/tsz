@@ -318,49 +318,94 @@ impl<'a> Printer<'a> {
             || !private_accessors.is_empty();
 
         if has_any_private_lowering {
-            // Collect all variable names needed for declaration
+            // Collect all variable names needed for declaration.
+            //
+            // tsc's order, see e.g. `privateNameInInExpressionTransform`:
+            //   1. WeakSet for instance methods/accessors (`_C_instances`)
+            //   2. Class alias for static members (`_a`)
+            //   3. Private members in *source* order (per-class)
+            //
+            // Grouping by category (all instance fields → all static fields →
+            // all methods → all accessors) does not match tsc — tsc walks the
+            // class body once and emits each var as it encounters the member.
             let mut var_names: Vec<String> = Vec::new();
+
+            // WeakSet for instance methods/accessors (first in tsc's emit)
+            if let Some(ref ws_name) = instances_weakset_name {
+                var_names.push(ws_name.clone());
+            }
 
             // Class alias for static members
             if let Some(ref alias) = private_class_alias {
                 var_names.push(alias.clone());
             }
 
-            // WeakSet for instance methods/accessors
-            if let Some(ref ws_name) = instances_weakset_name {
-                var_names.push(ws_name.clone());
-            }
-
-            // Instance field WeakMaps
-            for field in &private_fields {
-                if !field.is_static {
-                    var_names.push(field.weakmap_name.clone());
-                }
-            }
-
-            // Static field value containers
-            for field in &private_fields {
-                if field.is_static {
-                    var_names.push(field.weakmap_name.clone());
-                }
-            }
-
-            // Private method function vars
-            for method in &private_methods {
-                var_names.push(method.fn_var_name.clone());
-            }
-
-            // Private accessor function vars
-            for accessor in &private_accessors {
-                if let Some(ref name) = accessor.get_var_name
-                    && accessor.getter_body.is_some()
-                {
-                    var_names.push(name.clone());
-                }
-                if let Some(ref name) = accessor.set_var_name
-                    && accessor.setter_body.is_some()
-                {
-                    var_names.push(name.clone());
+            // Private members in source order. Walk `class.members.nodes`
+            // once and look up each member's pre-computed info entry by
+            // private-identifier name. Accessors share a private name across
+            // get/set, so we dedupe within an accessor pair.
+            let mut emitted_accessor_names: rustc_hash::FxHashSet<String> =
+                rustc_hash::FxHashSet::default();
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                let private_name = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .arena
+                        .get_property_decl(member_node)
+                        .and_then(|p| get_private_field_name(self.arena, p.name)),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(member_node)
+                        .and_then(|m| get_private_field_name(self.arena, m.name)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(member_node)
+                            .and_then(|a| get_private_field_name(self.arena, a.name))
+                    }
+                    _ => None,
+                };
+                let Some(private_name) = private_name else {
+                    continue;
+                };
+                let clean_name = private_name.strip_prefix('#').unwrap_or(&private_name);
+                match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        if let Some(field) = private_fields.iter().find(|f| f.name == clean_name) {
+                            var_names.push(field.weakmap_name.clone());
+                        }
+                    }
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        if let Some(method) = private_methods.iter().find(|m| m.name == clean_name)
+                        {
+                            var_names.push(method.fn_var_name.clone());
+                        }
+                    }
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        if !emitted_accessor_names.insert(clean_name.to_string()) {
+                            continue;
+                        }
+                        if let Some(accessor) =
+                            private_accessors.iter().find(|a| a.name == clean_name)
+                        {
+                            if let Some(ref name) = accessor.get_var_name
+                                && accessor.getter_body.is_some()
+                            {
+                                var_names.push(name.clone());
+                            }
+                            if let Some(ref name) = accessor.set_var_name
+                                && accessor.setter_body.is_some()
+                            {
+                                var_names.push(name.clone());
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
 
