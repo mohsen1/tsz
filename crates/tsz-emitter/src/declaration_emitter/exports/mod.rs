@@ -733,8 +733,12 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&var_name);
                 self.write(": ");
 
-                // Get the type of the expression
-                if let Some(type_id) = self.get_node_type(assign.expression) {
+                let source_object_type = self
+                    .object_literal_value_typeof_type_text(assign.expression, self.indent_level);
+
+                if let Some(type_text) = source_object_type {
+                    self.write(&type_text);
+                } else if let Some(type_id) = self.get_node_type(assign.expression) {
                     self.write(&self.print_type_id(type_id));
                 } else {
                     self.write("any");
@@ -1237,6 +1241,11 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(literal_text) = self.const_literal_initializer_text_deep(expr_idx) {
             self.write(": ");
             self.write(&literal_text);
+        } else if let Some(type_text) =
+            self.object_literal_value_typeof_type_text(expr_idx, self.indent_level)
+        {
+            self.write(": ");
+            self.write(&type_text);
         } else if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
             if let Some((file_path, pos, len, diagnostics_before)) = portability_context.as_ref()
                 && self.diagnostics.len() == *diagnostics_before

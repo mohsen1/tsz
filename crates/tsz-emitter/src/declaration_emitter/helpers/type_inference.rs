@@ -5379,6 +5379,61 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn object_literal_value_typeof_type_text(
+        &self,
+        object_expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let object_node = self.arena.get(object_expr_idx)?;
+        let object = self.arena.get_literal_expr(object_node)?;
+        let mut saw_typeof = false;
+        let mut members = Vec::new();
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            let name_text = self.object_literal_member_name_text(name_idx)?;
+            if name_text.is_empty() || name_text == ":" {
+                return None;
+            }
+
+            let value_idx = if let Some(data) = self.arena.get_shorthand_property(member_node) {
+                data.name
+            } else if let Some(data) = self.arena.get_property_assignment(member_node) {
+                data.initializer
+            } else {
+                return None;
+            };
+
+            let type_text = self
+                .direct_value_reference_typeof_text(value_idx)
+                .or_else(|| {
+                    self.preferred_object_member_initializer_type_text(value_idx, depth + 1)
+                })?;
+            saw_typeof |= type_text.contains("typeof ");
+            members.push(Self::format_object_member_type_text(
+                &name_text, &type_text, depth,
+            ));
+        }
+
+        if !saw_typeof || members.is_empty() {
+            return None;
+        }
+
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let formatted_members: Vec<String> = members
+            .iter()
+            .map(|member| Self::format_object_member_entry(&member_indent, member))
+            .collect();
+        Some(format!(
+            "{{\n{}\n{closing_indent}}}",
+            formatted_members.join("\n")
+        ))
+    }
+
     pub(in crate::declaration_emitter) fn infer_object_member_type_text_named_at(
         &self,
         member_idx: NodeIndex,

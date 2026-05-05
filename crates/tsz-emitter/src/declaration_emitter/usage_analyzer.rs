@@ -276,6 +276,11 @@ impl<'a> UsageAnalyzer<'a> {
                                 self.unwrap_export_default_expression(export.export_clause);
                             self.analyze_entity_name(callee);
                         }
+                        k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                            self.analyze_export_default_object_literal_value_references(
+                                export.export_clause,
+                            );
+                        }
                         k if k == syntax_kind_ext::CALL_EXPRESSION => {}
                         _ => {}
                     }
@@ -375,15 +380,49 @@ impl<'a> UsageAnalyzer<'a> {
         // Mark the expression as used (could be a type or value reference)
         if export_assign.expression.is_some() {
             let expr_idx = self.unwrap_export_default_expression(export_assign.expression);
-            let old = self.in_value_pos;
-            self.in_value_pos = true;
-            self.analyze_entity_name(expr_idx);
-            self.analyze_local_import_equals_dependency(expr_idx);
-            self.in_value_pos = old;
-            // Also type usage
-            self.analyze_entity_name(expr_idx);
-            self.analyze_local_import_equals_dependency(expr_idx);
+            self.analyze_reference_as_value_and_type(expr_idx);
+            self.analyze_export_default_object_literal_value_references(expr_idx);
         }
+    }
+
+    fn analyze_export_default_object_literal_value_references(&mut self, expr_idx: NodeIndex) {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+        if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+        let Some(object) = self.arena.get_literal_expr(expr_node) else {
+            return;
+        };
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let value_idx = if let Some(data) = self.arena.get_shorthand_property(member_node) {
+                data.name
+            } else if let Some(data) = self.arena.get_property_assignment(member_node) {
+                data.initializer
+            } else {
+                continue;
+            };
+
+            if self.initializer_preserves_value_reference(value_idx) {
+                self.analyze_reference_as_value_and_type(value_idx);
+            }
+        }
+    }
+
+    fn analyze_reference_as_value_and_type(&mut self, expr_idx: NodeIndex) {
+        let old = self.in_value_pos;
+        self.in_value_pos = true;
+        self.analyze_entity_name(expr_idx);
+        self.analyze_local_import_equals_dependency(expr_idx);
+        self.in_value_pos = false;
+        self.analyze_entity_name(expr_idx);
+        self.analyze_local_import_equals_dependency(expr_idx);
+        self.in_value_pos = old;
     }
 
     /// Unwrap `new X()` and `X()` expressions to find the constructor/callee
@@ -1833,7 +1872,18 @@ impl<'a> UsageAnalyzer<'a> {
     }
 
     fn symbol_needs_typeof(&self, sym_id: SymbolId) -> bool {
-        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+        let Some(source_symbol) = self.binder.symbols.get(sym_id) else {
+            return false;
+        };
+        let resolved_sym_id = if source_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+            && source_symbol.import_module.is_some()
+        {
+            self.resolve_import_alias_target_symbol(sym_id)
+                .unwrap_or(sym_id)
+        } else {
+            sym_id
+        };
+        let Some(symbol) = self.binder.symbols.get(resolved_sym_id) else {
             return false;
         };
 
@@ -1843,7 +1893,8 @@ impl<'a> UsageAnalyzer<'a> {
                 | tsz_binder::symbol_flags::ENUM
                 | tsz_binder::symbol_flags::VALUE_MODULE
                 | tsz_binder::symbol_flags::METHOD,
-        ) || self.is_namespace_import_alias_symbol(sym_id))
+        ) || self.is_namespace_import_alias_symbol(sym_id)
+            || self.is_namespace_import_alias_symbol(resolved_sym_id))
             && !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
     }
 
@@ -1948,7 +1999,14 @@ impl<'a> UsageAnalyzer<'a> {
         );
 
         // Add to used_symbols with bitwise OR to handle symbols used as both types and values
-        let is_new = !self.used_symbols.contains_key(&sym_id);
+        let previous_usage = self
+            .used_symbols
+            .get(&sym_id)
+            .copied()
+            .unwrap_or(UsageKind::NONE);
+        let is_new = previous_usage == UsageKind::NONE;
+        let usage_expanded = (usage_kind.is_type() && !previous_usage.is_type())
+            || (usage_kind.is_value() && !previous_usage.is_value());
         self.used_symbols
             .entry(sym_id)
             .and_modify(|kind| *kind |= usage_kind)
@@ -1965,7 +2023,7 @@ impl<'a> UsageAnalyzer<'a> {
 
         // Referenced local declarations need body walks so their dependencies
         // survive top-level declaration elision.
-        if is_new {
+        if is_new || usage_expanded {
             self.analyze_referenced_declaration_body(sym_id);
         }
     }
@@ -1987,6 +2045,9 @@ impl<'a> UsageAnalyzer<'a> {
                 }
                 k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                     self.analyze_interface_declaration(decl_idx)
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    self.analyze_function_declaration(decl_idx)
                 }
                 _ => {}
             }
