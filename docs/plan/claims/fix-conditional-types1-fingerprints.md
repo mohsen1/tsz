@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/conditional-types1-fingerprints`
-- **PR**: pending
+- **PR**: https://github.com/mohsen1/tsz/pull/3357
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
