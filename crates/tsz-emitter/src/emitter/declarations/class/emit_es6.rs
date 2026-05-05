@@ -648,10 +648,20 @@ impl<'a> Printer<'a> {
                 if is_constant {
                     continue;
                 }
-                // Check if this property is erased (type-only, abstract, etc.)
+                // Check if this property is erased (type-only, abstract, declared).
+                // `declare` fields have no runtime effect even when an
+                // initializer is present (the initializer is part of the
+                // declaration and is dropped). tsc still emits the computed
+                // expression for its side effects, but does not allocate a
+                // temp — see the `esDecorators-classDeclaration-fields-staticAmbient`
+                // baseline where `static declare [field3] = 3;` produces
+                // no `var _a; _a = field3;` pair.
                 let is_erased = if self
                     .arena
                     .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                    || self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
                 {
                     true
                 } else {
