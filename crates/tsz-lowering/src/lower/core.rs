@@ -29,6 +29,7 @@ pub(super) type NodeIndexResolver<'a, T> = dyn Fn(NodeIndex) -> Option<T> + 'a;
 pub(super) type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
 pub(super) type LazyTypeParamsResolver<'a> = dyn Fn(DefId) -> Option<Vec<TypeParamInfo>> + 'a;
 pub(super) type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
+pub(super) type TypeofParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 
 /// Type lowering context.
 /// Converts AST type nodes into interned `TypeIds`.
@@ -68,6 +69,8 @@ pub struct TypeLowering<'a> {
     pub(super) preferred_self_def_id: Option<DefId>,
     /// Type parameter scopes - wrapped in Rc for sharing across arena contexts
     pub(super) type_param_scopes: Rc<TypeParamScopeStack>,
+    /// Value-parameter scopes for `typeof paramName` in signature return types.
+    pub(super) typeof_param_scopes: Rc<TypeofParamScopeStack>,
     /// Whether strictNullChecks is enabled. When true, optional parameters
     /// in function types include `| undefined` in their type.
     pub(super) strict_null_checks: bool,
@@ -319,6 +322,7 @@ impl<'a> TypeLowering<'a> {
             name_def_id_resolver: None,
             strict_null_checks: false,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
+            typeof_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
             type_query_override: None,
@@ -431,6 +435,7 @@ impl<'a> TypeLowering<'a> {
             type_query_override: self.type_query_override,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
+            typeof_param_scopes: Rc::clone(&self.typeof_param_scopes),
             operations: Rc::clone(&self.operations),
             limit_exceeded: Rc::clone(&self.limit_exceeded),
         }
@@ -1371,11 +1376,29 @@ impl<'a> TypeLowering<'a> {
             return (TypeId::ANY, None);
         }
 
-        if let Some(predicate_node_idx) = self.find_type_predicate_node(node_idx) {
-            return self.lower_type_predicate_return(predicate_node_idx, params);
+        self.with_typeof_param_bindings(params, || {
+            if let Some(predicate_node_idx) = self.find_type_predicate_node(node_idx) {
+                return self.lower_type_predicate_return(predicate_node_idx, params);
+            }
+
+            (self.lower_type(node_idx), None)
+        })
+    }
+
+    fn with_typeof_param_bindings<T>(&self, params: &[ParamInfo], f: impl FnOnce() -> T) -> T {
+        let scope: Vec<_> = params
+            .iter()
+            .filter_map(|param| param.name.map(|name| (name, param.type_id)))
+            .collect();
+
+        if scope.is_empty() {
+            return f();
         }
 
-        (self.lower_type(node_idx), None)
+        self.typeof_param_scopes.borrow_mut().push(scope);
+        let result = f();
+        self.typeof_param_scopes.borrow_mut().pop();
+        result
     }
 
     /// Recursively find a type predicate node within a type node (e.g., inside parentheses or intersections).

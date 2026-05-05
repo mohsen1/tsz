@@ -488,7 +488,7 @@ impl<'a> CheckerState<'a> {
                     callee_type: callee_type_for_resolution,
                     is_super_call: false,
                     is_optional_chain: nullish_cause.is_some(),
-                    allow_contextual_mismatch_deferral: true,
+                    allow_contextual_mismatch_deferral: false,
                 },
             );
         }

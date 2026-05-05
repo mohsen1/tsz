@@ -749,6 +749,27 @@ impl<'a> TypeLowering<'a> {
         };
 
         if let Some(data) = self.arena.get_type_query(node) {
+            if let Some(expr_node) = self.arena.get(data.expr_name)
+                && let Some(ident) = self.arena.get_identifier(expr_node)
+            {
+                let name = self.interner.intern_string(&ident.escaped_text);
+                for scope in self.typeof_param_scopes.borrow().iter().rev() {
+                    if let Some((_, param_type)) = scope
+                        .iter()
+                        .rev()
+                        .find(|(param_name, _)| *param_name == name)
+                    {
+                        if let Some(args) = &data.type_arguments
+                            && !args.nodes.is_empty()
+                        {
+                            let type_args: Vec<TypeId> =
+                                args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
+                            return self.interner.application(*param_type, type_args);
+                        }
+                        return *param_type;
+                    }
+                }
+            }
             // Check for a pre-resolved type from the checker (e.g., flow-narrowed typeof).
             // This allows `typeof c` inside a type alias body to pick up the narrowed
             // type of `c` when control flow has narrowed it at the declaration site.
