@@ -722,10 +722,18 @@ impl<'a> CheckerState<'a> {
             let has_multi_construct = self.has_multi_construct_overloads(resolved_component_type)
                 || self.has_multi_construct_overloads(component_type)
                 || self.has_multi_construct_overloads(component_metadata_type);
-            let uses_jsx_overload_resolution = has_multi_construct
-                || (recovered_props.is_none()
-                    && (self.is_overloaded_sfc(resolved_component_type)
-                        || self.has_multi_signature_overloads(resolved_component_type)));
+            let overloaded_sfc_component_type = [
+                resolved_component_type,
+                component_type,
+                component_metadata_type,
+            ]
+            .into_iter()
+            .find(|component_type| {
+                self.is_overloaded_sfc(*component_type)
+                    || self.has_multi_signature_overloads(*component_type)
+            });
+            let has_multi_call = overloaded_sfc_component_type.is_some();
+            let uses_jsx_overload_resolution = has_multi_construct || has_multi_call;
 
             if let Some((props_type, raw_has_type_params)) = recovered_props {
                 if has_multi_construct {
@@ -751,6 +759,18 @@ impl<'a> CheckerState<'a> {
                         props_type,
                         &display_target,
                         jsx_opening.tag_name,
+                    );
+                } else if let Some(overload_component_type) = overloaded_sfc_component_type {
+                    // Function components with multiple call signatures must use
+                    // overload resolution even if props extraction recovered a
+                    // union-like props type. A union props check treats unknown
+                    // properties as compatible, which lets JSX body `children`
+                    // incorrectly match an overload that does not declare them.
+                    self.check_jsx_overloaded_sfc(
+                        overload_component_type,
+                        jsx_opening.attributes,
+                        jsx_opening.tag_name,
+                        children_ctx,
                     );
                 } else {
                     // TS2786: component return type must be valid JSX element
