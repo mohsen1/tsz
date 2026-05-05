@@ -53,19 +53,22 @@ impl<'a> CheckerState<'a> {
     ) {
         // Try call signatures first (SFC overloads), then construct signatures
         // (class component overloads like React.Component with 2 constructors).
-        let sigs = crate::query_boundaries::common::call_signatures_for_type(
+        let call_sigs = crate::query_boundaries::common::call_signatures_for_type(
             self.ctx.types,
             component_type,
         )
-        .filter(|s| s.len() >= 2)
-        .or_else(|| {
+        .filter(|s| s.len() >= 2);
+        let construct_sigs = || {
             crate::query_boundaries::common::construct_signatures_for_type(
                 self.ctx.types,
                 component_type,
             )
             .filter(|s| s.len() >= 2)
-        });
-        let Some(sigs) = sigs else {
+        };
+        let Some((sigs, exempt_synthesized_children_from_excess)) = call_sigs
+            .map(|sigs| (sigs, false))
+            .or_else(|| construct_sigs().map(|sigs| (sigs, true)))
+        else {
             return;
         };
 
@@ -164,7 +167,12 @@ impl<'a> CheckerState<'a> {
                 resolved
             };
 
-            if self.jsx_attrs_match_overload(&attrs_info, props_resolved, &default_props_keys) {
+            if self.jsx_attrs_match_overload(
+                &attrs_info,
+                props_resolved,
+                &default_props_keys,
+                exempt_synthesized_children_from_excess,
+            ) {
                 // Found a matching overload — done.
                 // Roll back speculative diagnostics from attribute collection.
                 snap.rollback(&mut self.ctx);
@@ -384,6 +392,7 @@ impl<'a> CheckerState<'a> {
         info: &JsxAttrsInfo,
         props_type: TypeId,
         default_props_keys: &rustc_hash::FxHashSet<String>,
+        exempt_synthesized_children_from_excess: bool,
     ) -> bool {
         if props_type == TypeId::ANY || props_type == TypeId::ERROR {
             return true;
@@ -435,15 +444,17 @@ impl<'a> CheckerState<'a> {
         // when all attrs come from spreads, no excess check occurs.
         // Hyphenated attribute names (e.g., `extra-prop`) are also exempt — in JSX,
         // they are only checked against string index signatures, not named properties.
-        // Synthesized attrs (no source name token, e.g. `children` from JSX body) are
-        // also exempt: they aren't user-written attributes, and class components'
-        // constructor props type doesn't include the children injected by JSX.
+        // Synthesized attrs (no source name token, e.g. `children` from JSX body)
+        // are exempt for class constructor overloads because constructor props
+        // don't include the children injected by JSX. Function component overloads
+        // receive JSX body children as part of their props object, so those children
+        // must still reject overloads that do not declare `children`.
         if !has_string_index {
             for attr in &info.attrs {
                 if attr.from_spread {
                     continue; // Spreads are exempt from excess checking
                 }
-                if attr.name_node_idx.is_none() {
+                if exempt_synthesized_children_from_excess && attr.name_node_idx.is_none() {
                     continue; // Synthesized attrs (e.g. JSX children) exempt
                 }
                 if attr.name.contains('-') {

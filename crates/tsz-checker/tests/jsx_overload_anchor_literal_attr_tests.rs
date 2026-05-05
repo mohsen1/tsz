@@ -99,3 +99,40 @@ const b4 = <MainButton goTo="home" extra />;
         );
     }
 }
+
+#[test]
+fn sfc_overload_body_children_reject_overload_without_children_prop() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace JSX {{ interface Element {{ __jsxElementBrand: never; }} }}
+interface TestingOptionalComponent {{
+    (a: {{ y1?: string; y2?: number }}): JSX.Element;
+    (a: {{ y1?: string; y2?: number; children: JSX.Element }}): JSX.Element;
+    (a: {{ y1: boolean; y2?: number; y3: boolean }}): JSX.Element;
+}}
+declare const TestingOptional: TestingOptionalComponent;
+const e4 = <TestingOptional y1="hello" y2={{1000}}>Hi</TestingOptional>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2769: Vec<&(u32, u32, String)> = diags
+        .iter()
+        .filter(|(c, _, _)| *c == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL)
+        .collect();
+    assert_eq!(
+        ts2769.len(),
+        1,
+        "Body text should reject every SFC overload and emit one TS2769. Got: {diags:?}"
+    );
+
+    let tag_start = source
+        .rfind("<TestingOptional")
+        .expect("repro must contain `<TestingOptional`")
+        + "<".len();
+    let (_, start, _) = ts2769[0];
+    assert_eq!(
+        *start as usize, tag_start,
+        "TS2769 should anchor at the JSX tag when synthesized children participate in SFC overload resolution"
+    );
+}
