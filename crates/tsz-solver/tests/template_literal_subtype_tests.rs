@@ -656,6 +656,67 @@ fn test_template_literal_hole_accepts_intersection_pattern_prefix() {
     assert!(!checker.is_subtype_of(interner.literal_string("abcTest"), pattern));
 }
 
+#[test]
+fn test_template_literal_union_hole_distributes_over_remaining_pattern() {
+    let interner = TypeInterner::new();
+
+    let protocols = interner.union(vec![
+        interner.literal_string("http"),
+        interner.literal_string("https"),
+        interner.literal_string("ftp"),
+    ]);
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(protocols),
+        TemplateSpan::Text(interner.intern_string("://")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let Some(TypeData::Union(members)) = interner.lookup(pattern) else {
+        panic!("expected finite protocol hole to distribute into a union");
+    };
+    assert_eq!(interner.type_list(members).len(), 3);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(interner.literal_string("http://example.com"), pattern));
+    assert!(!checker.is_subtype_of(interner.literal_string("gopher://example.com"), pattern));
+}
+
+#[test]
+fn test_template_literal_evaluation_preserves_evaluated_pattern_spans() {
+    use crate::def::DefId;
+    use crate::diagnostics::format::TypeFormatter;
+    use crate::{TypeEnvironment, TypeEvaluator};
+
+    let interner = TypeInterner::new();
+    let number_pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+
+    let mut env = TypeEnvironment::new();
+    let alias_def = DefId(1);
+    env.insert_def(alias_def, number_pattern);
+    let alias_ref = interner.lazy(alias_def);
+    let spaced = interner.template_literal(vec![
+        TemplateSpan::Type(alias_ref),
+        TemplateSpan::Text(interner.intern_string(" ")),
+        TemplateSpan::Type(alias_ref),
+    ]);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let evaluated = evaluator.evaluate(spaced);
+    let mut formatter = TypeFormatter::new(&interner);
+
+    assert_eq!(formatter.format(evaluated), "`${number} ${number}`");
+}
+
+#[test]
+fn test_union_removes_string_literals_covered_by_template_patterns() {
+    let interner = TypeInterner::new();
+
+    let number_pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let zero = interner.literal_string("0");
+
+    assert_eq!(interner.union(vec![number_pattern, zero]), number_pattern);
+}
+
 // ==========================================================================
 // Hex/Octal/Binary literal matching for ${bigint} and ${number} patterns
 // ==========================================================================
@@ -718,6 +779,20 @@ fn test_binary_literal_matches_number_pattern() {
     let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
     let mut checker = SubtypeChecker::new(&interner);
     assert!(checker.is_subtype_of(literal, pattern));
+}
+
+#[test]
+fn test_non_finite_names_do_not_match_number_pattern() {
+    let interner = TypeInterner::new();
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for value in ["NaN", "Infinity", "+Infinity", "-Infinity"] {
+        assert!(
+            !checker.is_subtype_of(interner.literal_string(value), pattern),
+            "{value:?} should not match `${{number}}`"
+        );
+    }
 }
 
 #[test]
