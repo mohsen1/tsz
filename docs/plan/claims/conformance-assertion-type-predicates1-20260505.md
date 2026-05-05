@@ -4,7 +4,7 @@
 - **Claimed**: 2026-05-05 17:00:18 UTC
 - **Branch**: `conformance/assertion-type-predicates1-20260505`
 - **PR**: #3127
-- **Status**: claim
+- **Status**: implementation
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
@@ -28,14 +28,26 @@ pool:     131
 
 ## Files Touched
 
-- TBD after investigation.
+- `crates/tsz-checker/src/types/computation/call/mod.rs`
+- `crates/tsz-checker/src/types/computation/call/inner.rs`
+- `crates/tsz-checker/src/flow/reachability_checker.rs`
+- `crates/tsz-checker/src/types/type_node.rs`
+- `crates/tsz-checker/src/state/type_environment/type_node_resolution.rs`
+- `crates/tsz-checker/src/tests/assertion_type_predicate_diagnostics_tests.rs`
+- `crates/tsz-checker/src/lib.rs`
 
 ## Verification
 
-- `./scripts/conformance/conformance.sh run --filter "assertionTypePredicates1" --verbose`
-- focused Rust unit tests in the owning crate
+- `cargo fmt --check`
 - `cargo check --package tsz-checker`
 - `cargo build --profile dist-fast --bin tsz`
-- `cargo nextest run --package tsz-checker --lib`
-- `./scripts/conformance/conformance.sh run --max 200`
-- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep FINAL`
+- `cargo nextest run --package tsz-checker --lib assertion_type_predicate_diagnostics_tests` — 5 passed
+- `cargo nextest run --package tsz-checker --lib` — 3438 passed, 10 skipped
+- `./scripts/conformance/conformance.sh run --filter "assertionTypePredicates1" --verbose` — 1/1 passed
+- `./scripts/conformance/conformance.sh run --max 200` — 200/200 passed
+
+Full safe-run is still blocked in this worktree: repeated attempts at
+`scripts/safe-run.sh ./scripts/conformance/conformance.sh run` and a reduced
+`--workers 8` run were terminated by SIGTERM during the dist-fast build before
+the conformance tests started. Keep PR #3127 WIP until the full safe-run can
+complete.

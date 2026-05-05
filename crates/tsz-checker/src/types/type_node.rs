@@ -720,6 +720,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
+        if _node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+            && let Some(tn) = self.ctx.arena.get(func_data.type_annotation)
+            && tn.kind == syntax_kind_ext::TYPE_PREDICATE
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.ctx.error(
+                tn.pos,
+                tn.end - tn.pos,
+                diagnostic_messages::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO.to_string(),
+                diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+            );
+        }
+
         // Check parameter type annotations
         for param_idx in &func_data.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(*param_idx)
