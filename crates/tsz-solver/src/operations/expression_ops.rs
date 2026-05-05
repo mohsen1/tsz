@@ -349,6 +349,24 @@ pub fn compute_template_expression_type(
         }
     }
 
+    if !parts.is_empty()
+        && texts.len() == parts.len() + 1
+        && parts
+            .iter()
+            .any(|&part| crate::type_queries::contains_type_parameters_db(db, part))
+    {
+        let mut spans = Vec::new();
+        for (i, text) in texts.iter().enumerate() {
+            if !text.is_empty() {
+                spans.push(TemplateSpan::Text(db.intern_string(text)));
+            }
+            if i < parts.len() {
+                spans.push(TemplateSpan::Type(parts[i]));
+            }
+        }
+        return db.template_literal(spans);
+    }
+
     // Template literals produce string type by default
     TypeId::STRING
 }

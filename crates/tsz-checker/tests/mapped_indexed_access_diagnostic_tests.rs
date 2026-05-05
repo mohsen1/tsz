@@ -107,3 +107,94 @@ f.register(s, null);
         ts2345[0].message_text
     );
 }
+
+#[test]
+fn remapped_mapped_type_constraint_indexed_access_diagnostics_match_tsc_surface() {
+    let source = r#"
+type Mapped2<K extends string> = { [P in K as `get${P}`]: { a: P } };
+
+function f2<K extends string>(obj: Mapped2<K>, key: `get${K}`) {
+    const x: { a: K } = obj[key];
+}
+
+type Mapped3<K extends string> = { [P in K as Uppercase<P>]: { a: P } };
+
+function f3<K extends string>(obj: Mapped3<K>, key: Uppercase<K>) {
+    const x: { a: K } = obj[key];
+}
+
+type Mapped5<K extends string> = {
+  [P in K as P extends `_${string}` ? P : never]: P;
+};
+
+function f5<K extends string>(obj: Mapped5<K>, key: keyof Mapped5<K>) {
+  let s: `_${string}` = obj[key];
+}
+
+type Mapped6<K extends string> = {
+  [P in K as `_${P}`]: P;
+};
+
+function f6<K extends string>(obj: Mapped6<K>, key: keyof Mapped6<K>) {
+  let s: `_${string}` = obj[key];
+}
+
+type Foo<T extends string> = {
+    [RemappedT in T as `get${RemappedT}`]: RemappedT;
+};
+
+const get = <T extends string>(t: T, foo: Foo<T>): T => foo[`get${t}`];
+
+type ObjectWithUnderscoredKeys<K extends string> = {
+    [k in K as `_${k}`]: true;
+};
+
+function genericTest<K extends string>(objectWithUnderscoredKeys: ObjectWithUnderscoredKeys<K>, key: K) {
+  const shouldBeTrue: true = objectWithUnderscoredKeys[`_${key}`];
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|diag| diag.message_text.contains("Mapped2<K>[`get${K}`]")),
+        "remapped template index should stay deferred and report Mapped2<K>[`get${{K}}`], got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|diag| diag.message_text.contains("Mapped3<K>[Uppercase<K>]")),
+        "intrinsic remapped index should stay deferred and report Mapped3<K>[Uppercase<K>], got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|diag| !diag.message_text.contains("keyof Mapped5<K>")),
+        "filtered remapped keys should not produce a false TS2322 for f5, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|diag| diag.message_text.contains("Mapped6<K>[keyof Mapped6<K>]")),
+        "keyof remapped mapped type should preserve the outer indexed-access surface, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|diag| diag.message_text.contains("Foo<T>[`get${T}`]")),
+        "generic remapped alias index should preserve Foo<T>[`get${{T}}`], got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| {
+            diag.message_text
+                .contains("ObjectWithUnderscoredKeys<K>[`_${K}`]")
+        }),
+        "value-level template key should preserve ObjectWithUnderscoredKeys<K>[`_${{K}}`], got: {ts2322:#?}"
+    );
+}

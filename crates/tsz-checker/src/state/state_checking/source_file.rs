@@ -539,6 +539,28 @@ impl<'a> CheckerState<'a> {
                 .error(diag.start, diag.length, diag.message_text, diag.code);
         }
 
+        // Excess-property failures on contextually-typed callbacks are reported
+        // after the property is proven invalid. Earlier speculative callback
+        // checks may already have emitted and rolled back TS7006 while leaving a
+        // stale dedup key, so clear that key before re-emitting the deferred
+        // diagnostic at the end of the file check.
+        let deferred_excess_implicit_any =
+            std::mem::take(&mut self.ctx.deferred_excess_property_implicit_any_diagnostics);
+        for diag in deferred_excess_implicit_any {
+            if self
+                .ctx
+                .diagnostics
+                .iter()
+                .any(|existing| existing.start == diag.start && existing.code == diag.code)
+            {
+                continue;
+            }
+            let key = self.ctx.diagnostic_dedup_key(&diag);
+            self.ctx.emitted_diagnostics.remove(&key);
+            self.ctx
+                .error(diag.start, diag.length, diag.message_text, diag.code);
+        }
+
         // JS JSDoc typedef/callback function-type parameters are comment-only
         // syntax and must not produce runtime-parameter TS7006 diagnostics.
         if self.is_js_file()

@@ -952,7 +952,28 @@ impl<'a> CheckerState<'a> {
                             .node_types
                             .insert(var_decl.initializer.0, init_type);
                     }
-                    let init_type_for_relation = checker.resolve_lazy_type(init_type);
+                    let (init_type_for_relation, remapped_mapped_initializer) = if checker
+                        .ctx
+                        .arena
+                        .get(var_decl.initializer)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                    {
+                        checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
+                        let raw_init_type = checker.get_type_of_node_with_request(
+                            var_decl.initializer,
+                            &TypingRequest::NONE,
+                        );
+                        if crate::query_boundaries::common::is_remapped_mapped_index_access(
+                            checker.ctx.types,
+                            raw_init_type,
+                        ) {
+                            (raw_init_type, true)
+                        } else {
+                            (checker.resolve_lazy_type(init_type), false)
+                        }
+                    } else {
+                        (checker.resolve_lazy_type(init_type), false)
+                    };
                     if let Some(branch_ranges) = conditional_branch_ranges {
                         // Preserve non-assignability diagnostics from the branch expressions
                         // (e.g. TS2352/TS2873), but drop premature TS2322s produced while
@@ -1193,6 +1214,11 @@ impl<'a> CheckerState<'a> {
                                                     checker.check_assignable_or_report_at_without_source_elaboration(
                                                         checked_init_type, declared_type, var_decl.initializer, decl_idx,
                                                     )
+                                                } else if remapped_mapped_initializer {
+                                                    checker.error_type_not_assignable_generic_at(
+                                                        checked_init_type, declared_type, decl_idx,
+                                                    );
+                                                    false
                                                 } else {
                                                     checker.check_assignable_or_report_at(
                                                         checked_init_type, declared_type, var_decl.initializer, decl_idx,

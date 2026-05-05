@@ -1537,7 +1537,29 @@ impl<'a> TypeFormatter<'a> {
                 {
                     return simplified.into();
                 }
-                let obj_str = self.format(*obj);
+                let obj_for_display = self
+                    .interner
+                    .get_display_alias(*obj)
+                    .filter(|&alias| {
+                        matches!(self.interner.lookup(alias), Some(TypeData::Application(_)))
+                    })
+                    .unwrap_or(*obj);
+                let obj_str = if obj_for_display == *obj
+                    && matches!(self.interner.lookup(*obj), Some(TypeData::Mapped(_)))
+                    && let Some(def_store) = self.def_store
+                    && let Some(def_id) = def_store.find_def_for_type(*obj)
+                    && let Some(def) = def_store.get(def_id)
+                    && !def.type_params.is_empty()
+                {
+                    let params: Vec<String> = def
+                        .type_params
+                        .iter()
+                        .map(|tp| self.atom(tp.name).to_string())
+                        .collect();
+                    format!("{}<{}>", self.format_def_name(&def), params.join(", "))
+                } else {
+                    self.format(obj_for_display).into_owned()
+                };
                 // Parenthesize the object when it's a union or intersection AND
                 // the formatted string actually shows the compound form (contains
                 // ` & ` or ` | `). Named type aliases like `Errors<T>` may be
