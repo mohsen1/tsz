@@ -41,6 +41,8 @@ use crate::span::Span;
 use rustc_hash::FxHashMap;
 use std::path::{Path, PathBuf};
 
+type ResolutionCacheKey = (PathBuf, String, ImportingModuleKind, ImportKind);
+
 fn explicit_ts_extension(specifier: &str) -> Option<String> {
     if specifier.ends_with(".d.ts")
         || specifier.ends_with(".d.mts")
@@ -76,10 +78,7 @@ pub struct ModuleResolver {
     allow_importing_ts_extensions: bool,
     jsx: Option<JsxEmit>,
     /// Cache of resolved modules
-    resolution_cache: FxHashMap<
-        (PathBuf, String, ImportingModuleKind),
-        Result<ResolvedModule, ResolutionFailure>,
-    >,
+    resolution_cache: FxHashMap<ResolutionCacheKey, Result<ResolvedModule, ResolutionFailure>>,
     /// Custom conditions from tsconfig (for customConditions option)
     custom_conditions: Vec<String>,
     module_kind: ModuleKind,
@@ -88,7 +87,7 @@ pub struct ModuleResolver {
     /// Whether to rewrite relative imports with TypeScript extensions during emit.
     rewrite_relative_import_extensions: bool,
     /// Cache for package.json package type lookups
-    package_type_cache: FxHashMap<PathBuf, Option<PackageType>>,
+    package_type_cache: std::cell::RefCell<FxHashMap<PathBuf, Option<PackageType>>>,
     /// Cache of parsed package.json contents keyed by canonical path.
     ///
     /// `RefCell` so `&self` paths in `file_probing` / `exports_imports` /
@@ -160,7 +159,7 @@ impl ModuleResolver {
             module_kind: options.printer.module,
             allow_js: options.allow_js,
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
-            package_type_cache: FxHashMap::default(),
+            package_type_cache: std::cell::RefCell::new(FxHashMap::default()),
             package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
             skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
             node_modules_dir_cache: std::cell::RefCell::new(FxHashMap::default()),
@@ -190,7 +189,7 @@ impl ModuleResolver {
             module_kind: ModuleKind::CommonJS,
             allow_js: false,
             rewrite_relative_import_extensions: false,
-            package_type_cache: FxHashMap::default(),
+            package_type_cache: std::cell::RefCell::new(FxHashMap::default()),
             package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
             skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
             node_modules_dir_cache: std::cell::RefCell::new(FxHashMap::default()),
@@ -248,38 +247,40 @@ impl ModuleResolver {
             .to_path_buf();
         let containing_file_str = containing_file.display().to_string();
 
-        self.current_package_type = match self.resolution_kind {
-            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
-                self.get_package_type_for_dir(&containing_dir)
-            }
-            _ => None,
-        };
-
         // Determine the module kind of the importing file, honoring any explicit
         // driver-provided resolution-mode override from import attributes.
         let importing_module_kind =
-            importing_module_kind_override.unwrap_or_else(|| match self.module_kind {
-                ModuleKind::Preserve => {
-                    let extension = ModuleExtension::from_path(containing_file);
-                    if extension.forces_esm() {
-                        ImportingModuleKind::Esm
-                    } else if extension.forces_cjs() {
-                        ImportingModuleKind::CommonJs
-                    } else {
-                        match import_kind {
-                            ImportKind::EsmImport
-                            | ImportKind::DynamicImport
-                            | ImportKind::EsmReExport => ImportingModuleKind::Esm,
-                            ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+            importing_module_kind_override.unwrap_or_else(|| match import_kind {
+                ImportKind::DynamicImport => ImportingModuleKind::Esm,
+                ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                ImportKind::EsmImport | ImportKind::EsmReExport => match self.module_kind {
+                    ModuleKind::Preserve => {
+                        let extension = ModuleExtension::from_path(containing_file);
+                        if extension.forces_esm() {
+                            ImportingModuleKind::Esm
+                        } else if extension.forces_cjs() {
+                            ImportingModuleKind::CommonJs
+                        } else {
+                            ImportingModuleKind::Esm
                         }
                     }
-                }
-                _ => self.get_importing_module_kind(containing_file),
+                    _ => self.get_importing_module_kind(containing_file),
+                },
             });
+        self.current_package_type = match self.resolution_kind {
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
+                Some(match importing_module_kind {
+                    ImportingModuleKind::Esm => PackageType::Module,
+                    ImportingModuleKind::CommonJs => PackageType::CommonJs,
+                })
+            }
+            _ => None,
+        };
         let cache_key = (
             containing_dir.clone(),
             specifier.to_string(),
             importing_module_kind,
+            import_kind,
         );
         if let Some(cached) = self.resolution_cache.get(&cache_key) {
             return cached.clone();
@@ -565,23 +566,22 @@ impl ModuleResolver {
         let importing_module_kind_for_lookup =
             request
                 .resolution_mode_override
-                .unwrap_or_else(|| match self.module_kind {
-                    ModuleKind::Preserve => {
-                        let extension = ModuleExtension::from_path(containing_file);
-                        if extension.forces_esm() {
-                            ImportingModuleKind::Esm
-                        } else if extension.forces_cjs() {
-                            ImportingModuleKind::CommonJs
-                        } else {
-                            match import_kind {
-                                ImportKind::EsmImport
-                                | ImportKind::DynamicImport
-                                | ImportKind::EsmReExport => ImportingModuleKind::Esm,
-                                ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                .unwrap_or_else(|| match import_kind {
+                    ImportKind::DynamicImport => ImportingModuleKind::Esm,
+                    ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                    ImportKind::EsmImport | ImportKind::EsmReExport => match self.module_kind {
+                        ModuleKind::Preserve => {
+                            let extension = ModuleExtension::from_path(containing_file);
+                            if extension.forces_esm() {
+                                ImportingModuleKind::Esm
+                            } else if extension.forces_cjs() {
+                                ImportingModuleKind::CommonJs
+                            } else {
+                                ImportingModuleKind::Esm
                             }
                         }
-                    }
-                    _ => self.get_importing_module_kind(containing_file),
+                        _ => self.get_importing_module_kind(containing_file),
+                    },
                 });
 
         // 1. Try primary resolution

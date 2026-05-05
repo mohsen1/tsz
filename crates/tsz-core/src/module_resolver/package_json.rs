@@ -10,9 +10,9 @@ use crate::module_resolver_helpers::PackageJson;
 
 impl ModuleResolver {
     /// Get the package type for a directory by walking up to find package.json
-    pub(super) fn get_package_type_for_dir(&mut self, dir: &Path) -> Option<PackageType> {
+    pub(super) fn get_package_type_for_dir(&self, dir: &Path) -> Option<PackageType> {
         // Check cache first
-        if let Some(cached) = self.package_type_cache.get(dir) {
+        if let Some(cached) = self.package_type_cache.borrow().get(dir) {
             return *cached;
         }
 
@@ -21,11 +21,12 @@ impl ModuleResolver {
 
         loop {
             // Check cache for this path - copy the value to avoid borrow conflict
-            if let Some(&cached) = self.package_type_cache.get(&current) {
+            if let Some(&cached) = self.package_type_cache.borrow().get(&current) {
                 let result = cached;
                 // Cache all visited paths with this result
+                let mut cache = self.package_type_cache.borrow_mut();
                 for path in visited {
-                    self.package_type_cache.insert(path, result);
+                    cache.insert(path, result);
                 }
                 return result;
             }
@@ -43,8 +44,9 @@ impl ModuleResolver {
                     _ => None,
                 });
                 // Cache all visited paths
+                let mut cache = self.package_type_cache.borrow_mut();
                 for path in visited {
-                    self.package_type_cache.insert(path, package_type);
+                    cache.insert(path, package_type);
                 }
                 return package_type;
             }
@@ -57,8 +59,9 @@ impl ModuleResolver {
         }
 
         // No package.json found, cache as None
+        let mut cache = self.package_type_cache.borrow_mut();
         for path in visited {
-            self.package_type_cache.insert(path, None);
+            cache.insert(path, None);
         }
         None
     }

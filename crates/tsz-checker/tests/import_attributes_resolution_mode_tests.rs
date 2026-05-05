@@ -1,7 +1,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::BinderState;
-use tsz_checker::context::{CheckerOptions, ResolutionModeOverride};
+use tsz_checker::context::{CheckerOptions, ResolutionModeOverride, ResolutionRequestKind};
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ModuleKind;
@@ -112,6 +112,7 @@ fn check_resolution_mode_with_targets_and_file_map(
             0usize,
             "pkg".to_string(),
             Some(ResolutionModeOverride::Import),
+            ResolutionRequestKind::EsmImport,
         ),
         1usize,
     );
@@ -120,6 +121,7 @@ fn check_resolution_mode_with_targets_and_file_map(
             0usize,
             "pkg".to_string(),
             Some(ResolutionModeOverride::Require),
+            ResolutionRequestKind::EsmImport,
         ),
         2usize,
     );

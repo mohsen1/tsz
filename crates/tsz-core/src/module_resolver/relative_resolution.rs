@@ -4,8 +4,8 @@
 //! including Node16/NodeNext ESM extension validation (TS2834/TS2835).
 
 use super::{
-    ImportKind, ImportingModuleKind, ModuleExtension, ModuleResolver, ResolutionFailure,
-    ResolvedModule,
+    ImportKind, ImportingModuleKind, ModuleExtension, ModuleResolver, PackageType,
+    ResolutionFailure, ResolvedModule,
 };
 use crate::config::ModuleResolutionKind;
 use crate::module_resolver_helpers::KNOWN_EXTENSIONS;
@@ -69,10 +69,30 @@ impl ModuleResolver {
             || specifier.ends_with('/')
             || specifier.ends_with('\\');
         let try_resolve_candidate = |path: &Path| {
-            if prefer_directory {
-                self.try_directory(path)
+            let uses_require_resolution = import_kind == ImportKind::CjsRequire
+                || (matches!(import_kind, ImportKind::EsmImport | ImportKind::EsmReExport)
+                    && importing_module_kind == ImportingModuleKind::CommonJs);
+            let package_type = if matches!(
+                self.resolution_kind,
+                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+            ) && uses_require_resolution
+            {
+                let package_dir = if prefer_directory || path.is_dir() {
+                    path
+                } else {
+                    path.parent().unwrap_or_else(|| Path::new("."))
+                };
+                Some(
+                    self.get_package_type_for_dir(package_dir)
+                        .unwrap_or(PackageType::CommonJs),
+                )
             } else {
-                self.try_file_or_directory(path)
+                self.current_package_type
+            };
+            if prefer_directory {
+                self.try_directory_with_package_type(path, package_type)
+            } else {
+                self.try_file_or_directory_with_package_type(path, package_type)
             }
         };
 
