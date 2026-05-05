@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-signature-combining-rest-params-fingerprint`
 - **PR**: #3372
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Conformance / diagnostic fingerprints)
 
 ## Intent
@@ -19,11 +19,13 @@ conformance test.
 
 ## Files Touched
 
-- TBD after root-cause analysis.
+- `crates/tsz-solver/src/intern/core/constructors.rs`
+- `crates/tsz-checker/tests/union_index_access_function_application_param_tests.rs`
 
 ## Verification
 
-- Baseline target command:
-  `./scripts/conformance/conformance.sh run --filter "signatureCombiningRestParameters4" --verbose`
-- Planned: owning-crate Rust regression test.
-- Planned: targeted conformance rerun for `signatureCombiningRestParameters4`.
+- `CARGO_BUILD_JOBS=1 cargo nextest run -p tsz-checker --test union_index_access_function_application_param_tests signature_combining_rest_parameters_4_preserves_intersection_display_order`
+- `CARGO_BUILD_JOBS=1 cargo build -p tsz-cli --bin tsz`
+- `/Users/mohsen/code/tsz-worktrees/conformance-quick-pick-20260505-next25/.target-run/debug/tsz-conformance --filter signatureCombiningRestParameters4 --workers 1 --verbose --print-fingerprints --test-dir /Users/mohsen/code/tsz-worktrees/conformance-quick-pick-20260505-next20/TypeScript/tests/cases --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary .target/debug/tsz`
+- Adjacent guard:
+  `/Users/mohsen/code/tsz-worktrees/conformance-quick-pick-20260505-next25/.target-run/debug/tsz-conformance --filter signatureCombiningRestParameters3 --workers 1 --verbose --print-fingerprints --test-dir /Users/mohsen/code/tsz-worktrees/conformance-quick-pick-20260505-next20/TypeScript/tests/cases --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary .target/debug/tsz`
