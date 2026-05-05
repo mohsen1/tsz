@@ -101,16 +101,60 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(node)
             && ident.escaped_text == "NaN"
         {
-            if let Some(sym_id) = self.resolve_identifier_symbol(current_idx) {
-                // Only treat this as the global NaN if it actually comes from a
-                // lib declaration file. User-declared locals (even at module
-                // scope) have `parent.is_none()` too, so checking `parent` is
-                // not a reliable discriminator; rely on the arena origin instead.
-                return self.ctx.symbol_is_from_lib(sym_id);
-            }
-            return true; // Unresolved NaN treated as global
+            return self.is_unshadowed_nan_identifier(current_idx);
         }
         false
+    }
+
+    pub(crate) fn is_unshadowed_nan_identifier(&self, node_idx: NodeIndex) -> bool {
+        let mut current_idx = node_idx;
+        while let Some(node) = self.ctx.arena.get(current_idx) {
+            if node.kind == tsz_parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(expr) = self.ctx.arena.get_parenthesized(node)
+            {
+                current_idx = expr.expression;
+                continue;
+            }
+            break;
+        }
+
+        let Some(node) = self.ctx.arena.get(current_idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16
+            || !self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "NaN")
+        {
+            return false;
+        }
+
+        let mut scope_id = self
+            .ctx
+            .binder
+            .find_enclosing_scope(self.ctx.arena, current_idx);
+        while let Some(current_scope_id) = scope_id {
+            let Some(scope) = self.ctx.binder.scopes.get(current_scope_id.0 as usize) else {
+                break;
+            };
+            if let Some(sym_id) = scope.table.get("NaN") {
+                return self.ctx.symbol_is_from_lib(sym_id);
+            }
+            if current_scope_id == scope.parent {
+                break;
+            }
+            scope_id = Some(scope.parent);
+        }
+
+        if self.ctx.binder.scopes.is_empty()
+            && let Some(sym_id) = self.ctx.binder.file_locals.get("NaN")
+        {
+            return self.ctx.symbol_is_from_lib(sym_id);
+        }
+
+        true
     }
 
     /// Check if a unary expression node is the direct left-hand side of a `**` binary.

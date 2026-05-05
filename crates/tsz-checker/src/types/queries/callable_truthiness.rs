@@ -118,6 +118,25 @@ impl<'a> CheckerState<'a> {
         }
 
         if check_enum_members
+            && let Some(condition_result) = self.nan_equality_condition_result(node_idx)
+        {
+            let already_reported = self.get_node_span(node_idx).is_some_and(|(start, end)| {
+                self.has_diagnostic_code_within_span(
+                    start,
+                    end,
+                    diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN,
+                )
+            });
+            if !already_reported {
+                self.error_at_node_msg(
+                    node_idx,
+                    diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN,
+                    &[condition_result],
+                );
+            }
+        }
+
+        if check_enum_members
             && let Some(condition_result) = self.enum_member_condition_result(node_idx, ty)
         {
             self.error_at_node_msg(
@@ -164,6 +183,36 @@ impl<'a> CheckerState<'a> {
             }
             SyntacticTruthiness::Sometimes => {}
         }
+    }
+
+    fn nan_equality_condition_result(&self, node_idx: NodeIndex) -> Option<&'static str> {
+        let node_idx = self.ctx.arena.skip_parenthesized(node_idx);
+        let node = self.ctx.arena.get(node_idx)?;
+        let binary = self.ctx.arena.get_binary_expr(node)?;
+        let op = binary.operator_token;
+        let is_equality = op == SyntaxKind::EqualsEqualsToken as u16
+            || op == SyntaxKind::EqualsEqualsEqualsToken as u16
+            || op == SyntaxKind::ExclamationEqualsToken as u16
+            || op == SyntaxKind::ExclamationEqualsEqualsToken as u16;
+        if !is_equality {
+            return None;
+        }
+
+        let has_global_nan = self.is_unshadowed_nan_identifier(binary.left)
+            || self.is_unshadowed_nan_identifier(binary.right);
+        if !has_global_nan {
+            return None;
+        }
+
+        Some(
+            if op == SyntaxKind::EqualsEqualsToken as u16
+                || op == SyntaxKind::EqualsEqualsEqualsToken as u16
+            {
+                "false"
+            } else {
+                "true"
+            },
+        )
     }
 
     fn enum_member_condition_result(
