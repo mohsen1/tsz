@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `claude/nice-darwin-mxEWb`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #3344
+- **Status**: ready
 - **Workstream**: conformance — CLI directive parity
 
 ## Intent
@@ -23,6 +23,12 @@ both the line-start table and the single-line comment span scanner.
 
 ## Verification
 
-- `cargo nextest run -p tsz-cli`
-- Targeted CR/CRLF repro: directive line successfully suppresses the
-  next line.
+- `cargo test -p tsz-cli --lib ts_directive` — 7/7 pass
+- `cargo test -p tsz-cli --lib build_line_starts` — 1/1 pass
+- `cargo test -p tsz-cli --lib` (full) — 821 pass, 4 pre-existing
+  unrelated failures (TS1362 `module.exports` type-only require,
+  TS5033 read-only tsbuildinfo, two declaration-emit tests). All four
+  reproduce on the parent commit (`cb1d2cc`) without this change.
+- End-to-end with rebuilt release binary on CR-only / CRLF / LF
+  directive repros: all three exit 0 and no longer leak the next-line
+  TS2322 diagnostic past the directive.
