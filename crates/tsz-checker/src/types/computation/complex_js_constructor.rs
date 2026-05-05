@@ -246,6 +246,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let func_node_idx = self.ctx.arena.parent_of(body_idx);
+        let has_jsdoc_constructor_evidence = func_node_idx
+            .and_then(|func_node_idx| self.get_jsdoc_for_function(func_node_idx))
+            .is_some_and(|jsdoc| jsdoc.contains("@constructor"))
+            || sym_id
+                .as_ref()
+                .is_some_and(|&sym_id| self.symbol_has_js_constructor_evidence(sym_id));
 
         // Build effective template/parameter data for JS generic constructors.
         let func_shape = crate::query_boundaries::common::function_shape_for_type(
@@ -467,7 +473,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if properties.is_empty() {
-            if has_prototype_evidence {
+            if has_prototype_evidence || has_jsdoc_constructor_evidence {
                 let brand_key = sym_id
                     .map(|sym_id| format!("__js_ctor_brand_{}", sym_id.0))
                     .or_else(|| {
