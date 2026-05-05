@@ -726,7 +726,40 @@ declare class RC<T extends "a" | "b"> {
         !has_error(&diagnostics, 2339),
         "TS2339 should not be emitted for property access on a generic class \
          used in its own computed property name. The property 'x' exists on \
-         the class instance type. Got diagnostics: {diagnostics:?}"
+        the class instance type. Got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2339_on_module_generic_class_computed_property_self_reference() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("module.ts", r#"export const marker = "a";"#),
+            (
+                "main.ts",
+                r#"
+import { marker } from "./module";
+marker;
+declare const rC: RC<"a">;
+rC.x
+declare class RC<T extends "a" | "b"> {
+    x: T;
+    [rC.x]: "b";
+}
+                "#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::CommonJS,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "module-mode forward class self-reference should not emit TS2339. \
+         Got diagnostics: {diagnostics:?}"
     );
 }
 
