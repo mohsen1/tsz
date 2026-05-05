@@ -2182,9 +2182,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             // @returns {type} or @return {type}
-            if let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
+            if let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed)
                 && rest.trim().starts_with('{')
             {
                 return true;
@@ -2685,10 +2683,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_returns_type_name(jsdoc: &str) -> Option<String> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
             let rest = rest.trim_start();
@@ -2713,10 +2708,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_returns_type_expression(jsdoc: &str) -> Option<String> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
             let rest = rest.trim_start();
@@ -2743,10 +2735,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(bool, String, Option<String>)> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
             let rest = rest.trim_start();

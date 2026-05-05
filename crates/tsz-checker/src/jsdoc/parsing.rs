@@ -293,6 +293,11 @@ impl<'a> CheckerState<'a> {
         Self::strip_jsdoc_tag_prefix(line, tag_name).is_some()
     }
 
+    pub(crate) fn strip_jsdoc_return_tag_prefix(text: &str) -> Option<&str> {
+        Self::strip_jsdoc_tag_prefix(text, "returns")
+            .or_else(|| Self::strip_jsdoc_tag_prefix(text, "return"))
+    }
+
     pub(crate) fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
         let typedef_pos = Self::jsdoc_tag_offset(jsdoc, "typedef");
         let tag_pos = Self::jsdoc_tag_offset(jsdoc, "type");
@@ -876,10 +881,7 @@ impl<'a> CheckerState<'a> {
                     }
                     continue;
                 }
-                if let Some(rest) = line
-                    .strip_prefix("@returns")
-                    .or_else(|| line.strip_prefix("@return"))
-                {
+                if let Some(rest) = Self::strip_jsdoc_return_tag_prefix(line) {
                     let rest = rest.trim();
                     if rest.starts_with('{')
                         && let Some(end) = rest[1..].find('}')
@@ -908,7 +910,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Parse a type predicate from a JSDoc type expression (`x is T`, `asserts x is T`).
-    pub(super) fn jsdoc_returns_type_predicate_from_type_expr(
+    pub(crate) fn jsdoc_returns_type_predicate_from_type_expr(
         type_expr: &str,
     ) -> Option<(bool, String, Option<String>)> {
         let (is_asserts, remainder) = Self::split_jsdoc_asserts_prefix(type_expr);
