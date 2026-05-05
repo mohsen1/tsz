@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-conditional-deferred-assignability-fingerprint`
-- **PR**: TBD
+- **PR**: #2774
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
