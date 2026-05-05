@@ -929,6 +929,67 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn object_rest_binding_excluded_names(&self, identifier_idx: NodeIndex) -> Option<Vec<String>> {
+        let sym_id = self.value_reference_symbol(identifier_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let parent_idx = self.arena.parent_of(decl_idx)?;
+            let parent_node = self.arena.get(parent_idx)?;
+            let binding = self.arena.get_binding_element(parent_node)?;
+            if !binding.dot_dot_dot_token || binding.name != decl_idx {
+                continue;
+            }
+
+            let pattern_idx = self.arena.parent_of(parent_idx)?;
+            let pattern_node = self.arena.get(pattern_idx)?;
+            let pattern = self.arena.get_binding_pattern(pattern_node)?;
+            let mut excluded = Vec::new();
+            for &element_idx in &pattern.elements.nodes {
+                let Some(element_node) = self.arena.get(element_idx) else {
+                    continue;
+                };
+                let Some(element) = self.arena.get_binding_element(element_node) else {
+                    continue;
+                };
+                if element.dot_dot_dot_token {
+                    continue;
+                }
+                let name_idx = if element.property_name.is_some() {
+                    element.property_name
+                } else {
+                    element.name
+                };
+                if let Some(name) = self.property_name_text_from_arena(self.arena, name_idx) {
+                    excluded.push(name);
+                }
+            }
+            return Some(excluded);
+        }
+
+        None
+    }
+
+    fn omit_object_type_text_properties(type_text: &str, excluded_names: &[String]) -> String {
+        if !type_text.trim_start().starts_with('{') || excluded_names.is_empty() {
+            return type_text.to_string();
+        }
+
+        type_text
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !excluded_names.iter().any(|name| {
+                    trimmed
+                        .strip_prefix(name)
+                        .is_some_and(|rest| rest.starts_with(':') || rest.starts_with("?:"))
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn qualify_foreign_exported_names_in_text(
         &self,
         source_arena: &NodeArena,
@@ -1313,14 +1374,40 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::Identifier as u16
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
             {
+                if expr_node.kind == SyntaxKind::Identifier as u16
+                    && self.identifier_is_object_rest_binding(expr_idx)
+                    && let Some(type_id) = self
+                        .get_node_type_or_names(&[expr_idx])
+                        .or_else(|| self.get_type_via_symbol(expr_idx))
+                    && type_id != tsz_solver::types::TypeId::ANY
+                    && type_id != tsz_solver::types::TypeId::ERROR
+                    && let Some(interner) = self.type_interner
+                    && tsz_solver::type_queries::is_object_like_type(interner, type_id)
+                {
+                    return Some(self.print_type_id(type_id));
+                }
                 if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     && self.get_node_type(expr_idx) == Some(tsz_solver::types::TypeId::ANY)
                 {
                     return Some("any".to_string());
                 }
-                self.reference_declared_type_annotation_text(expr_idx)
+                let type_text = self
+                    .reference_declared_type_annotation_text(expr_idx)
                     .or_else(|| self.value_reference_symbol_type_text(expr_idx))
-                    .or_else(|| self.undefined_identifier_type_text(expr_idx))
+                    .or_else(|| self.undefined_identifier_type_text(expr_idx));
+                if expr_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(type_text) = type_text
+                {
+                    if let Some(excluded_names) = self.object_rest_binding_excluded_names(expr_idx)
+                    {
+                        return Some(Self::omit_object_type_text_properties(
+                            &type_text,
+                            &excluded_names,
+                        ));
+                    }
+                    return Some(type_text);
+                }
+                type_text
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 let reused_type_text = self
@@ -3443,6 +3530,100 @@ impl<'a> DeclarationEmitter<'a> {
         !self.print_type_id(inferred_return_type).contains("typeof ")
     }
 
+    pub(in crate::declaration_emitter) fn function_return_type_text_for_declaration_scope(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> (String, bool) {
+        let (text, substituted_parameter_type_query) =
+            self.substitute_function_parameter_type_queries(func, source_type_text);
+        let Some(ref type_params) = func.type_parameters else {
+            return (text, substituted_parameter_type_query);
+        };
+        if type_params.nodes.is_empty() {
+            return (text, substituted_parameter_type_query);
+        }
+
+        let outer_names = self.collect_type_param_names(type_params);
+        let text = Self::rename_shadowed_type_params_in_text(&text, &outer_names);
+        (
+            Self::rename_shadowed_infer_type_params_in_text(&text, &outer_names),
+            substituted_parameter_type_query,
+        )
+    }
+
+    fn substitute_function_parameter_type_queries(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> (String, bool) {
+        if !source_type_text.contains("typeof ")
+            || !source_type_text.contains(" extends ")
+            || !source_type_text.contains('?')
+        {
+            return (source_type_text.to_string(), false);
+        }
+
+        let mut text = source_type_text.to_string();
+        let mut replaced_any = false;
+        for param_idx in func.parameters.nodes.iter().copied() {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_name) = self.get_identifier_text(param.name) else {
+                continue;
+            };
+            let Some(param_type_text) = self.function_parameter_type_text(func, param.name) else {
+                continue;
+            };
+            if Self::simple_type_reference_name(&param_type_text).is_none() {
+                continue;
+            }
+            let (replaced_text, replaced) =
+                Self::replace_typeof_identifier(&text, &param_name, &param_type_text);
+            text = replaced_text;
+            replaced_any |= replaced;
+        }
+        (text, replaced_any)
+    }
+
+    fn replace_typeof_identifier(
+        text: &str,
+        identifier: &str,
+        replacement: &str,
+    ) -> (String, bool) {
+        let query = format!("typeof {identifier}");
+        let bytes = text.as_bytes();
+        let query_bytes = query.as_bytes();
+        let mut result = String::with_capacity(text.len());
+        let mut replaced = false;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if i + query_bytes.len() <= bytes.len()
+                && &bytes[i..i + query_bytes.len()] == query_bytes
+                && (i == 0 || !Self::is_ident_char(bytes[i - 1]))
+            {
+                let after = i + query_bytes.len();
+                let after_ok = after == bytes.len()
+                    || (!Self::is_ident_char(bytes[after])
+                        && bytes[after] != b'.'
+                        && bytes[after] != b'<');
+                if after_ok {
+                    result.push_str(replacement);
+                    i = after;
+                    replaced = true;
+                    continue;
+                }
+            }
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+        (result, replaced)
+    }
+
     pub(in crate::declaration_emitter) fn collect_unique_return_type_text_from_block(
         &self,
         statements: &NodeList,
@@ -3476,6 +3657,14 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(text) = self
                     .preferred_expression_type_text(ret.expression)
                     .filter(|text| !text.is_empty() && text != "any")
+                {
+                    text
+                } else if let Some(text) = self
+                    .return_expression_identifier(ret.expression)
+                    .and_then(|identifier_idx| {
+                        self.reference_declared_type_annotation_text(identifier_idx)
+                    })
+                    .filter(|text| text == "any")
                 {
                     text
                 } else if let Some(text) = self

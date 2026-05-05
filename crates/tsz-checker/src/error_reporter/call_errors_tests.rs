@@ -94,6 +94,41 @@ var r6 = c.y();
 }
 
 #[test]
+fn tdz_callee_still_checks_argument_type_against_declared_signature() {
+    let diagnostics =
+        check_source_with_strict_null("f(true);\nconst f: (a: number) => void = null as any;");
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&2448),
+        "expected TDZ diagnostic for forward const call, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains(
+                    "Argument of type 'boolean' is not assignable to parameter of type 'number'.",
+                )
+        }),
+        "expected TS2345 from recovered declared callee signature, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn tdz_callee_still_checks_minimum_argument_count() {
+    let diagnostics = check_source_with_strict_null(
+        "b();\ntype Test = (arg: unknown) => arg is string;\nconst b: Test = null as any;",
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2554 && d.message_text == "Expected 1 arguments, but got 0."),
+        "expected TS2554 from recovered declared callee signature, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn emits_ts6234_for_non_generic_getter_call() {
     // Non-generic class: calling a getter should emit TS6234
     let diagnostics = check_source_with_strict_null(

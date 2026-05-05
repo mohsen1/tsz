@@ -558,10 +558,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
-        source
-            .lines()
-            .take(20)
-            .any(|line| line.contains("@ts-nocheck"))
+        tsz_common::comments::source_has_ts_nocheck_directive(source)
     }
 
     // =========================================================================
@@ -765,14 +762,6 @@ impl<'a> CheckerState<'a> {
     ) {
         let ts1262_code =
             crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE;
-
-        // The AST walk in check_reserved_await_identifier_in_module handles all
-        // declarations tracked by the binder. This fallback covers patterns the AST walk
-        // cannot reach (import forms, binding-pattern destructuring, plain-JS variables).
-        // Skip it only when the AST walk already produced at least one TS1262 AND the
-        // fallback would not add anything the AST walk missed. In practice the fallback's
-        // text-scan final clause would duplicate a diagnostic already emitted by the AST
-        // walk, so keep the early-return guard here.
         if self
             .ctx
             .diagnostics

@@ -35,6 +35,7 @@ impl<'a> Printer<'a> {
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
+        let class_name_is_real = class.name.is_some();
         let class_name = if class.name.is_none() {
             assignment_prefix
                 .as_ref()
@@ -236,7 +237,7 @@ impl<'a> Printer<'a> {
                 };
                 auto_accessor_members.push((member_idx, storage_name.clone(), init, is_static));
                 if is_static {
-                    if auto_accessor_class_alias.is_none() {
+                    if lower_auto_accessors_to_weakmap && auto_accessor_class_alias.is_none() {
                         auto_accessor_class_alias = Some(self.make_unique_name());
                     }
                     auto_accessor_static_inits.push((storage_name, init));
@@ -1313,6 +1314,7 @@ impl<'a> Printer<'a> {
         let prev_scoped_class_expression_self_alias =
             self.scoped_class_expression_self_alias.take();
         if let Some(temp) = class_expr_temp.as_ref()
+            && class_name_is_real
             && !class_name.is_empty()
             && class_name != *temp
         {

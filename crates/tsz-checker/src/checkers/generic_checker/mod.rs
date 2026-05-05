@@ -172,7 +172,6 @@ impl<'a> CheckerState<'a> {
                             || self.is_function_constraint(extends_resolved);
                         if constraint_is_callable
                             && (extends_is_callable
-                                || self.type_node_ref_name_equals(cond.extends_type, "Function")
                                 || self.is_assignable_to(extends_resolved, constraint)
                                 || self.is_assignable_to(extends_evaluated, constraint))
                         {
@@ -242,19 +241,6 @@ impl<'a> CheckerState<'a> {
             if self.type_node_contains_reference(child_idx, target_type_node) {
                 return true;
             }
-        }
-        false
-    }
-
-    fn type_node_ref_name_equals(&self, node_idx: NodeIndex, expected: &str) -> bool {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return false;
-        };
-        if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-            && let Some(identifier) = self.ctx.arena.get_identifier(name_node)
-        {
-            return identifier.escaped_text == expected;
         }
         false
     }
@@ -1093,64 +1079,7 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::context::CheckerOptions;
-    use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
-    use tsz_parser::parser::node::NodeArena;
-    use tsz_solver::TypeInterner;
-
-    #[test]
-    fn type_node_ref_name_equals_requires_exact_identifier() {
-        let mut parser = ParserState::new(
-            "test.ts".to_string(),
-            "type A = NotAFunction; type B = Function;".to_string(),
-        );
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-        let types = TypeInterner::new();
-        let checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "test.ts".to_string(),
-            CheckerOptions::default(),
-        );
-
-        let not_a_function = find_type_ref_by_name(parser.get_arena(), root, "NotAFunction")
-            .expect("expected NotAFunction type reference");
-        let function = find_type_ref_by_name(parser.get_arena(), root, "Function")
-            .expect("expected Function type reference");
-
-        assert!(!checker.type_node_ref_name_equals(not_a_function, "Function"));
-        assert!(checker.type_node_ref_name_equals(function, "Function"));
-    }
-
-    fn find_type_ref_by_name(
-        arena: &NodeArena,
-        node_idx: NodeIndex,
-        expected: &str,
-    ) -> Option<NodeIndex> {
-        let node = arena.get(node_idx)?;
-        if let Some(type_ref) = arena.get_type_ref(node)
-            && let Some(name_node) = arena.get(type_ref.type_name)
-            && let Some(identifier) = arena.get_identifier(name_node)
-            && identifier.escaped_text == expected
-        {
-            return Some(node_idx);
-        }
-
-        arena
-            .get_children(node_idx)
-            .into_iter()
-            .find_map(|child_idx| find_type_ref_by_name(arena, child_idx, expected))
-    }
-}
-
 mod constraint_validation;
-mod failed_typeof_instantiation;
 mod infer_conditional_constraints;
+mod instantiation_expression_constraints;
 mod mapped_constraint_helpers;

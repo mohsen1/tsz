@@ -77,10 +77,11 @@ impl<'a> CheckerState<'a> {
         type_args: &[TypeId],
         interface_declarations: &[NodeIndex],
         substitution: &crate::query_boundaries::common::TypeSubstitution,
+        use_global_array_members: bool,
     ) -> (Vec<PropertyInfo>, bool, String) {
         let array_display_name = |state: &Self| format!("{}[]", state.format_type(type_args[0]));
 
-        if interface_name == "Array" && type_args.len() == 1 {
+        if use_global_array_members {
             let display_name = array_display_name(self);
 
             if let Some(array_base) = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types)
@@ -215,12 +216,14 @@ impl<'a> CheckerState<'a> {
         &self,
         type_idx: NodeIndex,
         fallback: &str,
+        use_global_array_display: bool,
     ) -> String {
         let Some(type_node) = self.ctx.arena.get(type_idx) else {
             return fallback.to_string();
         };
 
-        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+        if use_global_array_display
+            && type_node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
             && let Some(type_name) = self.node_text(type_ref.type_name)
             && type_name == "Array"
@@ -231,7 +234,8 @@ impl<'a> CheckerState<'a> {
             return format!("{}[]", arg_text.trim().trim_end_matches('>'));
         }
 
-        if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+        if use_global_array_display
+            && type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
             && let Some(type_ref) = self.ctx.arena.get_expr_type_args(type_node)
             && let Some(type_name) = self.node_text(type_ref.expression)
             && type_name == "Array"
@@ -1029,6 +1033,9 @@ impl<'a> CheckerState<'a> {
                         &substitution,
                     );
                     let interface_type = self.evaluate_type_for_assignability(interface_type);
+                    let use_global_array_implements_path = interface_name == "Array"
+                        && type_args.len() == 1
+                        && self.ctx.symbol_is_from_actual_lib(sym_id);
                     let (
                         interface_properties,
                         interface_has_index_signature,
@@ -1039,11 +1046,13 @@ impl<'a> CheckerState<'a> {
                         &type_args,
                         &symbol.declarations,
                         &substitution,
+                        use_global_array_implements_path,
                     );
                     let interface_display_name = self
                         .implemented_interface_display_name_from_syntax(
                             type_idx,
                             &interface_display_name,
+                            use_global_array_implements_path,
                         );
                     // tsc shows the expanded intersection form (e.g., "Foo & Bar")
                     // instead of the type alias name (e.g., "Wrapper") when the

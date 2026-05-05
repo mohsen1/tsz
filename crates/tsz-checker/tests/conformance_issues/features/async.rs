@@ -641,6 +641,100 @@ if (Strs.A) {}
 }
 
 #[test]
+fn test_module_scoped_shadowed_nan_does_not_trigger_ts2845() {
+    // When a module re-declares `NaN` as a local variable, comparisons against
+    // that local should NOT emit TS2845. Only the lib-originated global `NaN`
+    // triggers the always-true/false diagnostic.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+const NaN = 0;
+
+if (NaN === 0) {
+    const ok: true = true;
+}
+
+if (NaN !== 0) {
+    const unreachable: never = "not actually unreachable";
+}
+
+export {};
+"#,
+    );
+
+    // Only the intentional `never` assignment should appear — no false TS2845.
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert!(
+        ts2845.is_empty(),
+        "Expected no TS2845 for shadowed module-level NaN, got: {ts2845:?}"
+    );
+    // The never assignment error IS expected.
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 (never assignment), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_function_local_shadowed_nan_does_not_trigger_ts2845() {
+    // Function-local `NaN` redeclarations must also be free of false TS2845.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+function f() {
+    const NaN = 0;
+    if (NaN === 0) {
+        return true;
+    }
+    return false;
+}
+
+f();
+
+export {};
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert!(
+        ts2845.is_empty(),
+        "Expected no TS2845 for function-local shadowed NaN, got: {ts2845:?}"
+    );
+}
+
+#[test]
+fn test_global_nan_still_triggers_ts2845() {
+    // The global (lib) NaN must still produce TS2845 so we don't regress
+    // the original behavior.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+declare let x: number;
+if (x === NaN) {}
+export {};
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert_eq!(
+        ts2845.len(),
+        1,
+        "Expected one TS2845 for global NaN comparison, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -676,11 +770,9 @@ both[sym] = 'not ok';
 
 #[test]
 fn test_js_global_element_access_or_fallback_uses_contextual_target() {
-    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
-        "test.js",
-        r#"
+    let source = r#"
 var Common = {};
-globalThis["Common"] = globalThis["Common"] || {};
+self['Common'] = self['Common'] || {};
 /**
  * @param {string} string
  * @return {string}
@@ -688,7 +780,10 @@ globalThis["Common"] = globalThis["Common"] || {};
 Common.localize = function (string) {
     return string;
 };
-"#,
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "test.js",
+        source,
         CheckerOptions {
             allow_js: true,
             check_js: true,
@@ -697,16 +792,31 @@ Common.localize = function (string) {
         },
     );
 
-    let ts2741_count = diagnostics.iter().filter(|(code, _)| *code == 2741).count();
-    let ts7053_count = diagnostics.iter().filter(|(code, _)| *code == 7053).count();
+    let ts2741: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2741)
+        .collect();
+    let ts7053_count = diagnostics.iter().filter(|diag| diag.code == 7053).count();
 
     assert_eq!(
-        ts2741_count, 1,
+        ts2741.len(),
+        1,
         "Expected the JS global element-access `||` assignment to fail with one TS2741.\nActual diagnostics: {diagnostics:#?}"
+    );
+    let statement_pos = source
+        .find("self['Common'] =")
+        .expect("expected global fallback assignment") as u32;
+    assert_eq!(
+        ts2741[0].start, statement_pos,
+        "Expected TS2741 to anchor at the assignment statement start.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2741[0].message_text.contains("typeof Common"),
+        "Expected TS2741 target display to preserve the namespace/value side.\nActual diagnostics: {diagnostics:#?}"
     );
     assert_eq!(
         ts7053_count, 0,
-        "Did not expect TS7053 for globalThis[\"Common\"] once it resolves through the global property path.\nActual diagnostics: {diagnostics:#?}"
+        "Did not expect TS7053 for self['Common'] once it resolves through the global property path.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 

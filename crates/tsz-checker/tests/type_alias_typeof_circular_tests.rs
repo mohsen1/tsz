@@ -25,6 +25,27 @@ fn test_ts2456_typeof_alias_references_self_through_array() {
 }
 
 #[test]
+fn test_ts2456_typeof_parameter_after_forward_predicate_call() {
+    let src = r#"
+        function test(arg: string | number, whatever: any) {
+            if (typeof arg === "string") {
+                b();
+                type First = typeof arg;
+                type Test = (arg: unknown) => arg is First;
+                const b: Test = whatever;
+                return b;
+            }
+            return undefined;
+        }
+    "#;
+    let codes = get_error_codes(src);
+    assert!(
+        codes.contains(&2456),
+        "Expected TS2456 for typeof parameter narrowed by forward predicate call, got: {codes:?}"
+    );
+}
+
+#[test]
 fn test_no_ts2456_when_typeof_target_uses_tuple_wrapping() {
     // Cycle goes through structurally-wrapping types (tuple element + generic
     // Application). tsc considers these structurally deferred and does NOT emit

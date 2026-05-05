@@ -144,6 +144,9 @@ mod heritage_type_only_tests;
 #[path = "tests/index_sig_param_intersection_validity_tests.rs"]
 mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
+#[path = "../tests/js_property_write_self_declaration_tests.rs"]
+mod js_property_write_self_declaration_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_postfix_nullable_type_tests.rs"]
 mod jsdoc_postfix_nullable_type_tests;
 #[cfg(test)]
