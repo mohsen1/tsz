@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `conformance/quick-pick-20260505-next19`
 - **PR**: #3262
-- **Status**: claimed
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
