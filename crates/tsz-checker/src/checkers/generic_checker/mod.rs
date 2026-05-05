@@ -1079,6 +1079,7 @@ impl<'a> CheckerState<'a> {
     }
 }
 
+mod array_like_constraint_helpers;
 mod constraint_validation;
 mod infer_conditional_constraints;
 mod instantiation_expression_constraints;
