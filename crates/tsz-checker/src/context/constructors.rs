@@ -189,6 +189,7 @@ impl<'a> CheckerContext<'a> {
             is_checking_statements: false,
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
+            preserve_destructuring_initializer_overload_diagnostics: false,
             skip_flow_narrowing: false,
             instantiation_depth: Cell::new(0),
             depth_exceeded: Cell::new(false),
