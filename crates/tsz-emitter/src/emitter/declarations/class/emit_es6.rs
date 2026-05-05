@@ -236,7 +236,7 @@ impl<'a> Printer<'a> {
                 };
                 auto_accessor_members.push((member_idx, storage_name.clone(), init, is_static));
                 if is_static {
-                    if auto_accessor_class_alias.is_none() {
+                    if lower_auto_accessors_to_weakmap && auto_accessor_class_alias.is_none() {
                         auto_accessor_class_alias = Some(self.make_unique_name());
                     }
                     auto_accessor_static_inits.push((storage_name, init));
