@@ -102,6 +102,10 @@ pub(crate) fn emit_outputs(
         .map(|file| file.file_name.clone())
         .collect();
     let declaration_const_enum_exports = build_declaration_const_enum_exports(context.program);
+    let ambient_global_type_only_names = build_ambient_global_type_only_names(
+        context.program,
+        context.options.printer.preserve_const_enums,
+    );
 
     // Build the set of JS output paths produced by TypeScript source files
     // (.ts/.tsx/.mts/.cts). When --allowJs is set and a JS input file (e.g.
@@ -165,15 +169,20 @@ pub(crate) fn emit_outputs(
                 &input_path,
             )
         {
-            // Get type_only_nodes from the type cache (if available)
-            let type_only_nodes = context.type_caches.get(&input_path).map_or_else(
-                || std::sync::Arc::new(rustc_hash::FxHashSet::default()),
-                |cache| std::sync::Arc::new(cache.type_only_nodes.clone()),
-            );
-
-            // Clone and update printer options with type_only_nodes
             let mut printer_options = context.options.printer.clone();
-            printer_options.type_only_nodes = type_only_nodes;
+            let mut type_only_nodes = context
+                .type_caches
+                .get(&input_path)
+                .map_or_else(rustc_hash::FxHashSet::default, |cache| {
+                    cache.type_only_nodes.clone()
+                });
+            mark_ambient_global_type_only_export_specifiers(
+                &file.arena,
+                file.source_file,
+                &ambient_global_type_only_names,
+                &mut type_only_nodes,
+            );
+            printer_options.type_only_nodes = std::sync::Arc::new(type_only_nodes);
 
             // Wire JSX options from resolved compiler options to printer
             if let Some(jsx) = context.options.jsx {
@@ -1376,6 +1385,140 @@ fn js_extension_for(path: &Path, jsx: Option<JsxEmit>) -> Option<&'static str> {
         Some("mjs") => Some("mjs"),
         Some("cjs") => Some("cjs"),
         _ => None,
+    }
+}
+
+fn build_ambient_global_type_only_names(
+    program: &MergedProgram,
+    preserve_const_enums: bool,
+) -> FxHashSet<String> {
+    let mut type_only_names = FxHashSet::default();
+    let mut value_names = FxHashSet::default();
+
+    for file in &program.files {
+        let input_path = PathBuf::from(&file.file_name);
+        if !is_declaration_file(&input_path) {
+            continue;
+        }
+
+        let Some(source) = file
+            .arena
+            .get(file.source_file)
+            .and_then(|node| file.arena.get_source_file(node))
+        else {
+            continue;
+        };
+
+        if source_file_has_top_level_module_syntax(&file.arena, &source.statements.nodes) {
+            continue;
+        }
+
+        type_only_names.extend(
+            tsz_emitter::transforms::module_commonjs::build_type_only_declaration_names(
+                &file.arena,
+                &source.statements.nodes,
+                preserve_const_enums,
+            ),
+        );
+        value_names.extend(
+            tsz_emitter::transforms::module_commonjs::build_value_declaration_names(
+                &file.arena,
+                &source.statements.nodes,
+                preserve_const_enums,
+            ),
+        );
+    }
+
+    type_only_names.retain(|name| !value_names.contains(name));
+    type_only_names
+}
+
+fn source_file_has_top_level_module_syntax(arena: &NodeArena, statements: &[NodeIndex]) -> bool {
+    statements.iter().any(|&stmt_idx| {
+        let Some(node) = arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::EXPORT_DECLARATION
+                || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                let Some(import_data) = arena.get_import_decl(node) else {
+                    return false;
+                };
+                let Some(spec_node) = arena.get(import_data.module_specifier) else {
+                    return false;
+                };
+                spec_node.kind == SyntaxKind::StringLiteral as u16
+                    || spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+            }
+            _ => false,
+        }
+    })
+}
+
+fn mark_ambient_global_type_only_export_specifiers(
+    arena: &NodeArena,
+    source_file_idx: NodeIndex,
+    ambient_global_type_only_names: &FxHashSet<String>,
+    type_only_nodes: &mut FxHashSet<NodeIndex>,
+) {
+    if ambient_global_type_only_names.is_empty() {
+        return;
+    }
+
+    let Some(source) = arena
+        .get(source_file_idx)
+        .and_then(|node| arena.get_source_file(node))
+    else {
+        return;
+    };
+
+    for &stmt_idx in &source.statements.nodes {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+            continue;
+        }
+
+        let Some(export_decl) = arena.get_export_decl(node) else {
+            continue;
+        };
+        if export_decl.is_type_only || export_decl.module_specifier.is_some() {
+            continue;
+        }
+
+        let Some(clause_node) = arena.get(export_decl.export_clause) else {
+            continue;
+        };
+        let Some(named_exports) = arena.get_named_imports(clause_node) else {
+            continue;
+        };
+
+        for &spec_idx in &named_exports.elements.nodes {
+            let Some(spec) = arena.get_specifier_at(spec_idx) else {
+                continue;
+            };
+            if spec.is_type_only {
+                continue;
+            }
+
+            let local_name_idx = if spec.property_name.is_some() {
+                spec.property_name
+            } else {
+                spec.name
+            };
+            if let Some(local_name) = arena.identifier_text_owned(local_name_idx)
+                && ambient_global_type_only_names.contains(&local_name)
+            {
+                type_only_nodes.insert(spec_idx);
+            }
+        }
     }
 }
 

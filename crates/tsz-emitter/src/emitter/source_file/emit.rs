@@ -963,6 +963,7 @@ impl<'a> Printer<'a> {
                 self.arena,
                 &source.statements.nodes,
                 self.ctx.options.preserve_const_enums,
+                &self.ctx.options.type_only_nodes,
             );
 
             if has_top_level_using
