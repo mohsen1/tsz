@@ -150,13 +150,15 @@ pub(crate) fn emit_outputs(
             continue;
         }
 
-        if let Some(js_path) = js_output_path(
-            context.base_dir,
-            context.root_dir,
-            context.out_dir,
-            context.options.jsx,
-            &input_path,
-        ) {
+        if !context.options.emit_declaration_only
+            && let Some(js_path) = js_output_path(
+                context.base_dir,
+                context.root_dir,
+                context.out_dir,
+                context.options.jsx,
+                &input_path,
+            )
+        {
             // Get type_only_nodes from the type cache (if available)
             let type_only_nodes = context.type_caches.get(&input_path).map_or_else(
                 || std::sync::Arc::new(rustc_hash::FxHashSet::default()),
@@ -500,7 +502,8 @@ pub(crate) fn emit_outputs(
     }
 
     // Emit bundled JS output when --outFile is set
-    if let Some(bundle_path) = js_bundle_path
+    if !context.options.emit_declaration_only
+        && let Some(bundle_path) = js_bundle_path
         && !js_bundle_chunks.is_empty()
     {
         let mut bundled = String::new();

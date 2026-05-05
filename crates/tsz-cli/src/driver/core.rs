@@ -2589,6 +2589,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.emit_declarations = true;
         options.checker.emit_declarations = true;
     }
+    if args.emit_declaration_only {
+        options.emit_declaration_only = true;
+    }
     if args.declaration_map {
         options.declaration_map = true;
     }
