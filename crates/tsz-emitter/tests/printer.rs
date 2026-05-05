@@ -491,6 +491,25 @@ fn test_commonjs_void_zero_exports_are_emitted_in_reverse_declaration_order() {
 }
 
 #[test]
+fn es2015_computed_instance_field_side_effects_fold_into_method_name() {
+    let source = "class C {\n    [Symbol.iterator] = 0;\n    [Symbol.unscopables]: number;\n    [Symbol.toPrimitive]() { }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("this[_a] = 0;"),
+        "expected constructor to use hoisted computed field temp:\n{output}"
+    );
+    assert!(
+        output.contains("[(_a = Symbol.iterator, Symbol.unscopables, Symbol.toPrimitive)]() { }"),
+        "expected prior computed field expressions to fold into the computed method name:\n{output}"
+    );
+    assert!(
+        !output.contains("_a = Symbol.iterator, Symbol.unscopables;"),
+        "unexpected trailing computed field side-effect expression:\n{output}"
+    );
+}
+
+#[test]
 fn test_es_module_export_equals_erased_to_empty_export_marker() {
     let source = "var a = 10;\nexport = a;\n";
     let output = parse_lower_print(
