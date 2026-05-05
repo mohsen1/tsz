@@ -140,6 +140,53 @@ class C {
 }
 
 #[test]
+fn ts1064_suggestion_wraps_declared_return_type() {
+    let diagnostics = check_with_libs(
+        r#"
+interface Box<T> {
+  value: T;
+}
+
+async function primitive(): number {
+  return 1;
+}
+
+async function generic(): Box<number> {
+  return { value: 1 };
+}
+"#,
+        &["lib.es5.d.ts", "lib.es2015.promise.d.ts"],
+    );
+
+    let ts1064: Vec<_> = diagnostics.iter().filter(|d| d.code == 1064).collect();
+    assert_eq!(
+        ts1064.len(),
+        2,
+        "Expected two TS1064 diagnostics, got: {diagnostics:#?}"
+    );
+
+    let messages: Vec<_> = ts1064.iter().map(|d| d.message_text.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Promise<number>")),
+        "Expected TS1064 suggestion for Promise<number>, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Promise<Box<number>>")),
+        "Expected TS1064 suggestion for Promise<Box<number>>, got: {messages:#?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("Promise<void>")),
+        "Did not expect Promise<void> fallback suggestion, got: {messages:#?}"
+    );
+}
+
+#[test]
 fn preserves_type_parameter_from_custom_promise_like_type() {
     // Test that we preserve type parameters from custom Promise-like types
     // even when complex Promise unwrapping fails.
