@@ -199,10 +199,10 @@ pub fn collect_enclosing_source_binding_names(
     names
 }
 
-fn find_containing_source_file<'a>(
-    arena: &'a NodeArena,
+fn find_containing_source_file(
+    arena: &NodeArena,
     node_idx: NodeIndex,
-) -> Option<&'a tsz_parser::parser::node::SourceFileData> {
+) -> Option<&tsz_parser::parser::node::SourceFileData> {
     let node = arena.get(node_idx)?;
     for candidate in &arena.nodes {
         if candidate.kind != syntax_kind_ext::SOURCE_FILE {
