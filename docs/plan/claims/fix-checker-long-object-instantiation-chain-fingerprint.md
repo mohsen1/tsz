@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-long-object-instantiation-chain-fingerprint`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/3366
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
