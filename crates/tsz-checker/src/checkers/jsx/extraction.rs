@@ -124,21 +124,8 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         props_type: TypeId,
     ) -> TypeId {
-        let Some(jsx_sym_id) = self.get_jsx_namespace_type() else {
-            return props_type;
-        };
-        let lib_binders = self.get_lib_binders();
-        let Some(symbol) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+        let Some(lma_sym_id) = self.get_jsx_namespace_export_symbol_id("LibraryManagedAttributes")
         else {
-            return props_type;
-        };
-        let Some(exports) = symbol.exports.as_ref() else {
-            return props_type;
-        };
-        let Some(lma_sym_id) = exports.get("LibraryManagedAttributes") else {
             return props_type;
         };
 
@@ -174,6 +161,19 @@ impl<'a> CheckerState<'a> {
                 self.resolve_property_access_with_env(component_type, "propTypes"),
                 crate::query_boundaries::common::PropertyAccessResult::Success { .. }
             );
+        if !has_managed_props_metadata
+            && crate::query_boundaries::common::is_type_parameter_like(
+                self.ctx.types,
+                component_type,
+            )
+        {
+            let lma_ref = self.resolve_symbol_as_lazy_type(lma_sym_id);
+            return self
+                .ctx
+                .types
+                .factory()
+                .application(lma_ref, vec![component_type, props_type]);
+        }
         if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, props_type) {
             return props_type;
         }
@@ -271,9 +271,19 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Skip type parameters — we can't check attributes against unresolved generics
+        // Bare type parameters use their callable/construct constraint for props
+        // extraction, while the raw type parameter remains the component argument
+        // to JSX.LibraryManagedAttributes<T, P>.
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type) {
-            return None;
+            let constraint = crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                component_type,
+            )?;
+            return self.get_jsx_props_type_for_component_member_with_raw(
+                raw_component_type,
+                constraint,
+                element_idx,
+            );
         }
 
         if let Some(members) =
@@ -336,6 +346,19 @@ impl<'a> CheckerState<'a> {
         element_idx: Option<NodeIndex>,
     ) -> Option<(TypeId, bool)> {
         let raw_component_type = component_type;
+        self.get_jsx_props_type_for_component_member_with_raw(
+            raw_component_type,
+            component_type,
+            element_idx,
+        )
+    }
+
+    fn get_jsx_props_type_for_component_member_with_raw(
+        &mut self,
+        raw_component_type: TypeId,
+        component_type: TypeId,
+        element_idx: Option<NodeIndex>,
+    ) -> Option<(TypeId, bool)> {
         let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
@@ -344,9 +367,21 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        if crate::query_boundaries::common::is_type_parameter_like(
+            self.ctx.types,
+            raw_component_type,
+        ) && let Some(props) =
+            self.get_jsx_type_parameter_callable_constraint_props_type(raw_component_type)
+        {
+            let props = self.apply_jsx_library_managed_attributes(raw_component_type, props);
+            return Some((props, true));
+        }
+
         // Try SFC first: get call signatures -> first parameter is props type
         if let Some((props, raw_has_tp)) = self.get_sfc_props_type(component_type) {
             let props = self.apply_jsx_library_managed_attributes(raw_component_type, props);
+            let raw_has_tp = raw_has_tp
+                || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, props);
             return Some((props, raw_has_tp));
         }
 
@@ -369,6 +404,45 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn get_jsx_type_parameter_callable_constraint_props_type(
+        &mut self,
+        type_param: TypeId,
+    ) -> Option<TypeId> {
+        let constraint =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_param)?;
+        let constraint = self.normalize_jsx_component_type_for_resolution(constraint);
+
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, constraint)
+            && !shape.is_constructor
+        {
+            return Some(
+                shape
+                    .params
+                    .first()
+                    .map(|p| p.type_id)
+                    .unwrap_or_else(|| self.ctx.types.factory().object(vec![])),
+            );
+        }
+
+        let sigs =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, constraint)?;
+        let non_generic: Vec<_> = sigs
+            .iter()
+            .filter(|sig| sig.type_params.is_empty())
+            .collect();
+        if non_generic.len() != 1 {
+            return None;
+        }
+        Some(
+            non_generic[0]
+                .params
+                .first()
+                .map(|p| p.type_id)
+                .unwrap_or_else(|| self.ctx.types.factory().object(vec![])),
+        )
     }
 
     /// Emit TS2604 if the component type has no call or construct signatures.

@@ -375,6 +375,7 @@ impl<'a> CheckerState<'a> {
         // mapped, and application-based surfaces (for example
         // JSX.LibraryManagedAttributes<...>) are read through the same structural
         // path we already use for missing-required-prop analysis.
+        let raw_props_type = props_type;
         let props_type = self.normalize_jsx_required_props_target(props_type);
 
         // Union props: delegate to whole-object assignability checking.
@@ -1537,12 +1538,51 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let reported_generic_managed_attrs_assignability =
+            if !reported_custom_children_assignability
+                && !reported_special_attr_assignability
+                && !reported_class_missing_props_assignability
+                && !reported_type_param_assignability
+                && !reported_invalid_generic_spread_assignability
+                && !reported_dynamic_intrinsic_assignability
+                && !has_excess_property_error
+                && !spread_covers_all
+                && !skip_prop_checks
+                && !has_prop_type_error
+                && component_type.is_some()
+                && provided_attrs.is_empty()
+                && raw_props_has_type_params
+                && self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
+            {
+                let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+                if !self.is_assignable_to(attrs_type, raw_props_type) {
+                    let mut target = self.format_type(raw_props_type);
+                    if target.starts_with("LibraryManagedAttributes<")
+                        && target.ends_with(", Element>")
+                    {
+                        target.truncate(target.len() - ", Element>".len());
+                        target.push_str(", {}>");
+                    }
+                    self.report_jsx_synthesized_props_assignability_error(
+                        attrs_type,
+                        &target,
+                        tag_name_idx,
+                    );
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
         // TS2741: missing required properties.
         if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_type_param_assignability
             && !reported_invalid_generic_spread_assignability
             && !reported_dynamic_intrinsic_assignability
+            && !reported_generic_managed_attrs_assignability
             && (!reported_class_missing_props_assignability
                 || (provided_attrs.is_empty() && raw_props_has_type_params))
             && !has_excess_property_error
@@ -1889,5 +1929,24 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    fn jsx_props_type_is_library_managed_attributes_application(
+        &mut self,
+        type_id: TypeId,
+    ) -> bool {
+        let Some((base, _args)) =
+            crate::query_boundaries::state::type_environment::application_info(
+                self.ctx.types,
+                type_id,
+            )
+        else {
+            return false;
+        };
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+            return false;
+        };
+        self.get_symbol_globally(sym_id)
+            .is_some_and(|symbol| symbol.escaped_name == "LibraryManagedAttributes")
     }
 }
