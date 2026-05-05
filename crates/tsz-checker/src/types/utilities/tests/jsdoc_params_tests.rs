@@ -529,10 +529,10 @@ fn jsdoc_template_multiple_comma() {
 }
 
 #[test]
-fn jsdoc_template_multiple_space() {
+fn jsdoc_template_space_does_not_delimit_names() {
     let jsdoc = "* @template T U";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
-    assert_eq!(names_only(&params), vec!["T", "U"]);
+    assert_eq!(names_only(&params), vec!["T"]);
 }
 
 #[test]

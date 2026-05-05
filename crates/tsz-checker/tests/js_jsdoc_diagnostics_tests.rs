@@ -271,6 +271,40 @@ ns.value;
 }
 
 #[test]
+fn checked_js_template_whitespace_does_not_declare_second_name() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"
+// @ts-check
+
+/**
+ * @template T U
+ * @param {U} y
+ * @returns {U}
+ */
+function f(y) { return y; }
+            "#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2304 && message.contains("'U'")),
+        "Expected whitespace-only @template delimiter to leave U unresolved. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn checked_js_cross_file_typedef_and_script_globals_duplicate() {
     let files = &[
         ("mod1.js", "/** @typedef {number} Foo */\nclass Bar {}\n"),
