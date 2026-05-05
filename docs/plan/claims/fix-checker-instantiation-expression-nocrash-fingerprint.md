@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-instantiation-expression-nocrash-fingerprint`
-- **PR**: TBD
+- **PR**: #3245
 - **Status**: claim
 - **Workstream**: 1 (Conformance / diagnostic fingerprints)
 
