@@ -197,5 +197,6 @@ mod type_inference;
 mod type_param_rewrite;
 mod type_printing;
 mod type_printing_paths;
+mod unexported_alias_literal;
 mod variable_decl;
 mod visibility;
