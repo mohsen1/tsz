@@ -1161,8 +1161,10 @@ impl<'a> LoweringPass<'a> {
                     member.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
                 })
             });
+        let has_private_comma_expr =
+            self.ctx.needs_es2022_lowering && self.class_has_private_members(class);
 
-        has_static_field_comma_expr || has_static_block_comma_expr
+        has_static_field_comma_expr || has_static_block_comma_expr || has_private_comma_expr
     }
 
     pub(super) fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<IdentifierId> {

@@ -908,3 +908,21 @@ fn lowered_instance_field_jsdoc_is_not_duplicated_on_initializer() {
         "JSDoc should not be emitted again as part of the field initializer.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn anonymous_class_expr_with_static_private_field_sets_function_name() {
+    let source = r#"const C = class {
+    static #x;
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__setFunctionName(_a, \"C\")"),
+        "anonymous class expression with static private state should set the inferred function name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C_x = { value: void 0 }"),
+        "static private field storage should still initialize in the comma expression.\nOutput:\n{output}"
+    );
+}
