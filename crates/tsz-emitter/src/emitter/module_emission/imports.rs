@@ -372,6 +372,16 @@ impl<'a> Printer<'a> {
             let pos = search_from + rel;
             if Self::is_standalone_identifier_at(haystack, ident, pos) {
                 if Self::identifier_occurrence_is_binding(haystack, pos) {
+                    // A second `import <ident> = ...` re-declares the same
+                    // alias; it doesn't shadow the original import — both
+                    // refer to the same name. tsc treats this as a duplicate
+                    // diagnostic but still emits the first value-bearing
+                    // import. Skip past this binding and keep searching for a
+                    // genuine value reference (e.g., `<ident>.foo`).
+                    if Self::binding_is_import_redeclaration(haystack, pos) {
+                        search_from = pos + ident.len();
+                        continue;
+                    }
                     return false;
                 }
                 return true;
@@ -379,6 +389,26 @@ impl<'a> Printer<'a> {
             search_from = pos + ident.len();
         }
         false
+    }
+
+    fn binding_is_import_redeclaration(haystack: &str, pos: usize) -> bool {
+        let bytes = haystack.as_bytes();
+        let mut p = pos;
+        while p > 0 && bytes[p - 1].is_ascii_whitespace() {
+            p -= 1;
+        }
+        let preceding = &haystack[..p];
+        if !preceding.ends_with("import") {
+            return false;
+        }
+        let start = p - "import".len();
+        if start == 0 {
+            return true;
+        }
+        haystack[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
     }
 
     fn is_standalone_identifier_at(haystack: &str, ident: &str, pos: usize) -> bool {
