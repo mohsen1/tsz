@@ -948,6 +948,66 @@ fn test_tagged_template_closing_brace_with_whitespace() {
     );
 }
 
+// `import { css } from "lib"; css `...`;` lowered to CommonJS becomes
+// `(0, lib_1.css) `...`;` so the tagged-template invocation does not bind
+// `this` to the imported module namespace object. Without the `(0, ...)`
+// wrapper, `lib_1.css `...`` would receive `lib_1` as `this`. Mirrors
+// tsc's `inlineJsxFactoryDeclarations` and
+// `jsxImportSourceNonPragmaComment` baselines.
+#[test]
+fn cjs_imported_function_tagged_template_wraps_in_zero_comma() {
+    let source = "import { css } from \"lib\";\nconst a = css `red`;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("(0, lib_1.css) `red`"),
+        "Tagged template with a CJS-imported tag must wrap in `(0, lib_1.css)` to detach `this`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("lib_1.css `red`"),
+        "Bare `lib_1.css` tag must not be emitted — would bind `this` to the namespace object.\nOutput:\n{output}"
+    );
+}
+
+/// JSX attribute names are property keys on the synthesized props
+/// object — they must not pick up the CJS-named-import substitution
+/// that `emit_identifier` applies to value identifiers. Without this,
+/// `<input css={...}/>` reads as `<input lib_1.css={...}/>` after
+/// CJS lowering with `--jsx preserve`, which is invalid JSX.
+#[test]
+fn jsx_attribute_name_skips_cjs_named_import_substitution() {
+    let source = "import { css } from \"lib\";\nconst foo = <input css={42}/>;\n";
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            jsx: JsxEmit::Preserve,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        output.contains("<input css={42}"),
+        "JSX attribute name `css` must be emitted bare even when the same identifier is a CJS-imported value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("<input lib_1.css="),
+        "JSX attribute name must not be substituted to `lib_1.css`.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn test_template_literal_multiple_spans_mixed_whitespace() {
     // Mix of spaces and no-spaces across multiple substitutions.
