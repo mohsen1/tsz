@@ -1706,6 +1706,31 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
 
+                    let direct_class_this_receiver = self.is_this_expression(access.expression)
+                        && self.ctx.enclosing_class.is_some()
+                        && !self.is_this_in_nested_function_inside_class(idx)
+                        && !self.is_this_in_static_class_member(idx);
+                    if direct_class_this_receiver
+                        && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            object_type_for_access,
+                        )
+                        && let Some(raw_prop) = shape.properties.iter().find(|prop| {
+                            self.ctx.types.resolve_atom_ref(prop.name).as_ref()
+                                == property_name.as_str()
+                        })
+                        && crate::query_boundaries::common::contains_this_type(
+                            self.ctx.types,
+                            raw_prop.type_id,
+                        )
+                    {
+                        prop_type = crate::query_boundaries::common::substitute_this_type(
+                            self.ctx.types,
+                            raw_prop.type_id,
+                            self.ctx.types.this_type(),
+                        );
+                    }
+
                     // Substitute polymorphic `this` type with the receiver type.
                     // E.g., for `class C<T> { x = this; }`, accessing `c.x` where
                     // `c: C<string>` should yield `C<string>`, not raw `ThisType`.
@@ -1718,6 +1743,8 @@ impl<'a> CheckerState<'a> {
                     // instead of `(other: Dog) => boolean`, which diverges from tsc.
                     let this_substitution_target = if self.is_super_expression(access.expression) {
                         self.current_this_type().unwrap_or(original_object_type)
+                    } else if direct_class_this_receiver {
+                        self.ctx.types.this_type()
                     } else {
                         original_object_type
                     };

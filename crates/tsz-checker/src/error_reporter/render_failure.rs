@@ -119,6 +119,103 @@ impl<'a> CheckerState<'a> {
         Some(format!("[{}]", formatted.join(", ")))
     }
 
+    fn class_own_missing_properties_for_display(
+        &self,
+        source_candidates: &[TypeId],
+        target_candidates: &[TypeId],
+        missing_property_name: tsz_common::interner::Atom,
+        fallback_target_type: TypeId,
+    ) -> Option<(
+        tsz_binder::SymbolId,
+        TypeId,
+        Vec<tsz_common::interner::Atom>,
+    )> {
+        let target_symbol = target_candidates
+            .iter()
+            .find_map(|&candidate| {
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
+                    .and_then(|shape| {
+                        shape.properties.iter().find_map(|prop| {
+                            (prop.name == missing_property_name)
+                                .then_some(prop.parent_id)
+                                .flatten()
+                                .filter(|sym| {
+                                    self.ctx.binder.get_symbol(*sym).is_some_and(|symbol| {
+                                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                                    })
+                                })
+                        })
+                    })
+            })
+            .or_else(|| {
+                target_candidates.iter().find_map(|&candidate| {
+                    crate::query_boundaries::common::get_object_symbol(self.ctx.types, candidate)
+                        .or_else(|| {
+                            crate::query_boundaries::common::object_shape_for_type(
+                                self.ctx.types,
+                                candidate,
+                            )
+                            .and_then(|shape| {
+                                shape.properties.iter().find_map(|prop| {
+                                    prop.parent_id.filter(|sym| {
+                                        self.ctx.binder.get_symbol(*sym).is_some_and(|symbol| {
+                                            symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                                        })
+                                    })
+                                })
+                            })
+                        })
+                })
+            })?;
+
+        let mut source_props = Vec::new();
+        for &candidate in source_candidates {
+            if let Some(shape) =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
+            {
+                for prop in &shape.properties {
+                    if !source_props.contains(&prop.name) {
+                        source_props.push(prop.name);
+                    }
+                }
+            }
+        }
+
+        let mut class_own_missing = Vec::new();
+        let mut target_display_type = None;
+        for &candidate in target_candidates {
+            if let Some(shape) =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
+            {
+                let mut saw_own = false;
+                for prop in &shape.properties {
+                    if prop.parent_id == Some(target_symbol) {
+                        saw_own = true;
+                        let name = self.ctx.types.resolve_atom_ref(prop.name);
+                        if !name.starts_with("__private_brand")
+                            && !is_object_prototype_method(&name)
+                            && !source_props.contains(&prop.name)
+                            && !class_own_missing.contains(&prop.name)
+                        {
+                            class_own_missing.push(prop.name);
+                        }
+                    }
+                }
+                if saw_own && target_display_type.is_none() {
+                    target_display_type = Some(candidate);
+                }
+            }
+        }
+
+        (class_own_missing.len() > 1).then(|| {
+            (
+                target_symbol,
+                target_display_type.unwrap_or(fallback_target_type),
+                class_own_missing,
+            )
+        })
+    }
+
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
     pub(crate) fn render_failure_reason(
         &mut self,
@@ -1312,6 +1409,58 @@ impl<'a> CheckerState<'a> {
             return Diagnostic::error(file_name, start, length, message, code);
         }
 
+        if depth == 0 {
+            let source_resolved = self.resolve_type_for_property_access(source_type);
+            let source_evaluated = self.evaluate_type_for_assignability(source_type);
+            let target_resolved = self.resolve_type_for_property_access(target_type);
+            let target_evaluated = self.evaluate_type_for_assignability(target_type);
+            let source_candidates = [source_type, source, source_resolved, source_evaluated];
+            let target_candidates = [target_type, target, target_resolved, target_evaluated];
+            if let Some((target_symbol, target_display_type, class_own_missing)) = self
+                .class_own_missing_properties_for_display(
+                    &source_candidates,
+                    &target_candidates,
+                    property_name,
+                    target_type,
+                )
+            {
+                let src_str = self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                );
+                let tgt_str = self
+                    .ctx
+                    .binder
+                    .get_symbol(target_symbol)
+                    .map(|symbol| symbol.escaped_name.to_string())
+                    .unwrap_or_else(|| self.format_type_diagnostic(target_display_type));
+                let ordered_names = self.sort_missing_property_names_for_display(
+                    target_display_type,
+                    &class_own_missing,
+                );
+                let prop_list: Vec<String> = ordered_names
+                    .iter()
+                    .take(5)
+                    .map(|name| self.missing_property_name_for_display(*name, target))
+                    .collect();
+                let props_joined = prop_list.join(", ");
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                    &[&src_str, &tgt_str, &props_joined],
+                );
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                );
+            }
+        }
+
         // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
         let widened_source = self.widen_type_for_display(source_type);
         let (mut src_str, mut tgt_str_qualified) = if depth == 0 {
@@ -1816,6 +1965,62 @@ impl<'a> CheckerState<'a> {
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
+        }
+
+        if filtered_names.len() == 1 {
+            let source_resolved = self.resolve_type_for_property_access(source_type);
+            let source_evaluated = self.evaluate_type_for_assignability(source_type);
+            let target_resolved = self.resolve_type_for_property_access(target_type);
+            let target_evaluated = self.evaluate_type_for_assignability(target_type);
+            let source_candidates = [source_type, source, source_resolved, source_evaluated];
+            let target_candidates = [target_type, target, target_resolved, target_evaluated];
+            if let Some((target_symbol, target_display_type, class_own_missing)) = self
+                .class_own_missing_properties_for_display(
+                    &source_candidates,
+                    &target_candidates,
+                    filtered_names[0],
+                    target_type,
+                )
+            {
+                let src_str = if depth == 0 {
+                    self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    )
+                } else {
+                    self.format_type_diagnostic(source_type)
+                };
+                let tgt_str = self
+                    .ctx
+                    .binder
+                    .get_symbol(target_symbol)
+                    .map(|symbol| symbol.escaped_name.to_string())
+                    .unwrap_or_else(|| self.format_type_diagnostic(target_display_type));
+                let ordered_names = self.sort_missing_property_names_for_display(
+                    target_display_type,
+                    &class_own_missing,
+                );
+                let prop_list: Vec<String> = ordered_names
+                    .iter()
+                    .take(5)
+                    .map(|name| self.missing_property_name_for_display(*name, target))
+                    .collect();
+                let props_joined = prop_list.join(", ");
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                    &[&src_str, &tgt_str, &props_joined],
+                );
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                );
+            }
         }
 
         // When filtering removed brand/prototype properties and only 1 remains, emit TS2741.

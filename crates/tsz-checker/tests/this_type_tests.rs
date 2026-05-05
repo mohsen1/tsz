@@ -5,9 +5,9 @@
 //! (not the concrete declaring class type).  This enables fluent method chaining
 //! on subclass instances.
 
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -55,6 +55,10 @@ fn errors_with_code(diagnostics: &[(u32, String)], code: u32) -> Vec<&str> {
         .filter(|(c, _)| *c == code)
         .map(|(_, msg)| msg.as_str())
         .collect()
+}
+
+fn messages(diagnostics: &[(u32, String)]) -> Vec<&str> {
+    diagnostics.iter().map(|(_, msg)| msg.as_str()).collect()
 }
 
 /// Fluent method chaining: `c.foo().bar().baz()` where foo/bar/baz are defined
@@ -207,7 +211,6 @@ class Base {
         this[prop] = value;
     }
 }
-
 class Person extends Base {
     parts: number;
     constructor(parts: number) {
@@ -284,6 +287,81 @@ class OtherPerson {
         !has_error(&diagnostics, 2345),
         "`keyof this` evaluation must stay class-context-sensitive and not \
          reuse another class's cached keys: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_direct_this_property_access_preserves_polymorphic_this_in_class_members() {
+    let source = r#"
+class C {
+    self = this;
+    c = new C();
+    foo() {
+        return this;
+    }
+    f2() {
+        var a: C[];
+        var a = [this, this.c];
+        var b: this[];
+        var b = [this, this.self, null, undefined];
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2403 = errors_with_code(&diagnostics, 2403);
+
+    assert!(
+        ts2403.len() == 1,
+        "Expected only the this[] duplicate declaration to emit TS2403: {diagnostics:?}"
+    );
+    assert!(
+        ts2403[0].contains(
+            "Variable 'b' must be of type 'this[]', but here has type '(this | null | undefined)[]'."
+        ),
+        "Expected duplicate declaration message to preserve this[]: {ts2403:?}"
+    );
+}
+
+#[test]
+fn test_this_type_relationship_assignment_diagnostics_use_nominal_class_names() {
+    let source = r#"
+class C {
+    self = this;
+    c = new C();
+    foo() {
+        return this;
+    }
+}
+
+class D extends C {
+    self1 = this;
+    self2 = this.self;
+    self3 = this.foo();
+    d = new D();
+    bar() {
+        this.d = this.self;
+        this.d = this.c;
+        this.self = this.d;
+        this.c = this.d;
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let all_messages = messages(&diagnostics);
+
+    assert!(
+        all_messages.contains(&"Type 'C' is missing the following properties from type 'D': self1, self2, self3, d, bar"),
+        "Expected C-to-D TS2739 message, got: {diagnostics:?}"
+    );
+    assert!(
+        all_messages.contains(&"Type 'D' is not assignable to type 'this'."),
+        "Expected D-to-this TS2322 message, got: {diagnostics:?}"
+    );
+    assert!(
+        !all_messages.iter().any(|msg| msg.contains("{ self:")),
+        "Class instance diagnostics should not expand to anonymous object shapes: {diagnostics:?}"
     );
 }
 
