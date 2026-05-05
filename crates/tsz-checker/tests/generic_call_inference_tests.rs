@@ -70,8 +70,44 @@ fn compile_strict_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn compile_js_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 fn relevant_diagnostics(source: &str) -> Vec<(u32, String)> {
     compile_and_get_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318) // Filter out "Cannot find global type"
+        .collect()
+}
+
+fn relevant_js_diagnostics(source: &str) -> Vec<(u32, String)> {
+    compile_js_and_get_diagnostics(source)
         .into_iter()
         .filter(|(code, _)| *code != 2318) // Filter out "Cannot find global type"
         .collect()
@@ -111,6 +147,40 @@ doSomething([{ foo() {} }]); // ok: T = { foo(): void }[]
             .iter()
             .any(|(_, msg)| msg.contains("not assignable to parameter of type 'never'")),
         "The rejected string branch should reduce the parameter to never. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn self_referential_constraint_fallback_preserves_literal_union_display() {
+    let source = r#"
+interface Comparable<T> {
+    compareTo(other: T): number;
+}
+interface Comparer {
+    <T extends Comparable<T>>(x: T, y: T): T;
+}
+var max2: Comparer = (x, y) => { return (x.compareTo(y) > 0) ? x : y };
+var maxResult = max2(1, 2);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for max2(1, 2); got: {diags:#?}"
+    );
+    let msg = &ts2345[0].1;
+    assert!(
+        msg.contains("Argument of type 'number'"),
+        "source display should widen the direct numeric literal to number. Got: {msg}"
+    );
+    assert!(
+        msg.contains("parameter of type 'Comparable<1 | 2>'"),
+        "self-referential constraint fallback should preserve the literal union. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("Comparable<number>"),
+        "TS2345 should not instantiate the fallback constraint with widened number. Got: {msg}"
     );
 }
 
@@ -320,19 +390,24 @@ g("", 3, a => a);
 fn contextual_signature_instantiation_rejects_conflicting_generic_params() {
     let source = r#"
 declare function foo<T>(cb: (x: number, y: string) => T): T;
+declare function bar<T, U, V>(x: T, y: U, cb: (x: T, y: U) => V): V;
 declare function g<T>(x: T, y: T): T;
 
 var b: number | string;
 var b = foo(g);
+var b = bar(1, "one", g);
+var b = bar("one", 1, g);
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2345_count = diags.iter().filter(|(code, _)| *code == 2345).count();
+    let ts2403_count = diags.iter().filter(|(code, _)| *code == 2403).count();
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
-        "Expected TS2345 when one generic source parameter gets incompatible contextual candidates. Diagnostics: {diags:#?}"
+        ts2345_count >= 3,
+        "Expected TS2345 for each incompatible contextual generic callback. Diagnostics: {diags:#?}"
     );
     assert!(
-        diags.iter().any(|(code, _)| *code == 2403),
-        "Expected downstream TS2403 from the failed call's unknown return. Diagnostics: {diags:#?}"
+        ts2403_count >= 3,
+        "Expected downstream TS2403 from each failed call's unknown return. Diagnostics: {diags:#?}"
     );
 }
 
@@ -987,6 +1062,70 @@ const r2 = f4([{ a: 1 }, { a: 2 }]);
     assert!(
         diags.is_empty(),
         "const T in multiple tuple positions should union candidates. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_parameter_infers_deep_readonly_literals() {
+    let source = r#"
+declare function keep<const T>(value: T): T;
+
+const tupleViaConstParam = keep(["a", "b"]);
+tupleViaConstParam[0] = "a";
+tupleViaConstParam[1] = "z";
+
+const objectViaConstParam = keep({ tag: "ok", nested: { value: 1 } });
+objectViaConstParam.tag = "ok";
+objectViaConstParam.nested.value = 1;
+
+declare function keepMutable<T extends string[]>(value: T): T;
+const mutable = keepMutable(["a", "b"]);
+mutable[0] = "z";
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2540 = diags.iter().filter(|(code, _)| *code == 2540).count();
+    assert_eq!(
+        ts2540, 4,
+        "const T should infer readonly tuple/object literals while mutable T remains writable. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_parameter_readonly_tuple_rejects_mutable_array_assignment() {
+    let source = r#"
+declare function readonlyConstraint<const T extends readonly string[]>(value: T): T;
+const fromReadonlyConstraint = readonlyConstraint(["a", "b"]);
+let mutableArray: string[] = fromReadonlyConstraint;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 4104),
+        "const T inferred readonly tuple should not assign to mutable array. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn jsdoc_const_template_infers_deep_readonly_literals() {
+    let source = r#"
+/**
+ * @template const T
+ * @param {T} value
+ * @returns {T}
+ */
+function keep(value) { return value; }
+
+const tupleViaConstParam = keep(["a", "b"]);
+tupleViaConstParam[0] = "a";
+
+const objectViaConstParam = keep({ tag: "ok", nested: { value: 1 } });
+objectViaConstParam.tag = "ok";
+objectViaConstParam.nested.value = 1;
+"#;
+    let diags = relevant_js_diagnostics(source);
+    let ts2540 = diags.iter().filter(|(code, _)| *code == 2540).count();
+    assert_eq!(
+        ts2540, 3,
+        "JSDoc @template const should infer readonly tuple/object literals. Diagnostics: {diags:#?}"
     );
 }
 

@@ -2,56 +2,21 @@
 //!
 //! Verifies that assigning to readonly properties emits TS2540.
 
-use tsz_binder::BinderState;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::{check_source_code_messages, check_source_codes};
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        tsz_checker::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().any(|d| d.code == code)
+    check_source_codes(source).contains(&code)
 }
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        tsz_checker::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code != 2318) // Filter global type errors
-        .map(|d| (d.code, d.message_text.clone()))
+    // `check_source_*` helpers run with an empty lib context, so TS2318
+    // ("Cannot find global type") can fire for built-in references like
+    // `Array`. Filter it out here so the assertions below only inspect
+    // readonly-related diagnostics, matching the prior local helper's
+    // behavior.
+    check_source_code_messages(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
         .collect()
 }
 

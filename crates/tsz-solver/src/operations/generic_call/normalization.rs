@@ -67,7 +67,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             )
         });
         let inferred_ty = if tp.is_const {
-            arg_ty
+            crate::operations::widening::apply_const_assertion(
+                self.interner.as_type_database(),
+                arg_ty,
+            )
         } else {
             // When the declared constraint is a primitive type (string, number,
             // boolean, bigint) or a union thereof, preserve literal types without

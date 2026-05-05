@@ -191,6 +191,15 @@ impl<'a> Printer<'a> {
                 lit.text.clone()
             };
 
+            if had_separators
+                && !self.ctx.options.target.supports_es2021()
+                && decimal_literal_has_exponent(&text)
+                && let Ok(value) = text.parse::<f64>()
+            {
+                self.write(&format_js_number(value));
+                return;
+            }
+
             // Convert numeric literals that need downleveling:
             // - Binary (0b/0B) and ES2015 octal (0o/0O): only for pre-ES2015 targets
             // - Legacy octal (01, 076): for ALL targets (TSC always converts these)
@@ -201,8 +210,39 @@ impl<'a> Printer<'a> {
                 return;
             }
 
+            if let Some(converted) =
+                self.convert_decimal_separator_exponent_literal(&text, had_separators)
+            {
+                self.write(&converted);
+                return;
+            }
+
             self.write(&text);
         }
+    }
+
+    fn convert_decimal_separator_exponent_literal(
+        &self,
+        text: &str,
+        had_separators: bool,
+    ) -> Option<String> {
+        if !had_separators || self.ctx.options.target.supports_es2021() {
+            return None;
+        }
+        if !text.bytes().any(|b| b == b'e' || b == b'E') {
+            return None;
+        }
+        if text.starts_with("0b")
+            || text.starts_with("0B")
+            || text.starts_with("0o")
+            || text.starts_with("0O")
+            || text.starts_with("0x")
+            || text.starts_with("0X")
+        {
+            return None;
+        }
+
+        text.parse::<f64>().ok().map(format_js_number)
     }
 
     /// Convert numeric literals that need downleveling:
@@ -675,7 +715,7 @@ impl<'a> Printer<'a> {
 }
 
 /// Format an f64 value the way JavaScript's `Number.toString()` would.
-/// JavaScript uses exponential notation for integers >= 1e21.
+/// JavaScript uses exponential notation for magnitudes >= 1e21 or < 1e-6.
 fn format_js_number(value: f64) -> String {
     if value.is_infinite() {
         return "Infinity".to_string();
@@ -683,17 +723,15 @@ fn format_js_number(value: f64) -> String {
     if value.is_nan() {
         return "NaN".to_string();
     }
-    // For integers < 1e21, emit as plain integer (no decimal point)
-    // JavaScript switches to exponential notation at 1e21
-    if value == value.trunc() && value.abs() < 1e21 {
+    let abs = value.abs();
+    if value == value.trunc() && abs < 1e21 {
         return (value as i128).to_string();
     }
-    // For large values or non-integers, use JavaScript-style formatting
-    // JavaScript's Number.toString() uses exponential for >= 1e21
-    // Format: significant digits + e+exponent
+    if value == 0.0 || (1e-6..1e21).contains(&abs) {
+        return value.to_string();
+    }
+
     let s = format!("{value:e}");
-    // Rust's {:e} produces lowercase 'e' like "9.671406556917009e24"
-    // JS uses "9.671406556917009e+24" (with explicit + sign)
     if let Some(pos) = s.find('e') {
         let (mantissa, exp_part) = s.split_at(pos);
         let exp_str = &exp_part[1..]; // skip 'e'
@@ -703,6 +741,17 @@ fn format_js_number(value: f64) -> String {
         return s;
     }
     s
+}
+
+fn decimal_literal_has_exponent(text: &str) -> bool {
+    let lower = text.as_bytes();
+    if lower.len() >= 2
+        && lower[0] == b'0'
+        && matches!(lower[1], b'b' | b'B' | b'o' | b'O' | b'x' | b'X')
+    {
+        return false;
+    }
+    text.contains('e') || text.contains('E')
 }
 
 fn trim_unterminated_regex_recovery_suffix(text: &str) -> &str {
@@ -790,6 +839,46 @@ mod tests {
     }
 
     #[test]
+    fn decimal_numeric_separators_with_exponents_downlevel_to_number_text() {
+        let source = [
+            "1e1_0;",
+            "1e+1_0;",
+            "1e-1_0;",
+            "1.1e10_0;",
+            "1.1e+10_0;",
+            "1.1e-10_0;",
+            "1_2.3_4e5_6;",
+            "1_2.3_4e+5_6;",
+            "1_2.3_4e-5_6;",
+        ]
+        .join("\n");
+
+        let mut parser = ParserState::new("test.ts".to_string(), source);
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.print(root);
+        let output = printer.finish().code;
+
+        for expected in [
+            "10000000000;",
+            "1e-10;",
+            "1.1e+100;",
+            "1.1e-100;",
+            "1.234e+57;",
+            "1.234e-55;",
+        ] {
+            assert!(
+                output.contains(expected),
+                "Expected downleveled decimal separator exponent {expected}\nGot: {output}"
+            );
+        }
+        assert!(
+            !output.contains("1e10;") && !output.contains("12.34e56;"),
+            "Decimal exponent separators should be normalized through the numeric value.\nGot: {output}"
+        );
+    }
+
+    #[test]
     fn unterminated_regex_in_call_does_not_duplicate_recovery_paren() {
         let source = "foo(/notregexp);";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -855,6 +944,29 @@ mod tests {
             assert!(
                 output.contains(expected),
                 "Hex with separators {source} at ES2015 should emit {expected}\nGot: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_separator_decimal_exponents_normalized_below_es2021() {
+        use tsz_common::ScriptTarget;
+        let source = "1e1_0\n1e+1_0\n1.1e10_0\n1_2.3_4e5_6\n1_2.3_4e-5_6";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        for expected in ["10000000000;", "1.1e+100;", "1.234e+57;", "1.234e-55;"] {
+            assert!(
+                output.contains(expected),
+                "Decimal numeric separator exponent should contain {expected}\nGot: {output}"
             );
         }
     }

@@ -4,7 +4,7 @@
 //! the 2000 LOC architecture ceiling.
 
 use crate::state::CheckerState;
-use tsz_binder::FlowNodeId;
+use tsz_binder::{FlowNodeId, flow_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 
@@ -31,6 +31,15 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         if self.ctx.binder.get_node_flow(receiver) != Some(property_flow) {
+            return false;
+        }
+        if self
+            .ctx
+            .binder
+            .flow_nodes
+            .get(property_flow)
+            .is_some_and(|flow| flow.has_any_flags(flow_flags::ASSIGNMENT))
+        {
             return false;
         }
         let Some(node) = self.ctx.arena.get(receiver) else {

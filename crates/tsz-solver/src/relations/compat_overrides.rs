@@ -678,6 +678,41 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // assuming related. Without this, `IPromise2<W, U>` vs `Promise2<any, W>` at
         // a cycle point would be assumed related (because same DefId pair), even though
         // the type arguments [W, U] vs [any, W] are NOT identical.
+        // 5c. Object index signature & const-enum-flag identity.
+        //
+        // tsc's `isTypeIdenticalTo` requires both object types to expose
+        // identical index signatures and const-enum semantics. The bidirectional
+        // subtype check below is too permissive here: assigning `{ A: E.A }` to
+        // `{ A: E.A; [k: number]: string }` succeeds (the source has no numeric
+        // properties so the index requirement is vacuously satisfied) and the
+        // reverse also succeeds, so the two types appear identical. That breaks
+        // TS2403 for `var x: typeof Enum; var x: { A: Enum.A };` redeclarations,
+        // where `typeof Enum` carries the numeric reverse-mapping signature
+        // (and `CONST_ENUM` flag on const enums) that the plain object literal
+        // lacks. Reject the pair early when those structural signals diverge.
+        if let (
+            Some(TypeData::Object(a_id) | TypeData::ObjectWithIndex(a_id)),
+            Some(TypeData::Object(b_id) | TypeData::ObjectWithIndex(b_id)),
+        ) = (self.interner.lookup(a), self.interner.lookup(b))
+        {
+            let a_shape = self.interner.object_shape(a_id);
+            let b_shape = self.interner.object_shape(b_id);
+            let a_const_enum = a_shape
+                .flags
+                .contains(crate::types::ObjectFlags::CONST_ENUM);
+            let b_const_enum = b_shape
+                .flags
+                .contains(crate::types::ObjectFlags::CONST_ENUM);
+            if a_const_enum != b_const_enum {
+                return false;
+            }
+            if a_shape.string_index.is_some() != b_shape.string_index.is_some()
+                || a_shape.number_index.is_some() != b_shape.number_index.is_some()
+            {
+                return false;
+            }
+        }
+
         // TS2403 identity checking mirrors tsc's `isTypeIdenticalTo` which uses
         // the `identity` relation — strictly bidirectional structural equality.
         // Unlike the subtype relation, identity does NOT have bivariance at all:

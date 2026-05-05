@@ -712,6 +712,7 @@ impl<'a> CheckerState<'a> {
                             idx,
                             source_prop.name,
                             source_prop.type_id,
+                            effective_target,
                             type_id,
                         ) {
                             return;
@@ -791,6 +792,7 @@ impl<'a> CheckerState<'a> {
                             idx,
                             source_prop.name,
                             source_prop.type_id,
+                            effective_target,
                             target_prop.type_id,
                         ) {
                             return;
@@ -904,6 +906,7 @@ impl<'a> CheckerState<'a> {
                                 idx,
                                 source_prop.name,
                                 source_prop.type_id,
+                                effective_target,
                                 target_prop_type,
                             )
                         {

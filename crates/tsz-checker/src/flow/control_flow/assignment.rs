@@ -655,6 +655,7 @@ impl<'a> FlowAnalyzer<'a> {
         if node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT
             && node.kind != syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
             && node.kind != syntax_kind_ext::BINDING_ELEMENT
+            && node.kind != syntax_kind_ext::BINARY_EXPRESSION
             && self.is_matching_reference(pattern, target)
         {
             return Some(source.ty);
@@ -1008,6 +1009,7 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(default_ty) = self.destructuring_source_type_from_node(default_node) else {
             return source;
         };
+        let default_ty = widen_literal_to_primitive(self.interner, default_ty);
 
         let non_undefined = crate::query_boundaries::flow::narrow_destructuring_default(
             self.interner.as_type_database(),

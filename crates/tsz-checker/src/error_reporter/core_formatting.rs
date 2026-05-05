@@ -949,6 +949,12 @@ impl<'a> CheckerState<'a> {
         other: TypeId,
         strip_top_level_nullish: bool,
     ) -> String {
+        if let Some(collapsed) =
+            self.collapsed_anonymous_object_intersection_for_assignability_display(ty)
+        {
+            return self.format_collapsed_object_for_assignability_display(collapsed);
+        }
+
         if self.target_preserves_literal_surface(other) {
             return self.format_type_diagnostic_for_assignability_display(ty);
         }

@@ -44,6 +44,15 @@ fn test_extract_reference_paths_with_leading_whitespace() {
 }
 
 #[test]
+fn test_extract_reference_paths_after_shebang() {
+    let source =
+        "#!/usr/bin/env node\n/// <reference path=\"f.d.ts\"/>\nimport { x } from \"test\";\n";
+    let refs = extract_reference_paths(source);
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].0, "f.d.ts");
+}
+
+#[test]
 fn test_extract_no_references() {
     let source = "const x = 1;\n// regular comment\n";
     let refs = extract_reference_paths(source);
@@ -200,6 +209,14 @@ fn extract_reference_types_captures_byte_offset_and_length() {
 }
 
 #[test]
+fn extract_reference_types_after_shebang() {
+    let source = "#!/usr/bin/env node\n/// <reference types=\"node\" />\n";
+    let types = extract_reference_types(source);
+    assert_eq!(types.len(), 1);
+    assert_eq!(types[0].0, "node");
+}
+
+#[test]
 fn extract_reference_types_multiple_directives_carry_offsets() {
     // Two consecutive directives — second must have a byte offset
     // accounting for the first directive's line + newline.
@@ -350,4 +367,89 @@ fn extract_reference_paths_ignores_directives_inside_block_comment() {
     let source = "/*\n/// <reference path=\"a.ts\" />\n*/\n";
     let refs = extract_reference_paths(source);
     assert!(refs.is_empty());
+}
+
+// =========================================================================
+// Directive prologue boundary: directives after code must be ignored
+// =========================================================================
+
+#[test]
+fn extract_reference_paths_ignores_directives_after_code() {
+    let source = "export const value = 1;\n\n/// <reference path=\"./missing\" />\n\nvalue;\n";
+    let refs = extract_reference_paths(source);
+    assert!(
+        refs.is_empty(),
+        "triple-slash path directive after executable code must not be extracted"
+    );
+}
+
+#[test]
+fn extract_reference_paths_still_works_before_code() {
+    let source = "/// <reference path=\"./a.ts\" />\n// comment\n/// <reference path=\"./b.ts\" />\nexport const value = 1;\n";
+    let refs = extract_reference_paths(source);
+    assert_eq!(
+        refs.len(),
+        2,
+        "directives before any code must be extracted"
+    );
+    assert_eq!(refs[0].0, "./a.ts");
+    assert_eq!(refs[1].0, "./b.ts");
+}
+
+#[test]
+fn extract_reference_types_ignores_directives_after_code() {
+    let source = "export const value = 1;\n\n/// <reference types=\"missing-types\" />\n\nvalue;\n";
+    let types = extract_reference_types(source);
+    assert!(
+        types.is_empty(),
+        "triple-slash types directive after executable code must not be extracted"
+    );
+}
+
+#[test]
+fn extract_reference_types_byte_offset_unaffected_by_code_after_directive() {
+    // A directive in the prologue followed by code — byte offsets must be
+    // computed correctly for the prologue directive.
+    let source = "/// <reference types=\"abc\" />\nexport const value = 1;\n/// <reference types=\"xyz\" />\n";
+    let types = extract_reference_types(source);
+    assert_eq!(
+        types.len(),
+        1,
+        "only the first directive (in prologue) is extracted"
+    );
+    assert_eq!(types[0].0, "abc");
+}
+
+#[test]
+fn extract_amd_module_names_ignores_directives_after_code() {
+    let source = "export const value = 1;\n\n/// <amd-module name=\"LateModule\" />\n\nvalue;\n";
+    let amd = extract_amd_module_names(source);
+    assert!(
+        amd.is_empty(),
+        "amd-module directive after executable code must not be extracted"
+    );
+}
+
+#[test]
+fn extract_amd_module_names_second_after_code_not_duplicate() {
+    // First directive is in the prologue; a second one after code must not
+    // be counted (and must not trigger a spurious TS2458 duplicate warning).
+    let source = "/// <amd-module name=\"ModuleA\" />\nexport const value = 1;\n/// <amd-module name=\"ModuleB\" />\n";
+    let amd = extract_amd_module_names(source);
+    assert_eq!(
+        amd.len(),
+        1,
+        "only the prologue directive should be reported"
+    );
+    assert_eq!(amd[0].0, "ModuleA");
+}
+
+#[test]
+fn find_malformed_directives_ignores_malformed_after_code() {
+    let source = "export const value = 1;\n\n/// <reference />\n\nvalue;\n";
+    let malformed = find_malformed_reference_directives(source);
+    assert!(
+        malformed.is_empty(),
+        "malformed triple-slash directive after code must not be reported"
+    );
 }

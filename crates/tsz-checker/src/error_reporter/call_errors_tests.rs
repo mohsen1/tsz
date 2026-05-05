@@ -94,6 +94,41 @@ var r6 = c.y();
 }
 
 #[test]
+fn tdz_callee_still_checks_argument_type_against_declared_signature() {
+    let diagnostics =
+        check_source_with_strict_null("f(true);\nconst f: (a: number) => void = null as any;");
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&2448),
+        "expected TDZ diagnostic for forward const call, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains(
+                    "Argument of type 'boolean' is not assignable to parameter of type 'number'.",
+                )
+        }),
+        "expected TS2345 from recovered declared callee signature, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn tdz_callee_still_checks_minimum_argument_count() {
+    let diagnostics = check_source_with_strict_null(
+        "b();\ntype Test = (arg: unknown) => arg is string;\nconst b: Test = null as any;",
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2554 && d.message_text == "Expected 1 arguments, but got 0."),
+        "expected TS2554 from recovered declared callee signature, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn emits_ts6234_for_non_generic_getter_call() {
     // Non-generic class: calling a getter should emit TS6234
     let diagnostics = check_source_with_strict_null(
@@ -589,6 +624,69 @@ a5([1, 2]);
     assert!(
         has_short_tuple_ts2345,
         "should still report TS2345 for the short tuple argument, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts2322_array_literal_elaboration_widens_destructuring_default_sources() {
+    let source = r#"
+function b6([a, z, y] = [undefined, null, undefined]) { }
+b6(["string", 1, 2]);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+
+    for expected in [
+        "Type 'string' is not assignable to type 'undefined'.",
+        "Type 'number' is not assignable to type 'null'.",
+        "Type 'number' is not assignable to type 'undefined'.",
+    ] {
+        assert!(
+            messages.iter().any(|message| message.contains(expected)),
+            "expected widened TS2322 message `{expected}`, got: {messages:#?}"
+        );
+    }
+
+    assert!(
+        messages.iter().all(|message| {
+            !message.contains("Type '\"string\"'")
+                && !message.contains("Type '1'")
+                && !message.contains("Type '2'")
+        }),
+        "array literal elaboration should not preserve literal source display here, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn ts2322_array_literal_elaboration_preserves_same_primitive_literal_targets() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+function takesLiteral(value: ["a"]) { }
+takesLiteral(["b"]);
+"#,
+    );
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '\"b\"' is not assignable to type '\"a\"'.")),
+        "same-primitive literal targets should preserve the source literal, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("Type 'string' is not assignable to type '\"a\"'.")),
+        "same-primitive literal targets should not widen to the primitive source, got: {messages:#?}"
     );
 }
 

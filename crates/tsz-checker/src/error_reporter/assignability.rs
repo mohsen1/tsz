@@ -1394,7 +1394,31 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> (String, String) {
-        let (source_str, _) = self.format_top_level_assignability_message_types(source, target);
+        let (mut source_str, _) = self.format_top_level_assignability_message_types(source, target);
+        if self
+            .array_literal_element_source_widening_required_for_display(anchor_idx, source, target)
+        {
+            let widened = self.widen_type_for_display(source);
+            source_str = self.format_assignability_type_for_message(widened, target);
+        }
+        if let Some(expr_idx) = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+            && let Some(annotation_text) =
+                self.declared_type_annotation_text_for_expression(expr_idx)
+            && annotation_text.contains('&')
+            && !annotation_text.trim_start().starts_with("keyof ")
+        {
+            source_str = self.format_declared_annotation_for_diagnostic(&annotation_text);
+        }
+        if self
+            .collapsed_anonymous_object_intersection_for_assignability_display(source)
+            .is_some()
+            && let Some(annotation_text) =
+                self.line_rhs_declared_intersection_annotation(anchor_idx)
+        {
+            source_str = self.format_declared_annotation_for_diagnostic(&annotation_text);
+        }
         let target_str = self.format_type_for_diagnostic_role(
             target,
             DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },

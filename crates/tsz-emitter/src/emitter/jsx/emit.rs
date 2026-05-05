@@ -1038,11 +1038,18 @@ impl<'a> Printer<'a> {
             && let Some(expr) = self.arena.get_jsx_expression(node)
             && expr.expression.is_some()
         {
-            // Spread children in classic mode: `{...expr}` -> `...expr`
-            if expr.dot_dot_dot_token {
+            // Spread children in classic mode: `{...expr}` -> `...expr`.
+            // tsc unwraps parens that exist solely because of an erased type
+            // cast (`(x as any)` → `x`), so `{...(x as any)}` becomes `...x`,
+            // not `...(x)`. Walk past parens + as/satisfies/type-assertion
+            // wrappers so the spread argument prints unwrapped.
+            let target_expr = if expr.dot_dot_dot_token {
                 self.write("...");
-            }
-            self.emit(expr.expression);
+                self.unwrap_spread_argument(expr.expression)
+            } else {
+                expr.expression
+            };
+            self.emit(target_expr);
             // Emit trailing comments between expression and closing `}` of the
             // JSX expression container, e.g. `{null /* preserved */}` should
             // produce `null /* preserved */` in the createElement args.
@@ -1057,6 +1064,35 @@ impl<'a> Printer<'a> {
         // JSX element, fragment, or self-closing element -- emit recursively
         // This will hit the transform dispatch again for nested JSX.
         self.emit(child);
+    }
+
+    /// Strip outer parens and erased type-cast wrappers (`as`, `satisfies`,
+    /// `<T>x` assertions) around a spread argument. `...(expr as T)` should
+    /// emit as `...expr`; the parens only existed for the cast.
+    fn unwrap_spread_argument(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(n) = self.arena.get(idx) else {
+                return idx;
+            };
+            if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                if let Some(paren) = self.arena.get_parenthesized(n) {
+                    idx = paren.expression;
+                    continue;
+                }
+                return idx;
+            }
+            if n.kind == syntax_kind_ext::AS_EXPRESSION
+                || n.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+                || n.kind == syntax_kind_ext::TYPE_ASSERTION
+            {
+                if let Some(inner) = self.arena.get_unary_expr(n) {
+                    idx = inner.operand;
+                    continue;
+                }
+                return idx;
+            }
+            return idx;
+        }
     }
 
     /// Emit JSX attributes as a JS object literal: `{ key: value, ... }`

@@ -239,6 +239,24 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     self.error_comma_expected();
+                    if self.is_token(SyntaxKind::IsKeyword) {
+                        // `function f(a: b is A)` is not a legal parameter type
+                        // predicate. TSC treats both `is` and the following type
+                        // name as list elements missing commas.
+                        self.next_token();
+                        if !matches!(
+                            self.token(),
+                            SyntaxKind::CommaToken
+                                | SyntaxKind::CloseParenToken
+                                | SyntaxKind::OpenBraceToken
+                                | SyntaxKind::EndOfFileToken
+                        ) {
+                            self.parse_companion_error_at_current_token(
+                                "',' expected.",
+                                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                            );
+                        }
+                    }
                     if is_rest_param && self.is_parameter_start() {
                         // `...public rest: T` is invalid, but tsc recovers as if
                         // a comma separated the malformed rest parameter from

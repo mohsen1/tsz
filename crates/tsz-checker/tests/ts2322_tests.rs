@@ -1437,6 +1437,63 @@ y = "AbC";
 }
 
 #[test]
+fn test_type_literal_local_intrinsic_utility_aliases_shadow_lib_intrinsics() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+export {};
+
+type Uppercase<T> = { custom: T };
+type NoInfer<T> = { custom: T };
+
+type UpperBox = {
+  value: Uppercase<"abc">;
+};
+
+type NoInferBox = {
+  value: NoInfer<string>;
+};
+
+const upperOk: UpperBox = { value: { custom: "abc" } };
+const upperBad: UpperBox = { value: "ABC" };
+
+const noInferOk: NoInferBox = { value: { custom: "abc" } };
+const noInferBad: NoInferBox = { value: "abc" };
+
+upperOk;
+upperBad;
+noInferOk;
+noInferBad;
+"#,
+    );
+
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        messages.len(),
+        2,
+        "Expected only the two string assignments to fail, got: {diagnostics:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| message
+            .contains("Type 'string' is not assignable to type 'Uppercase<\"abc\">'.")),
+        "Expected local Uppercase alias target, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|message| message
+            .contains("Type 'string' is not assignable to type 'NoInfer<string>'.")),
+        "Expected local NoInfer alias target, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().all(|message| !message.contains("\"ABC\"")),
+        "Local Uppercase alias should not lower to the string intrinsic, got: {messages:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_string_mapping_alias_displays_resolved_literal_target() {
     let source = r#"
 type A = "aA";
@@ -4257,6 +4314,117 @@ const r1: number = x;
 }
 
 #[test]
+fn test_module_local_builtin_iterator_return_alias_shadows_intrinsic() {
+    let source = r#"
+export {};
+
+type BuiltinIteratorReturn = string;
+
+const ok: BuiltinIteratorReturn = "done";
+const bad: BuiltinIteratorReturn = undefined;
+
+ok;
+bad;
+"#;
+    let options = CheckerOptions {
+        strict_builtin_iterator_return: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", options);
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for assigning undefined to the local string alias. Got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0]
+            .1
+            .contains("Type 'undefined' is not assignable to type 'string'."),
+        "Expected the local alias to resolve to string. Actual diagnostic: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_ts2322_intersections_and_optional_properties_source_display() {
+    let source = r#"
+declare let x: { a?: number, b: string };
+declare let y: { a: null, b: string };
+declare let z: { a: null } & { b: string };
+x = y;
+x = z;
+"#;
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322.iter().any(|message| message.contains(
+            "Type '{ a: null; b: string; }' is not assignable to type '{ a?: number | undefined; b: string; }'."
+        )),
+        "expected plain object source to display as a collapsed object, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322.iter().any(|message| message.contains(
+            "Type '{ a: null; } & { b: string; }' is not assignable to type '{ a?: number | undefined; b: string; }'."
+        )),
+        "expected declared intersection source to keep its intersection surface, got: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_ts2322_reports_alias_intersection_optional_property_conflict() {
+    let source = r#"
+interface To {
+    field?: number;
+    anotherField: string;
+}
+type From = { field: null } & Omit<To, 'field'>;
+function foo(v: From) {
+    let x: To;
+    x = v;
+}
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'From' is not assignable to type 'To'.")),
+        "expected alias intersection assignment to report TS2322 as From -> To, got: {ts2322:#?}"
+    );
+}
+
+#[test]
 fn test_ts2322_keeps_outer_object_error_for_direct_index_access_target() {
     let source = r#"
 interface TextChannel {
@@ -4782,5 +4950,60 @@ fn test_ts2322_too_many_parameters_emits_chained_target_signature_elaboration() 
         "expected chained TS2849 'Target signature provides too few arguments' \
          elaboration with counts (2,1); got: {:#?}",
         mismatch.related_information
+    );
+}
+
+// =============================================================================
+// @ts-nocheck / @ts-check pragma: must only honour directives in comments
+// (issue #2821)
+// =============================================================================
+
+#[test]
+fn test_ts_nocheck_in_string_literal_does_not_suppress_ts2322() {
+    // A string literal containing "@ts-nocheck" must NOT suppress checking.
+    // Only a `// @ts-nocheck` or `/* @ts-nocheck */` comment in the leading
+    // trivia of the file suppresses diagnostics.
+    let source = r#"const marker = "@ts-nocheck";
+const n: number = "not a number";
+"#;
+    let diags = compile_with_options(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "@ts-nocheck inside a string literal must not suppress TS2322; got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts_nocheck_in_real_comment_suppresses_checking() {
+    // Sanity check: a genuine `// @ts-nocheck` leading comment should still
+    // suppress diagnostics (the pre-existing behaviour must be preserved).
+    let source = r#"// @ts-nocheck
+const n: number = "not a number";
+"#;
+    let diags = compile_with_options(source, "test.ts", CheckerOptions::default());
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "// @ts-nocheck in leading comment should suppress TS2322; got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts_nocheck_after_code_does_not_suppress_ts2322() {
+    // A `// @ts-nocheck` comment that appears *after* real code is not
+    // a leading-trivia directive and must not suppress subsequent errors.
+    let source = r#"const marker = 1;
+// @ts-nocheck
+const n: number = "not a number";
+"#;
+    let diags = compile_with_options(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "@ts-nocheck after real code must not suppress TS2322; got: {diags:?}"
     );
 }

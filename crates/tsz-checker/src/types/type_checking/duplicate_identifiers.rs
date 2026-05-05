@@ -26,6 +26,76 @@ pub(super) enum DuplicateDeclarationOrigin {
 }
 
 impl<'a> CheckerState<'a> {
+    fn function_decl_has_body_for_duplicate_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        decl_idx: NodeIndex,
+        is_local: bool,
+    ) -> bool {
+        use tsz_parser::parser::{NodeArena, syntax_kind_ext};
+
+        fn function_has_body_in_arena(arena: &NodeArena, decl_idx: NodeIndex) -> bool {
+            arena
+                .get(decl_idx)
+                .filter(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+                .and_then(|node| arena.get_function(node))
+                .is_some_and(|func| func.body.is_some())
+        }
+
+        fn function_matches_name_and_has_body(
+            arena: &NodeArena,
+            decl_idx: NodeIndex,
+            name: &str,
+        ) -> bool {
+            let Some(node) = arena.get(decl_idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                return false;
+            }
+            arena.get_function(node).is_some_and(|func| {
+                func.body.is_some()
+                    && arena
+                        .get_identifier_at(func.name)
+                        .is_some_and(|ident| ident.escaped_text == name)
+            })
+        }
+
+        if is_local {
+            return function_has_body_in_arena(self.ctx.arena, decl_idx);
+        }
+
+        if self
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(sym_id, decl_idx))
+            .is_some_and(|arenas| {
+                arenas.iter().any(|arena| {
+                    let arena: &NodeArena = arena;
+                    !std::ptr::eq(arena, self.ctx.arena)
+                        && function_has_body_in_arena(arena, decl_idx)
+                })
+            })
+        {
+            return true;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        self.ctx.all_arenas.as_ref().is_some_and(|all_arenas| {
+            all_arenas.iter().enumerate().any(|(file_idx, arena)| {
+                file_idx != self.ctx.current_file_idx
+                    && function_matches_name_and_has_body(
+                        arena.as_ref(),
+                        decl_idx,
+                        &symbol.escaped_name,
+                    )
+            })
+        })
+    }
+
     /// Check for duplicate identifiers (TS2300, TS2451, TS2392).
     /// Reports when variables, functions, classes, or other declarations
     /// have conflicting names within the same scope.
@@ -1039,11 +1109,16 @@ impl<'a> CheckerState<'a> {
                     let both_functions = (decl_flags & symbol_flags::FUNCTION) != 0
                         && (other_flags & symbol_flags::FUNCTION) != 0;
                     if both_functions {
-                        let decl_has_body = decl_is_local && self.function_has_body(decl_idx);
-                        if !other_is_local {
-                            continue;
-                        }
-                        let other_has_body = self.function_has_body(other_idx);
+                        let decl_has_body = self.function_decl_has_body_for_duplicate_symbol(
+                            sym_id,
+                            decl_idx,
+                            decl_is_local,
+                        );
+                        let other_has_body = self.function_decl_has_body_for_duplicate_symbol(
+                            sym_id,
+                            other_idx,
+                            other_is_local,
+                        );
 
                         if !(decl_has_body && other_has_body) {
                             continue;
@@ -1489,6 +1564,16 @@ impl<'a> CheckerState<'a> {
                     declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                         conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) == 0
                     });
+                let has_remote_function_implementation =
+                    declarations
+                        .iter()
+                        .any(|(decl_idx, flags, is_local, _, _)| {
+                            !*is_local
+                                && (flags & symbol_flags::FUNCTION) != 0
+                                && self.function_decl_has_body_for_duplicate_symbol(
+                                    sym_id, *decl_idx, false,
+                                )
+                        });
                 let func_impls_with_scope: Vec<(NodeIndex, NodeIndex)> = declarations
                     .iter()
                     .filter(|(decl_idx, flags, is_local, _, _)| {
@@ -1507,7 +1592,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 for group in scope_groups.values() {
-                    if group.len() > 1 {
+                    if group.len() > 1 || has_remote_function_implementation {
                         for &idx in group {
                             let error_node = self.get_declaration_name_node(idx).unwrap_or(idx);
                             self.error_at_node(

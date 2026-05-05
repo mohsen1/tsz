@@ -155,6 +155,112 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
     comments
 }
 
+/// True when the source text contains a top-level `declare module
+/// "<specifier>"` (or single-quoted) declaration *outside* of comments,
+/// strings, and regex literals.
+///
+/// Used by the module resolver to decide whether a `.d.ts` file ambiently
+/// declares a particular package subpath. A raw substring scan is wrong
+/// because example code in JSDoc / line comments / string literals would
+/// otherwise let the resolver believe the subpath exists. This helper
+/// reuses the same code-scope detection as [`get_comment_ranges`], so
+/// matches inside strings, regexes, or comments are skipped.
+#[must_use]
+pub fn source_declares_ambient_module(source: &str, specifier: &str) -> bool {
+    source_contains_in_code(source, &format!("declare module \"{specifier}\""))
+        || source_contains_in_code(source, &format!("declare module '{specifier}'"))
+}
+
+/// True when the source text contains `needle` at a byte position that
+/// is outside of strings, comments, regex literals, and template
+/// literals. The scan mirrors the state machine used by
+/// [`get_comment_ranges`] but checks for the needle at each code byte
+/// instead of recording comment positions.
+#[must_use]
+pub fn source_contains_in_code(source: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let bytes = source.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    let len = bytes.len();
+    let mut pos = 0;
+
+    while pos < len {
+        let ch = bytes[pos];
+
+        if ch == b' ' || ch == b'\t' || ch == b'\r' || ch == b'\n' {
+            pos += 1;
+            continue;
+        }
+
+        if ch == b'/' && pos + 1 < len {
+            let next = bytes[pos + 1];
+            if next == b'/' {
+                pos += 2;
+                while pos < len && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                    pos += 1;
+                }
+                continue;
+            } else if next == b'*' {
+                pos += 2;
+                while pos + 1 < len {
+                    if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                        pos += 2;
+                        break;
+                    }
+                    pos += 1;
+                }
+                continue;
+            }
+        }
+
+        if ch == b'\'' || ch == b'"' {
+            pos = skip_quoted_string(bytes, pos, ch);
+            continue;
+        }
+
+        if ch == b'`' {
+            pos = skip_template_literal(bytes, pos);
+            continue;
+        }
+
+        if ch == b'/'
+            && pos + 1 < len
+            && can_start_regex_at(bytes, pos)
+            && let Some(next_pos) = skip_regex_literal(bytes, pos)
+        {
+            pos = next_pos;
+            continue;
+        }
+
+        if pos + needle_bytes.len() <= len && &bytes[pos..pos + needle_bytes.len()] == needle_bytes
+        {
+            return true;
+        }
+        pos += 1;
+    }
+
+    false
+}
+
+fn skip_template_literal(bytes: &[u8], start: usize) -> usize {
+    // Walk past the opening backtick to the matching closing backtick,
+    // honoring escape sequences. Nested `${...}` interpolations contain
+    // code, but for ambient-module / pragma detection we accept the
+    // approximation that the directive cannot legally appear inside a
+    // template-string interpolation at the top level.
+    let mut pos = start + 1;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => pos = (pos + 2).min(bytes.len()),
+            b'`' => return pos + 1,
+            _ => pos += 1,
+        }
+    }
+    pos
+}
+
 fn skip_quoted_string(bytes: &[u8], start: usize, quote: u8) -> usize {
     let mut pos = start + 1;
     while pos < bytes.len() {
@@ -317,6 +423,21 @@ pub fn format_multi_line_comment(text: &str, indent: &str) -> String {
     result
 }
 
+/// True when the source text contains a `// @ts-nocheck` (or `/* @ts-nocheck */`)
+/// directive in leading trivia. Substrings inside string/regex/code are ignored.
+#[must_use]
+pub fn source_has_ts_nocheck_directive(source: &str) -> bool {
+    has_ts_directive_in_leading_trivia(source, "@ts-nocheck")
+}
+
+/// True when the source text contains a `// @ts-check` (or `/* @ts-check */`)
+/// directive in leading trivia. Mirrors [`source_has_ts_nocheck_directive`]
+/// for the opt-in form used by JS files.
+#[must_use]
+pub fn source_has_ts_check_directive(source: &str) -> bool {
+    has_ts_directive_in_leading_trivia(source, "@ts-check")
+}
+
 /// Check if a comment is a `JSDoc` comment.
 #[must_use]
 pub fn is_jsdoc_comment(comment: &CommentRange, source: &str) -> bool {
@@ -329,6 +450,155 @@ pub fn is_jsdoc_comment(comment: &CommentRange, source: &str) -> bool {
 pub fn is_triple_slash_directive(comment: &CommentRange, source: &str) -> bool {
     let text = comment.get_text(source);
     text.starts_with("///")
+}
+
+/// Check whether `directive` appears inside a comment in the **leading trivia**
+/// of `source` (i.e. before the first non-whitespace, non-comment byte).
+///
+/// This is the correct way to detect `@ts-check` / `@ts-nocheck` file-level
+/// pragmas: TypeScript only honours them when they appear in a `//` or `/* */`
+/// comment that precedes all real source code.  A raw substring scan over the
+/// entire file is wrong because it would trigger on string literals, template
+/// literals, and any other non-comment occurrence of the directive text.
+///
+/// The search is **case-insensitive** to match tsc's behaviour.
+#[must_use]
+pub fn has_ts_directive_in_leading_trivia(source: &str, directive: &str) -> bool {
+    last_ts_directive_offset_in_leading_trivia(source, directive).is_some()
+}
+
+/// Return the byte offset of the last matching `@ts-check` / `@ts-nocheck`
+/// directive in leading trivia comments.
+#[must_use]
+pub fn last_ts_directive_offset_in_leading_trivia(source: &str, directive: &str) -> Option<u32> {
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    let mut pos = 0;
+    let mut result = None;
+
+    // Skip UTF-8 BOM (EF BB BF)
+    if bytes.get(..3) == Some(&[0xEF, 0xBB, 0xBF]) {
+        pos = 3;
+    }
+
+    while pos < len {
+        match bytes[pos] {
+            // Skip whitespace
+            b' ' | b'\t' | b'\r' | b'\n' => {
+                pos += 1;
+            }
+            b'/' if pos + 1 < len => match bytes[pos + 1] {
+                b'/' => {
+                    // Single-line comment: `// ... <newline>`
+                    let comment_start = pos + 2;
+                    let line_end = bytes[comment_start..]
+                        .iter()
+                        .position(|&b| b == b'\n' || b == b'\r')
+                        .map(|off| comment_start + off)
+                        .unwrap_or(len);
+                    if let Some(offset) =
+                        last_directive_offset_in_comment(source, comment_start, line_end, directive)
+                    {
+                        result = Some(offset);
+                    }
+                    pos = line_end;
+                }
+                b'*' => {
+                    // Block comment: `/* ... */`
+                    let comment_start = pos + 2;
+                    let close = source[comment_start..]
+                        .find("*/")
+                        .map(|off| comment_start + off)
+                        .unwrap_or(len);
+                    if let Some(offset) =
+                        last_directive_offset_in_comment(source, comment_start, close, directive)
+                    {
+                        result = Some(offset);
+                    }
+                    pos = close + 2;
+                    if pos > len {
+                        pos = len;
+                    }
+                }
+                _ => break, // `/x` — real code; stop scanning leading trivia
+            },
+            _ => break, // Any other non-whitespace byte is real code
+        }
+    }
+
+    result
+}
+
+fn last_directive_offset_in_comment(
+    source: &str,
+    comment_start: usize,
+    comment_end: usize,
+    directive: &str,
+) -> Option<u32> {
+    let bytes = source.as_bytes();
+    let directive_bytes = directive.as_bytes();
+    let mut line_start = comment_start;
+    let mut result = None;
+
+    while line_start <= comment_end {
+        let mut line_end = line_start;
+        while line_end < comment_end && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let mut candidate = line_start;
+        while candidate < line_end && matches!(bytes[candidate], b' ' | b'\t') {
+            candidate += 1;
+        }
+        if candidate < line_end && bytes[candidate] == b'*' {
+            candidate += 1;
+            while candidate < line_end && matches!(bytes[candidate], b' ' | b'\t') {
+                candidate += 1;
+            }
+        }
+
+        if starts_with_directive(bytes, candidate, line_end, directive_bytes) {
+            result = u32::try_from(candidate).ok();
+        }
+
+        if line_end == comment_end {
+            break;
+        }
+        line_start = line_end + 1;
+        if line_start < comment_end && bytes[line_end] == b'\r' && bytes[line_start] == b'\n' {
+            line_start += 1;
+        }
+    }
+
+    result
+}
+
+fn starts_with_directive(
+    bytes: &[u8],
+    candidate: usize,
+    line_end: usize,
+    directive: &[u8],
+) -> bool {
+    let directive_end = candidate.saturating_add(directive.len());
+    if directive_end > line_end {
+        return false;
+    }
+    if !bytes[candidate..directive_end]
+        .iter()
+        .zip(directive)
+        .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    {
+        return false;
+    }
+    source_byte_at_word_boundary(bytes, directive_end, line_end)
+}
+
+fn source_byte_at_word_boundary(bytes: &[u8], pos: usize, line_end: usize) -> bool {
+    pos >= line_end || !is_directive_word_byte(bytes[pos])
+}
+
+const fn is_directive_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
 }
 
 /// Extract the content of a `JSDoc` comment (without the delimiters).

@@ -1780,11 +1780,66 @@ impl<'a> TypePrinter<'a> {
             let args: Vec<String> = app
                 .args
                 .iter()
+                .take(self.visible_type_application_arg_count(app.base, &app.args))
                 .enumerate()
                 .map(|(index, &id)| self.print_type_argument(id, index == 0))
                 .collect();
-            format!("{base_text}<{}>", args.join(", "))
+            if args.is_empty() {
+                base_text
+            } else {
+                format!("{base_text}<{}>", args.join(", "))
+            }
         }
+    }
+
+    fn visible_type_application_arg_count(&self, base: TypeId, args: &[TypeId]) -> usize {
+        let Some(type_params) = self.type_application_type_params(base) else {
+            return args.len();
+        };
+        if type_params.len() < args.len() {
+            return args.len();
+        }
+
+        let mut visible = args.len();
+        while visible > 0 {
+            let Some(default) = type_params.get(visible - 1).and_then(|param| param.default) else {
+                break;
+            };
+            if args[visible - 1] != default {
+                break;
+            }
+            visible -= 1;
+        }
+        visible
+    }
+
+    fn type_application_type_params(
+        &self,
+        base: TypeId,
+    ) -> Option<&'a [tsz_solver::types::TypeParamInfo]> {
+        let cache = self.type_cache?;
+        if let Some(def_id) = visitor::lazy_def_id(self.interner, base) {
+            return cache
+                .def_type_params
+                .get(&def_id.0)
+                .map(std::vec::Vec::as_slice);
+        }
+        if let Some(sym_ref) = visitor::type_query_symbol(self.interner, base) {
+            let sym_id = SymbolId(sym_ref.0);
+            return cache
+                .def_to_symbol
+                .iter()
+                .find_map(|(def_id, &candidate_sym_id)| {
+                    (candidate_sym_id == sym_id).then_some(def_id)
+                })
+                .and_then(|def_id| {
+                    cache
+                        .def_type_params
+                        .get(&def_id.0)
+                        .map(std::vec::Vec::as_slice)
+                });
+        }
+        None
     }
 
     pub(crate) fn print_type_argument(&self, type_id: TypeId, is_first: bool) -> String {

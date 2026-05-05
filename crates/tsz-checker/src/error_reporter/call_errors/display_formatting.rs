@@ -575,6 +575,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Direct arguments later in the same generic call can fix a callback's
+        // return type more specifically than the instantiated parameter surface.
+        let callback_return_tp = self.raw_callback_return_type_param_name(raw_param_type);
         let mut replacements = FxHashMap::default();
         self.collect_type_param_display_replacements(raw_param_type, param_type, &mut replacements);
 
@@ -585,6 +588,14 @@ impl<'a> CheckerState<'a> {
             for tp in &raw_sig.type_params {
                 let Some(&replacement_type) = replacements.get(&tp.name) else {
                     continue;
+                };
+                let replacement_type = if callback_return_tp == Some(tp.name) {
+                    self.later_literal_argument_replacement_for_type_param(
+                        &raw_sig, args, arg_index, tp.name,
+                    )
+                    .unwrap_or(replacement_type)
+                } else {
+                    replacement_type
                 };
                 let replacement = self.format_type_for_assignability_message(replacement_type);
                 let tp_name = self.ctx.types.resolve_atom_ref(tp.name);
@@ -669,6 +680,45 @@ impl<'a> CheckerState<'a> {
             && display != original_display
             && (display.contains('<') || !original_display.contains('<')))
         .then_some(display)
+    }
+
+    fn raw_callback_return_type_param_name(
+        &self,
+        raw_param_type: TypeId,
+    ) -> Option<tsz_common::interner::Atom> {
+        let shape = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            raw_param_type,
+        )?;
+        crate::query_boundaries::common::type_param_info(
+            self.ctx.types.as_type_database(),
+            shape.return_type,
+        )
+        .map(|tp| tp.name)
+    }
+
+    fn later_literal_argument_replacement_for_type_param(
+        &mut self,
+        raw_sig: &tsz_solver::FunctionShape,
+        args: &[NodeIndex],
+        arg_index: usize,
+        type_param_name: tsz_common::interner::Atom,
+    ) -> Option<TypeId> {
+        raw_sig
+            .params
+            .iter()
+            .zip(args.iter().copied())
+            .enumerate()
+            .skip(arg_index + 1)
+            .find_map(|(_, (raw_param, call_arg_idx))| {
+                let raw_tp = crate::query_boundaries::common::type_param_info(
+                    self.ctx.types.as_type_database(),
+                    raw_param.type_id,
+                )?;
+                (raw_tp.name == type_param_name)
+                    .then(|| self.literal_type_from_initializer(call_arg_idx))
+                    .flatten()
+            })
     }
 
     fn instantiated_call_parameter_display(&mut self, arg_idx: NodeIndex) -> Option<String> {
@@ -778,8 +828,13 @@ impl<'a> CheckerState<'a> {
             };
 
         let display = self.format_type_for_assignability_message(display_type);
-        Some(
+        let display = if query_common::is_callable_type(self.ctx.types, display_type) {
+            display
+        } else {
             Self::widen_member_literals_in_display_text(&display)
+        };
+        Some(
+            display
                 .replace("new(", "new (")
                 .replace("?: unknown | undefined", "?: unknown"),
         )

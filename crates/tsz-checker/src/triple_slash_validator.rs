@@ -11,6 +11,7 @@ use std::path::Path;
 pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
     let mut references = Vec::new();
     let mut in_block_comment = false;
+    let mut past_prologue = false;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -36,6 +37,19 @@ pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
             if !trimmed.contains("*/") {
                 in_block_comment = true;
             }
+            continue;
+        }
+
+        if is_initial_shebang(line_num, trimmed) {
+            continue;
+        }
+
+        // Triple-slash directives are only valid before any executable statement.
+        // A non-empty line that is not a comment ends the directive prologue.
+        if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            past_prologue = true;
+        }
+        if past_prologue {
             continue;
         }
 
@@ -68,6 +82,7 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
     let mut references = Vec::new();
     let mut in_block_comment = false;
     let mut byte_offset = 0usize;
+    let mut past_prologue = false;
 
     for line in source.lines() {
         let trimmed = line.trim();
@@ -89,7 +104,18 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
             continue;
         }
 
-        if trimmed.starts_with("///")
+        if is_initial_shebang(byte_offset, trimmed) {
+            byte_offset += line.len() + 1;
+            continue;
+        }
+
+        // Triple-slash directives are only valid before any executable statement.
+        if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            past_prologue = true;
+        }
+
+        if !past_prologue
+            && trimmed.starts_with("///")
             && trimmed.contains("<reference")
             && trimmed.contains("types=")
             && let Some((name, value_offset_in_line)) =
@@ -114,6 +140,7 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
 pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
     let mut amd_modules = Vec::new();
     let mut in_block_comment = false;
+    let mut past_prologue = false;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -129,6 +156,18 @@ pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
             if !trimmed.contains("*/") {
                 in_block_comment = true;
             }
+            continue;
+        }
+
+        if is_initial_shebang(line_num, trimmed) {
+            continue;
+        }
+
+        // Triple-slash directives are only valid before any executable statement.
+        if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            past_prologue = true;
+        }
+        if past_prologue {
             continue;
         }
 
@@ -160,6 +199,7 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
     let mut malformed = Vec::new();
     let mut in_block_comment = false;
     let mut byte_offset = 0usize;
+    let mut past_prologue = false;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -180,8 +220,18 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
             continue;
         }
 
-        // Must start with /// and contain <reference
-        if trimmed.starts_with("///") && trimmed.contains("<reference") {
+        if is_initial_shebang(byte_offset, trimmed) {
+            byte_offset += line.len() + 1;
+            continue;
+        }
+
+        // Triple-slash directives are only valid before any executable statement.
+        if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            past_prologue = true;
+        }
+
+        // Must start with /// and contain <reference (and still be in the prologue)
+        if !past_prologue && trimmed.starts_with("///") && trimmed.contains("<reference") {
             // Check if it's a well-formed directive:
             // Valid forms: path="...", types="...", lib="...", no-default-lib="true"
             let has_valid_path = extract_quoted_attr(trimmed, "path").is_some();
@@ -202,6 +252,10 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
     }
 
     malformed
+}
+
+fn is_initial_shebang(position: usize, trimmed: &str) -> bool {
+    position == 0 && trimmed.starts_with("#!")
 }
 
 /// Extract the value of a named attribute from a reference directive line.

@@ -94,6 +94,15 @@ impl<'a> CheckerState<'a> {
         let in_arith_compound = self.in_arithmetic_compound_assignment_context(anchor_idx);
 
         if !in_arith_compound
+            && self.array_literal_element_source_widening_required_for_display(
+                anchor_idx, source, target,
+            )
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
+
+        if !in_arith_compound
             && self.is_literal_sensitive_assignment_target(target)
             && let Some(display) = self.literal_expression_display(anchor_idx)
             && literal_display_appropriate_for_undefined_null_target(
@@ -228,6 +237,9 @@ impl<'a> CheckerState<'a> {
             }
         }
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
+            if let Some(display) = self.type_assertion_mapped_alias_source_display(expr_idx) {
+                return display;
+            }
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
                 && display.contains("=>")
             {
@@ -975,6 +987,40 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn type_assertion_mapped_alias_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if !matches!(
+            node.kind,
+            syntax_kind_ext::AS_EXPRESSION | syntax_kind_ext::TYPE_ASSERTION
+        ) {
+            return None;
+        }
+        let assertion = self.ctx.arena.get_type_assertion(node)?;
+        let assertion_type = self.get_type_from_type_node(assertion.type_node);
+        let is_generic_mapped_alias =
+            crate::query_boundaries::common::is_generic_application(self.ctx.types, assertion_type)
+                && crate::query_boundaries::common::get_application_lazy_def_id(
+                    self.ctx.types,
+                    assertion_type,
+                )
+                .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                .is_some_and(|def| {
+                    def.kind == tsz_solver::def::DefKind::TypeAlias
+                        && def.body.is_some_and(|body| {
+                            crate::query_boundaries::common::is_mapped_type(self.ctx.types, body)
+                        })
+                });
+        if !is_generic_mapped_alias {
+            return None;
+        }
+        self.node_text(assertion.type_node)
+            .and_then(|text| self.sanitize_type_annotation_text_for_diagnostic(text, false))
+            .map(|text| self.format_annotation_like_type(&text))
+    }
+
     /// Whether to suppress the AST-literal short-circuit for an
     /// object-literal-property elaboration when the property elaboration has
     /// already widened the source (e.g. `1` → `number`). Mirrors tsc's
@@ -1002,6 +1048,49 @@ impl<'a> CheckerState<'a> {
         }
         let primitive_kind = source;
         !target_accepts_literal_primitive_kind(self.ctx.types, target, primitive_kind)
+    }
+
+    pub(in crate::error_reporter) fn array_elaboration_widening_required_for_display(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common;
+
+        let source_primitive = if let Some(value) = common::literal_value(self.ctx.types, source) {
+            value.primitive_type_id()
+        } else if matches!(
+            source,
+            TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT | TypeId::BOOLEAN
+        ) {
+            source
+        } else {
+            return false;
+        };
+        let target = common::evaluate_type(self.ctx.types, target);
+        if target == TypeId::UNDEFINED || target == TypeId::NULL {
+            return source_primitive != TypeId::BOOLEAN;
+        }
+
+        !target_accepts_literal_primitive_kind(self.ctx.types, target, source_primitive)
+    }
+
+    pub(in crate::error_reporter) fn array_literal_element_source_widening_required_for_display(
+        &self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if !self.array_elaboration_widening_required_for_display(source, target) {
+            return false;
+        }
+
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
+        self.ctx
+            .arena
+            .parent_of(expr_idx)
+            .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+            .is_some_and(|parent| parent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
     }
 }
 

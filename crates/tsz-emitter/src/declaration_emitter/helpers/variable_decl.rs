@@ -1056,7 +1056,16 @@ impl<'a> DeclarationEmitter<'a> {
         identifier_idx: NodeIndex,
     ) -> Option<String> {
         self.function_parameter_type_text(func, identifier_idx)
-            .or_else(|| self.reference_declared_type_annotation_text(identifier_idx))
+            .or_else(|| {
+                let type_text = self.reference_declared_type_annotation_text(identifier_idx)?;
+                if let Some(type_id) = self.reference_declared_type_id(identifier_idx)
+                    && (self.printed_type_uses_non_emittable_local_alias_root(&type_text)
+                        || self.should_expand_named_application_for_inferred_declaration(type_id))
+                {
+                    return Some(self.print_type_id_for_inferred_declaration(type_id));
+                }
+                Some(type_text)
+            })
     }
 
     pub(in crate::declaration_emitter) fn function_return_identifier_declared_type_id(
@@ -1456,6 +1465,64 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    pub(in crate::declaration_emitter) fn refine_object_rest_return_type_from_identifier(
+        &self,
+        body_idx: NodeIndex,
+        inferred_return_type: tsz_solver::types::TypeId,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let interner = self.type_interner?;
+        if inferred_return_type == tsz_solver::types::TypeId::ANY
+            || inferred_return_type == tsz_solver::types::TypeId::ERROR
+        {
+            return None;
+        }
+
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        if !self.identifier_is_object_rest_binding(returned_identifier) {
+            return None;
+        }
+
+        let returned_identifier_type = self
+            .get_node_type_or_names(&[returned_identifier])
+            .or_else(|| self.get_type_via_symbol(returned_identifier))?;
+        if returned_identifier_type == inferred_return_type
+            || returned_identifier_type == tsz_solver::types::TypeId::ANY
+            || returned_identifier_type == tsz_solver::types::TypeId::ERROR
+            || !tsz_solver::type_queries::is_object_like_type(interner, returned_identifier_type)
+        {
+            return None;
+        }
+
+        Some(returned_identifier_type)
+    }
+
+    pub(in crate::declaration_emitter) fn identifier_is_object_rest_binding(
+        &self,
+        identifier_idx: NodeIndex,
+    ) -> bool {
+        let Some(sym_id) = self.value_reference_symbol(identifier_idx) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(parent_idx) = self.arena.parent_of(decl_idx) else {
+                return false;
+            };
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                return false;
+            };
+            self.arena
+                .get_binding_element(parent_node)
+                .is_some_and(|binding| binding.dot_dot_dot_token && binding.name == decl_idx)
+        })
     }
 
     pub(in crate::declaration_emitter) fn function_body_returns_identifier(

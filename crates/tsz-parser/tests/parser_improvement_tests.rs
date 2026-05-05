@@ -58,6 +58,88 @@ const fn = (a: number, b: string)
 }
 
 #[test]
+fn parameter_type_predicate_tail_reports_comma_at_type_name() {
+    let source = "function b2(a: b is A) {};";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let fingerprints: Vec<(u32, u32, u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.clone(),
+            )
+        })
+        .collect();
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            1,
+            18,
+            "',' expected.".to_string()
+        )),
+        "expected TS1005 at `is`, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            1,
+            21,
+            "',' expected.".to_string()
+        )),
+        "expected TS1005 at the predicate type name, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn index_signature_type_predicate_tail_defers_close_brace() {
+    let source = "interface I2 {\n    [index: number]: p1 is C;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let fingerprints: Vec<(u32, u32, u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.clone(),
+            )
+        })
+        .collect();
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            2,
+            25,
+            "';' expected.".to_string()
+        )),
+        "expected TS1005 at the invalid `is` tail, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            3,
+            1,
+            "Declaration or statement expected.".to_string()
+        )),
+        "expected TS1128 at the deferred interface close brace, got {fingerprints:?}"
+    );
+}
+
+#[test]
 fn test_missing_arrow_with_typed_parameters_prefers_arrow_recovery() {
     let source = r"
 namespace N {

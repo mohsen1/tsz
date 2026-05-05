@@ -322,6 +322,39 @@ type TestType<C extends string | ComponentType<any>> =
 }
 
 #[test]
+fn test_module_local_function_alias_does_not_satisfy_callable_conditional_constraint() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[(
+            "index.ts",
+            r#"
+export {};
+
+type Function = { tag: string };
+
+type CallableBox<T extends (...args: never[]) => unknown> = T;
+
+type Result<T extends Function> =
+  T extends Function ? CallableBox<T> : never;
+
+declare const result: Result<{ tag: string }>;
+result.tag;
+"#,
+        )],
+        "index.ts",
+        CheckerOptions {
+            no_lib: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2344),
+        "Expected TS2344 because the module-local Function alias is not callable. Got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts1062_self_referencing_promise_in_await() {
     if !lib_files_available() {
         return;
