@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-05-05T00:38:46Z",
-  "git_sha": "198cce43edc6ba9c00a55c246879e549a535ff9d",
+  "timestamp": "2026-05-05T01:14:15Z",
+  "git_sha": "1a8b2489a21d9b9de6c311f6ff69566bdef74f0e",
   "summary": {
     "total_tests": 12582,
     "passed": 12434,
@@ -49,6 +49,13 @@
       "passed": 22,
       "failed": 2,
       "pass_rate": 91.67
+    },
+    {
+      "area": "types/spread",
+      "total": 25,
+      "passed": 23,
+      "failed": 2,
+      "pass_rate": 92.0
     },
     {
       "area": "controlFlow",
@@ -156,13 +163,6 @@
       "pass_rate": 95.9
     },
     {
-      "area": "types/spread",
-      "total": 25,
-      "passed": 24,
-      "failed": 1,
-      "pass_rate": 96.0
-    },
-    {
       "area": "internalModules/DeclarationMerging",
       "total": 30,
       "passed": 29,
@@ -207,9 +207,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6456,
-      "failed": 64,
-      "pass_rate": 99.02
+      "passed": 6457,
+      "failed": 63,
+      "pass_rate": 99.03
     },
     {
       "area": "jsdoc",
@@ -970,7 +970,7 @@
   "one_extra_zero_missing": [
     {
       "code": "TS2322",
-      "count": 4
+      "count": 3
     },
     {
       "code": "TS18046",
@@ -1172,7 +1172,7 @@
   "top_extra_codes": [
     {
       "code": "TS2322",
-      "count": 7
+      "count": 6
     },
     {
       "code": "TS2339",
@@ -1278,9 +1278,9 @@
   "categories": {
     "false_positive": 3,
     "all_missing": 1,
-    "wrong_code": 39,
-    "fingerprint_only": 105,
+    "wrong_code": 38,
+    "fingerprint_only": 106,
     "same_code_count_drift": 0,
-    "close_to_passing": 25
+    "close_to_passing": 24
   }
 }
