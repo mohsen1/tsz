@@ -195,6 +195,14 @@ impl<'a> CheckerState<'a> {
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
         let _ = self.evaluate_type_with_env_uncached(body_type);
         let body_evaluation_too_complex = self.ctx.types.take_union_too_complex();
+        if self.type_node_produces_too_large_tuple(alias.type_node) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                alias.type_node,
+                diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+            );
+        }
         if body_construction_too_complex || body_evaluation_too_complex {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let anchor = if body_evaluation_too_complex {
