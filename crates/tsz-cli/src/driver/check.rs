@@ -363,6 +363,45 @@ pub(super) fn collect_diagnostics(
     let program_has_real_syntax_errors = program_has_real_syntax_errors(program);
     let program_has_unsupported_js_root = program_has_unsupported_js_root(program, options);
 
+    // TS6504: when allowJs is disabled, emit one error per explicit JS root file.
+    // tsc includes the JS file in the program but rejects it with this diagnostic
+    // and skips semantic checks for that file (the suppression is in
+    // post_process_checker_diagnostics).
+    if program_has_unsupported_js_root {
+        for file in &program.files {
+            if is_js_file(Path::new(&file.file_name)) {
+                let mut ts6504 = Diagnostic::from_code(
+                    diagnostic_codes::FILE_IS_A_JAVASCRIPT_FILE_DID_YOU_MEAN_TO_ENABLE_THE_ALLOWJS_OPTION,
+                    "",
+                    0,
+                    0,
+                    &[&file.file_name],
+                );
+                ts6504
+                    .related_information
+                    .push(DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::THE_FILE_IS_IN_THE_PROGRAM_BECAUSE,
+                        file: String::new(),
+                        start: 0,
+                        length: 0,
+                        message_text: "The file is in the program because:".to_string(),
+                    });
+                ts6504
+                    .related_information
+                    .push(DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::ROOT_FILE_SPECIFIED_FOR_COMPILATION,
+                        file: String::new(),
+                        start: 0,
+                        length: 0,
+                        message_text: "Root file specified for compilation".to_string(),
+                    });
+                diagnostics.push(ts6504);
+            }
+        }
+    }
+
     {
         let _span = tracing::info_span!("build_program_path_maps", files = file_count).entered();
         for (idx, file) in program.files.iter().enumerate() {
@@ -5670,5 +5709,56 @@ interface Node {
 
         let result = topological_file_order(&[0, 1], &deps);
         assert_eq!(result, vec![0, 1]);
+    }
+
+    #[test]
+    fn ts6504_emitted_for_js_root_when_allow_js_disabled() {
+        // When allowJs is not set, an explicit JS root must produce TS6504.
+        // tsc includes the file in the program but reports the error and skips
+        // semantic checks for that file.
+        let options = ResolvedCompilerOptions {
+            allow_js: false,
+            ..ResolvedCompilerOptions::default()
+        };
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("/main.js", "const n = 1;\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+
+        assert!(
+            diagnostics.iter().any(|d| d.code == 6504),
+            "expected TS6504 for JS root without allowJs, got: {diagnostics:?}"
+        );
+
+        let ts6504 = diagnostics.iter().find(|d| d.code == 6504).unwrap();
+        assert!(
+            ts6504.message_text.contains("main.js"),
+            "TS6504 message should include the JS file path: {}",
+            ts6504.message_text
+        );
+        assert!(
+            ts6504.related_information.len() >= 2,
+            "TS6504 should have related info explaining why the file is in the program"
+        );
+    }
+
+    #[test]
+    fn ts6504_not_emitted_when_allow_js_enabled() {
+        // When allowJs is enabled, JS root files are accepted without TS6504.
+        let options = ResolvedCompilerOptions {
+            allow_js: true,
+            ..ResolvedCompilerOptions::default()
+        };
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("/main.js", "const n = 1;\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 6504),
+            "expected no TS6504 when allowJs is enabled, got: {diagnostics:?}"
+        );
     }
 }
