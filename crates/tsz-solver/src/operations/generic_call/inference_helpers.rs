@@ -493,6 +493,42 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         result
     }
 
+    pub(super) fn collect_noinfer_placeholder_vars_in_type(
+        &mut self,
+        ty: TypeId,
+        var_map: &FxHashMap<TypeId, InferenceVar>,
+        result: &mut FxHashSet<InferenceVar>,
+        probe_map: &mut FxHashMap<TypeId, InferenceVar>,
+        visited: &mut FxHashSet<TypeId>,
+    ) {
+        if !visited.insert(ty) {
+            return;
+        }
+
+        let mut roots = vec![ty];
+        if let Some(expanded) = self.checker.expand_type_alias_application(ty)
+            && expanded != ty
+            && visited.insert(expanded)
+        {
+            roots.push(expanded);
+        }
+
+        for root in roots {
+            for nested in crate::visitor::collect_all_types(self.interner.as_type_database(), root)
+            {
+                if let Some(TypeData::NoInfer(inner)) = self.interner.lookup(nested) {
+                    let mut inner_visited = FxHashSet::default();
+                    result.extend(self.collect_placeholder_vars_in_type(
+                        inner,
+                        var_map,
+                        probe_map,
+                        &mut inner_visited,
+                    ));
+                }
+            }
+        }
+    }
+
     pub(super) fn direct_inference_tracking_target(&self, ty: TypeId) -> Option<TypeId> {
         match self.interner.lookup(ty) {
             Some(TypeData::Union(members)) => {
