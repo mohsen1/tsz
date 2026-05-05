@@ -5,6 +5,29 @@ use crate::test_utils::check_source_diagnostics;
 use tsz_common::checker_options::JsxMode;
 
 #[test]
+fn structural_nodes_do_not_poison_expression_dispatch() {
+    let diags = check_source_diagnostics(
+        r#"
+export const value = 1;
+export { value };
+
+const run: () => void = () => {
+    value;
+};
+"#,
+    );
+    assert_eq!(
+        diags.len(),
+        0,
+        "Expected block bodies and named exports to remain structural, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ts7006_false_positive_arrow_in_generic_call() {
     // Arrow functions in object literal properties within generic indexed-access
     // calls should receive contextual typing from the inferred type parameter.

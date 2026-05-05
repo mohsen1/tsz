@@ -1936,6 +1936,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 );
                 TypeId::ANY
             }
+            // Structural statement/export nodes can be reached by broad
+            // expression walks in real projects. They do not have a value type,
+            // but they also should not poison checking with TypeId::ERROR.
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::NAMED_EXPORTS => TypeId::VOID,
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(
