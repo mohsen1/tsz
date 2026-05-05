@@ -314,6 +314,106 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn flow_narrowed_write_receiver_type(
+        &mut self,
+        property_access_idx: NodeIndex,
+        receiver_idx: NodeIndex,
+        declared_type: TypeId,
+    ) -> TypeId {
+        let read_type = self.get_type_of_node_with_request(receiver_idx, &TypingRequest::NONE);
+        if read_type != declared_type {
+            return read_type;
+        }
+        if self.ctx.daa_error_nodes.contains(&receiver_idx.0)
+            || self.ctx.daa_error_nodes.contains(&property_access_idx.0)
+        {
+            return read_type;
+        }
+        if !self.write_receiver_can_flow_narrow(property_access_idx, receiver_idx) {
+            return read_type;
+        }
+        let Some(flow_node) = self.flow_node_for_reference_usage(property_access_idx) else {
+            return read_type;
+        };
+
+        self.flow_analyzer_for_property_reads()
+            .get_flow_type(receiver_idx, read_type, flow_node)
+    }
+
+    pub(crate) fn write_receiver_type_for_property_access(
+        &mut self,
+        property_access_idx: NodeIndex,
+        receiver_idx: NodeIndex,
+        property_name: Option<&str>,
+        object_type_no_flow: TypeId,
+        preserve_non_js_write_base: bool,
+    ) -> (TypeId, bool) {
+        let can_use_no_flow = if let Some(property_name) = property_name {
+            let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
+            let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
+            !matches!(
+                self.resolve_property_access_with_env(resolved_no_flow, property_name),
+                PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+            )
+        } else {
+            false
+        };
+
+        if !can_use_no_flow && !preserve_non_js_write_base {
+            return (
+                self.flow_narrowed_write_receiver_type(
+                    property_access_idx,
+                    receiver_idx,
+                    object_type_no_flow,
+                ),
+                false,
+            );
+        }
+
+        let Some(property_name) = property_name else {
+            return (object_type_no_flow, false);
+        };
+        let read_object_type = self.flow_narrowed_write_receiver_type(
+            property_access_idx,
+            receiver_idx,
+            object_type_no_flow,
+        );
+        let evaluated_read = self.evaluate_application_type(read_object_type);
+        let resolved_read = self.resolve_type_for_property_access(evaluated_read);
+        if self.union_write_requires_existing_named_member(resolved_read, property_name) {
+            return (read_object_type, false);
+        }
+
+        let read_has_property = !matches!(
+            self.resolve_property_access_with_env(resolved_read, property_name),
+            PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+        );
+        if read_has_property {
+            (object_type_no_flow, false)
+        } else if self.write_receiver_can_flow_narrow(property_access_idx, receiver_idx) {
+            (read_object_type, true)
+        } else {
+            (object_type_no_flow, true)
+        }
+    }
+
+    fn write_receiver_can_flow_narrow(
+        &self,
+        property_access_idx: NodeIndex,
+        receiver_idx: NodeIndex,
+    ) -> bool {
+        self.flow_node_for_reference_usage(property_access_idx)
+            .is_some()
+            && self.ctx.arena.get(receiver_idx).is_some_and(|expr| {
+                matches!(
+                    expr.kind,
+                    k if k == SyntaxKind::Identifier as u16
+                        || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                )
+            })
+    }
+
     pub(crate) fn recover_self_recursive_property_access_type(
         &self,
         receiver_type: TypeId,

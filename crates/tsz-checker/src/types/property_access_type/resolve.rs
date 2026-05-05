@@ -243,48 +243,14 @@ impl<'a> CheckerState<'a> {
                             })
                     });
 
-            let property_name_for_probe = self
-                .ctx
-                .arena
-                .get_identifier(name_node)
-                .map(|ident| ident.escaped_text.clone());
-            let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
-                let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
-                let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
-                !matches!(
-                    self.resolve_property_access_with_env(resolved_no_flow, property_name),
-                    PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
-                )
-            } else {
-                false
-            };
-
-            if can_use_no_flow || preserve_non_js_write_base {
-                let read_object_type =
-                    self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE);
-                if let Some(property_name) = property_name_for_probe.as_deref() {
-                    let evaluated_read = self.evaluate_application_type(read_object_type);
-                    let resolved_read = self.resolve_type_for_property_access(evaluated_read);
-                    if self.union_write_requires_existing_named_member(resolved_read, property_name)
-                    {
-                        (read_object_type, false)
-                    } else {
-                        let read_has_property = !matches!(
-                            self.resolve_property_access_with_env(resolved_read, property_name),
-                            PropertyAccessResult::PropertyNotFound { .. }
-                                | PropertyAccessResult::IsUnknown
-                        );
-                        (object_type_no_flow, !read_has_property)
-                    }
-                } else {
-                    (object_type_no_flow, false)
-                }
-            } else {
-                (
-                    self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE),
-                    false,
-                )
-            }
+            let property_name_for_probe = self.ctx.arena.get_identifier(name_node);
+            self.write_receiver_type_for_property_access(
+                idx,
+                access.expression,
+                property_name_for_probe.map(|ident| ident.escaped_text.as_str()),
+                object_type_no_flow,
+                preserve_non_js_write_base,
+            )
         } else if skip_optional_base_flow {
             (
                 self.get_type_of_write_target_base_expression(access.expression),
@@ -326,7 +292,6 @@ impl<'a> CheckerState<'a> {
                 false,
             )
         };
-
         let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
             if skip_flow_narrowing {
                 if write_presence_only {
@@ -489,7 +454,6 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
-
         let mut commonjs_namespace_override: Option<TypeId> = None;
         if object_type == TypeId::ANY
             && self.is_js_file()

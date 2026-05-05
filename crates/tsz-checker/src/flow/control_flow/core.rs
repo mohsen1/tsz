@@ -1585,7 +1585,8 @@ impl<'a> FlowAnalyzer<'a> {
                                         f.has_any_flags(
                                             flow_flags::CONDITION
                                                 | flow_flags::CALL
-                                                | flow_flags::LOOP_LABEL,
+                                                | flow_flags::LOOP_LABEL
+                                                | flow_flags::ASSIGNMENT,
                                         )
                                     });
                                 if ant_needs_defer {
