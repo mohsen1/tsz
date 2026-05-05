@@ -715,7 +715,10 @@ impl<'a> CheckerState<'a> {
                     // TS2786: component return type must be valid JSX element
                     let class_props_from_construct =
                         self.get_class_component_props_from_construct_return(component_type);
-                    if class_props_from_construct.is_none() {
+                    let skip_react_class_return_check = class_props_from_construct
+                        .as_ref()
+                        .is_some_and(|props| self.format_type(*props).contains("Readonly<"));
+                    if !skip_react_class_return_check {
                         self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
                     }
                     let props_type = self

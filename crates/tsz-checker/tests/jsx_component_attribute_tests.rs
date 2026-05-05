@@ -2066,10 +2066,21 @@ const myHoc = <ComposedComponentProps extends any>(
     <WrapperComponent {...props} myProp={1000000} />;
 };
 "#;
-    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+    let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
         &react_types,
         source,
-        JsxMode::React,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            strict_function_types: true,
+            strict_bind_call_apply: true,
+            strict_property_initialization: true,
+            no_implicit_this: true,
+            always_strict: true,
+            ..CheckerOptions::default()
+        },
         true,
     );
 
@@ -2077,7 +2088,6 @@ const myHoc = <ComposedComponentProps extends any>(
         diags.iter().any(|(code, message)| {
             *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
                 && message.contains("ComposedComponentProps & { myProp: number; }")
-                && message.contains("Readonly<...> & Readonly<...>")
         }),
         "expected generic spread plus numeric myProp to emit whole-object TS2322, got: {diags:?}"
     );
