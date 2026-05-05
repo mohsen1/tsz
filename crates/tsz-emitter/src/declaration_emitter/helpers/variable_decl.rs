@@ -173,8 +173,12 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                 }
                 let type_text = self.qualify_current_namespace_self_type_text(&type_text);
+                let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
+                let type_text = self
+                    .expand_portable_mapped_object_text_in_current_context(&type_text)
+                    .unwrap_or(type_text);
                 self.write(": ");
-                self.write(&Self::strip_synthetic_anonymous_object_members(&type_text));
+                self.write(&type_text);
             } else if has_initializer
                 && (self.emit_ts_late_bound_function_initializer_type_annotation(
                     decl_name,

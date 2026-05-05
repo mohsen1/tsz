@@ -83,6 +83,8 @@ impl<'a> DeclarationEmitter<'a> {
             }
         } else {
             let rewritten = self.qualify_foreign_imported_names_in_text(source_arena, &type_text);
+            let expands_mapped_object =
+                Self::contains_portable_mapped_object_text(rewritten.as_str());
             let rewritten = self
                 .expand_portable_intersection_type_text(source_arena, &rewritten)
                 .unwrap_or(rewritten);
@@ -90,6 +92,7 @@ impl<'a> DeclarationEmitter<'a> {
                 Some(ref printed)
                     if printed != "any"
                         && !printed.contains("any")
+                        && !expands_mapped_object
                         && (!rewritten.contains("import(\"") || printed.contains("import(\"")) =>
                 {
                     printed.clone()
@@ -103,7 +106,21 @@ impl<'a> DeclarationEmitter<'a> {
         Some(trimmed.to_string())
     }
 
-    fn expand_portable_intersection_type_text(
+    pub(in crate::declaration_emitter) fn contains_portable_mapped_object_text(text: &str) -> bool {
+        Self::split_top_level_intersection_parts(text)
+            .iter()
+            .any(|part| {
+                let trimmed = part.trim().trim_end_matches(';').trim();
+                trimmed
+                    .strip_prefix('{')
+                    .and_then(|inner| inner.strip_suffix('}'))
+                    .is_some_and(|inner| {
+                        inner.trim_start().starts_with('[') && inner.contains("import(\"")
+                    })
+            })
+    }
+
+    pub(in crate::declaration_emitter) fn expand_portable_intersection_type_text(
         &self,
         source_arena: &NodeArena,
         text: &str,
@@ -193,7 +210,16 @@ impl<'a> DeclarationEmitter<'a> {
         (!inner.is_empty()).then(|| format!("{{\n    {};\n}}", inner.trim().trim_end_matches(';')))
     }
 
-    fn expand_portable_mapped_object_text(
+    pub(in crate::declaration_emitter) fn expand_portable_mapped_object_text_in_current_context(
+        &self,
+        text: &str,
+    ) -> Option<String> {
+        Self::contains_portable_mapped_object_text(text)
+            .then(|| self.expand_portable_intersection_type_text(self.arena, text))
+            .flatten()
+    }
+
+    pub(in crate::declaration_emitter) fn expand_portable_mapped_object_text(
         &self,
         source_arena: &NodeArena,
         inner: &str,
@@ -247,24 +273,57 @@ impl<'a> DeclarationEmitter<'a> {
             })
             .or_else(|| self.current_file_path.clone())?;
 
-        for module_path in self.matching_module_export_paths(binder, &source_path, module_specifier)
+        let mut module_paths =
+            self.matching_module_export_paths(binder, &source_path, module_specifier);
+        if module_paths.is_empty()
+            && !module_specifier.starts_with('.')
+            && !module_specifier.starts_with('/')
         {
+            module_paths = self.package_root_index_module_export_paths(binder, module_specifier);
+        }
+
+        for module_path in module_paths {
             let Some(exports) = binder.module_exports.get(module_path) else {
                 continue;
             };
             let Some(export_sym_id) = exports.get(export_name) else {
                 continue;
             };
+            if let Some((foreign_arena, alias_type_node)) =
+                self.exported_type_alias_type_node_in_module_path(module_path, export_name)
+                && let Some(keys) = self.expand_string_literals_from_type_node_in_arena(
+                    foreign_arena,
+                    alias_type_node,
+                    &FxHashMap::default(),
+                    0,
+                )
+            {
+                return Some(keys);
+            }
+            if let Some(keys) =
+                self.expand_string_literals_from_type_alias_file(module_path, export_name)
+            {
+                return Some(keys);
+            }
             if let Some(keys) =
                 self.with_symbol_declarations(export_sym_id, |foreign_arena, decl_idx| {
-                    let decl_node = foreign_arena.get(decl_idx)?;
-                    let alias = foreign_arena.get_type_alias(decl_node)?;
-                    self.expand_string_literals_from_type_node_in_arena(
-                        foreign_arena,
-                        alias.type_node,
-                        &FxHashMap::default(),
-                        0,
-                    )
+                    let mut current = decl_idx;
+                    for _ in 0..4 {
+                        let decl_node = foreign_arena.get(current)?;
+                        if let Some(alias) = foreign_arena.get_type_alias(decl_node) {
+                            return self.expand_string_literals_from_type_node_in_arena(
+                                foreign_arena,
+                                alias.type_node,
+                                &FxHashMap::default(),
+                                0,
+                            );
+                        }
+                        current = foreign_arena.parent_of(current)?;
+                        if !current.is_some() {
+                            return None;
+                        }
+                    }
+                    None
                 })
             {
                 return Some(keys);
@@ -272,6 +331,148 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn package_root_index_module_export_paths<'b>(
+        &self,
+        binder: &'b BinderState,
+        module_specifier: &str,
+    ) -> Vec<&'b str> {
+        let mut matches: Vec<_> = binder
+            .module_exports
+            .keys()
+            .filter_map(|module_path| {
+                let package_root =
+                    Self::deepest_node_modules_package_root_path(module_path, module_specifier)?;
+                let suffix = module_path.strip_prefix(&package_root)?;
+                matches!(
+                    suffix.trim_start_matches(['/', '\\']),
+                    "index.d.ts" | "index.ts"
+                )
+                .then_some(module_path.as_str())
+            })
+            .collect();
+        matches.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
+        matches
+    }
+
+    fn deepest_node_modules_package_root_path(
+        module_path: &str,
+        module_specifier: &str,
+    ) -> Option<String> {
+        use std::path::{Component, Path, PathBuf};
+
+        let components: Vec<_> = Path::new(module_path).components().collect();
+        let pkg_len = if module_specifier.starts_with('@') {
+            2
+        } else {
+            1
+        };
+        components
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, component)| {
+                matches!(component, Component::Normal(part) if part.to_str() == Some("node_modules"))
+                    .then_some(idx)
+            })
+            .filter_map(|nm_idx| {
+                let pkg_start = nm_idx + 1;
+                if components.len() < pkg_start + pkg_len {
+                    return None;
+                }
+                let package_name = components[pkg_start..pkg_start + pkg_len]
+                    .iter()
+                    .filter_map(|component| match component {
+                        Component::Normal(part) => part.to_str(),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("/");
+                (package_name == module_specifier).then(|| {
+                    components[..pkg_start + pkg_len]
+                        .iter()
+                        .fold(PathBuf::new(), |mut path, component| {
+                            path.push(component.as_os_str());
+                            path
+                        })
+                        .to_string_lossy()
+                        .into_owned()
+                })
+            })
+            .max_by_key(|path| path.len())
+    }
+
+    fn expand_string_literals_from_type_alias_file(
+        &self,
+        module_path: &str,
+        export_name: &str,
+    ) -> Option<Vec<String>> {
+        let source = std::fs::read_to_string(module_path).ok()?;
+        let mut parser = ParserState::new(module_path.to_string(), source);
+        let _root = parser.parse_source_file();
+        let alias_type_node =
+            self.find_type_alias_type_node_in_arena(&parser.arena, export_name)?;
+        self.expand_string_literals_from_type_node_in_arena(
+            &parser.arena,
+            alias_type_node,
+            &FxHashMap::default(),
+            0,
+        )
+    }
+
+    fn exported_type_alias_type_node_in_module_path<'arena>(
+        &'arena self,
+        module_path: &str,
+        export_name: &str,
+    ) -> Option<(&'arena NodeArena, NodeIndex)> {
+        if self.arena_matches_module_path(self.arena, module_path)
+            && let Some(type_node) =
+                self.find_type_alias_type_node_in_arena(self.arena, export_name)
+        {
+            return Some((self.arena, type_node));
+        }
+
+        for arena in self.global_symbol_arenas.values() {
+            if self.arena_matches_module_path(arena.as_ref(), module_path)
+                && let Some(type_node) =
+                    self.find_type_alias_type_node_in_arena(arena.as_ref(), export_name)
+            {
+                return Some((arena.as_ref(), type_node));
+            }
+        }
+
+        let binder = self.binder?;
+        for arenas in binder.declaration_arenas.values() {
+            for arena in arenas {
+                if self.arena_matches_module_path(arena.as_ref(), module_path)
+                    && let Some(type_node) =
+                        self.find_type_alias_type_node_in_arena(arena.as_ref(), export_name)
+                {
+                    return Some((arena.as_ref(), type_node));
+                }
+            }
+        }
+
+        for arena in binder.symbol_arenas.values() {
+            if self.arena_matches_module_path(arena.as_ref(), module_path)
+                && let Some(type_node) =
+                    self.find_type_alias_type_node_in_arena(arena.as_ref(), export_name)
+            {
+                return Some((arena.as_ref(), type_node));
+            }
+        }
+
+        None
+    }
+
+    fn arena_matches_module_path(&self, arena: &NodeArena, module_path: &str) -> bool {
+        let arena_ptr = arena as *const NodeArena as usize;
+        self.arena_to_path
+            .get(&arena_ptr)
+            .is_some_and(|path| path == module_path)
+            || self
+                .arena_source_file(arena)
+                .is_some_and(|source_file| source_file.file_name == module_path)
     }
 
     fn type_reference_name_text_from_arena(
@@ -1831,9 +2032,15 @@ impl<'a> DeclarationEmitter<'a> {
                 .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
         {
             if let Some(type_text) = self.preferred_expression_type_text(initializer) {
-                return Self::strip_synthetic_anonymous_object_members(&type_text);
+                let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
+                return self
+                    .expand_portable_mapped_object_text_in_current_context(&type_text)
+                    .unwrap_or(type_text);
             }
-            return Self::strip_synthetic_anonymous_object_members(printed_type_text);
+            let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
+            return self
+                .expand_portable_mapped_object_text_in_current_context(&type_text)
+                .unwrap_or(type_text);
         }
 
         if (type_id != tsz_solver::types::TypeId::ANY
@@ -1841,12 +2048,22 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(type_text) = self.preferred_expression_type_text(initializer)
         {
             let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
+            if let Some(expanded) =
+                self.expand_portable_mapped_object_text_in_current_context(&type_text)
+            {
+                return expanded;
+            }
             return self
                 .enum_value_index_access_alias_type_text(&type_text)
                 .unwrap_or(type_text);
         }
 
         let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
+        if let Some(expanded) =
+            self.expand_portable_mapped_object_text_in_current_context(&type_text)
+        {
+            return expanded;
+        }
         self.enum_value_index_access_alias_type_text(&type_text)
             .unwrap_or(type_text)
     }
