@@ -14,10 +14,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-// =============================================================================
-// Weak Union, Excess Property, and Diagnostic Reporting Methods
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
     fn excess_property_target_score(&self, type_id: TypeId) -> (u8, usize) {
         match classify_for_excess_properties(self.ctx.types, type_id) {
