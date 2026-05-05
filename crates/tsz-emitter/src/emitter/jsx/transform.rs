@@ -396,6 +396,8 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let closing_brace_pos = self.find_jsx_expression_closing_brace(node);
+
         self.write("{");
         if expr.dot_dot_dot_token {
             self.write("...");
@@ -407,7 +409,7 @@ impl<'a> Printer<'a> {
             // parent JSX element as trailing comments.
             self.increase_indent();
             let (has_comment, last_comment_end, last_comment_has_newline) =
-                self.emit_comments_in_range(node.pos + 1, node.end, false, true);
+                self.emit_comments_in_range(node.pos + 1, closing_brace_pos, false, true);
             if has_comment && last_comment_has_newline {
                 // When the last comment had a trailing newline, the writer is at
                 // line-start and will use ensure_indent() for the closing `}`.
@@ -420,7 +422,7 @@ impl<'a> Printer<'a> {
             if has_comment
                 && self.should_emit_space_before_closing_jsx_brace(
                     node.pos + 1,
-                    node.end,
+                    closing_brace_pos,
                     last_comment_end,
                 )
             {
@@ -429,14 +431,75 @@ impl<'a> Printer<'a> {
         } else if let Some(expr_node) = self.arena.get(expr.expression) {
             // Emit comments between `{` and the expression, such as `{
             // /* comment */ expr }` in JSX context.
-            self.emit_comments_in_range(node.pos + 1, expr_node.pos, false, false);
+            self.increase_indent();
+            self.emit_comments_in_range(node.pos + 1, expr_node.pos, false, true);
             self.emit(expr.expression);
 
             // Emit comments between the expression and the closing brace.
             let expr_token_end = self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
-            self.emit_comments_in_range(expr_token_end, node.end, true, false);
+            self.emit_comments_in_range(expr_token_end, closing_brace_pos, true, false);
+            self.decrease_indent();
         }
         self.write("}");
+    }
+
+    fn find_jsx_expression_closing_brace(&self, node: &Node) -> u32 {
+        let Some(text) = self.source_text else {
+            return node.end;
+        };
+        let bytes = text.as_bytes();
+        let end = (node.end as usize).min(bytes.len());
+        let mut pos = node.pos as usize;
+        let mut depth = 0i32;
+
+        while pos < end {
+            match bytes[pos] {
+                b'{' => {
+                    depth += 1;
+                    pos += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return pos as u32;
+                    }
+                    pos += 1;
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < end {
+                        if bytes[pos] == b'\\' {
+                            pos = (pos + 2).min(end);
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < end && !matches!(bytes[pos], b'\n' | b'\r') {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < end {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+
+        node.end
     }
 
     fn should_emit_space_before_closing_jsx_brace(
@@ -461,6 +524,10 @@ impl<'a> Printer<'a> {
             return false;
         }
 
+        if pos == end {
+            return true;
+        }
+
         while pos < end {
             match bytes[pos] {
                 b' ' | b'\t' => pos += 1,
@@ -478,6 +545,18 @@ impl<'a> Printer<'a> {
         };
 
         self.write(&text.text);
+        self.skip_comments_for_jsx_text(node);
+    }
+
+    fn skip_comments_for_jsx_text(&mut self, node: &Node) {
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.pos >= node.pos && comment.end <= node.end {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
     }
 
     pub(in super::super) fn emit_jsx_namespaced_name(&mut self, node: &Node) {
