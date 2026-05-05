@@ -1414,3 +1414,68 @@ fn test_async_arrow_destructuring_default_param_temp_var_no_collision() {
         );
     }
 }
+
+/// `this.#field ??= rhs` on a private field must lower through the
+/// `__classPrivateFieldSet(get() ?? rhs)` pattern, mirroring the existing
+/// `+=`/`-=`/etc. compound-assignment lowering. Without this, the helper
+/// emit produces `__classPrivateFieldGet(...) ??= rhs` — invalid JS, since
+/// `??=` cannot apply to a function call. Mirrors tsc's emit for issue
+/// `microsoft/TypeScript#61109`.
+#[test]
+fn private_field_nullish_assign_lowers_to_set_get_nullish_rhs() {
+    let source = "class Cls {\n  #privateProp: number | undefined;\n  problem() {\n    this.#privateProp ??= 20;\n  }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("__classPrivateFieldSet(this, _Cls_privateProp, __classPrivateFieldGet(this, _Cls_privateProp, \"f\") ?? 20, \"f\")"),
+        "Private-field `??=` must lower to set(get() ?? rhs).\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("??="),
+        "Lowered output must not still contain a `??=` operator.\nOutput:\n{output}"
+    );
+}
+
+/// When the RHS of `??=`/`||=`/`&&=` on a private field is a
+/// conditional expression, the lowered `get() <op> rhs` must wrap the
+/// conditional in parens. `??`, `||`, and `&&` all bind tighter than the
+/// conditional operator, so `get() ?? a ? b : c` would otherwise reparse
+/// as `(get() ?? a) ? b : c` and silently change semantics.
+#[test]
+fn private_field_nullish_assign_parenthesizes_conditional_rhs() {
+    let source = "class Cls {\n  #privateProp: number | undefined;\n  problem() {\n    this.#privateProp ??= false ? noop() : 20;\n  }\n}\nfunction noop(): number { return 0; }\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("?? (false ? noop() : 20)"),
+        "Conditional RHS of `??=` must be parenthesized to preserve precedence.\nOutput:\n{output}"
+    );
+}
+
+/// `||=` on a private field follows the same lowering shape as `??=`.
+/// Locks in coverage so a future refactor of the compound-assignment
+/// list can't regress one operator while leaving the others working.
+#[test]
+fn private_field_logical_or_assign_lowers_to_set_get_or_rhs() {
+    let source =
+        "class Cls {\n  #flag: boolean = false;\n  toggle() {\n    this.#flag ||= true;\n  }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("__classPrivateFieldSet(this, _Cls_flag, __classPrivateFieldGet(this, _Cls_flag, \"f\") || true, \"f\")"),
+        "Private-field `||=` must lower to set(get() || rhs).\nOutput:\n{output}"
+    );
+}
+
+/// `&&=` on a private field follows the same lowering shape as `??=`.
+#[test]
+fn private_field_logical_and_assign_lowers_to_set_get_and_rhs() {
+    let source =
+        "class Cls {\n  #flag: boolean = true;\n  guard() {\n    this.#flag &&= false;\n  }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("__classPrivateFieldSet(this, _Cls_flag, __classPrivateFieldGet(this, _Cls_flag, \"f\") && false, \"f\")"),
+        "Private-field `&&=` must lower to set(get() && rhs).\nOutput:\n{output}"
+    );
+}

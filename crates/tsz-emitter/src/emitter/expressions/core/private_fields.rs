@@ -414,7 +414,31 @@ impl<'a> Printer<'a> {
                     self.write(" ");
                     self.write(&base_op);
                     self.write(" ");
-                    self.emit(binary.right);
+                    // For logical-assignment lowering (`??=`/`||=`/`&&=`),
+                    // wrap a lower-precedence RHS in parens so
+                    // `get() ?? rhs ? a : b` doesn't reparse as
+                    // `(get() ?? rhs) ? a : b`. `??`, `||`, and `&&` all bind
+                    // tighter than the conditional operator, so a ternary
+                    // RHS would silently rebind without these parens.
+                    let needs_logical_parens = matches!(
+                        binary.operator_token,
+                        t if t == SyntaxKind::QuestionQuestionEqualsToken as u16
+                            || t == SyntaxKind::BarBarEqualsToken as u16
+                            || t == SyntaxKind::AmpersandAmpersandEqualsToken as u16,
+                    ) && self.arena.get(binary.right).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                            || n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                && self.arena.get_binary_expr(n).is_some_and(|b| {
+                                    b.operator_token == SyntaxKind::CommaToken as u16
+                                })
+                    });
+                    if needs_logical_parens {
+                        self.write("(");
+                        self.emit(binary.right);
+                        self.write(")");
+                    } else {
+                        self.emit(binary.right);
+                    }
                 }
 
                 self.emit_private_field_set_close(&clean_name);
