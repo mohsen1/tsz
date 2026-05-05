@@ -136,3 +136,38 @@ type Ccps = ConstructorParameters<typeof C>;
         "Should NOT emit TS2344 for ConstructorParameters<typeof C> because typeof C has construct signatures.\nGot: {ts2344_errors:#?}\nAll: {diagnostics:#?}"
     );
 }
+
+/// `typeof` applied to a generic class expression with type arguments remains
+/// value-space. It satisfies constructor constraints like `InstanceType`'s.
+#[test]
+fn test_instance_type_of_generic_class_expression_type_query_no_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type InstanceType<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: any) => infer R ? R : any;
+
+let Anon = class <out T> {
+    foo(): InstanceType<(typeof Anon<T>)> {
+        return this;
+    }
+}
+        "#,
+    );
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Should NOT emit TS2344 for InstanceType<typeof Anon<T>> because typeof Anon<T> is constructable.\nGot: {ts2344_errors:#?}\nAll: {diagnostics:#?}"
+    );
+}
