@@ -239,6 +239,65 @@ function container() {
     );
 }
 
+#[test]
+fn test_js_esm_prototype_assignments_keep_named_exports() {
+    let diagnostics = check_named_files_entry(
+        &[
+            (
+                "/base.mjs",
+                r#"
+export function MjsBase() {}
+
+MjsBase.prototype.method = function() {
+  return 1;
+};
+"#,
+            ),
+            (
+                "/base.js",
+                r#"
+export function JsBase() {}
+
+JsBase.prototype.method = function() {
+  return 1;
+};
+"#,
+            ),
+            (
+                "/main.ts",
+                r#"
+import { MjsBase } from "./base.mjs";
+import { JsBase } from "./base.js";
+
+class FromMjs extends MjsBase {}
+class FromJs extends JsBase {}
+
+new FromMjs().method();
+new FromJs().method();
+"#,
+            ),
+        ],
+        "/main.ts",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            module: tsz_common::common::ModuleKind::NodeNext,
+            target: tsz_common::common::ScriptTarget::ES2022,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    let unexpected: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2305 | 2339 | 2507))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "Expected JS ESM prototype assignments to preserve named exports and instance methods, got: {diagnostics:#?}"
+    );
+}
+
 fn check_named_files_entry(
     files: &[(&str, &str)],
     entry_file: &str,

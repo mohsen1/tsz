@@ -15,3 +15,11 @@ pub(crate) fn classify_for_constructor_check(
 pub(crate) fn has_function_shape(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::get_function_shape(db, type_id).is_some()
 }
+
+pub(crate) fn is_constructor_function_type(
+    db: &dyn tsz_solver::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::get_function_shape(db, type_id)
+        .is_some_and(|shape| shape.is_constructor)
+}
