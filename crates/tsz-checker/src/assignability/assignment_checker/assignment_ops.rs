@@ -781,6 +781,8 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_node(right_idx);
         }
 
+        let js_global_fallback =
+            self.is_checked_js_global_element_access_fallback_assignment(left_idx, right_idx);
         let contextual_request = if is_destructuring {
             self.destructuring_assignment_initializer_request(left_idx, right_idx)
         } else if left_type != TypeId::ANY
@@ -829,8 +831,16 @@ impl<'a> CheckerState<'a> {
             TypingRequest::NONE
         };
 
+        let diag_count_before_rhs = self.ctx.diagnostics.len();
         let right_raw = self.get_type_of_node_with_request(right_idx, &contextual_request);
         let right_type = self.resolve_type_query_type(right_raw);
+        if js_global_fallback {
+            self.relocate_js_global_element_access_fallback_diagnostics(
+                left_idx,
+                right_idx,
+                diag_count_before_rhs,
+            );
+        }
 
         // Ensure the RHS type is also available in node_types for flow analysis.
         // When clear_type_cache_recursive removes the RHS entry for contextual
