@@ -5996,3 +5996,74 @@ declare var E: I;
         "Expected NO TS2322 for class JSX whole-attrs assignability against primitive props, got: {codes:?}"
     );
 }
+
+/// Regression test for issue #3227: `JSX.LibraryManagedAttributes` was being
+/// discarded whenever the formatted evaluated props type happened to contain
+/// the substring `Factory<`. That was a display-text heuristic, not a
+/// semantic condition, so any user type named `Factory` (or anything else
+/// whose printed form started with `Factory<`) silently broke LMA.
+///
+/// Structural rule: when a component has `defaultProps`, the props returned
+/// from `JSX.LibraryManagedAttributes<C, Props>` must reflect the mapped
+/// optional-property result regardless of the names of types appearing in
+/// the props.
+fn jsx_lma_user_type_named_factory_does_not_disable_default_props_helper(
+    user_type_name: &str,
+) -> Vec<u32> {
+    let source = format!(
+        r#"
+declare namespace JSX {{
+    interface Element {{}}
+    interface ElementClass {{}}
+    interface IntrinsicElements {{}}
+    type LibraryManagedAttributes<C, P> =
+        C extends {{ defaultProps: infer D }}
+          ? {{ [K in keyof P]?: P[K] }}
+          : P;
+}}
+
+interface {user_type_name}<T> {{
+    make(): T;
+}}
+
+interface Props {{
+    value: {user_type_name}<number>;
+    other: number;
+}}
+
+declare function Comp(props: Props): JSX.Element;
+declare namespace Comp {{
+    const defaultProps: {{
+        value: {user_type_name}<number>;
+    }};
+}}
+
+const _ok = <Comp />;
+"#
+    );
+    jsx_codes(&source)
+}
+
+#[test]
+fn jsx_lma_user_type_named_factory_does_not_disable_default_props() {
+    // Reproduces the issue: a user type literally named `Factory` must not
+    // suppress the LMA-mapped optional props.
+    let codes = jsx_lma_user_type_named_factory_does_not_disable_default_props_helper("Factory");
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        "User type named `Factory` should not disable JSX.LibraryManagedAttributes; \
+         expected no TS2741 for `<Comp />`, got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_lma_user_type_named_widget_does_not_emit_ts2741() {
+    // Sister test with a different name: proves the rule is structural and not
+    // tied to the literal spelling `Factory`.
+    let codes = jsx_lma_user_type_named_factory_does_not_disable_default_props_helper("Widget");
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        "User type named `Widget` should also not disable JSX.LibraryManagedAttributes; \
+         expected no TS2741 for `<Comp />`, got: {codes:?}"
+    );
+}
