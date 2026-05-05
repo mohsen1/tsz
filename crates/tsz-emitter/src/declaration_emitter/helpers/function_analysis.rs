@@ -1372,6 +1372,16 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(sym_id) = binder.get_node_symbol(access.name_or_argument) {
                 return Some(sym_id);
             }
+            if self
+                .arena
+                .get(access.expression)
+                .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+                && let Some(member_name) = self.get_identifier_text(access.name_or_argument)
+                && let Some(sym_id) =
+                    self.enclosing_class_member_symbol(access.expression, &member_name)
+            {
+                return Some(sym_id);
+            }
             let base_sym_id = self.value_reference_symbol(access.expression)?;
             let resolved_base_sym_id = self.resolve_portability_symbol(base_sym_id, binder);
             let base_symbol = binder.symbols.get(resolved_base_sym_id)?;
@@ -1398,6 +1408,63 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         binder.get_node_symbol(expr_idx)
+    }
+
+    fn enclosing_class_member_symbol(
+        &self,
+        this_idx: NodeIndex,
+        member_name: &str,
+    ) -> Option<SymbolId> {
+        let binder = self.binder?;
+        let this_node = self.arena.get(this_idx)?;
+        let this_pos = this_node.pos;
+        let mut best_class: Option<(NodeIndex, u32)> = None;
+
+        for sym in binder.symbols.iter() {
+            if (sym.flags & tsz_binder::symbol_flags::CLASS) == 0 {
+                continue;
+            }
+            for &decl_idx in &sym.declarations {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                if this_pos >= decl_node.pos && this_pos < decl_node.end {
+                    let span = decl_node.end - decl_node.pos;
+                    if best_class.is_none_or(|(_, best_span)| span < best_span) {
+                        best_class = Some((decl_idx, span));
+                    }
+                }
+            }
+        }
+
+        let class_idx = best_class.map(|(idx, _)| idx)?;
+        let class_node = self.arena.get(class_idx)?;
+        let class_decl = self.arena.get_class(class_node)?;
+        for &member_idx in &class_decl.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let member_name_idx = if let Some(method) = self.arena.get_method_decl(member_node) {
+                method.name
+            } else if let Some(prop) = self.arena.get_property_decl(member_node) {
+                prop.name
+            } else if let Some(accessor) = self.arena.get_accessor(member_node) {
+                accessor.name
+            } else {
+                continue;
+            };
+            if self.get_identifier_text(member_name_idx).as_deref() != Some(member_name) {
+                continue;
+            }
+            if let Some(sym_id) = binder
+                .get_node_symbol(member_name_idx)
+                .or_else(|| binder.get_node_symbol(member_idx))
+            {
+                return Some(sym_id);
+            }
+        }
+
+        None
     }
 
     /// Resolve `this` to the innermost enclosing class symbol by position.
