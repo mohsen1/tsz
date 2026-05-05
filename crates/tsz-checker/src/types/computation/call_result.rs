@@ -1256,11 +1256,18 @@ impl<'a> CheckerState<'a> {
 
         let db = self.ctx.types;
 
-        // Extract the base DefId from an Application type (e.g., A<T> -> DefId_A)
+        // Extract the base DefId from a class Application type (e.g., A<T> -> DefId_A).
+        // Type aliases such as Partial<T> remain transparent enough for deferred
+        // assignability; only nominal class bases make the rejection permanent.
         let base_def = |ty: TypeId| -> Option<tsz_solver::DefId> {
             let app_id = application_id(db, ty)?;
             let app = db.type_application(app_id);
-            lazy_def_id(db, app.base)
+            let def_id = lazy_def_id(db, app.base)?;
+            matches!(
+                tsz_solver::TypeResolver::get_def_kind(&self.ctx, def_id),
+                Some(tsz_solver::def::DefKind::Class)
+            )
+            .then_some(def_id)
         };
 
         let actual_def = base_def(actual);
