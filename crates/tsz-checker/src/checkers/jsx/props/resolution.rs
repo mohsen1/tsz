@@ -13,7 +13,6 @@ impl<'a> CheckerState<'a> {
     /// props that aren't shadowed by an explicit attr (in spread source order).
     /// This matches tsc's display for elements like `<X {...{p: v}} q />` where
     /// the printed source type is `{ q: true; p: v; }`.
-    ///
     fn format_jsx_attrs_synthesized_source_for_excess(
         &mut self,
         attributes_idx: NodeIndex,

@@ -927,11 +927,23 @@ impl<'a> Printer<'a> {
                     && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                     && let Some(prop) = self.arena.get_property_decl(member_node)
                 {
-                    if prop.initializer.is_none()
-                        || !self.class_property_initializer_has_equals(member_node, prop)
-                        || self
-                            .arena
-                            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                    // With useDefineForClassFields, fields without initializers
+                    // are still materialized at runtime as
+                    // `Object.defineProperty(this, "name", { value: void 0 })`.
+                    // Without that flag the typed-only declaration has no
+                    // runtime effect, so skip it.
+                    let no_initializer_node = prop.initializer.is_none();
+                    let materialize_no_init =
+                        no_initializer_node && self.ctx.options.use_define_for_class_fields;
+                    if !materialize_no_init
+                        && (no_initializer_node
+                            || !self.class_property_initializer_has_equals(member_node, prop))
+                    {
+                        continue;
+                    }
+                    if self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
                         || self
                             .arena
                             .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
@@ -1145,9 +1157,13 @@ impl<'a> Printer<'a> {
                     self.write("writable: true,");
                     self.write_line();
                     self.write("value: ");
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(*init_idx);
-                    });
+                    if init_idx.is_none() {
+                        self.write("void 0");
+                    } else {
+                        self.with_scoped_static_initializer_context_cleared(|this| {
+                            this.emit_expression(*init_idx);
+                        });
+                    }
                     self.write_line();
                     self.decrease_indent();
                     self.write("});");
@@ -1160,9 +1176,13 @@ impl<'a> Printer<'a> {
                         self.write(name);
                     }
                     self.write(" = ");
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(*init_idx);
-                    });
+                    if init_idx.is_none() {
+                        self.write("void 0");
+                    } else {
+                        self.with_scoped_static_initializer_context_cleared(|this| {
+                            this.emit_expression(*init_idx);
+                        });
+                    }
                     self.write(";");
                     if !trailing.is_empty() {
                         for comment in trailing {

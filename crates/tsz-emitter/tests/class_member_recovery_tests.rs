@@ -133,3 +133,50 @@ fn downlevel_define_type_only_computed_property_does_not_allocate_temp() {
         "Side-effectful computed property expression should still be emitted.\nOutput:\n{output}"
     );
 }
+
+/// With `useDefineForClassFields: true` and target < ES2022, a typed-only
+/// field (no initializer) must still be materialized as
+/// `Object.defineProperty(this, "name", { value: void 0 })` in the
+/// constructor — matching tsc semantics where every class field
+/// declaration creates a runtime property under define-fields mode.
+#[test]
+fn downlevel_define_typed_only_field_emits_void0_define_property() {
+    let output = print_with_printer_options(
+        "class Base {}\nclass Test extends Base {\n    prop: number;\n    constructor(public p: number) {\n        super();\n    }\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    let define_prop = "Object.defineProperty(this, \"prop\", {\n            enumerable: true,\n            configurable: true,\n            writable: true,\n            value: void 0\n        });";
+    assert!(
+        output.contains(define_prop),
+        "Typed-only field should be lowered to Object.defineProperty with void 0.\nOutput:\n{output}"
+    );
+}
+
+/// Without `useDefineForClassFields`, a typed-only field has no runtime
+/// effect and must not produce any assignment. This guards against the
+/// fix above accidentally widening to all targets.
+#[test]
+fn downlevel_assign_typed_only_field_emits_nothing() {
+    let output = print_with_printer_options(
+        "class Test {\n    prop: number;\n    constructor() {}\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !output.contains("this.prop"),
+        "Typed-only field without define-fields must not emit a runtime assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("defineProperty(this, \"prop\""),
+        "Typed-only field without define-fields must not emit defineProperty.\nOutput:\n{output}"
+    );
+}
