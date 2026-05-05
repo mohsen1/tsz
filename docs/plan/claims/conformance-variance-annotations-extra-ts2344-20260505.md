@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `conformance/variance-annotations-extra-ts2344-20260505`
-- **PR**: TBD
+- **PR**: #3274
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
