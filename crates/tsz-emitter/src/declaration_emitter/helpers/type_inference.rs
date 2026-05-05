@@ -2595,7 +2595,11 @@ impl<'a> DeclarationEmitter<'a> {
                 && callable
                     .type_parameters
                     .is_some_and(|params| !params.nodes.is_empty());
-            if (!is_ambient_function && !is_source_overload_signature)
+            let is_source_with_return_annotation =
+                callable.body.is_some() && callable.type_annotation.is_some();
+            if (!is_ambient_function
+                && !is_source_overload_signature
+                && !is_source_with_return_annotation)
                 || !callable.type_annotation.is_some()
                 || !self.function_signature_accepts_call_arguments(
                     source_arena,
