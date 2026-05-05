@@ -1571,6 +1571,30 @@ export declare const arrow9: {
 }
 
 #[test]
+fn test_callable_export_expando_function_property_emits_method_signature() {
+    let source = r#"
+export interface Point {
+    readonly x: number;
+    readonly y: number;
+}
+
+export const Point = (x: number, y: number): Point => ({ x, y });
+Point.zero = (): Point => Point(0, 0);
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("zero(): Point;"),
+        "Expected function-valued expando on callable export to use method syntax: {output}"
+    );
+    assert!(
+        !output.contains("zero: () => Point;"),
+        "Expected not to emit function-valued expando as property syntax: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_exported_arrow_function_preserves_any_return_type() {
     let source = r#"
 const donkey = (ast) => ast;

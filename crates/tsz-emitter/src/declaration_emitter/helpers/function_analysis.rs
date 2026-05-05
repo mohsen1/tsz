@@ -760,9 +760,16 @@ impl<'a> DeclarationEmitter<'a> {
 
         for member in members {
             self.write_indent();
-            self.write(&member.property_name_text);
-            self.write(": ");
-            self.write(&member.type_text);
+            if let Some(method_text) = Self::late_bound_function_type_method_signature_text(
+                &member.property_name_text,
+                &member.type_text,
+            ) {
+                self.write(&method_text);
+            } else {
+                self.write(&member.property_name_text);
+                self.write(": ");
+                self.write(&member.type_text);
+            }
             self.write(";");
             self.write_line();
         }
@@ -771,6 +778,63 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         true
+    }
+
+    fn late_bound_function_type_method_signature_text(
+        property_name_text: &str,
+        type_text: &str,
+    ) -> Option<String> {
+        if !Self::is_unquoted_property_name(property_name_text) {
+            return None;
+        }
+        let type_text = type_text.trim();
+        let arrow_idx = Self::top_level_function_type_arrow(type_text)?;
+        let params_text = type_text[..arrow_idx].trim_end();
+        if params_text.starts_with("new ") {
+            return None;
+        }
+        let return_type_text = type_text[arrow_idx + 2..].trim_start();
+        if return_type_text.is_empty()
+            || !(params_text.starts_with('(') || params_text.starts_with('<'))
+        {
+            return None;
+        }
+
+        Some(format!(
+            "{property_name_text}{params_text}: {return_type_text}"
+        ))
+    }
+
+    fn top_level_function_type_arrow(type_text: &str) -> Option<usize> {
+        let mut paren_depth = 0u32;
+        let mut bracket_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut angle_depth = 0u32;
+        let bytes = type_text.as_bytes();
+        let mut idx = 0;
+        while idx + 1 < bytes.len() {
+            match bytes[idx] {
+                b'=' if bytes[idx + 1] == b'>'
+                    && paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    return Some(idx);
+                }
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'<' => angle_depth += 1,
+                b'>' => angle_depth = angle_depth.saturating_sub(1),
+                _ => {}
+            }
+            idx += 1;
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn emit_ts_late_bound_function_namespace_from_members(
