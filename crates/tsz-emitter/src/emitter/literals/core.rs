@@ -88,6 +88,16 @@ impl<'a> Printer<'a> {
             self.write(&parent_name);
             self.write(".");
             self.write_identifier(emit_text);
+        } else if self.in_namespace_iife
+            && !self.suppress_ns_qualification
+            && let Some(qualifier) = self
+                .namespace_ancestor_export_qualifiers
+                .get(original_text.as_str())
+                .cloned()
+        {
+            self.write(&qualifier);
+            self.write(".");
+            self.write_identifier(emit_text);
         } else if !self.suppress_ns_qualification
             && self
                 .commonjs_exported_var_names

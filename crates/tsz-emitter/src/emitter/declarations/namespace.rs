@@ -1064,12 +1064,15 @@ impl<'a> Printer<'a> {
             // Collect exported names for identifier qualification in emit_identifier
             let prev_exported = std::mem::take(&mut self.namespace_exported_names);
             let prev_parent_exported = std::mem::take(&mut self.namespace_parent_exported_names);
+            let prev_ancestor_qualifiers =
+                std::mem::take(&mut self.namespace_ancestor_export_qualifiers);
             let mut local_exports = self.collect_namespace_exported_names(module);
             let leaf_name = self.get_identifier_text_idx(module.name);
             if !leaf_name.is_empty() {
                 local_exports
                     .extend(self.collect_dotted_namespace_children_from_source(&leaf_name));
             }
+            let mut ancestor_qualifiers = prev_ancestor_qualifiers.clone();
             let mut parent_exports = self
                 .parent_namespace_name
                 .as_ref()
@@ -1081,6 +1084,13 @@ impl<'a> Printer<'a> {
                         .collect::<rustc_hash::FxHashSet<_>>()
                 })
                 .unwrap_or_default();
+            if let Some(parent) = self.parent_namespace_name.as_ref()
+                && let Some(exports) = self.namespace_prior_exports.get(parent)
+            {
+                for name in exports {
+                    ancestor_qualifiers.insert(name.clone(), parent.clone());
+                }
+            }
             // Also merge class/fn/enum names from PRIOR blocks of the parent
             // namespace. These names live on the parent namespace object once
             // the prior IIFE has exited, so a nested namespace inside a
@@ -1096,9 +1106,11 @@ impl<'a> Printer<'a> {
             {
                 for name in class_exports.iter() {
                     parent_exports.insert(name.clone());
+                    ancestor_qualifiers.insert(name.clone(), parent.clone());
                 }
             }
             parent_exports.remove(&leaf_name);
+            ancestor_qualifiers.remove(&leaf_name);
             // Collect class/function/enum names for future reopenings (before mutable borrow)
             let class_fn_enum_names = self.collect_namespace_class_fn_enum_names(module);
             // Merge in exports from prior blocks of the same namespace (cross-block sharing)
@@ -1163,13 +1175,16 @@ impl<'a> Printer<'a> {
             for name in &local_names {
                 local_exports.remove(name);
                 parent_exports.remove(name);
+                ancestor_qualifiers.remove(name);
             }
             for name in self.collect_namespace_local_module_names(body_node) {
                 local_exports.remove(&name);
                 parent_exports.remove(&name);
+                ancestor_qualifiers.remove(&name);
             }
             self.namespace_exported_names = local_exports;
             self.namespace_parent_exported_names = parent_exports;
+            self.namespace_ancestor_export_qualifiers = ancestor_qualifiers;
             let (destructuring_export_temps, destructuring_export_temp_names) =
                 self.reserve_namespace_destructuring_export_temps(module);
 
@@ -1443,6 +1458,7 @@ impl<'a> Printer<'a> {
             // Restore previous exported names
             self.namespace_exported_names = prev_exported;
             self.namespace_parent_exported_names = prev_parent_exported;
+            self.namespace_ancestor_export_qualifiers = prev_ancestor_qualifiers;
         }
     }
 
