@@ -305,6 +305,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // (e.g., `(...args: any[]) => any`) produces a merged Callable whose
             // conflicting parameter types cause `get_parameter_type` to return None,
             // triggering false TS7006 errors.
+
+            // Mirror tsc's `widenLiteralTypes` gate (checker.ts ~26595): if the
+            // type parameter occurs at the top level of the signature's return
+            // type and has not yet been fixed, fresh literal candidates must
+            // NOT be widened during this Round 1 → Round 2 substitution. This
+            // preserves literal target types like `U=1` for context-sensitive
+            // arguments whose contextual signature embeds the type parameter
+            // (e.g. `cb: (a: T) => U`). All type parameters are unfixed at this
+            // point in `compute_contextual_types`, so the flag is conditioned
+            // solely on the structural top-level test.
+            if crate::visitor::is_type_parameter_at_top_level(
+                self.interner.as_type_database(),
+                func.return_type,
+                tp.name,
+            ) {
+                infer_ctx.mark_top_level_in_return_type_unfixed(var);
+            }
         }
 
         // 2. Instantiate parameters with placeholders

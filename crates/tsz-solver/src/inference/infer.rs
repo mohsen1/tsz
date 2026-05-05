@@ -281,6 +281,19 @@ pub(crate) struct InferenceContext<'a> {
     /// Prevents re-visiting the same pair, breaking cycles in
     /// self-referential type hierarchies.
     pub(crate) infer_visited: FxHashSet<(TypeId, TypeId)>,
+    /// Inference variables whose corresponding type parameter appears at the
+    /// top level of the signature's return type and has not yet been "fixed".
+    ///
+    /// Mirrors the `inference.isFixed || !isTypeParameterAtTopLevelInReturnType`
+    /// gate in tsc's `getCovariantInference` (checker.ts ~26595): when a type
+    /// parameter is at top level in the return type and has not been fixed yet,
+    /// fresh literal candidates are NOT widened during covariant resolution.
+    /// This preserves literals across the Round 1 → Round 2 boundary so that
+    /// deferred (context-sensitive) arguments see literal target types matching
+    /// tsc (e.g., `(a: T) => U` becomes `(a: number) => 1` rather than
+    /// `(a: number) => number` for `f<T,U>(x: T, cb: (a: T) => U, y: U)` called
+    /// as `f(1, function(a){return ''}, 1)`).
+    pub(crate) top_level_in_return_type_unfixed: FxHashSet<InferenceVar>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -310,6 +323,7 @@ impl<'a> InferenceContext<'a> {
             source_is_type_annotation: false,
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
+            top_level_in_return_type_unfixed: FxHashSet::default(),
         }
     }
 
@@ -331,7 +345,17 @@ impl<'a> InferenceContext<'a> {
             source_is_type_annotation: false,
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
+            top_level_in_return_type_unfixed: FxHashSet::default(),
         }
+    }
+
+    /// Mark an inference variable as representing a type parameter that
+    /// occurs at the top level of the signature's return type and has not
+    /// yet been fixed. Such variables suppress literal-type widening during
+    /// covariant resolution, matching tsc's `getCovariantInference` gate.
+    pub fn mark_top_level_in_return_type_unfixed(&mut self, var: InferenceVar) {
+        let root = self.table.find(var);
+        self.top_level_in_return_type_unfixed.insert(root);
     }
 
     /// Create a fresh inference variable

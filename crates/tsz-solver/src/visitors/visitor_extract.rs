@@ -209,6 +209,66 @@ pub fn type_param_info(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Type
     })
 }
 
+/// True when `param_name` (or a placeholder unifying with `param_name`) appears
+/// at the **top level** of `ty`, mirroring tsc's `isTypeParameterAtTopLevel`
+/// (checker.ts ~26411). "Top level" means:
+///
+/// - `ty` is the type parameter itself, OR
+/// - `ty` is a union/intersection containing a top-level occurrence, OR
+/// - `ty` is a conditional type whose true- or false-branch contains a
+///   top-level occurrence (recursing up to depth 3).
+///
+/// Used by the inference solver to decide whether literal-type widening should
+/// be suppressed during the Round 1 → Round 2 contextual substitution: if a
+/// type parameter appears at top level in the return type AND has not been
+/// fixed yet, fresh literals are preserved so deferred callbacks see the
+/// literal target type (matching tsc's `getCovariantInference` gate).
+pub fn is_type_parameter_at_top_level(
+    types: &dyn TypeDatabase,
+    ty: TypeId,
+    param_name: tsz_common::interner::Atom,
+) -> bool {
+    is_type_parameter_at_top_level_impl(types, ty, param_name, 0)
+}
+
+fn is_type_parameter_at_top_level_impl(
+    types: &dyn TypeDatabase,
+    ty: TypeId,
+    param_name: tsz_common::interner::Atom,
+    depth: u32,
+) -> bool {
+    if ty.is_intrinsic() {
+        return false;
+    }
+    if let Some(info) = type_param_info(types, ty)
+        && info.name == param_name
+    {
+        return true;
+    }
+    let Some(data) = types.lookup(ty) else {
+        return false;
+    };
+    match data {
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+            let members = types.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| is_type_parameter_at_top_level_impl(types, m, param_name, depth))
+        }
+        TypeData::Conditional(cond_id) if depth < 3 => {
+            let cond = types.get_conditional(cond_id);
+            is_type_parameter_at_top_level_impl(types, cond.true_type, param_name, depth + 1)
+                || is_type_parameter_at_top_level_impl(
+                    types,
+                    cond.false_type,
+                    param_name,
+                    depth + 1,
+                )
+        }
+        _ => false,
+    }
+}
+
 /// True when the type is a top-level `infer T` placeholder (`TypeData::Infer`).
 ///
 /// Distinct from `type_param_info`, which collapses `TypeParameter` and `Infer`
