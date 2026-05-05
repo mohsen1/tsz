@@ -458,6 +458,35 @@ export { isValid };
     );
 }
 
+#[test]
+fn named_export_specifier_for_undefined_only_uses_preamble() {
+    let source = "var undefined;\nexport { undefined };\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.undefined = void 0;"),
+        "undefined export should be initialized in the preamble.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var undefined;"),
+        "local undefined declaration should still be emitted.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.undefined = undefined;"),
+        "undefined self-export should not emit a post-declaration assignment.\nOutput:\n{output}"
+    );
+}
+
 /// `export { f as g }` where `f` is a function should still hoist
 /// the export with the exported name `g` in the preamble.
 #[test]
