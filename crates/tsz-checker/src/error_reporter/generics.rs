@@ -540,12 +540,82 @@ impl<'a> CheckerState<'a> {
         if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
             return;
         }
-        let type_str = self.format_type_diagnostic(expr_type);
+        let type_str = self.format_type_diagnostic_for_instantiation_expression(expr_type);
         self.error_at_node_msg(
             idx,
             diagnostic_codes::TYPE_HAS_NO_SIGNATURES_FOR_WHICH_THE_TYPE_ARGUMENT_LIST_IS_APPLICABLE,
             &[&type_str],
         );
+    }
+
+    pub fn error_no_applicable_signatures_for_type_args_with_base(
+        &mut self,
+        expr_type: TypeId,
+        idx: NodeIndex,
+        base_expr_idx: NodeIndex,
+    ) {
+        if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
+            return;
+        }
+        let type_str = self
+            .source_parameter_type_display_for_instantiation_expression(base_expr_idx)
+            .unwrap_or_else(|| self.format_type_diagnostic_for_instantiation_expression(expr_type));
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::TYPE_HAS_NO_SIGNATURES_FOR_WHICH_THE_TYPE_ARGUMENT_LIST_IS_APPLICABLE,
+            &[&type_str],
+        );
+    }
+
+    pub fn error_no_applicable_signatures_for_type_args_at_position(
+        &mut self,
+        expr_type: TypeId,
+        pos: u32,
+    ) {
+        if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
+            return;
+        }
+        let type_str = self.format_type_diagnostic_for_instantiation_expression(expr_type);
+        let message = format_message(
+            diagnostic_messages::TYPE_HAS_NO_SIGNATURES_FOR_WHICH_THE_TYPE_ARGUMENT_LIST_IS_APPLICABLE,
+            &[&type_str],
+        );
+        self.ctx.error(
+            pos,
+            1,
+            message,
+            diagnostic_codes::TYPE_HAS_NO_SIGNATURES_FOR_WHICH_THE_TYPE_ARGUMENT_LIST_IS_APPLICABLE,
+        );
+    }
+
+    fn source_parameter_type_display_for_instantiation_expression(
+        &self,
+        base_expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, base_expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(decl)?;
+        let param = self.ctx.arena.get_parameter(decl_node)?;
+        if param.type_annotation.is_none() {
+            return None;
+        }
+        let type_node = self.ctx.arena.get(param.type_annotation)?;
+        let source = &self.ctx.arena.source_files.first()?.text;
+        let text = source[type_node.pos as usize..type_node.end as usize].trim();
+        if !text.starts_with('{') || text.contains('&') || text.contains('|') {
+            return None;
+        }
+        let text = &text[..=text.find('}')?];
+        let inner = text
+            .trim_start_matches('{')
+            .trim_end_matches('}')
+            .trim()
+            .replace(',', ";");
+        Some(format!("{{ {inner}; }}"))
     }
 
     /// Report TS2559: Type has no properties in common with constraint.
