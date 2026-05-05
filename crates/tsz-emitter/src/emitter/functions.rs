@@ -1092,6 +1092,7 @@ impl<'a> Printer<'a> {
         self.write("{");
         self.write_line();
         self.increase_indent();
+        self.ctx.block_scope_state.enter_function_scope();
         self.skip_block_opening_line_comments(block_node, block);
         self.emit_param_prologue(transforms);
 
@@ -1103,6 +1104,7 @@ impl<'a> Printer<'a> {
             }
         }
 
+        self.ctx.block_scope_state.exit_scope();
         self.decrease_indent();
         self.write("}");
     }
