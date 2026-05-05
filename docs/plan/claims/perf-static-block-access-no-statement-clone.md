@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `perf/static-block-access-no-statement-clone`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 5 (Stable Identity, Skeletons, And Large-Repo Residency)
 
 ## Intent
@@ -18,9 +18,15 @@ ending the immutable arena borrow.
 - `crates/tsz-checker/src/state/state_checking_members/property_init.rs`
 - `docs/plan/claims/perf-static-block-access-no-statement-clone.md`
 
-## Verification Plan
+## Verification
 
 - `cargo test -p tsz-checker --lib property_init`
+  (pass: 12 passed)
 - `scripts/bench/perf-hotspots.sh --quick`
-- `cargo fmt --check`
-- `git diff --check`
+  (pass after rebasing onto current `origin/main`, artifact:
+  `artifacts/perf/hotspots-20260505-062725.json`; tsz beat tsgo on all five
+  quick fixtures: 100 classes 2.07x, Constraint conflicts N=30 1.72x,
+  50 generic functions 1.27x, DeepPartial optional-chain N=50 1.23x, Shallow
+  optional-chain N=50 1.22x)
+- `cargo fmt --check` (pass)
+- `git diff --check` (pass)
