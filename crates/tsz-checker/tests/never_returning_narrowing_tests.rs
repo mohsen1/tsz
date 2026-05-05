@@ -100,6 +100,34 @@ function f(x: { a: string }) {
 }
 
 #[test]
+fn this_method_returning_never_marks_following_code_unreachable() {
+    let source = r#"
+class C {
+    fail(): never {
+        throw "boom";
+    }
+    f() {
+        this.fail();
+        let x = 1;
+    }
+}
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            allow_unreachable_code: Some(false),
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&7027),
+        "Expected TS7027 after calling a this-method declared as never; got codes: {codes:?}"
+    );
+}
+
+#[test]
 fn test_inferred_never_local_identifier_does_not_trigger_unreachable() {
     let source = r#"
 function f() {
