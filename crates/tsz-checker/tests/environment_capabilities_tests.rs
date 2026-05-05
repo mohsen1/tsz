@@ -950,6 +950,63 @@ fn test_top_level_await_gate_supported() {
     }
 }
 
+#[test]
+fn test_top_level_await_in_supported_script_emits_ts1375() {
+    let diagnostics = check_with_options(
+        "await 1;",
+        CheckerOptions {
+            module: ModuleKind::ES2022,
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1375),
+        "Expected TS1375 for top-level await in a script file, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_top_level_await_in_supported_external_module_no_ts1375() {
+    let diagnostics = check_with_options(
+        "export {};\nawait 1;",
+        CheckerOptions {
+            module: ModuleKind::ES2022,
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&1375),
+        "Expected no TS1375 for top-level await in an external module, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_top_level_await_in_checked_js_script_emits_ts1375() {
+    let diagnostics = check_source(
+        "await 1;",
+        "test.js",
+        CheckerOptions {
+            module: ModuleKind::ES2022,
+            target: ScriptTarget::ES2017,
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1375),
+        "Expected TS1375 for top-level await in a checked JS script file, got: {codes:?}"
+    );
+}
+
 // =============================================================================
 // Phase 2: Import assert deprecation boundary (TS2880)
 // =============================================================================

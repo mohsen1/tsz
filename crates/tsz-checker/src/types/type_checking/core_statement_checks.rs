@@ -448,6 +448,12 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_messages::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
                                     diagnostic_codes::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
                                 );
+                            } else if !self.ctx.is_external_module_file() {
+                                self.error_at_node(
+                                    current_idx,
+                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
+                                    diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
+                                );
                             }
                         } else {
                             // TS1308: 'await' expressions are only allowed within async functions
