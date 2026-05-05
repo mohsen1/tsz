@@ -782,6 +782,7 @@ impl<'a> CheckerState<'a> {
                             && let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id)
                         {
                             body_symbol.escaped_name == "Promise"
+                                && self.symbol_has_standard_lib_origin(body_sym_id)
                         } else {
                             false
                         }
