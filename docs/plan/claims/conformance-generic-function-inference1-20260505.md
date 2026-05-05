@@ -1,9 +1,9 @@
-# [WIP] fix(conformance): align generic function inference diagnostics
+# fix(conformance): align generic function inference diagnostics
 
 - **Date**: 2026-05-05
-- **Branch**: `conformance/generic-function-inference1-20260505`
-- **PR**: #3047
-- **Status**: claim
+- **Branch**: `conformance/generic-function-inference1-impl-20260505`
+- **PR**: #3125
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
@@ -20,7 +20,6 @@ contextual typing, or arithmetic operand checking after failed inference.
 - `crates/tsz-checker/src/error_reporter/call_errors_tests.rs`
 - `crates/tsz-checker/src/types/computation/call/inner.rs`
 - `crates/tsz-checker/src/types/computation/call/mod.rs`
-- `crates/tsz-checker/src/types/computation/call_display.rs`
 
 ## Verification
 
