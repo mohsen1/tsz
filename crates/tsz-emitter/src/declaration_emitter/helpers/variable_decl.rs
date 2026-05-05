@@ -861,7 +861,9 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(type_text) = preferred_return_type_text.as_ref()
                     && self.should_prefer_source_return_type_text(type_text, return_type_id)
                 {
-                    self.write(type_text);
+                    let (type_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, type_text);
+                    self.write(&type_text);
                 } else {
                     let return_type_text = if let Some(ref type_params) = func.type_parameters
                         && !type_params.nodes.is_empty()
@@ -870,6 +872,8 @@ impl<'a> DeclarationEmitter<'a> {
                     } else {
                         self.print_type_id(return_type_id)
                     };
+                    let return_type_text = self
+                        .rewrite_returned_auto_accessor_parameter_unknowns(func, &return_type_text);
                     let return_type_text = self.add_returned_object_member_comments_to_type_text(
                         initializer,
                         &return_type_text,
