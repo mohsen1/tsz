@@ -9,6 +9,10 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+fn is_identifier_continue_byte(byte: Option<u8>) -> bool {
+    byte.is_some_and(|b| b == b'_' || b == b'$' || b.is_ascii_alphanumeric())
+}
+
 impl<'a> Printer<'a> {
     /// Emit a module specifier, rewriting extension if rewriteRelativeImportExtensions is set.
     pub(in crate::emitter) fn emit_module_specifier(&mut self, specifier_idx: NodeIndex) {
@@ -155,6 +159,30 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn next_anonymous_default_export_name(&mut self) -> String {
+        loop {
+            self.next_anonymous_default_index += 1;
+            let candidate = format!("default_{}", self.next_anonymous_default_index);
+            if !self.source_has_identifier_text(&candidate) {
+                return candidate;
+            }
+        }
+    }
+
+    fn source_has_identifier_text(&self, candidate: &str) -> bool {
+        let Some(source) = self.source_text_for_map() else {
+            return false;
+        };
+        source.match_indices(candidate).any(|(start, _)| {
+            let before = start
+                .checked_sub(1)
+                .and_then(|idx| source.as_bytes().get(idx))
+                .copied();
+            let after = source.as_bytes().get(start + candidate.len()).copied();
+            !is_identifier_continue_byte(before) && !is_identifier_continue_byte(after)
+        })
+    }
+
     /// Emit a CommonJS export with optional hoisting of the export assignment.
     ///
     /// When `is_hoisted_declaration` is true (for function declarations), the
@@ -288,8 +316,7 @@ impl<'a> Printer<'a> {
         // `exportDefaultInterfaceAndTwoFunctions`) but tsc still emits each
         // with its own counter rather than colliding on a single name.
         let is_function = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
-        self.next_anonymous_default_index += 1;
-        let synthetic_name = format!("default_{}", self.next_anonymous_default_index);
+        let synthetic_name = self.next_anonymous_default_export_name();
         let prev = self.anonymous_default_export_name.take();
         self.anonymous_default_export_name = Some(synthetic_name.clone());
         if is_function {
@@ -356,19 +383,19 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let temp_name = self.next_anonymous_default_export_name();
         if let Some(output) =
-            self.render_simple_tc39_decorated_class_es5(node, class_node, "default_1", "default")
+            self.render_simple_tc39_decorated_class_es5(node, class_node, &temp_name, "default")
         {
             self.write(&output);
             self.write_line();
             self.write_export_binding_start("default");
-            self.write("default_1");
+            self.write(&temp_name);
             self.write_export_binding_end();
             self.write_line();
             return;
         }
 
-        let temp_name = "default_1".to_string();
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter.set_indent_level(self.writer.indent_level());

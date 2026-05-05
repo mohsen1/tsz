@@ -1019,6 +1019,7 @@ pub fn collect_export_names_categorized(
     let mut anonymous_default_counter: u32 = 0;
     let all =
         collect_export_names_with_options(arena, statements, preserve_const_enums, type_only_nodes);
+    let mut reserved_default_names = collect_top_level_binding_names(arena, statements);
 
     // First pass: collect all function declaration names in the file (including
     // non-exported ones and `declare function` names) so we can resolve
@@ -1113,8 +1114,13 @@ pub fn collect_export_names_categorized(
                     !name.is_empty() && name != "function" && is_valid_identifier_name(name)
                 })
                 .unwrap_or_else(|| {
-                    anonymous_default_counter += 1;
-                    format!("default_{anonymous_default_counter}")
+                    loop {
+                        anonymous_default_counter += 1;
+                        let candidate = format!("default_{anonymous_default_counter}");
+                        if reserved_default_names.insert(candidate.clone()) {
+                            break candidate;
+                        }
+                    }
                 });
             default_func_exports.push(name);
         }
@@ -1235,6 +1241,55 @@ pub fn collect_export_names_categorized(
         other_exports,
         default_function_exports: default_func_exports,
     }
+}
+
+fn collect_top_level_binding_names(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+) -> FxHashSet<String> {
+    let mut names = FxHashSet::default();
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        let inner = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            arena
+                .get_export_decl(node)
+                .and_then(|export_decl| arena.get(export_decl.export_clause))
+        } else {
+            Some(node)
+        };
+        let Some(inner) = inner else {
+            continue;
+        };
+        match inner.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if let Some(var_stmt) = arena.get_variable(inner) {
+                    let mut binding_names = Vec::new();
+                    for &decl_idx in &var_stmt.declarations.nodes {
+                        collect_declaration_names(arena, decl_idx, &mut binding_names);
+                    }
+                    names.extend(binding_names);
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = arena.get_function(inner)
+                    && let Some(name) = get_identifier_text(arena, func.name)
+                {
+                    names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = arena.get_class(inner)
+                    && let Some(name) = get_identifier_text(arena, class.name)
+                {
+                    names.insert(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    names
 }
 
 /// Collect names from inline-exported variable declarations (`export let/const/var`).
