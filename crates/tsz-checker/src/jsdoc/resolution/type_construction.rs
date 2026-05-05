@@ -833,8 +833,8 @@ impl<'a> CheckerState<'a> {
             if let Some(colon_idx) = Self::find_top_level_char(prop_str, ':') {
                 let mut raw_name = prop_str[..colon_idx].trim();
                 let type_str = prop_str[colon_idx + 1..].trim();
-                let readonly = if let Some(rest) = raw_name.strip_prefix("readonly ") {
-                    raw_name = rest.trim();
+                let readonly = if let Some(rest) = Self::strip_jsdoc_readonly_modifier(raw_name) {
+                    raw_name = rest;
                     true
                 } else {
                     false
@@ -897,8 +897,9 @@ impl<'a> CheckerState<'a> {
         raw_name: &str,
         type_str: &str,
     ) -> Option<IndexSignature> {
-        let (raw_name, readonly) = if let Some(rest) = raw_name.trim().strip_prefix("readonly ") {
-            (rest.trim(), true)
+        let (raw_name, readonly) = if let Some(rest) = Self::strip_jsdoc_readonly_modifier(raw_name)
+        {
+            (rest, true)
         } else {
             (raw_name.trim(), false)
         };
@@ -917,6 +918,16 @@ impl<'a> CheckerState<'a> {
             readonly,
             param_name: (!param_name.is_empty()).then(|| self.ctx.types.intern_string(param_name)),
         })
+    }
+
+    fn strip_jsdoc_readonly_modifier(raw_name: &str) -> Option<&str> {
+        let raw_name = raw_name.trim();
+        let rest = raw_name.strip_prefix("readonly")?;
+        rest.chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+            .then(|| rest.trim())
+            .filter(|name| !name.is_empty())
     }
 
     fn parse_jsdoc_mapped_type(&mut self, type_expr: &str) -> Option<TypeId> {

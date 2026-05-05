@@ -121,6 +121,36 @@ var x = ["hello"];
     );
 }
 
+#[test]
+fn jsdoc_readonly_property_accepts_tab_after_modifier() {
+    let diags = check_js(
+        r#"
+// @ts-check
+
+/** @type {{readonly	value: string}} */
+const item = { value: 123 };
+"#,
+    );
+    let codes = diags.iter().map(|d| d.code).collect::<Vec<_>>();
+
+    assert!(
+        !codes.contains(&2353),
+        "Expected readonly modifier with tab whitespace to parse without TS2353, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        codes.contains(&2322),
+        "Expected parsed readonly property to report value mismatch TS2322, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
 // =============================================================================
 // JSDoc tuple types
 // =============================================================================
