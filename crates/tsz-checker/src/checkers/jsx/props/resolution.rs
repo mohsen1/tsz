@@ -34,18 +34,12 @@ impl<'a> CheckerState<'a> {
         format!("{display_name}: {type_str}")
     }
 
-    /// Build the synthesized JSX-attributes source-type display string for the
-    /// per-attribute excess-property TS2322 diagnostic.
-    ///
     /// Walks the attributes once and produces a formatted object-type string with
     /// explicit (non-spread) attrs first (in source order), then spread-derived
     /// props that aren't shadowed by an explicit attr (in spread source order).
     /// This matches tsc's display for elements like `<X {...{p: v}} q />` where
     /// the printed source type is `{ q: true; p: v; }`.
     ///
-    /// All `compute_*` calls below are cache hits during a normal check pass:
-    /// the main attribute loop has already computed each attribute and spread
-    /// type, so re-walking does not double-report diagnostics.
     fn format_jsx_attrs_synthesized_source_for_excess(
         &mut self,
         attributes_idx: NodeIndex,
@@ -521,7 +515,6 @@ impl<'a> CheckerState<'a> {
             self.check_jsx_union_props(attributes_idx, props_type, tag_name_idx, children_ctx);
             return;
         }
-        // Skip attribute-vs-props checking for any/error props.
         let skip_prop_checks = props_type == TypeId::ANY
             || props_type == TypeId::ERROR
             || crate::query_boundaries::common::contains_error_type_in_args(
@@ -536,13 +529,10 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // String index signature → any attribute name is valid.
         let has_string_index =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)
                 .is_some_and(|shape| shape.string_index.is_some());
 
-        // Suppress excess-property errors when props has unresolved type params.
-        // Check both raw and evaluated props (evaluation may collapse type params).
         let props_has_type_params = raw_props_has_type_params
             || crate::query_boundaries::common::contains_type_parameters(
                 self.ctx.types,
@@ -576,22 +566,13 @@ impl<'a> CheckerState<'a> {
         let mut has_excess_property_error = false;
         let mut needs_special_attr_object_assignability = false;
         let mut has_prop_type_error = false;
+        let mut invalid_generic_spread_types: Vec<TypeId> = Vec::new();
 
-        // TS2783: track explicit attr names for spread overwrite detection.
         let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
             rustc_hash::FxHashMap::default();
 
-        // Deferred spread entries: (spread_type, expr_idx, attr_index) for TS2322.
         let mut spread_entries: Vec<(TypeId, NodeIndex, usize)> = Vec::new();
 
-        // Pre-scan: if any attribute is an `any`/`error`-typed spread, tsc
-        // widens the merged JSX-attributes object to be `any`-compatible and
-        // skips per-attribute assignability checks against the props type for
-        // *every* explicit attribute on the element (regardless of order).
-        // Mirrors `tsxSpreadAttributesResolution12.tsx` where
-        // `<OverWriteAttr {...anyobj} x={3} />` produces no TS2322. `unknown`
-        // is *not* in this set: tsc rejects unknown spreads with TS2698, so we
-        // must keep per-attribute checks active for them too.
         let attr_nodes = &attrs.properties.nodes;
         let any_spread_present = attr_nodes.iter().any(|&attr_idx| {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
@@ -610,7 +591,6 @@ impl<'a> CheckerState<'a> {
             matches!(spread_type, TypeId::ANY | TypeId::ERROR)
         });
 
-        // Check each attribute
         for (attr_i, &attr_idx) in attr_nodes.iter().enumerate() {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
                 continue;
@@ -1179,6 +1159,15 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let spread_expr_idx = spread_data.expression;
+                let raw_spread_type = self.compute_type_of_node(spread_expr_idx);
+                if crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    raw_spread_type,
+                ) && !invalid_generic_spread_types.contains(&raw_spread_type)
+                {
+                    invalid_generic_spread_types.push(raw_spread_type);
+                }
+
                 // Set contextual type so spread literals preserve narrow types.
                 let spread_request = if !skip_prop_checks {
                     request.read().normal_origin().contextual(props_type)
@@ -1621,6 +1610,17 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let reported_invalid_generic_spread_assignability = self
+            .report_invalid_generic_jsx_spread_assignability(
+                invalid_generic_spread_types,
+                &provided_attrs,
+                props_type,
+                &display_target,
+                tag_name_idx,
+                has_excess_property_error,
+                skip_prop_checks,
+            );
+
         let reported_dynamic_intrinsic_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
@@ -1646,6 +1646,7 @@ impl<'a> CheckerState<'a> {
         if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_type_param_assignability
+            && !reported_invalid_generic_spread_assignability
             && !reported_dynamic_intrinsic_assignability
             && (!reported_class_missing_props_assignability
                 || (provided_attrs.is_empty() && raw_props_has_type_params))

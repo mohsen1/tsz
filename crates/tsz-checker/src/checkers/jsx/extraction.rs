@@ -11,6 +11,48 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn jsx_type_contains_callable_surface(&mut self, type_id: TypeId) -> bool {
+        let mut stack = vec![type_id];
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(current) = stack.pop() {
+            if !seen.insert(current) {
+                continue;
+            }
+            let evaluated = self.evaluate_type_with_env(current);
+            let resolved = self.resolve_type_for_property_access(evaluated);
+            let resolved = self.resolve_lazy_type(resolved);
+            if resolved != current {
+                stack.push(resolved);
+            }
+            if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, current)
+                .is_some()
+                || crate::query_boundaries::common::call_signatures_for_type(
+                    self.ctx.types,
+                    current,
+                )
+                .is_some_and(|sigs| !sigs.is_empty())
+                || crate::query_boundaries::common::construct_signatures_for_type(
+                    self.ctx.types,
+                    current,
+                )
+                .is_some_and(|sigs| !sigs.is_empty())
+            {
+                return true;
+            }
+            if let Some(members) =
+                crate::query_boundaries::common::intersection_members(self.ctx.types, current)
+            {
+                stack.extend(members);
+            }
+            if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, current)
+            {
+                stack.extend(members);
+            }
+        }
+        false
+    }
+
     fn effective_jsx_factory_name(&self) -> String {
         let pragma_factory = self
             .current_jsx_source_text()
@@ -132,15 +174,14 @@ impl<'a> CheckerState<'a> {
                 self.resolve_property_access_with_env(component_type, "propTypes"),
                 crate::query_boundaries::common::PropertyAccessResult::Success { .. }
             );
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, props_type) {
+            return props_type;
+        }
         if !has_managed_props_metadata
-            && (crate::query_boundaries::common::contains_type_parameters(
+            && crate::computation::call_inference::should_preserve_contextual_application_shape(
                 self.ctx.types,
                 props_type,
             )
-                || crate::computation::call_inference::should_preserve_contextual_application_shape(
-                    self.ctx.types,
-                    props_type,
-                ))
         {
             return props_type;
         }
@@ -175,6 +216,28 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 evaluated,
             ) {
+                return props_type;
+            }
+            let evaluated_is_callable = self.jsx_type_contains_callable_surface(evaluated);
+            let props_is_callable = self.jsx_type_contains_callable_surface(props_type);
+            if evaluated_is_callable && !props_is_callable {
+                return props_type;
+            }
+            if self.format_type(evaluated).contains("Factory<") {
+                return props_type;
+            }
+            if crate::computation::call_inference::should_preserve_contextual_application_shape(
+                self.ctx.types,
+                evaluated,
+            )
+                && !crate::computation::call_inference::should_preserve_contextual_application_shape(
+                    self.ctx.types,
+                    props_type,
+                )
+            {
+                return props_type;
+            }
+            if !self.jsx_managed_attributes_preserve_original_props(props_type, evaluated) {
                 return props_type;
             }
             evaluated
@@ -644,6 +707,14 @@ impl<'a> CheckerState<'a> {
                         // unresolved type params that can't be checked until
                         // instantiation. Call sigs (SFCs) are still checked.
                         if !is_call_sig && !sig.type_params.is_empty() {
+                            return true;
+                        }
+                        if !is_call_sig
+                            && crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                member_type,
+                            )
+                        {
                             return true;
                         }
                         let ret = self.evaluate_type_with_env(sig.return_type);
@@ -1143,8 +1214,10 @@ impl<'a> CheckerState<'a> {
 
         // Evaluate Application/Lazy instance types to their structural form.
         // e.g. `Component<{reqd: any}, any>` is an Application that evaluates
-        // to a concrete object. Only skip if evaluation still yields a type
-        // with unresolved type parameters (outer generic context).
+        // to a concrete object. Keep partially generic instances: JSX attribute
+        // checking can still read `props` or fall back to the constructor
+        // parameter, and later checks already guard the places where unresolved
+        // type parameters would create false diagnostics.
         let instance_type = if crate::query_boundaries::common::needs_evaluation_for_merge(
             self.ctx.types,
             raw_instance_type,

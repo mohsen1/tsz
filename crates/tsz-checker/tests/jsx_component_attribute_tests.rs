@@ -2094,6 +2094,41 @@ const myHoc = <ComposedComponentProps extends any>(
 }
 
 #[test]
+fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let Some(mut source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx",
+    ) else {
+        return;
+    };
+    source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        &react_types,
+        &source,
+        JsxMode::React,
+        true,
+    );
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES
+        ),
+        "real react16 fixture should emit TS2698 for generic spreads, got: {diags:?}"
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "real react16 fixture should emit TS2322 for the number myProp JSX element, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT),
+        "ComponentClass<WrapperComponentProps> should be accepted as a JSX component, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_jsx_fragment_factory_no_unused_locals_react16_fixture_checks_nested_callback_body() {
     let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
         return;
