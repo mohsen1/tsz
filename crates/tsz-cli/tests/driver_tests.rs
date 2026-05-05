@@ -12391,6 +12391,78 @@ fn bare_import_type_reports_ts1340() {
 }
 
 #[test]
+fn declaration_emit_raw_typeof_import_text_still_reports_ts9006() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+    let raw_specifier = base.join("some-mod").display().to_string();
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "module": "commonjs",
+    "target": "es2020",
+    "types": []
+  },
+  "files": ["some-mod.d.ts", "index.js", "index-comment.js"]
+}"#,
+    );
+    write_file(
+        &base.join("some-mod.d.ts"),
+        r#"
+interface Item {
+  x: string;
+}
+
+declare function getItems(): Item[];
+export = getItems;
+"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        &format!(
+            r#"// @ts-check
+const items = require("./some-mod")();
+const note = 'typeof import("{raw_specifier}")';
+
+module.exports = items;
+"#
+        ),
+    );
+    write_file(
+        &base.join("index-comment.js"),
+        &format!(
+            r#"// @ts-check
+// typeof import("{raw_specifier}")
+const items = require("./some-mod")();
+
+module.exports = items;
+"#
+        ),
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts9006: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 9006)
+        .collect();
+    assert_eq!(
+        ts9006.len(),
+        2,
+        "raw string/comment import text must not suppress TS9006, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn bare_import_type_export_equals_class_does_not_report_ts1340() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
