@@ -2380,6 +2380,15 @@ impl<'a> DeclarationEmitter<'a> {
             if index > 0 {
                 self.write(", ");
             }
+            let has_leading_jsdoc = self.arena.get(ident_idx).is_some_and(|node| {
+                !self
+                    .leading_jsdoc_comment_chain_for_pos(node.pos)
+                    .is_empty()
+            });
+            if has_leading_jsdoc && let Some(node) = self.arena.get(ident_idx) {
+                self.write_line();
+                self.emit_leading_jsdoc_comments(node.pos);
+            }
             self.emit_node(ident_idx);
             self.emit_flattened_binding_type_annotation(ident_idx, type_id);
         }

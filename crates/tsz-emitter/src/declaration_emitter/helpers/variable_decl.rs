@@ -405,6 +405,14 @@ impl<'a> DeclarationEmitter<'a> {
 
                 let selected_type_text =
                     self.qualify_current_namespace_self_type_text(selected_type_text);
+                let selected_type_text = if has_initializer {
+                    self.add_returned_object_member_comments_to_type_text(
+                        initializer,
+                        &selected_type_text,
+                    )
+                } else {
+                    selected_type_text
+                };
                 self.write(": ");
                 self.write(&Self::strip_synthetic_anonymous_object_members(
                     &selected_type_text,
@@ -434,6 +442,20 @@ impl<'a> DeclarationEmitter<'a> {
                 // initializer but no resolved type, default to `: any`.
                 self.write(": any");
             }
+        }
+
+        if has_initializer
+            && let Some(init_node) = self.arena.get(initializer)
+            && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+            && let Some(func) = self.arena.get_function(init_node)
+            && func.body.is_some()
+        {
+            let skip_end = self
+                .arena
+                .get(decl_idx)
+                .map_or(init_node.end, |node| node.end);
+            self.skip_comments_before_raw(skip_end);
         }
     }
 
@@ -1119,6 +1141,10 @@ impl<'a> DeclarationEmitter<'a> {
                     } else {
                         self.print_type_id(return_type_id)
                     };
+                    let return_type_text = self.add_returned_object_member_comments_to_type_text(
+                        initializer,
+                        &return_type_text,
+                    );
                     self.write(&return_type_text);
                 }
                 return true;

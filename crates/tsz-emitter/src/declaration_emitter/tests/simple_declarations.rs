@@ -418,6 +418,71 @@ export interface Box {
 }
 
 #[test]
+fn test_returned_object_literal_member_comments_are_preserved() {
+    let output = emit_dts(
+        r#"
+/**
+ * make docs
+ */
+export const make = (value: string) => {
+    return {
+        /**
+         * field docs
+         */
+        field: (next: number) => {},
+        /**
+         * method docs
+         */
+        method(next: number) {},
+    };
+}
+
+export class Next {}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare const make: (value: string) => {\n    /** field docs */\n    field: (next: number) => void;\n    /** method docs */\n    method: any;\n};"
+        ),
+        "Expected returned object literal member JSDoc to stay with members: {output}"
+    );
+    assert!(
+        !output.contains("*/\nexport declare class Next"),
+        "Did not expect returned object member JSDoc to leak to the next declaration: {output}"
+    );
+}
+
+#[test]
+fn test_destructured_binding_comments_are_preserved_before_flattened_name() {
+    let output = emit_dts(
+        r#"
+export let {
+    /**
+    * method docs
+    */
+    method
+} = null as any;
+
+declare global {
+    interface Ext {
+        method(): void;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export declare let \n/**\n* method docs\n*/\nmethod: any;"),
+        "Expected destructured binding JSDoc to be emitted before the flattened name: {output}"
+    );
+    assert!(
+        !output.contains("method: any;\n/**"),
+        "Did not expect destructuring JSDoc to leak after the flattened declaration: {output}"
+    );
+}
+
+#[test]
 fn test_trailing_top_level_jsdoc_after_export_is_preserved() {
     let output = emit_dts(
         r#"
