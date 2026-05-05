@@ -44,7 +44,14 @@ impl<'a> NarrowingContext<'a> {
         let resolved = self.resolve_type(type_id);
         let members = match classify_for_union_members(self.db, resolved) {
             UnionMembersKind::Union(list) => list.into_iter().collect::<Vec<_>>(),
-            UnionMembersKind::NotUnion => vec![resolved],
+            // Preserve the original `type_id` (potentially a `Lazy(DefId)`
+            // for built-in interfaces like the global `Function`) so that
+            // callers pushing `member` back into their result set keep the
+            // original type identity. Resolving to the instantiated object
+            // shape erases the boxed-builtin marker that downstream
+            // `typeof === "function"` narrowing relies on
+            // (`is_boxed_def_id`) to recognize callable values.
+            UnionMembersKind::NotUnion => vec![type_id],
         };
         let evaluator = match self.resolver {
             Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
