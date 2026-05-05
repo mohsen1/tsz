@@ -18,6 +18,63 @@ fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn instanceof_symbol_hasinstance_generic_predicate_erases_to_any() {
+    let source = r#"
+interface SymbolConstructor {
+    readonly hasInstance: unique symbol;
+}
+declare var Symbol: SymbolConstructor;
+
+interface BConstructor {
+    new <T>(): B<T>;
+    [Symbol.hasInstance](value: unknown): value is B<any>;
+}
+interface B<T> {
+    foo: T;
+}
+declare var B: BConstructor;
+
+declare var obj3: B<number> | string;
+if (obj3 instanceof B) {
+    obj3.foo = 1;
+    obj3.foo = "str";
+    obj3.bar = "str";
+}
+
+declare var obj4: any;
+if (obj4 instanceof B) {
+    obj4.bar = "str";
+}
+"#;
+
+    let diagnostics = strict_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message == "Type 'string' is not assignable to type 'number'."
+        }),
+        "expected assignment to preserve B<number> after instanceof, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'bar' does not exist on type 'B<number>'."
+        }),
+        "expected obj3.bar to see the narrowed B<number> type, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'bar' does not exist on type 'B<any>'."
+        }),
+        "expected obj4.bar to narrow any through B<any>, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message.contains("string | B<number>")),
+        "instanceof should not leave obj3 as the original union: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn homomorphic_mapped_type_preserves_null_in_primitive_union() {
     let source = r#"
 type Narrowable = string | number | bigint | boolean;

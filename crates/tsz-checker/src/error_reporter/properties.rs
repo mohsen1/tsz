@@ -502,6 +502,8 @@ impl<'a> CheckerState<'a> {
                 .next()
                 .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
             && !annotation.contains('{')
+            && !annotation.contains('|')
+            && !matches!(annotation.trim(), "any" | "unknown")
             && !receiver_reduces_to_never
             && (crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
                 || self.ctx.types.get_display_alias(type_id).is_some()
