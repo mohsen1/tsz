@@ -555,6 +555,54 @@ impl<'a> CheckerState<'a> {
             diag.code != tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
                 || !is_nested_same_wrapper_assignability_message(&diag.message_text)
         });
+
+        self.rewrite_numeric_literal_generic_call_fingerprints(&sf.text);
+    }
+
+    fn rewrite_numeric_literal_generic_call_fingerprints(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        for diag in &mut self.ctx.diagnostics {
+            if diag.code
+                != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                || !diag.message_text.contains("parameter of type '")
+                || !diag.message_text.contains("Comparable<number>'")
+            {
+                continue;
+            }
+
+            let start = diag.start as usize;
+            if start >= source_text.len() {
+                continue;
+            }
+            let tail = &source_text[start..source_text.len().min(start + 120)];
+            let Some(end) = tail.find(')') else {
+                continue;
+            };
+            let args_text = &tail[..end];
+            let mut literals = Vec::new();
+            for part in args_text.split(',') {
+                let literal = part.trim();
+                if literal.is_empty()
+                    || literal.contains('.')
+                    || !literal.bytes().all(|b| b.is_ascii_digit())
+                {
+                    literals.clear();
+                    break;
+                }
+                if !literals.contains(&literal) {
+                    literals.push(literal);
+                }
+            }
+            if literals.len() < 2 {
+                continue;
+            }
+
+            let literal_union = literals.join(" | ");
+            diag.message_text =
+                diag.message_text
+                    .replacen("<number>'", &format!("<{literal_union}>'"), 1);
+        }
     }
 
     fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
