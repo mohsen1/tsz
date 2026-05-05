@@ -673,8 +673,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // Also handle cases where normalization itself exposes direct array types.
         if let (Some(a_elem), Some(b_elem)) = (
-            self.array_element_for_redeclaration(a),
-            self.array_element_for_redeclaration(b),
+            self.mutable_array_element_for_redeclaration(a),
+            self.mutable_array_element_for_redeclaration(b),
         ) {
             return self.are_types_identical_for_redeclaration(a_elem, b_elem);
         }
