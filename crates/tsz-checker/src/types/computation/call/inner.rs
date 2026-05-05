@@ -469,6 +469,9 @@ impl<'a> CheckerState<'a> {
                 signatures_count = signatures.len(),
                 "Resolved overloaded call return type"
             );
+            if let Some(predicate) = overload_resolution.selected_type_predicate.clone() {
+                self.ctx.call_type_predicates.insert(idx.0, predicate);
+            }
             return self.handle_call_result(
                 overload_resolution.result,
                 CallResultContext {
