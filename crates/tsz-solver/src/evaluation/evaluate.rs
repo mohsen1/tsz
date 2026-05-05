@@ -661,6 +661,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let result = if let Some(type_params) = type_params {
                 // Resolve the base type to get the body
                 if let Some(resolved) = resolved {
+                    // When the resolver returns `unknown` for the alias body,
+                    // the body hasn't been registered yet (e.g. cross-file
+                    // alias whose declaring file is still being processed in
+                    // parallel checking). Substituting an `unknown` body would
+                    // collapse `Foo<Args>` to bare `unknown` and erase its
+                    // structural shape downstream. Bail out and keep the
+                    // original `Application` opaque so later evaluator passes
+                    // (with a populated body) can expand it correctly.
+                    if resolved == TypeId::UNKNOWN {
+                        if let Some(d) = self.def_depth.get_mut(&def_id) {
+                            *d = d.saturating_sub(1);
+                        }
+                        return original_type_id;
+                    }
                     // Pre-expand type arguments that are TypeQuery or Application.
                     // For conditional type bodies with Application extends containing infer,
                     // preserve Application args so the conditional evaluator can match
