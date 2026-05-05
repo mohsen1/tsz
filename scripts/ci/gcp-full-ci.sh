@@ -754,7 +754,11 @@ run_with_heartbeat() {
   local label="$1"
   shift
 
-  local pid rc
+  local pid rc restore_errexit=0
+  case "$-" in
+    *e*) restore_errexit=1 ;;
+  esac
+
   "$@" &
   pid="$!"
 
@@ -768,7 +772,11 @@ run_with_heartbeat() {
   set +e
   wait "$pid"
   rc="$?"
-  set -e
+  if [[ "$restore_errexit" == "1" ]]; then
+    set -e
+  else
+    set +e
+  fi
   return "$rc"
 }
 
