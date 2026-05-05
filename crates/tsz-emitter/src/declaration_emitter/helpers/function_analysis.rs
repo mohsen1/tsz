@@ -2141,9 +2141,12 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
+        if self.inline_identity_arrow_callee(call.expression) {
+            return self.const_literal_initializer_text_deep_guarded(args.nodes[0], guard);
+        }
+
         let func = self.identity_returning_function(call.expression)?;
-        let callee_body = func.body;
-        let returned_identifier = self.function_body_unique_return_identifier(callee_body)?;
+        let returned_identifier = self.function_identity_return_identifier(func)?;
         let return_name = self.get_identifier_text(returned_identifier)?;
         let first_param_name = func
             .parameters
@@ -2167,10 +2170,63 @@ impl<'a> DeclarationEmitter<'a> {
         Some(text)
     }
 
+    fn inline_identity_arrow_callee(&self, callee_idx: NodeIndex) -> bool {
+        let Some(raw) = self
+            .arena
+            .get(callee_idx)
+            .and_then(|node| self.get_source_slice_no_semi(node.pos, node.end))
+        else {
+            return false;
+        };
+        let mut text = raw.trim();
+        while text.starts_with('(') && text.ends_with(')') {
+            text = text[1..text.len() - 1].trim();
+        }
+        let Some((left, right)) = text.split_once("=>") else {
+            return false;
+        };
+        let mut left = left.trim();
+        if left.starts_with('<')
+            && let Some(end) = left.find('>')
+        {
+            left = left[end + 1..].trim();
+        }
+        if left.starts_with('(') && left.ends_with(')') {
+            left = left[1..left.len() - 1].trim();
+        }
+        let param_name: String = left
+            .chars()
+            .take_while(|ch| *ch == '_' || *ch == '$' || ch.is_ascii_alphanumeric())
+            .collect();
+        if param_name.is_empty() {
+            return false;
+        }
+        right.trim() == param_name
+    }
+
+    fn function_identity_return_identifier(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<NodeIndex> {
+        let body_node = self.arena.get(func.body)?;
+        if body_node.kind == SyntaxKind::Identifier as u16 {
+            return Some(func.body);
+        }
+        self.function_body_unique_return_identifier(func.body)
+    }
+
     pub(in crate::declaration_emitter) fn identity_returning_function(
         &self,
         callee_idx: NodeIndex,
     ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        if let Some(func) = self.identity_returning_function_expression(callee_idx) {
+            return Some(func);
+        }
+
+        if let Some(func) = self.identity_returning_function_from_symbol(callee_idx) {
+            return Some(func);
+        }
+
         let callee_name = self.get_identifier_text(callee_idx)?;
         let source_file_idx = self.current_source_file_idx?;
         let source_file_node = self.arena.get(source_file_idx)?;
@@ -2181,15 +2237,118 @@ impl<'a> DeclarationEmitter<'a> {
             .nodes
             .iter()
             .copied()
-            .find_map(|decl_idx| {
-                let decl_node = self.arena.get(decl_idx)?;
-                let func = self.arena.get_function(decl_node)?;
-                let same_name = self
-                    .get_identifier_text(func.name)
-                    .is_some_and(|name| name == callee_name);
-                (same_name && func.body.is_some() && func.parameters.nodes.len() == 1)
-                    .then_some(func)
-            })
+            .find_map(|decl_idx| self.named_identity_function_decl(decl_idx, &callee_name))
+    }
+
+    fn named_identity_function_decl(
+        &self,
+        decl_idx: NodeIndex,
+        callee_name: &str,
+    ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        let decl_node = self.arena.get(decl_idx)?;
+        if let Some(export_decl) = self.arena.get_export_decl(decl_node) {
+            return self.named_identity_function_decl(export_decl.export_clause, callee_name);
+        }
+        if let Some(func) = self.arena.get_function(decl_node) {
+            let same_name = self
+                .get_identifier_text(func.name)
+                .is_some_and(|name| name == callee_name);
+            return (same_name && func.body.is_some() && func.parameters.nodes.len() == 1)
+                .then_some(func);
+        }
+        if let Some(variable) = self.arena.get_variable(decl_node) {
+            for &decl_list_idx in &variable.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &var_decl_idx in &decl_list.declarations.nodes {
+                    let Some(var_decl_node) = self.arena.get(var_decl_idx) else {
+                        continue;
+                    };
+                    let Some(var_decl) = self.arena.get_variable_declaration(var_decl_node) else {
+                        continue;
+                    };
+                    if self.get_identifier_text(var_decl.name).as_deref() == Some(callee_name)
+                        && let Some(func) =
+                            self.identity_returning_function_expression(var_decl.initializer)
+                    {
+                        return Some(func);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn identity_returning_function_expression(
+        &self,
+        callee_idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        let callee_idx = self.skip_parenthesized_expression(callee_idx)?;
+        let callee_node = self.arena.get(callee_idx)?;
+        if callee_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && callee_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.arena.get_function(callee_node)?;
+        (func.body.is_some() && func.parameters.nodes.len() == 1).then_some(func)
+    }
+
+    fn identity_returning_function_from_symbol(
+        &self,
+        callee_idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        let sym_id = self.value_reference_symbol(callee_idx)?;
+        let binder = self.binder?;
+        let sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            if let Some(func) = self.callable_identity_function_decl(decl_idx) {
+                return Some(func);
+            }
+        }
+        None
+    }
+
+    fn callable_identity_function_decl(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        let decl_node = self.arena.get(decl_idx)?;
+        if let Some(export_decl) = self.arena.get_export_decl(decl_node) {
+            return self.callable_identity_function_decl(export_decl.export_clause);
+        }
+        if let Some(func) = self.arena.get_function(decl_node)
+            && func.body.is_some()
+            && func.parameters.nodes.len() == 1
+        {
+            return Some(func);
+        }
+
+        let mut current = decl_idx;
+        for _ in 0..8 {
+            let node = self.arena.get(current)?;
+            if let Some(func) = self.arena.get_function(node)
+                && func.body.is_some()
+                && func.parameters.nodes.len() == 1
+            {
+                return Some(func);
+            }
+            if let Some(var_decl) = self.arena.get_variable_declaration(node)
+                && let Some(func) =
+                    self.identity_returning_function_expression(var_decl.initializer)
+            {
+                return Some(func);
+            }
+            current = self.arena.parent_of(current)?;
+        }
+        None
     }
 
     /// True when `expr_idx` is a bare `globalThis` identifier. Used by variable

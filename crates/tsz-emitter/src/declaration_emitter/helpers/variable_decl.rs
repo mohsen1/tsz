@@ -62,9 +62,15 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
                 .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_name))
                 .is_some();
+        let exported_call_initializer = self.variable_declaration_has_effective_export(decl_idx)
+            && self
+                .arena
+                .get(initializer)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION);
         let literal_initializer_text = (keyword == "const"
             && !has_type_annotation
             && has_initializer
+            && !exported_call_initializer
             && const_asserted_enum_member.is_none()
             && !js_has_jsdoc_type)
             .then(|| self.const_literal_initializer_text_deep(initializer))
@@ -136,6 +142,11 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&type_text);
             } else if has_initializer
                 && let Some(type_text) = self.explicit_asserted_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if exported_call_initializer
+                && let Some(type_text) = self.const_literal_initializer_text_deep(initializer)
             {
                 self.write(": ");
                 self.write(&type_text);
@@ -462,6 +473,20 @@ impl<'a> DeclarationEmitter<'a> {
                 .map_or(init_node.end, |node| node.end);
             self.skip_comments_before_raw(skip_end);
         }
+    }
+
+    fn variable_declaration_has_effective_export(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        for _ in 0..4 {
+            if self.statement_has_effective_export(current) {
+                return true;
+            }
+            let Some(parent) = self.arena.get_extended(current).map(|ext| ext.parent) else {
+                return false;
+            };
+            current = parent;
+        }
+        false
     }
 
     pub(in crate::declaration_emitter) fn previous_duplicate_variable_declaration_type_text(
