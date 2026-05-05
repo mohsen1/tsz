@@ -1405,6 +1405,11 @@ impl<'a> DeclarationEmitter<'a> {
                             &excluded_names,
                         ));
                     }
+                    if let Some(type_id) = self.reference_declared_type_id(expr_idx)
+                        && self.should_expand_named_application_for_inferred_declaration(type_id)
+                    {
+                        return Some(self.print_type_id_for_inferred_declaration(type_id));
+                    }
                     return Some(type_text);
                 }
                 type_text

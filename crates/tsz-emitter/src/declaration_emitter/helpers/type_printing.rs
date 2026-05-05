@@ -40,10 +40,40 @@ impl<'a> DeclarationEmitter<'a> {
         self.binder
             .and_then(|binder| binder.symbols.get(sym_id))
             .is_none_or(|symbol| {
+                if symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                    && self.symbol_is_function_local_type_alias(symbol)
+                {
+                    return false;
+                }
                 symbol.flags
                     & (symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS)
                     != 0
             })
+    }
+
+    fn symbol_is_function_local_type_alias(&self, symbol: &tsz_binder::Symbol) -> bool {
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let mut current = decl_idx;
+            for _ in 0..32 {
+                let Some(parent_idx) = self.arena.parent_of(current) else {
+                    return false;
+                };
+                if !parent_idx.is_some() {
+                    return false;
+                }
+                let Some(parent_node) = self.arena.get(parent_idx) else {
+                    return false;
+                };
+                if self.arena.get_source_file(parent_node).is_some() {
+                    return false;
+                }
+                if self.arena.get_function(parent_node).is_some() {
+                    return true;
+                }
+                current = parent_idx;
+            }
+            false
+        })
     }
 
     fn should_preserve_named_application_for_emit(
@@ -64,18 +94,18 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(def_id) = tsz_solver::visitor::lazy_def_id(interner, app.base)
             && let Some(cache) = self.type_cache.as_ref()
         {
-            if cache.def_to_name.contains_key(&def_id) {
-                return true;
-            }
             if let Some(sym_id) = cache.def_to_symbol.get(&def_id).copied() {
                 return self.symbol_is_nameable_type_for_emit(sym_id);
+            }
+            if cache.def_to_name.contains_key(&def_id) {
+                return true;
             }
         }
 
         false
     }
 
-    fn should_preserve_named_application_for_inferred_emit(
+    pub(in crate::declaration_emitter) fn should_preserve_named_application_for_inferred_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
         interner: &tsz_solver::TypeInterner,
@@ -99,6 +129,17 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         tsz_solver::visitor::conditional_type_id(interner, base_type).is_none()
+    }
+
+    pub(in crate::declaration_emitter) fn should_expand_named_application_for_inferred_declaration(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> bool {
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+        tsz_solver::visitor::application_id(interner, type_id).is_some()
+            && !self.should_preserve_named_application_for_inferred_emit(type_id, interner)
     }
 
     fn display_alias_for_declaration_emit(
@@ -644,6 +685,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_id: tsz_solver::types::TypeId,
     ) -> String {
+        let elided_alias_names = self.function_local_type_alias_application_names(type_id);
         let type_id = if let Some(interner) = self.type_interner {
             self.display_alias_for_policy(
                 type_id,
@@ -654,10 +696,230 @@ impl<'a> DeclarationEmitter<'a> {
             type_id
         };
         let type_id = self.reduce_conditional_aliases_for_inferred_emit(type_id, 0);
-        self.print_type_id_with_policy(
+        let printed = self.print_type_id_with_policy(
             type_id,
             Self::should_preserve_named_application_for_inferred_emit,
-        )
+        );
+        if elided_alias_names.is_empty() {
+            printed
+        } else {
+            Self::elide_type_reference_names(&printed, &elided_alias_names)
+        }
+    }
+
+    fn function_local_type_alias_application_names(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+        self.collect_function_local_type_alias_application_names(type_id, &mut names, 0);
+        names
+    }
+
+    fn collect_function_local_type_alias_application_names(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        names: &mut FxHashSet<String>,
+        depth: usize,
+    ) {
+        if depth > 16 {
+            return;
+        }
+        let (Some(interner), Some(cache)) = (self.type_interner, self.type_cache.as_ref()) else {
+            return;
+        };
+        let Some(type_data) = interner.lookup(type_id) else {
+            return;
+        };
+        match type_data {
+            tsz_solver::types::TypeData::Application(app_id) => {
+                let app = interner.type_application(app_id);
+                if let Some(def_id) = tsz_solver::visitor::lazy_def_id(interner, app.base)
+                    && let Some(sym_id) = cache.def_to_symbol.get(&def_id).copied()
+                    && let Some(symbol) = self.binder.and_then(|binder| binder.symbols.get(sym_id))
+                    && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                    && self.symbol_is_function_local_type_alias(symbol)
+                    && let Some(name) = cache.def_to_name.get(&def_id)
+                {
+                    names.insert(name.clone());
+                }
+                self.collect_function_local_type_alias_application_names(
+                    app.base,
+                    names,
+                    depth + 1,
+                );
+                for arg in app.args.iter().copied() {
+                    self.collect_function_local_type_alias_application_names(arg, names, depth + 1);
+                }
+            }
+            tsz_solver::types::TypeData::Union(members)
+            | tsz_solver::types::TypeData::Intersection(members) => {
+                for member in interner.type_list(members).iter().copied() {
+                    self.collect_function_local_type_alias_application_names(
+                        member,
+                        names,
+                        depth + 1,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn elide_type_reference_names(type_text: &str, names: &FxHashSet<String>) -> String {
+        let bytes = type_text.as_bytes();
+        let mut out = String::with_capacity(type_text.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if ch == '"' || ch == '\'' {
+                let start = i;
+                i += 1;
+                while i < bytes.len() {
+                    let current = bytes[i] as char;
+                    if current == '\\' {
+                        i = (i + 2).min(bytes.len());
+                        continue;
+                    }
+                    i += 1;
+                    if current == ch {
+                        break;
+                    }
+                }
+                out.push_str(&type_text[start..i]);
+                continue;
+            }
+            if !Self::is_type_reference_identifier_start(ch) {
+                out.push(ch);
+                i += 1;
+                continue;
+            }
+
+            let start = i;
+            i += 1;
+            while i < bytes.len() && Self::is_type_reference_identifier_continue(bytes[i] as char) {
+                i += 1;
+            }
+            let ident = &type_text[start..i];
+            let prev_non_ws = type_text[..start]
+                .chars()
+                .rev()
+                .find(|c| !c.is_ascii_whitespace());
+            if prev_non_ws == Some('.') || !names.contains(ident) {
+                out.push_str(ident);
+                continue;
+            }
+
+            let mut end = i;
+            while end < bytes.len() && (bytes[end] as char).is_ascii_whitespace() {
+                end += 1;
+            }
+            if end < bytes.len()
+                && bytes[end] as char == '<'
+                && let Some(type_arg_end) = Self::type_reference_type_argument_end(type_text, end)
+            {
+                if let Some(type_arg) =
+                    Self::single_type_argument_text(type_text, end, type_arg_end)
+                {
+                    out.push_str(type_arg);
+                    out.push_str(" | /*elided*/ any");
+                } else {
+                    out.push_str("/*elided*/ any");
+                }
+                i = type_arg_end;
+                continue;
+            }
+            out.push_str("/*elided*/ any");
+        }
+        out
+    }
+
+    fn type_reference_type_argument_end(type_text: &str, start: usize) -> Option<usize> {
+        let bytes = type_text.as_bytes();
+        let mut depth = 0usize;
+        let mut i = start;
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            match ch {
+                '"' | '\'' => {
+                    i += 1;
+                    while i < bytes.len() {
+                        let current = bytes[i] as char;
+                        if current == '\\' {
+                            i = (i + 2).min(bytes.len());
+                            continue;
+                        }
+                        i += 1;
+                        if current == ch {
+                            break;
+                        }
+                    }
+                }
+                '<' => {
+                    depth += 1;
+                    i += 1;
+                }
+                '>' if i == 0 || bytes[i - 1] != b'=' => {
+                    depth = depth.checked_sub(1)?;
+                    i += 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        None
+    }
+
+    fn single_type_argument_text(type_text: &str, start: usize, end: usize) -> Option<&str> {
+        let inner = type_text.get(start + 1..end.checked_sub(1)?)?.trim();
+        if inner.is_empty() {
+            return None;
+        }
+        let bytes = inner.as_bytes();
+        let mut depth = 0usize;
+        let mut i = 0;
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            match ch {
+                '"' | '\'' => {
+                    i += 1;
+                    while i < bytes.len() {
+                        let current = bytes[i] as char;
+                        if current == '\\' {
+                            i = (i + 2).min(bytes.len());
+                            continue;
+                        }
+                        i += 1;
+                        if current == ch {
+                            break;
+                        }
+                    }
+                }
+                '<' => {
+                    depth += 1;
+                    i += 1;
+                }
+                '>' if i == 0 || bytes[i - 1] != b'=' => {
+                    depth = depth.checked_sub(1)?;
+                    i += 1;
+                }
+                ',' if depth == 0 => return None,
+                _ => i += 1,
+            }
+        }
+        Some(inner)
+    }
+
+    const fn is_type_reference_identifier_start(ch: char) -> bool {
+        ch == '_' || ch == '$' || ch.is_ascii_alphabetic()
+    }
+
+    const fn is_type_reference_identifier_continue(ch: char) -> bool {
+        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
     pub(crate) fn resolve_declaration_type_text(
@@ -693,6 +955,7 @@ impl<'a> DeclarationEmitter<'a> {
         type_id: tsz_solver::types::TypeId,
         outer_type_params: &NodeList,
     ) -> String {
+        let elided_alias_names = self.function_local_type_alias_application_names(type_id);
         let Some(interner) = self.type_interner else {
             return "any".to_string();
         };
@@ -750,7 +1013,12 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(enc_sym) = self.enclosing_namespace_symbol {
             printer = printer.with_enclosing_symbol(enc_sym);
         }
-        printer.print_type(type_id)
+        let printed = printer.print_type(type_id);
+        if elided_alias_names.is_empty() {
+            printed
+        } else {
+            Self::elide_type_reference_names(&printed, &elided_alias_names)
+        }
     }
     pub(crate) fn collect_type_param_names(&self, type_params: &NodeList) -> Vec<String> {
         let mut names = Vec::new();
