@@ -2460,36 +2460,98 @@ impl ScannerState {
     #[wasm_bindgen(js_name = scanJsxIdentifier)]
     pub fn scan_jsx_identifier(&mut self) -> SyntaxKind {
         if crate::token_is_identifier_or_keyword(self.token) {
+            let start = self.token_start;
+            let mut decoded = if (self.token_flags & TokenFlags::UnicodeEscape as u32) != 0 {
+                Some(self.get_token_value_ref().to_string())
+            } else {
+                None
+            };
+            let mut extended = false;
             // Continue scanning to include any hyphenated parts.
             // JSX identifiers can be like: foo-bar-baz, class-id, etc.
             // Keywords like `class` can also start JSX attribute names.
             while self.pos < self.end {
                 let ch = self.char_code_unchecked(self.pos);
                 if ch == CharacterCodes::MINUS {
+                    extended = true;
                     // In JSX, hyphens are allowed in identifiers
                     self.pos += 1;
+                    if let Some(text) = decoded.as_mut() {
+                        text.push('-');
+                    }
                     // After hyphen, we need more identifier characters
-                    if self.pos < self.end
-                        && is_identifier_start(self.char_code_unchecked(self.pos))
-                    {
-                        self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
-                        while self.pos < self.end
-                            && is_identifier_part(self.char_code_unchecked(self.pos))
+                    if self.pos >= self.end {
+                        continue;
+                    }
+                    let part_start = self.char_code_unchecked(self.pos);
+                    if part_start == CharacterCodes::BACKSLASH {
+                        if let Some(code_point) = self.peek_unicode_escape()
+                            && is_identifier_start(code_point)
                         {
+                            let text =
+                                decoded.get_or_insert_with(|| self.source[start..self.pos].into());
+                            if let Some(c) =
+                                char::from_u32(self.scan_unicode_escape_value().unwrap_or(0))
+                            {
+                                text.push(c);
+                            }
+                            while self.pos < self.end {
+                                let ch = self.char_code_unchecked(self.pos);
+                                if ch == CharacterCodes::BACKSLASH {
+                                    if let Some(code_point) = self.peek_unicode_escape()
+                                        && is_identifier_part(code_point)
+                                    {
+                                        if let Some(c) = char::from_u32(
+                                            self.scan_unicode_escape_value().unwrap_or(0),
+                                        ) {
+                                            text.push(c);
+                                        }
+                                        continue;
+                                    }
+                                    break;
+                                }
+                                if !is_identifier_part(ch) {
+                                    break;
+                                }
+                                if let Some(c) = char::from_u32(ch) {
+                                    text.push(c);
+                                }
+                                self.pos += self.char_len_at(self.pos);
+                            }
+                        }
+                    } else if is_identifier_start(part_start) {
+                        loop {
+                            let ch = self.char_code_unchecked(self.pos);
+                            if !is_identifier_part(ch) {
+                                break;
+                            }
+                            if let Some(text) = decoded.as_mut()
+                                && let Some(c) = char::from_u32(ch)
+                            {
+                                text.push(c);
+                            }
                             self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
+                            if self.pos >= self.end {
+                                break;
+                            }
                         }
                     }
                 } else {
                     break;
                 }
             }
-            // ZERO-ALLOCATION: Intern directly from source slice, clear token_value
-            self.token_atom = self
-                .interner
-                .intern(&self.source[self.token_start..self.pos]);
-            self.token_value.clear();
-            // After extending with hyphens, the token becomes an Identifier
-            self.token = SyntaxKind::Identifier;
+            if extended {
+                if let Some(text) = decoded {
+                    self.token_atom = self.interner.intern(&text);
+                    self.token_flags |= TokenFlags::UnicodeEscape as u32;
+                } else {
+                    // ZERO-ALLOCATION: Intern directly from source slice, clear token_value
+                    self.token_atom = self.interner.intern(&self.source[start..self.pos]);
+                }
+                self.token_value.clear();
+                // After extending with hyphens, the token becomes an Identifier
+                self.token = SyntaxKind::Identifier;
+            }
         }
         self.token
     }
