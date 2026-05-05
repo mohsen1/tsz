@@ -498,7 +498,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<(String, u32, u32, u32)> {
         let mut params = Vec::new();
         let mut cursor = 0usize;
-        while let Some(rel) = raw_comment[cursor..].find("@template") {
+        while let Some(rel) = Self::jsdoc_tag_offset(&raw_comment[cursor..], "template") {
             let tag_start = cursor + rel;
             let mut idx = cursor + rel + "@template".len();
             while let Some(ch) = raw_comment[idx..].chars().next() {

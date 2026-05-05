@@ -3,7 +3,6 @@
 //! This module handles type resolution from AST type nodes.
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! resolve types, then use the solver to explain any failures.
-
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
@@ -30,7 +29,6 @@ pub struct TypeNodeChecker<'a, 'ctx> {
 }
 
 pub(super) type TypeLiteralSignatureScopeUpdates = Vec<(String, Option<TypeId>)>;
-
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Create a new type node checker with a mutable context reference.
     pub const fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
@@ -1982,10 +1980,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .and_then(|call| arena.get(call.expression))
             .and_then(|expr_node| arena.get_identifier(expr_node))
             .is_some_and(|ident| ident.escaped_text == "Symbol")
-    }
-
-    pub const fn context(&self) -> &CheckerContext<'ctx> {
-        self.ctx
     }
 }
 #[cfg(test)]
