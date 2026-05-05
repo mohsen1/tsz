@@ -316,6 +316,7 @@ fn spread_index_access_uses_base_constraint_before_validation() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -330,6 +331,7 @@ fn spread_index_access_uses_base_constraint_before_validation() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -365,6 +367,7 @@ fn spread_keyof_type_param_is_invalid() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let tp = TypeParamInfo {
@@ -435,6 +438,7 @@ fn spread_properties_skip_non_public_and_prototype_members() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -449,6 +453,7 @@ fn spread_properties_skip_non_public_and_prototype_members() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -463,6 +468,7 @@ fn spread_properties_skip_non_public_and_prototype_members() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);

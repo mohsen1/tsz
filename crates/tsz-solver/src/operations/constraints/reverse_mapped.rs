@@ -355,6 +355,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // reverseMappedTypeLimitedConstraint.ts).
                 declaration_order: prop.declaration_order,
                 is_string_named: prop.is_string_named,
+                is_symbol_named: prop.is_symbol_named,
                 single_quoted_name: prop.single_quoted_name,
             });
         }
@@ -988,6 +989,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         parent_id: None,
                         declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
+                        is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                     });
                 }

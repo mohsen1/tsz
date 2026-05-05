@@ -281,6 +281,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         prop.readonly,
                         prop.type_id,
                         prop.is_string_named,
+                        prop.is_symbol_named,
                         prop.single_quoted_name,
                     ),
                 );
@@ -408,7 +409,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Delegate to centralized modifier computation in type_queries.
             let source_info = source_prop_map.get(&key_name);
             let (source_optional, source_readonly) =
-                source_info.map_or((false, false), |(opt, ro, _, _, _)| (*opt, *ro));
+                source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
 
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
@@ -440,7 +441,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             });
             let property_type = if is_identity_homomorphic
                 && !source_has_type_params
-                && let Some(&(_, _, declared_type, _, _)) = source_info
+                && let Some(&(_, _, declared_type, _, _, _)) = source_info
             {
                 declared_type
             } else {
@@ -461,12 +462,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             for remapped_name in remapped_names {
                 let is_string_named = source_info
-                    .is_some_and(|(_, _, _, source_is_string_named, _)| *source_is_string_named)
+                    .is_some_and(|(_, _, _, source_is_string_named, _, _)| *source_is_string_named)
                     && remapped_name == key_name;
                 let single_quoted_name =
-                    source_info.is_some_and(|(_, _, _, _, source_single_quoted_name)| {
+                    source_info.is_some_and(|(_, _, _, _, _, source_single_quoted_name)| {
                         *source_single_quoted_name
                     }) && remapped_name == key_name;
+                let is_symbol_named = source_info
+                    .is_some_and(|(_, _, _, _, source_is_symbol_named, _)| *source_is_symbol_named)
+                    && remapped_name == key_name;
                 properties.push(PropertyInfo {
                     name: remapped_name,
                     type_id: property_type,
@@ -479,6 +483,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named,
+                    is_symbol_named,
                     single_quoted_name,
                 });
             }
@@ -687,6 +692,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }

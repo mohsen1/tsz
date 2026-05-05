@@ -595,6 +595,7 @@ fn test_intersection_visibility_merging() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -699,6 +700,7 @@ fn test_visibility_interning_distinct_shape_ids() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -743,6 +745,7 @@ fn test_parent_id_interning_distinct_shape_ids() {
         parent_id: Some(SymbolId(1)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -758,6 +761,7 @@ fn test_parent_id_interning_distinct_shape_ids() {
         parent_id: Some(SymbolId(2)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -885,6 +889,7 @@ fn test_partial_object_merging_in_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -900,6 +905,7 @@ fn test_partial_object_merging_in_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -998,6 +1004,7 @@ fn test_partial_object_and_callable_merging() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1013,6 +1020,7 @@ fn test_partial_object_and_callable_merging() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1589,6 +1597,7 @@ fn test_estimated_size_bytes_grows_with_object_shapes() {
             parent_id: None,
             declaration_order: i as u32,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         };
         interner.object(vec![prop]);

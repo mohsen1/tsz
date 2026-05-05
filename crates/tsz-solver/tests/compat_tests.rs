@@ -25,6 +25,7 @@ fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -41,6 +42,7 @@ fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
@@ -503,6 +505,7 @@ fn test_method_bivariance_even_strict() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -518,6 +521,7 @@ fn test_method_bivariance_even_strict() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -565,6 +569,7 @@ fn test_function_property_stays_strict() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -580,6 +585,7 @@ fn test_function_property_stays_strict() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1728,6 +1734,7 @@ fn test_object_keyword_accepts_non_primitives() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     assert!(checker.is_assignable(obj, TypeId::OBJECT));
@@ -1814,6 +1821,7 @@ fn test_split_accessor_allows_wider_setter_in_source() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1829,6 +1837,7 @@ fn test_split_accessor_allows_wider_setter_in_source() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1853,6 +1862,7 @@ fn test_split_accessor_rejects_wider_setter_in_target() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1868,6 +1878,7 @@ fn test_split_accessor_rejects_wider_setter_in_target() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1944,6 +1955,7 @@ fn test_function_type_rejects_non_callables() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     assert!(!checker.is_assignable(obj, function_top));
@@ -2473,6 +2485,7 @@ fn test_optional_property_allows_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
@@ -2487,6 +2500,7 @@ fn test_optional_property_allows_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -2511,6 +2525,7 @@ fn test_optional_property_rejects_required_target() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
@@ -2525,6 +2540,7 @@ fn test_optional_property_rejects_required_target() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -2549,6 +2565,7 @@ fn test_optional_property_rejects_string_index_signature() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -2590,6 +2607,7 @@ fn test_exact_optional_property_rejects_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
@@ -2604,6 +2622,7 @@ fn test_exact_optional_property_rejects_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -2629,6 +2648,7 @@ fn test_exact_optional_property_allows_string_index_signature() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3229,6 +3249,7 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3247,6 +3268,7 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3625,6 +3647,7 @@ fn test_void_return_exception_constructors() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3649,6 +3672,7 @@ fn test_void_return_exception_constructors() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3698,6 +3722,7 @@ fn test_method_bivariance_allows_derived_methods() {
         is_method: true,
         is_class_prototype: false,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3727,6 +3752,7 @@ fn test_method_bivariance_allows_derived_methods() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3774,6 +3800,7 @@ fn test_method_bivariance_persists_with_strict_function_types() {
         is_method: true,
         is_class_prototype: false,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3803,6 +3830,7 @@ fn test_method_bivariance_persists_with_strict_function_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3865,6 +3893,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3880,6 +3909,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4168,6 +4198,7 @@ fn test_union_intersection_distributivity_basic() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4185,6 +4216,7 @@ fn test_union_intersection_distributivity_basic() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4222,6 +4254,7 @@ fn test_intersection_union_distributivity() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4239,6 +4272,7 @@ fn test_intersection_union_distributivity() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4390,6 +4424,7 @@ fn test_strict_function_types_affects_methods_independently() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4408,6 +4443,7 @@ fn test_strict_function_types_affects_methods_independently() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
@@ -4517,6 +4553,7 @@ fn test_keyof_union_contravariance() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4549,6 +4586,7 @@ fn test_keyof_union_contravariance() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     };
     // Type C: { name: string, x: number }
@@ -4597,6 +4635,7 @@ fn test_keyof_intersection_distributivity() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4614,6 +4653,7 @@ fn test_keyof_intersection_distributivity() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(age, TypeId::NUMBER),
@@ -4662,6 +4702,7 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(age, TypeId::NUMBER),
@@ -4682,6 +4723,7 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(email, TypeId::STRING),
@@ -4754,6 +4796,7 @@ fn test_best_common_type_with_supertype() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4772,6 +4815,7 @@ fn test_best_common_type_with_supertype() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
@@ -4923,6 +4967,7 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let target = interner.object(vec![
@@ -4939,6 +4984,7 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -4970,6 +5016,7 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -4985,6 +5032,7 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -5012,6 +5060,7 @@ fn test_private_brand_neither_has_brand_falls_through() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
@@ -5026,6 +5075,7 @@ fn test_private_brand_neither_has_brand_falls_through() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6025,6 +6075,7 @@ fn test_intersection_with_primitive_weak_type_check_not_suppressed() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6040,6 +6091,7 @@ fn test_intersection_with_primitive_weak_type_check_not_suppressed() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 

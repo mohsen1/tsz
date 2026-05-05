@@ -373,6 +373,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }
@@ -434,6 +435,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }
@@ -477,6 +479,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: current_sym,
                                 declaration_order: declaration_order + param_pos as u32 + 1,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             });
                         }
@@ -595,6 +598,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         };
                         let mut partial_props: Vec<PropertyInfo> =
@@ -708,6 +712,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         },
                     );
@@ -830,6 +835,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: current_sym,
                                 declaration_order: declaration_order + param_pos as u32 + 1,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             },
                         );
@@ -1084,6 +1090,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order: *declaration_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }
@@ -1103,6 +1110,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: current_sym,
                         declaration_order: deferred.declaration_order,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -1277,6 +1285,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -1419,6 +1428,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: accessor.declaration_order,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );
@@ -1468,6 +1478,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: method.declaration_order,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );
@@ -1493,6 +1504,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
