@@ -782,6 +782,13 @@ impl<'a> Printer<'a> {
 
         // VariableStatement.declarations contains a VARIABLE_DECLARATION_LIST
         // Emit the declaration list (which handles the let/const/var keyword)
+        if self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::AccessorKeyword)
+            || self.has_recovered_accessor_modifier(node)
+        {
+            self.write("accessor ");
+        }
         for &decl_list_idx in &var_stmt.declarations.nodes {
             self.emit(decl_list_idx);
         }

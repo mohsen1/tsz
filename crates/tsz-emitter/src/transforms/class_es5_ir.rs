@@ -3085,6 +3085,9 @@ fn collect_auto_accessor_fields(
         if arena.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword) {
             continue;
         }
+        if arena.has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword) {
+            continue;
+        }
         if is_private_identifier(arena, prop_data.name) {
             continue;
         }
