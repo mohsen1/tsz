@@ -182,6 +182,7 @@ fn resolve_compiler_options_overrides() {
             "rootDir": "src",
             "outDir": "dist",
             "declaration": true,
+            "emitDeclarationOnly": true,
             "declarationDir": "types",
             "strict": true,
             "noEmit": true,
@@ -207,6 +208,7 @@ fn resolve_compiler_options_overrides() {
     assert_eq!(resolved.out_dir, Some(PathBuf::from("dist")));
     assert_eq!(resolved.declaration_dir, Some(PathBuf::from("types")));
     assert!(resolved.emit_declarations);
+    assert!(resolved.emit_declaration_only);
     assert!(resolved.checker.strict);
     assert!(resolved.no_emit);
     assert!(resolved.no_emit_on_error);

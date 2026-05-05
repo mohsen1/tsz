@@ -7793,6 +7793,104 @@ fn compile_declaration_with_declaration_dir() {
 }
 
 #[test]
+fn compile_emit_declaration_only_from_tsconfig_suppresses_js_output() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "outDir": "dist",
+            "target": "es2017",
+            "lib": ["es2017"],
+            "skipLibCheck": true,
+            "typeRoots": ["./empty-types"]
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+    write_file(
+        &base.join("main.ts"),
+        "export const value: string = \"ok\";\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(result.diagnostics.is_empty());
+    assert!(
+        base.join("dist/main.d.ts").is_file(),
+        "Declaration output should be emitted"
+    );
+    assert!(
+        !base.join("dist/main.js").exists(),
+        "JavaScript output should be suppressed by emitDeclarationOnly"
+    );
+    assert!(
+        result
+            .emitted_files
+            .iter()
+            .any(|path| path.ends_with("dist/main.d.ts")),
+        "emitted_files should include declaration output: {:?}",
+        result.emitted_files
+    );
+    assert!(
+        !result
+            .emitted_files
+            .iter()
+            .any(|path| path.ends_with("dist/main.js")),
+        "emitted_files should not include JavaScript output: {:?}",
+        result.emitted_files
+    );
+}
+
+#[test]
+fn compile_emit_declaration_only_from_cli_suppresses_js_output() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+    write_file(
+        &base.join("main.ts"),
+        "export const value: string = \"ok\";\n",
+    );
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--declaration",
+        "--emitDeclarationOnly",
+        "--pretty",
+        "false",
+        "--typeRoots",
+        "./empty-types",
+        "--skipLibCheck",
+        "--target",
+        "es2017",
+        "--lib",
+        "es2017",
+        "--outDir",
+        "dist",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(result.diagnostics.is_empty());
+    assert!(
+        base.join("dist/main.d.ts").is_file(),
+        "Declaration output should be emitted"
+    );
+    assert!(
+        !base.join("dist/main.js").exists(),
+        "JavaScript output should be suppressed by CLI emitDeclarationOnly"
+    );
+}
+
+#[test]
 fn cli_declaration_dir_places_declarations_outside_out_dir() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
