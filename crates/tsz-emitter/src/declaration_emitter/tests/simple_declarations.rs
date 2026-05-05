@@ -1264,6 +1264,24 @@ export = X;
 }
 
 #[test]
+fn test_namespace_shadowed_default_export_uses_self_import_type_names() {
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.current_namespace_self_import_alias = Some("me".to_string());
+    emitter.current_namespace_shadowed_default_name = Some("MyComponent".to_string());
+    emitter.current_namespace_self_export_names.extend([
+        "Things".to_string(),
+        "Props".to_string(),
+        "MyComponent".to_string(),
+    ]);
+
+    let qualified = emitter.qualify_current_namespace_self_type_text("Things<Props, MyComponent>");
+
+    assert_eq!(qualified, "me.Things<me.Props, me.default>");
+}
+
+#[test]
 fn test_js_exports_assignment_emits_named_exports_and_filters_locals() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

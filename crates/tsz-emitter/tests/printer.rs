@@ -510,6 +510,28 @@ fn es2015_computed_instance_field_side_effects_fold_into_method_name() {
 }
 
 #[test]
+fn commonjs_local_undefined_export_skips_redundant_assignment() {
+    let source = "var undefined;\nexport { undefined };\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.undefined = void 0;\nvar undefined;"),
+        "expected undefined export preamble and local declaration:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.undefined = undefined;"),
+        "unexpected redundant undefined export assignment:\n{output}"
+    );
+}
+
+#[test]
 fn test_es_module_export_equals_erased_to_empty_export_marker() {
     let source = "var a = 10;\nexport = a;\n";
     let output = parse_lower_print(
@@ -1273,6 +1295,29 @@ fn test_commonjs_class_export_before_static_block_iife() {
 }
 
 #[test]
+fn erased_computed_class_fields_emit_native_static_block_side_effects() {
+    let source = r#"declare const s: unique symbol;
+declare namespace N { const s: unique symbol; }
+class C {
+    static [s]: "a";
+    static [N.s]: "b";
+    [s]: "a";
+    [N.s]: "b";
+}
+"#;
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("class C {\n    static { N.s, N.s; }\n}"),
+        "Erased computed class field side effects should stay inside a native static block.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("}\nN.s;"),
+        "Erased computed class field side effects should not be emitted after the class.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_lowered_static_block_recovered_await_emits_yield() {
     let source = "class C {\n    static {\n        await 1;\n        yield 1;\n    }\n}\n";
     let output = parse_lower_print(
@@ -1856,5 +1901,53 @@ fn export_default_class_declaration_unchanged() {
     assert!(
         !output.contains("export default (class Foo"),
         "Bare default-class export must not be wrapped in parens.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: `({ foo, bar } = foo)` reassigns the same identifier on
+/// both sides. Inlining as `(foo = foo.foo, bar = foo.bar)` reads
+/// `foo.bar` AFTER `foo` has been clobbered. tsc captures the RHS in a
+/// temp first: `_a = foo, foo = _a.foo, bar = _a.bar`.
+#[test]
+fn es5_assignment_destructuring_reassigning_rhs_uses_temp() {
+    let source = "var foo: any = { foo: 1, bar: 2 };\nvar bar: any;\n({ foo, bar } = foo);\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("(_a = foo, foo = _a.foo, bar = _a.bar);"),
+        "RHS reassigned by LHS must capture in `_a` first.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(foo = foo.foo, bar = foo.bar);"),
+        "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
+    );
+}
+
+/// Same hazard for `var { foo, baz } = foo;` — must lower to
+/// `var _a = foo, foo = _a.foo, baz = _a.baz;`.
+#[test]
+fn es5_var_destructuring_reassigning_rhs_uses_temp() {
+    let source = "var foo: any = { foo: 1, baz: 2 };\nvar { foo, baz } = foo;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a = foo, foo = _a.foo, baz = _a.baz;"),
+        "Var declaration whose pattern reassigns the RHS identifier must capture in a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var foo = foo.foo, baz = foo.baz;"),
+        "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
     );
 }

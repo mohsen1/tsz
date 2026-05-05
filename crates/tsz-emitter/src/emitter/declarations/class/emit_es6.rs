@@ -1942,6 +1942,20 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let computed_side_effects_emitted_in_static_block =
+            !computed_property_side_effects.is_empty() && class_expr_temp.is_none();
+        if computed_side_effects_emitted_in_static_block {
+            self.write("static { ");
+            for (i, expr_idx) in computed_property_side_effects.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.emit_expression(*expr_idx);
+            }
+            self.write("; }");
+            self.write_line();
+        }
+
         // Skip orphaned comments inside the class body.
         // When class members are erased (type-only properties, abstract members, etc.),
         // comments on lines between erased members or between the last erased member
@@ -2044,7 +2058,7 @@ impl<'a> Printer<'a> {
                     self.write(";");
                 }
             }
-        } else {
+        } else if !computed_side_effects_emitted_in_static_block {
             // Emit computed property name side-effect statements for erased members
             // (when hoisting is not active, e.g., ES2022+ targets).
             // e.g., `[Symbol.iterator]: Type` → `Symbol.iterator;`

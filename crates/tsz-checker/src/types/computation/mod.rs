@@ -39,6 +39,7 @@ pub(crate) mod contextual;
 pub mod helpers;
 pub(crate) mod identifier;
 pub(crate) mod identifier_flow;
+pub(crate) mod large_tuple;
 pub(crate) mod object_literal;
 pub(crate) mod object_literal_circularity;
 pub(crate) mod object_literal_context;

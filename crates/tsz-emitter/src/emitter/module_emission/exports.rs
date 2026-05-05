@@ -775,6 +775,10 @@ impl<'a> Printer<'a> {
                                     continue;
                                 }
 
+                                if export_name == "undefined" && local_name == "undefined" {
+                                    continue;
+                                }
+
                                 if self.ctx.module_state.runtime_decl_names_computed
                                     && self
                                         .ctx
@@ -787,6 +791,13 @@ impl<'a> Printer<'a> {
                                         .runtime_declaration_names
                                         .contains(&local_name)
                                 {
+                                    continue;
+                                }
+
+                                // For `export { undefined }`, tsc relies on the
+                                // preamble `exports.undefined = void 0;` and does not
+                                // emit a trailing `exports.undefined = undefined;`.
+                                if export_name == "undefined" && local_name == "undefined" {
                                     continue;
                                 }
 

@@ -1131,6 +1131,31 @@ fn recovered_typeof_member_type_tail_emits_as_statement() {
 }
 
 #[test]
+fn valid_typeof_property_call_does_not_emit_extra_statement() {
+    // A method literally named `typeof` is a valid JS property. The emitter must
+    // not treat it as a recovered type-annotation tail and emit a duplicate
+    // `typeof (arg);` statement.
+    let source = r#"const obj = {
+    typeof(value) {
+        return value;
+    }
+};
+const result = obj.typeof("ok");
+result;"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains(r#"obj.typeof("ok")"#),
+        "Valid .typeof() property call should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(r#"typeof ("ok");"#),
+        "Valid .typeof() call must not produce a spurious typeof statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn recovered_interface_function_type_body_return_emits() {
     let source = r#"class Foo {
     get Z() {

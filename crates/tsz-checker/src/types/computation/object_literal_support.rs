@@ -1,4 +1,5 @@
 use crate::context::TypingRequest;
+use crate::query_boundaries::common::TypeResolver;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
@@ -397,6 +398,20 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_type_for_property_access(type_id);
         let resolved = self.resolve_lazy_type(resolved);
         let resolved = self.evaluate_type_with_env(resolved);
+        // Cross-file lowering can leave intersection members as
+        // `Application(UnresolvedTypeName(name), args)` when an imported
+        // qualified type (e.g. `util.OmitKeys`) was referenced inside an
+        // alias body that the lowering pass couldn't fully resolve. By the
+        // time the spread collector runs, the merged binder graph IS
+        // available — re-run the cross-file qualified-name resolver and
+        // rewrite the base to `Lazy(def_id)` when we can.
+        let resolved = self.reresolve_unresolved_application_bases_in_intersection(resolved);
+        // Even with a `Lazy(def_id)` base, the solver-level spread collector
+        // returns `Vec::new()` for `Application` members because no arm of
+        // its match handles them. Force-expand each such member here via
+        // `instantiate_type` + `evaluate_type_with_env`. Falls back to the
+        // original member when expansion collapses to `unknown`/`error`.
+        let resolved = self.expand_intersection_application_members_for_spread(resolved);
         if let Some(mapped_id) =
             crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved)
         {
@@ -463,5 +478,138 @@ impl<'a> CheckerState<'a> {
                 prop
             })
             .collect()
+    }
+
+    /// When `type_id` is an intersection containing
+    /// `Application(UnresolvedTypeName(name), args)` members, attempt to
+    /// recover the alias body by re-running the cross-file qualified-name
+    /// resolver from the current checker context. Cross-file lowering can
+    /// fall back to `UnresolvedTypeName` when an imported namespace member
+    /// (e.g. `util.OmitKeys`) wasn't yet visible at the time the alias body
+    /// was lowered; by the time the spread collector runs, the full binder
+    /// graph is available and the dotted name resolves cleanly.
+    fn reresolve_unresolved_application_bases_in_intersection(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
+        let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        let mut rewritten = Vec::with_capacity(members.len());
+        let mut changed = false;
+        for member in members {
+            let new_member = self.reresolve_unresolved_application_base(member);
+            if new_member != member {
+                changed = true;
+            }
+            rewritten.push(new_member);
+        }
+        if !changed {
+            return type_id;
+        }
+        let new_intersection =
+            crate::query_boundaries::spread::make_intersection(self.ctx.types, rewritten);
+        self.evaluate_type_with_env(new_intersection)
+    }
+
+    /// If `type_id` is `Application(UnresolvedTypeName(name), args)` whose
+    /// flat dotted `name` resolves to a `DefId` via the current binder, return
+    /// `Application(Lazy(def_id), args)`. Otherwise return `type_id` unchanged.
+    fn reresolve_unresolved_application_base(&mut self, type_id: TypeId) -> TypeId {
+        let Some(app_id) = crate::query_boundaries::common::application_id(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        let app = self.ctx.types.type_application(app_id);
+        let Some(atom) =
+            crate::query_boundaries::spread::unresolved_type_name_atom(self.ctx.types, app.base)
+        else {
+            return type_id;
+        };
+        let name = self.ctx.types.resolve_atom(atom);
+        let Some(def_id) = self.resolve_entity_name_text_to_def_id_for_lowering(&name) else {
+            return type_id;
+        };
+        let lazy_base = crate::query_boundaries::spread::make_lazy(self.ctx.types, def_id);
+        crate::query_boundaries::spread::make_application(
+            self.ctx.types,
+            lazy_base,
+            app.args.clone(),
+        )
+    }
+
+    /// When `type_id` is an intersection whose members include an unreduced
+    /// `Application(Lazy(def_id), [args])`, expand each such member by
+    /// instantiating the alias body with the supplied args using the
+    /// resolver-equipped checker context. The solver-level spread collector
+    /// returns no properties for `Application` members (they fall through
+    /// `_ => Vec::new()`), so without this expansion the structural
+    /// contributions of e.g. `OmitKeys<U, "path">` would be lost.
+    fn expand_intersection_application_members_for_spread(&mut self, type_id: TypeId) -> TypeId {
+        let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        let mut expanded = Vec::with_capacity(members.len());
+        let mut changed = false;
+        for member in members {
+            let exp = self.expand_application_member_for_spread(member);
+            if exp != member {
+                changed = true;
+            }
+            expanded.push(exp);
+        }
+        if !changed {
+            return type_id;
+        }
+        let new_intersection =
+            crate::query_boundaries::spread::make_intersection(self.ctx.types, expanded);
+        self.evaluate_type_with_env(new_intersection)
+    }
+
+    /// Expand a single `Application(Lazy(def_id), args)` to its instantiated
+    /// body via `instantiate_type` + `evaluate_type_with_env`. Falls back to
+    /// the original `type_id` for non-applications, missing type params,
+    /// missing body, arity mismatch, or when evaluation collapses to
+    /// `unknown`/`error`/`any` (which would otherwise let downstream
+    /// intersection reduction silently drop the application via
+    /// `unknown & T = T`).
+    fn expand_application_member_for_spread(&mut self, type_id: TypeId) -> TypeId {
+        let Some(app_id) = crate::query_boundaries::common::application_id(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        let app = self.ctx.types.type_application(app_id);
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+        else {
+            return type_id;
+        };
+        let Some(type_params) = self.ctx.get_lazy_type_params(def_id) else {
+            return type_id;
+        };
+        let Some(body) = self.ctx.resolve_lazy(def_id, self.ctx.types) else {
+            return type_id;
+        };
+        if type_params.len() != app.args.len() {
+            return type_id;
+        }
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &type_params,
+            &app.args,
+        );
+        let instantiated =
+            crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &substitution);
+        if instantiated == type_id {
+            return type_id;
+        }
+        let evaluated = self.evaluate_type_with_env(instantiated);
+        if evaluated == TypeId::UNKNOWN || evaluated == TypeId::ERROR || evaluated == TypeId::ANY {
+            return type_id;
+        }
+        evaluated
     }
 }

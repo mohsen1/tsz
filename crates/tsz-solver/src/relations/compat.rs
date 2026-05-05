@@ -6,7 +6,7 @@ use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{IntrinsicKind, LiteralValue, MappedType, PropertyInfo, TypeData, TypeId};
 use crate::visitor::{
     TypeVisitor, intrinsic_kind, is_empty_object_type_through_type_constraints, is_error_type,
-    lazy_def_id,
+    keyof_inner_type, lazy_def_id, type_param_info,
 };
 use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
@@ -1260,6 +1260,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             flatten_mapped_chain(self.interner, s_mapped_id),
             flatten_mapped_chain(self.interner, t_mapped_id),
         ) {
+            let constraints_match =
+                self.mapped_key_constraint_covers(s_flat.key_constraint, t_flat.key_constraint);
             let sources_match = if s_flat.source == t_flat.source {
                 true
             } else {
@@ -1267,7 +1269,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 self.subtype.is_subtype_of(s_flat.source, t_flat.source)
             };
 
-            if sources_match {
+            if constraints_match && sources_match {
                 // Source has optional but target doesn't → reject
                 if s_flat.has_optional && !t_flat.has_optional {
                     return Some(false);
@@ -1282,17 +1284,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // Both must have the same constraint (e.g., both `keyof T`).
         // First try identity, then evaluate to normalize (e.g., keyof(Readonly<T>) → keyof(T)).
-        let constraints_match = if s_mapped.constraint == t_mapped.constraint {
-            true
-        } else {
-            let s_eval = self.subtype.evaluate_type(s_mapped.constraint);
-            let t_eval = self.subtype.evaluate_type(t_mapped.constraint);
-            s_eval == t_eval
-                || (self.mapped_name_types_compatible(&s_mapped, &t_mapped)
-                    && self
-                        .subtype
-                        .is_subtype_of(t_mapped.constraint, s_mapped.constraint))
-        };
+        let constraints_match = self
+            .mapped_key_constraint_covers(s_mapped.constraint, t_mapped.constraint)
+            || (self.mapped_name_types_compatible(&s_mapped, &t_mapped)
+                && self
+                    .subtype
+                    .is_subtype_of(t_mapped.constraint, s_mapped.constraint));
 
         if !constraints_match {
             return None;
@@ -1352,6 +1349,39 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             && self.subtype.is_subtype_of(target_name, source_name);
         self.subtype.type_param_equivalences.truncate(equiv_start);
         compatible
+    }
+
+    fn mapped_key_constraint_covers(
+        &mut self,
+        source_constraint: TypeId,
+        target_constraint: TypeId,
+    ) -> bool {
+        if source_constraint == target_constraint {
+            return true;
+        }
+        let source_eval = self.subtype.evaluate_type(source_constraint);
+        let target_eval = self.subtype.evaluate_type(target_constraint);
+        if source_eval != source_constraint || target_eval != target_constraint {
+            return self.mapped_key_constraint_covers(source_eval, target_eval);
+        }
+        if let Some(target_param) = type_param_info(self.interner, target_constraint)
+            && let Some(target_bound) = target_param.constraint
+        {
+            return self.mapped_key_constraint_covers(source_constraint, target_bound);
+        }
+        if type_param_info(self.interner, source_constraint).is_some() {
+            return false;
+        }
+        if let (Some(source_obj), Some(target_obj)) = (
+            keyof_inner_type(self.interner, source_constraint),
+            keyof_inner_type(self.interner, target_constraint),
+        ) {
+            self.configure_subtype(self.strict_function_types);
+            return self.subtype.is_subtype_of(source_obj, target_obj);
+        }
+        self.configure_subtype(self.strict_function_types);
+        self.subtype
+            .is_subtype_of(target_constraint, source_constraint)
     }
 
     /// Check fast-path assignability conditions.

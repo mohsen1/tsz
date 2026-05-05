@@ -1617,8 +1617,8 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Compute the capture variable name for `_this` in a given scope.
-    /// If the scope contains a variable declaration or function parameter named `_this`,
-    /// returns `_this_1`. Otherwise returns `_this`.
+    /// Keep trying TypeScript's `_this`, `_this_1`, `_this_2`, ... pattern until
+    /// the generated name does not collide with a binding in the same scope.
     pub(super) fn compute_this_capture_name(&self, body_idx: NodeIndex) -> Arc<str> {
         self.compute_this_capture_name_with_params(body_idx, None)
     }
@@ -1629,10 +1629,19 @@ impl<'a> LoweringPass<'a> {
         body_idx: NodeIndex,
         params: Option<&NodeList>,
     ) -> Arc<str> {
-        if self.scope_has_name(body_idx, "_this") || self.params_have_name(params, "_this") {
-            Arc::from("_this_1")
-        } else {
-            Arc::from("_this")
+        let mut suffix = 0usize;
+        loop {
+            let candidate = if suffix == 0 {
+                "_this".to_string()
+            } else {
+                format!("_this_{suffix}")
+            };
+            if !self.scope_has_name(body_idx, &candidate)
+                && !self.params_have_name(params, &candidate)
+            {
+                return Arc::from(candidate);
+            }
+            suffix += 1;
         }
     }
 
