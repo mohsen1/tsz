@@ -1,7 +1,7 @@
 # fix(checker): align weak symbol diagnostic fingerprints
 
 - **Date**: 2026-05-05
-- **Branch**: `fix/checker-weak-symbol-fingerprints`
+- **Branch**: `fix/checker-weak-symbol-fingerprints-v2`
 - **PR**: TBD
 - **Status**: claim
 - **Workstream**: 1 (conformance)
