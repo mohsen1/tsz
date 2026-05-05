@@ -2129,7 +2129,15 @@ impl<'a> Printer<'a> {
                         if block_pos >= *_member_pos {
                             break;
                         }
+                        let prev_this_alias = self.scoped_static_this_alias.clone();
+                        let prev_super_alias = self.scoped_static_super_base_alias.clone();
+                        self.scoped_static_this_alias =
+                            static_initializer_this_binding.map(std::sync::Arc::from);
+                        self.scoped_static_super_base_alias =
+                            static_initializer_super_base.map(std::sync::Arc::from);
                         self.emit_static_block_iife_expression(block_idx, comment_idx);
+                        self.scoped_static_this_alias = prev_this_alias;
+                        self.scoped_static_super_base_alias = prev_super_alias;
                         self.write(";");
                         self.write_line();
                         next_static_block += 1;
@@ -2233,7 +2241,15 @@ impl<'a> Printer<'a> {
             if !self.defer_class_static_blocks {
                 while next_static_block < deferred_static_blocks.len() {
                     let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
+                    let prev_this_alias = self.scoped_static_this_alias.clone();
+                    let prev_super_alias = self.scoped_static_super_base_alias.clone();
+                    self.scoped_static_this_alias =
+                        static_initializer_this_binding.map(std::sync::Arc::from);
+                    self.scoped_static_super_base_alias =
+                        static_initializer_super_base.map(std::sync::Arc::from);
                     self.emit_static_block_iife_expression(block_idx, comment_idx);
+                    self.scoped_static_this_alias = prev_this_alias;
+                    self.scoped_static_super_base_alias = prev_super_alias;
                     self.write(";");
                     self.write_line();
                     next_static_block += 1;
