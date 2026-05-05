@@ -1763,6 +1763,32 @@ fn instantiation_expression_with_empty_args_emits_bare() {
     );
 }
 
+/// Regression: `(({}) as any).foo` was emitting `(({}).foo)` — wrapping
+/// the entire property access in extra outer parens because the
+/// "object-literal access" emitter unconditionally wrote `(` and `)`
+/// even when the inner emit was already producing `({})` (from the
+/// nested `ParenthesizedExpression`). tsc emits `({}).foo`.
+#[test]
+fn property_access_on_paren_cast_paren_object_literal_emits_single_paren() {
+    let source = "interface T {}\n(({}) as any as T).foo;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("({}).foo"),
+        "Receiver should be `({{}})` with `.foo` suffix outside the parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(({}).foo)"),
+        "Outer parens around the property access are redundant when the receiver is already parenthesized.\nOutput:\n{output}"
+    );
+}
+
 /// Regression: `export default (X as T)` where `X` is a class or function
 /// expression. The parens only existed to delimit the type cast; after
 /// erasure they look removable, but stripping them silently changes the

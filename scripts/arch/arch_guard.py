@@ -417,6 +417,7 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/tests/dispatch_tests.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/class_type/core.rs",
+            "crates/tsz-checker/src/types/computation/access.rs",
             "crates/tsz-checker/src/types/computation/binary.rs",
             "crates/tsz-checker/src/types/computation/call/inner.rs",
             "crates/tsz-checker/src/types/computation/call_inference.rs",
