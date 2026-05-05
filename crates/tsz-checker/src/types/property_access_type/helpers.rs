@@ -198,7 +198,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|ident| ident.escaped_text == "exports")
     }
 
-    pub(crate) fn current_file_commonjs_direct_write_rhs(
+    pub(crate) fn property_access_direct_write_rhs(
         &self,
         property_access_idx: NodeIndex,
     ) -> Option<NodeIndex> {
@@ -211,6 +211,13 @@ impl<'a> CheckerState<'a> {
         let binary = self.ctx.arena.get_binary_expr(parent_node)?;
         (binary.left == property_access_idx && self.is_assignment_operator(binary.operator_token))
             .then_some(binary.right)
+    }
+
+    pub(crate) fn current_file_commonjs_direct_write_rhs(
+        &self,
+        property_access_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        self.property_access_direct_write_rhs(property_access_idx)
     }
 
     pub(crate) fn current_file_commonjs_write_rhs_is_undefined_like(&self, idx: NodeIndex) -> bool {

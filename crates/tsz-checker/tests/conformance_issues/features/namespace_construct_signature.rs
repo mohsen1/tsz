@@ -1351,12 +1351,12 @@ c.p + c.q;
         .into_iter()
         .filter(|(code, _)| *code == 2339 || *code == 18048)
         .collect();
-    assert_eq!(relevant.len(), 1, "unexpected diagnostics: {relevant:#?}");
+    assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
     assert!(
         relevant
             .iter()
             .all(|(_, message)| message.contains("Property 'q' does not exist on type 'C'.")),
-        "Expected TS2339 for missing constructor property. Actual diagnostics: {relevant:#?}"
+        "Expected TS2339 for missing constructor property assignment and access. Actual diagnostics: {relevant:#?}"
     );
     assert!(
         !has_error(&relevant, 18048),

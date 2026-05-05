@@ -2170,6 +2170,10 @@ impl<'a> CheckerState<'a> {
                         && self
                             .current_this_type()
                             .is_some_and(|ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN);
+                    let this_direct_write_rhs_is_void_zero = is_this_access
+                        && self
+                            .property_access_direct_write_rhs(idx)
+                            .is_some_and(|rhs| self.js_assignment_rhs_is_void_zero(rhs));
                     // When `this` type comes from a ThisType<T> marker (e.g., Vue 2
                     // Options API pattern), property access on unresolved type parameters
                     // should not emit TS2339. The type parameters will be inferred from the
@@ -2242,7 +2246,9 @@ impl<'a> CheckerState<'a> {
                                 access.expression,
                                 property_name,
                             );
-                        if !object_literal_owned_this || prototype_object_literal_expando_write {
+                        if (!object_literal_owned_this || prototype_object_literal_expando_write)
+                            && !(has_explicit_this_context && this_direct_write_rhs_is_void_zero)
+                        {
                             return TypeId::ANY;
                         }
                     }

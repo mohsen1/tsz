@@ -1539,6 +1539,37 @@ a.empty;
 }
 
 #[test]
+fn test_plain_js_function_constructor_void_zero_initializer_does_not_declare_property() {
+    let source = r#"
+exports.j = 1;
+exports.k = void 0;
+var o = {};
+o.x = 1;
+o.y = void 0;
+o.x + o.y;
+
+function C() {
+    this.p = 1;
+    this.q = void 0;
+}
+var c = new C();
+c.p + c.q;
+"#;
+    let diagnostics = check_js(source);
+    let q_missing: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, msg)| {
+            *code == 2339 && msg.contains("Property 'q' does not exist on type 'C'.")
+        })
+        .collect();
+    assert_eq!(
+        q_missing.len(),
+        2,
+        "Expected TS2339 for both void-zero constructor assignment and later property access, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_plain_js_function_constructor_initializers_emit_ts7008_in_check_js() {
     let source = r#"
 function A() {
