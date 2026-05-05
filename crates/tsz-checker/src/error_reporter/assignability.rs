@@ -1401,6 +1401,7 @@ impl<'a> CheckerState<'a> {
             let widened = self.widen_type_for_display(source);
             source_str = self.format_assignability_type_for_message(widened, target);
         }
+        let mut source_from_annotation = false;
         if let Some(expr_idx) = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))
@@ -1410,6 +1411,7 @@ impl<'a> CheckerState<'a> {
             && !annotation_text.trim_start().starts_with("keyof ")
         {
             source_str = self.format_declared_annotation_for_diagnostic(&annotation_text);
+            source_from_annotation = true;
         }
         if self
             .collapsed_anonymous_object_intersection_for_assignability_display(source)
@@ -1418,6 +1420,17 @@ impl<'a> CheckerState<'a> {
                 self.line_rhs_declared_intersection_annotation(anchor_idx)
         {
             source_str = self.format_declared_annotation_for_diagnostic(&annotation_text);
+            source_from_annotation = true;
+        }
+        if !source_from_annotation
+            && let Some(object_display) =
+                self.object_literal_source_type_display(anchor_idx, Some(target))
+        {
+            source_str = self.rewrite_source_display_for_non_literal_target_assignability(
+                source,
+                target,
+                object_display,
+            );
         }
         let target_str = self.format_type_for_diagnostic_role(
             target,
