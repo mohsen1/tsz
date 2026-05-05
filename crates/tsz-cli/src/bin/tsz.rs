@@ -2532,7 +2532,6 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
         .unwrap_or("es2025");
     let user_target = parse_target(user_target_str);
 
-    let user_strict = map.get("strict").and_then(|v| v.as_bool()).unwrap_or(false);
     let user_composite = map
         .get("composite")
         .and_then(|v| v.as_bool())
@@ -2635,27 +2634,9 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
     }
 
     // --- strict sub-flags: deps=["strict"] ---
-    let strict_sub_flags = [
-        "noImplicitAny",
-        "noImplicitThis",
-        "strictNullChecks",
-        "strictFunctionTypes",
-        "strictBindCallApply",
-        "strictPropertyInitialization",
-        "strictBuiltinIteratorReturn",
-        "alwaysStrict",
-        "useUnknownInCatchVariables",
-    ];
-    for flag_name in &strict_sub_flags {
-        if !provided.contains(*flag_name) && depends_on_provided(&["strict"]) {
-            // computed = strict ?? false; default = false (no strict in empty config)
-            let computed = user_strict;
-            let default_val = false;
-            if computed != default_val {
-                map.insert((*flag_name).to_string(), Value::Bool(computed));
-            }
-        }
-    }
+    // tsc 6.0 keeps `strict: true` compact in --showConfig output. Explicit
+    // strict sub-options are already present in `map`, but the aggregate
+    // `strict` flag no longer expands every sub-option here.
 
     // --- isolatedModules: deps=["verbatimModuleSyntax"] ---
     if !provided.contains("isolatedModules") && depends_on_provided(&["verbatimModuleSyntax"]) {
@@ -2739,15 +2720,13 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
         && depends_on_provided(&["moduleResolution", "module", "target"])
     {
         let user_resolve_json = map.get("resolveJsonModule").and_then(|v| v.as_bool());
-        // Compute: resolveJsonModule defaults to true if moduleResolution is node16/nodenext/bundler
+        // tsc 6.0 shows the empty-config default as true (bundler), but node16
+        // and legacy resolution compute false while nodenext/bundler compute true.
         let eff_mr = map
             .get("moduleResolution")
             .and_then(|v| v.as_str())
             .unwrap_or(DEFAULT_MODULE_RESOLUTION);
-        let mr_implies_json = matches!(
-            eff_mr.to_lowercase().as_str(),
-            "node16" | "nodenext" | "bundler"
-        );
+        let mr_implies_json = matches!(eff_mr.to_lowercase().as_str(), "nodenext" | "bundler");
         let computed = user_resolve_json.unwrap_or(mr_implies_json);
         // default: bundler implies true
         let default_mr_implies = matches!(

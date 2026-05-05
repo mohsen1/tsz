@@ -2908,7 +2908,7 @@ fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<St
 /// dot-separated identifier chain (e.g. `h`, `React.createElement`).
 /// Empty segments, leading/trailing dots, and any non-identifier
 /// character (digits leading a segment, dashes, whitespace) fail
-/// validation. Mirrors tsc's "EntityName + identifier check" used to
+/// validation. Mirrors tsc's "`EntityName` + identifier check" used to
 /// drive the TS5067 diagnostic and the runtime fallback.
 fn is_valid_jsx_factory_expression(s: &str) -> bool {
     if s.is_empty() {

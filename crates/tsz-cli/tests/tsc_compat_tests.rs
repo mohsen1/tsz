@@ -1356,6 +1356,77 @@ fn tsc_parity_no_input() {
     assert_tsc_tsz_match_with_exit_code(&temp.path, &[], "no input (no tsconfig, no files)");
 }
 
+#[test]
+fn tsc_parity_show_config_strict_stays_compact() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("show_config_strict_compact").expect("temp dir");
+    write_file(&temp.path.join("main.ts"), "const n: number = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2017",
+    "strict": true,
+    "noEmit": true
+  },
+  "files": ["main.ts"]
+}
+"#,
+    );
+
+    let tsc_output = run_tsc(&temp.path, &["--showConfig"]).expect("tsc should run");
+    let output = run_tsz(&temp.path, &["--showConfig"]).expect("tsz should run");
+    assert!(
+        !tsc_output.contains("\"strictNullChecks\""),
+        "tsc should keep strict sub-options compact: {tsc_output}"
+    );
+    assert!(
+        !output.contains("\"strictNullChecks\""),
+        "strict sub-options should not be expanded: {output}"
+    );
+}
+
+#[test]
+fn tsc_parity_show_config_node16_resolve_json_false() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("show_config_node16_resolve_json").expect("temp dir");
+    write_file(
+        &temp.path.join("main.ts"),
+        "import data from \"./data.json\";\nconst n: number = data.value;\n",
+    );
+    write_file(&temp.path.join("data.json"), "{\"value\":123}\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "node16",
+    "moduleResolution": "node16",
+    "target": "es2017",
+    "strict": true,
+    "noEmit": true
+  },
+  "files": ["main.ts", "data.json"]
+}
+"#,
+    );
+
+    let tsc_output = run_tsc(&temp.path, &["--showConfig"]).expect("tsc should run");
+    let output = run_tsz(&temp.path, &["--showConfig"]).expect("tsz should run");
+    assert!(
+        tsc_output.contains("\"resolveJsonModule\": false"),
+        "tsc should show node16 resolveJsonModule false: {tsc_output}"
+    );
+    assert!(
+        output.contains("\"resolveJsonModule\": false"),
+        "node16 showConfig should include resolveJsonModule false: {output}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // --init
 // ---------------------------------------------------------------------------
