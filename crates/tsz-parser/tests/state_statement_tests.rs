@@ -858,6 +858,56 @@ fn parse_reserved_word_parameter_names_emit_ts1390_recovery_family() {
 }
 
 #[test]
+fn parse_rest_reserved_word_parameter_name_emits_ts1359_not_ts1390() {
+    let source = "\"use strict\";\nfunction f(...while) {}\nfunction g(...public) {}";
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE
+        ),
+        "expected TS1359 for reserved rest parameter names, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::IS_NOT_ALLOWED_AS_A_PARAMETER_NAME),
+        "rest parameter reserved-word recovery should not emit TS1390, got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_destructuring_parameter_reserved_words_matches_tsc_code_set() {
+    let source = r#""use strict";
+function a({while}) { }
+function a1({public}) { }
+function a4([while, for, public]){ }
+function a5(...while) { }
+function a6(...public) { }
+function a7(...a: string) { }
+a({ while: 1 });
+"#;
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    for expected in [
+        diagnostic_codes::EXPECTED,
+        diagnostic_codes::EXPRESSION_EXPECTED,
+        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED,
+        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+    ] {
+        assert!(
+            codes.contains(&expected),
+            "expected diagnostic code {expected}, got {codes:?}"
+        );
+    }
+    assert!(
+        !codes.contains(&diagnostic_codes::IS_NOT_ALLOWED_AS_A_PARAMETER_NAME),
+        "conformance target should not emit TS1390, got {codes:?}"
+    );
+}
+
+#[test]
 fn parse_reserved_word_as_const_name_emits_ts1389() {
     let (parser, _root) = parse_source("const class = 1;");
     let diags = parser.get_diagnostics();

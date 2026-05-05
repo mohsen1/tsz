@@ -78,6 +78,8 @@ pub const CONTEXT_FLAG_GENERATOR_MEMBER_NAME: u32 = 131072;
 /// Empty spans at EOF report TS1109 from template-span recovery so the
 /// expression error can anchor before trailing trivia while TS1005 anchors at EOF.
 pub const CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION: u32 = 262144;
+/// Context flag: parsing a binding pattern as a function parameter name.
+pub const CONTEXT_FLAG_PARAMETER_BINDING_PATTERN: u32 = 524288;
 
 // =============================================================================
 // Parse Diagnostic

@@ -313,6 +313,19 @@ impl ParserState {
                 if let Some(comma_pos) = last_comma_pos {
                     self.parse_error_at(comma_pos, 1, "';' expected.", diagnostic_codes::EXPECTED);
                 }
+                if (self.context_flags
+                    & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
+                    != 0
+                {
+                    self.parse_companion_error_at_current_token(
+                        "Expression expected.",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
+                    self.parse_companion_error_at_current_token(
+                        "Declaration or statement expected.",
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                }
                 self.pending_array_binding_tail_recovery = true;
                 reserved_word_element_needs_close_error = true;
                 self.next_token();

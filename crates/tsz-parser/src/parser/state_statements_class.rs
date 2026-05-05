@@ -2,7 +2,8 @@
 
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
-    CONTEXT_FLAG_IN_CLASS, CONTEXT_FLAG_PARAMETER_DEFAULT, ParserState,
+    CONTEXT_FLAG_IN_CLASS, CONTEXT_FLAG_PARAMETER_BINDING_PATTERN, CONTEXT_FLAG_PARAMETER_DEFAULT,
+    ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -550,9 +551,17 @@ impl ParserState {
 
         // Parse parameter name - can be an identifier, keyword, or binding pattern
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_object_binding_pattern()
+            let saved_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_PARAMETER_BINDING_PATTERN;
+            let pattern = self.parse_object_binding_pattern();
+            self.context_flags = saved_flags;
+            pattern
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
-            self.parse_array_binding_pattern()
+            let saved_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_PARAMETER_BINDING_PATTERN;
+            let pattern = self.parse_array_binding_pattern();
+            self.context_flags = saved_flags;
+            pattern
         } else if self.is_token(SyntaxKind::ThisKeyword) {
             let start_pos = self.token_pos();
             let end_pos = self.token_end();
@@ -569,7 +578,11 @@ impl ParserState {
         ) {
             let reserved_start = self.token_pos();
             let reserved_end = self.token_end();
-            self.error_reserved_word_in_parameter_name();
+            if dot_dot_dot_token {
+                self.error_reserved_word_identifier();
+            } else {
+                self.error_reserved_word_in_parameter_name();
+            }
             self.arena.add_identifier(
                 SyntaxKind::Identifier as u16,
                 reserved_start,
