@@ -37,8 +37,27 @@ impl<'a> Printer<'a> {
             .map(std::string::ToString::to_string);
         let needs_this_capture = this_capture_name.is_some();
 
+        if block.statements.nodes.is_empty()
+            && !needs_this_capture
+            && is_function_body_block
+            && !self.pending_object_rest_params.is_empty()
+            && self.is_single_line(node)
+        {
+            self.ctx.block_scope_state.enter_function_scope();
+            self.map_opening_brace(node);
+            self.write("{ ");
+            self.emit_pending_object_rest_param_preamble(true);
+            self.map_closing_brace(node);
+            self.write(" }");
+            self.ctx.block_scope_state.exit_scope();
+            return;
+        }
+
         // Empty blocks: check for comments inside and preserve original format
-        if block.statements.nodes.is_empty() && !needs_this_capture {
+        if block.statements.nodes.is_empty()
+            && !needs_this_capture
+            && self.pending_object_rest_params.is_empty()
+        {
             // Find the actual closing `}` position (not node.end which includes trailing trivia)
             let closing_brace_end = self.find_block_closing_brace_end(node);
             let closing_brace_pos = closing_brace_end.saturating_sub(1);
@@ -254,14 +273,7 @@ impl<'a> Printer<'a> {
         // Inject object rest parameter destructuring preamble for ES2018 lowering.
         // e.g., `function f(_a, b) { var { a } = _a, rest = __rest(_a, ["a"]); ... }`
         if is_function_body_block && !self.pending_object_rest_params.is_empty() {
-            let rest_params: Vec<(String, NodeIndex)> =
-                std::mem::take(&mut self.pending_object_rest_params);
-            for (temp_name, pattern_idx) in &rest_params {
-                self.write("var ");
-                self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
-                self.write(";");
-                self.write_line();
-            }
+            self.emit_pending_object_rest_param_preamble(false);
         }
 
         let hoisted_var_byte_offset = if is_function_body_block {
@@ -600,6 +612,22 @@ impl<'a> Printer<'a> {
             self.write(&ref_vars.join(", "));
             self.write(";");
             self.write_line();
+        }
+    }
+
+    fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
+        let rest_params: Vec<(String, NodeIndex)> =
+            std::mem::take(&mut self.pending_object_rest_params);
+        for (i, (temp_name, pattern_idx)) in rest_params.iter().enumerate() {
+            if inline && i > 0 {
+                self.write(" ");
+            }
+            self.write("var ");
+            self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
+            self.write(";");
+            if !inline {
+                self.write_line();
+            }
         }
     }
 

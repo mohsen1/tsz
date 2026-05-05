@@ -1237,6 +1237,16 @@ impl<'a> Printer<'a> {
                         &mut object_rest_temp_counter,
                         &mut object_rest_temp_names,
                     );
+                    if param.dot_dot_dot_token {
+                        self.write("...");
+                        if let Some(name_node) = self.arena.get(param.name) {
+                            self.emit_comments_after_dot_dot_dot(
+                                param_node.pos,
+                                name_node.pos,
+                                false,
+                            );
+                        }
+                    }
                     self.write(&temp);
                     // Skip type annotation comments
                     if param.type_annotation.is_some()
