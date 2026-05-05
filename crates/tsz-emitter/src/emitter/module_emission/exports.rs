@@ -775,6 +775,10 @@ impl<'a> Printer<'a> {
                                     continue;
                                 }
 
+                                if export_name == "undefined" && local_name == "undefined" {
+                                    continue;
+                                }
+
                                 if self.ctx.module_state.runtime_decl_names_computed
                                     && self
                                         .ctx
