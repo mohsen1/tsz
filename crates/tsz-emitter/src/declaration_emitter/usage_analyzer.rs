@@ -498,6 +498,7 @@ impl<'a> UsageAnalyzer<'a> {
             // Matches typeReferenceRelatedFiles.
             if func.body.is_some() {
                 self.analyze_return_statement_assertions(func.body);
+                self.analyze_return_statement_inferred_dependencies(func.body);
             }
         }
     }
@@ -514,6 +515,72 @@ impl<'a> UsageAnalyzer<'a> {
         };
         for &stmt_idx in &block.statements.nodes {
             self.analyze_return_assertion_in_statement(stmt_idx);
+        }
+    }
+
+    fn analyze_return_statement_inferred_dependencies(&mut self, body_idx: NodeIndex) {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return;
+        };
+        for &stmt_idx in &block.statements.nodes {
+            self.analyze_return_inferred_dependency_in_statement(stmt_idx);
+        }
+    }
+
+    fn analyze_return_inferred_dependency_in_statement(&mut self, stmt_idx: NodeIndex) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+            return;
+        }
+        let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+            return;
+        };
+        if !ret.expression.is_some() {
+            return;
+        }
+
+        self.walk_inferred_type_or_related(&[ret.expression]);
+        self.analyze_returned_identifier_declared_type(ret.expression);
+    }
+
+    fn analyze_returned_identifier_declared_type(&mut self, expr_idx: NodeIndex) {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return;
+        }
+        let Some(sym_id) = self.value_reference_symbol(expr_idx) else {
+            return;
+        };
+        let declarations = self
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| symbol.all_declarations())
+            .unwrap_or_default();
+        for decl_idx in declarations {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            if let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                && decl.type_annotation.is_some()
+            {
+                self.analyze_type_node(decl.type_annotation);
+            } else if let Some(param) = self.arena.get_parameter(decl_node)
+                && param.type_annotation.is_some()
+            {
+                self.analyze_type_node(param.type_annotation);
+            } else if let Some(prop) = self.arena.get_property_decl(decl_node)
+                && prop.type_annotation.is_some()
+            {
+                self.analyze_type_node(prop.type_annotation);
+            }
         }
     }
 
