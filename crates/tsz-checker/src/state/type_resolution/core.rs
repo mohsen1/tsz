@@ -1160,6 +1160,11 @@ impl<'a> CheckerState<'a> {
         type_name_idx: NodeIndex,
     ) -> TypeId {
         if self.is_mapped_type_utility(name) {
+            if self.ctx.compiler_options.no_lib {
+                self.report_missing_lib_type_name(name, type_name_idx);
+                return TypeId::ANY;
+            }
+
             if let Some(args) = &type_ref.type_arguments {
                 let type_args: Vec<TypeId> = args
                     .nodes
@@ -1186,11 +1191,9 @@ impl<'a> CheckerState<'a> {
                     });
                 }
 
-                if self.ctx.has_lib_loaded() {
-                    let (base_type, _) = self.resolve_lib_type_with_params(name);
-                    if let Some(base_type) = base_type {
-                        return self.ctx.types.factory().application(base_type, type_args);
-                    }
+                let (base_type, _) = self.resolve_lib_type_with_params(name);
+                if let Some(base_type) = base_type {
+                    return self.ctx.types.factory().application(base_type, type_args);
                 }
             }
             return TypeId::ANY;
