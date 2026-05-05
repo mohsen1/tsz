@@ -222,7 +222,7 @@ appendToOptionalArray(foo, "x", "no");
     assert!(
         ts2345_messages
             .iter()
-            .any(|message| message.contains("{ y?: number[]")),
+            .any(|message| message.contains("{ y?: 12[]")),
         "the numeric value passed with key 'y' should check the object against only the y slot. Diagnostics: {diags:#?}"
     );
     assert!(
