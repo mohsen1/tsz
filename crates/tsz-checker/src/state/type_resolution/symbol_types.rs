@@ -4,6 +4,7 @@
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
@@ -342,9 +343,39 @@ impl<'a> CheckerState<'a> {
             if should_attempt_type_alias_resolution
                 && (has_type_alias_decl || (flags & symbol_flags::TYPE_ALIAS) != 0)
             {
+                let alias_body_is_keyof_type_query = declarations.iter().any(|&d| {
+                    let arena = self
+                        .ctx
+                        .binder
+                        .arena_for_declaration_or(sym_id, d, self.ctx.arena);
+                    arena
+                        .get(d)
+                        .and_then(|n| {
+                            if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                                let type_alias = arena.get_type_alias(n)?;
+                                let type_node = arena.get(type_alias.type_node)?;
+                                if type_node.kind != syntax_kind_ext::TYPE_OPERATOR {
+                                    return Some(false);
+                                }
+                                let operator = arena.get_type_operator(type_node)?;
+                                let operand = arena.get(operator.type_node)?;
+                                Some(
+                                    operator.operator == SyntaxKind::KeyOfKeyword as u16
+                                        && operand.kind == syntax_kind_ext::TYPE_QUERY,
+                                )
+                            } else {
+                                Some(false)
+                            }
+                        })
+                        .unwrap_or(false)
+                });
                 // Return structural type directly for type aliases (not Lazy) so
                 // conditional types are fully resolved during assignability checking.
-                let mut structural_type = self.get_type_of_symbol(sym_id);
+                let mut structural_type = if alias_body_is_keyof_type_query {
+                    self.type_reference_symbol_type_with_params(sym_id).0
+                } else {
+                    self.get_type_of_symbol(sym_id)
+                };
                 if (structural_type == TypeId::ANY
                     || structural_type == TypeId::UNKNOWN
                     || structural_type == TypeId::ERROR)
@@ -1495,11 +1526,11 @@ impl<'a> CheckerState<'a> {
                         };
 
                         let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
-                            let ident_name = lib_arena.get_identifier_text(node_idx)?;
-                            if is_compiler_managed_type(ident_name) {
+                            let type_name = entity_name_text_in_arena(lib_arena, node_idx)?;
+                            if is_compiler_managed_type(&type_name) {
                                 return None;
                             }
-                            let sym_id = resolve_type_name(ident_name)?;
+                            let sym_id = resolve_type_name(&type_name)?;
                             let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
                             symbol.has_any_flags(symbol_flags::TYPE).then_some(sym_id.0)
                         };
@@ -1508,11 +1539,11 @@ impl<'a> CheckerState<'a> {
                         };
                         let def_id_resolver =
                             |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
-                                let ident_name = lib_arena.get_identifier_text(node_idx)?;
-                                if is_compiler_managed_type(ident_name) {
+                                let type_name = entity_name_text_in_arena(lib_arena, node_idx)?;
+                                if is_compiler_managed_type(&type_name) {
                                     return None;
                                 }
-                                let sym_id = resolve_type_name(ident_name)?;
+                                let sym_id = resolve_type_name(&type_name)?;
                                 let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
                                 symbol
                                     .has_any_flags(symbol_flags::TYPE)

@@ -280,10 +280,16 @@ impl<'a> NarrowingContext<'a> {
             // Don't trust a cached Lazy type — re-resolve in case the TypeEnvironment
             // has been populated since the cache entry was created.
             if let Some(prop_type) = cached {
-                if !matches!(self.db.lookup(prop_type), Some(TypeData::Lazy(_))) {
+                if prop_type != TypeId::ERROR
+                    && !matches!(
+                        self.db.lookup(prop_type),
+                        Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+                    )
+                {
                     return cached;
                 }
-                // Re-resolve the Lazy type
+                // Re-resolve symbolic/error property types; an earlier no-resolver
+                // lookup may have run before the checker populated the environment.
                 let re_resolved = self.resolve_type(prop_type);
                 if re_resolved != prop_type {
                     self.cache
@@ -304,7 +310,13 @@ impl<'a> NarrowingContext<'a> {
         // Don't cache unresolved Lazy property types — the TypeEnvironment may be
         // populated later during checking, and we need to re-resolve on next access.
         let should_cache = match result {
-            Some(prop_type) => !matches!(self.db.lookup(prop_type), Some(TypeData::Lazy(_))),
+            Some(prop_type) => {
+                prop_type != TypeId::ERROR
+                    && !matches!(
+                        self.db.lookup(prop_type),
+                        Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+                    )
+            }
             None => true,
         };
         if should_cache {
@@ -415,11 +427,15 @@ impl<'a> NarrowingContext<'a> {
                 if member.is_any_or_unknown() {
                     continue;
                 }
-                let raw_prop_type = self.get_top_level_property_type_fast(member, property)?;
-                let prop_type = is_constructor_property
-                    .then_some(raw_prop_type)
-                    .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
-                    .unwrap_or(raw_prop_type);
+                let resolved_member = self.resolve_type(member);
+                let raw_prop_type =
+                    self.get_top_level_property_type_fast(resolved_member, property)?;
+                let prop_type = self.resolve_type(
+                    is_constructor_property
+                        .then_some(raw_prop_type)
+                        .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
+                        .unwrap_or(raw_prop_type),
+                );
                 if prop_type == TypeId::ANY {
                     continue;
                 }
@@ -456,11 +472,14 @@ impl<'a> NarrowingContext<'a> {
                 continue;
             }
 
-            let raw_prop_type = self.get_top_level_property_type_fast(member, property)?;
-            let prop_type = is_constructor_property
-                .then_some(raw_prop_type)
-                .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
-                .unwrap_or(raw_prop_type);
+            let resolved_member = self.resolve_type(member);
+            let raw_prop_type = self.get_top_level_property_type_fast(resolved_member, property)?;
+            let prop_type = self.resolve_type(
+                is_constructor_property
+                    .then_some(raw_prop_type)
+                    .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
+                    .unwrap_or(raw_prop_type),
+            );
             if !keep_matching && prop_type == TypeId::ANY {
                 kept.push(member);
                 continue;
@@ -529,12 +548,15 @@ impl<'a> NarrowingContext<'a> {
                     any_unknown_members.push(member);
                     continue;
                 }
-                match self.get_top_level_property_type_fast(member, property) {
+                let resolved_member = self.resolve_type(member);
+                match self.get_top_level_property_type_fast(resolved_member, property) {
                     Some(prop_type) => {
-                        let prop_type = is_constructor_property
-                            .then_some(prop_type)
-                            .and_then(|ty| construct_return_type_for_type(self.db, ty))
-                            .unwrap_or(prop_type);
+                        let prop_type = self.resolve_type(
+                            is_constructor_property
+                                .then_some(prop_type)
+                                .and_then(|ty| construct_return_type_for_type(self.db, ty))
+                                .unwrap_or(prop_type),
+                        );
                         // A member whose discriminant property has type `any` can
                         // hold any literal value, so it must match every bucket
                         // (just like a top-level any/unknown member). Otherwise
