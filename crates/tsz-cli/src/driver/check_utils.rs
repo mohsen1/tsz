@@ -2029,7 +2029,14 @@ enum DirectiveKind {
 
 /// Characters that can follow `@ts-expect-error` / `@ts-ignore` in a valid directive.
 const fn is_directive_separator(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b':' | b'*' | b'/')
+    matches!(
+        b,
+        b' ' | b'\t' | b'\r' | b'\n' | 0x0B | 0x0C | b':' | b'*' | b'/'
+    )
+}
+
+const fn is_directive_leading_trivia_byte(b: u8) -> bool {
+    matches!(b, b'/' | b' ' | b'\t' | b'\r' | b'\n' | 0x0B | 0x0C | b'*')
 }
 
 /// Check if a comment text contains `@ts-expect-error` or `@ts-ignore`.
@@ -2041,7 +2048,7 @@ fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
         0
     };
 
-    while pos < bytes.len() && matches!(bytes[pos], b'/' | b' ' | b'\t' | b'\r' | b'\n' | b'*') {
+    while pos < bytes.len() && is_directive_leading_trivia_byte(bytes[pos]) {
         pos += 1;
     }
 
@@ -2626,6 +2633,41 @@ const value = 1;
         assert_eq!(directives.len(), 1);
         assert!(directives[0].is_expect_error);
         assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_scan_accepts_form_feed_before_directive() {
+        let directives = find_ts_directives("//\x0C@ts-ignore\nconst x: string = 1;");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_scan_accepts_vertical_tab_before_directive() {
+        let directives = find_ts_directives("//\x0B@ts-ignore\nconst x: string = 1;");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_suppresses_next_line_with_form_feed_spacing() {
+        let source = "//\x0C@ts-ignore\nlet x: string = 1;\n";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            21,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected form-feed @ts-ignore to suppress the next-line diagnostic, got: {diagnostics:?}"
+        );
     }
 
     #[test]
