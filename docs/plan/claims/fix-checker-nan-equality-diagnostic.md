@@ -1,9 +1,9 @@
-# [WIP] fix(checker): report NaN equality diagnostics
+# fix(checker): report NaN equality diagnostics
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-nan-equality-diagnostic`
 - **PR**: https://github.com/mohsen1/tsz/pull/3152
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -19,8 +19,11 @@ global lib `NaN` should be diagnosed.
 
 ## Files Touched
 
+- `crates/tsz-checker/src/types/computation/expression_guards.rs`
+- `crates/tsz-checker/tests/conformance_issues/features/async.rs`
 - `docs/plan/claims/fix-checker-nan-equality-diagnostic.md`
 
 ## Verification
 
-- Pending implementation.
+- PASS `CARGO_TARGET_DIR=/tmp/tsz-pr3152-verify-target CARGO_INCREMENTAL=0 cargo test -j 2 -p tsz-checker --test conformance_issues nan -- --nocapture`
+- NOT RUN `./scripts/conformance/conformance.sh run --filter "nanEquality" --verbose` in the refresh worktree because `TypeScript/tests/cases` is not present, so the harness reports no test files.

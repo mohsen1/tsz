@@ -768,15 +768,18 @@ export {};
 }
 
 #[test]
-fn test_global_nan_before_later_parameter_shadow_still_triggers_ts2845() {
+fn test_script_global_nan_comparisons_trigger_ts2845() {
+    // In script files, lib globals are merged into the file binder. Comparisons
+    // against that merged global `NaN` still need TS2845, while parameter
+    // shadows named `NaN` remain valid.
     let diagnostics = compile_and_get_diagnostics_with_lib(
         r#"
 declare const x: number;
-
 if (x === NaN) {}
-if (NaN !== x) {}
+if (NaN == x) {}
+if (((NaN)) !== x) {}
 
-function t1(value: number, NaN: number) {
+function ok(value: number, NaN: number) {
     return value === NaN;
 }
 "#,
@@ -788,8 +791,8 @@ function t1(value: number, NaN: number) {
         .collect();
     assert_eq!(
         ts2845.len(),
-        2,
-        "Expected global NaN comparisons to emit TS2845 despite later parameter shadowing, got: {diagnostics:?}"
+        3,
+        "Expected three TS2845 diagnostics for global NaN comparisons only, got: {diagnostics:?}"
     );
 }
 

@@ -101,7 +101,12 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(node)
             && ident.escaped_text == "NaN"
         {
-            return self.is_unshadowed_nan_identifier(current_idx);
+            if let Some(sym_id) = self.resolve_identifier_symbol(current_idx) {
+                return self.ctx.symbol_is_from_actual_lib(sym_id)
+                    || self.ctx.symbol_is_from_lib(sym_id)
+                    || self.ctx.binder.lib_symbol_ids.contains(&sym_id);
+            }
+            return true; // Unresolved NaN treated as global
         }
         false
     }
