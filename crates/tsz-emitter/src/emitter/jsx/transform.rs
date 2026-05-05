@@ -524,6 +524,10 @@ impl<'a> Printer<'a> {
             return false;
         }
 
+        if pos == end {
+            return true;
+        }
+
         while pos < end {
             match bytes[pos] {
                 b' ' | b'\t' => pos += 1,
