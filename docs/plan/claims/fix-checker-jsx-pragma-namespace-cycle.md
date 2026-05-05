@@ -17,8 +17,24 @@ suppress only the false circularity report.
 
 ## Files Touched
 
-- TBD
+- `crates/tsz-checker/src/state/type_analysis/computed/type_alias_variable_alias.rs`
+  - Continues using JSX runtime bridge suppression during inline alias
+    circularity checks.
+- `crates/tsz-checker/src/state/type_analysis/computed/jsx_runtime_bridge.rs`
+  - Makes JSX runtime bridge alias detection program-aware so a pragma in the
+    entry file suppresses false circularity in the imported runtime `.d.ts`.
+- `crates/tsz-checker/src/state/type_analysis/computed/mod.rs`
+  - Registers the focused runtime bridge helper module.
+- `crates/tsz-checker/src/state/type_analysis/computed_helpers.rs`
+  - Reuses the runtime bridge suppression in cross-file circular alias
+    post-processing.
+- `crates/tsz-checker/tests/jsx_import_source_namespace_tests.rs`
+  - Adds a pragma-based regression for the `@emotion/react/jsx-runtime`
+    namespace bridge.
 
 ## Verification
 
-- Pending
+- `cargo fmt --check`
+- `CARGO_TARGET_DIR=target-codex CARGO_INCREMENTAL=0 cargo nextest run --target-dir target-codex -p tsz-checker --test jsx_import_source_namespace_tests jsx_import_source_pragma_suppresses_runtime_bridge_alias_circularity jsx_import_source_namespace_overrides_global_jsx_intrinsic_elements`
+- `CARGO_TARGET_DIR=target-codex CARGO_INCREMENTAL=0 cargo build --target-dir target-codex --profile dist-fast -j 4 -p tsz-cli -p tsz-conformance`
+- `./target-codex/dist-fast/tsz-conformance --test-dir /Users/mohsen/code/tsz/TypeScript/tests/cases --cache-file /Users/mohsen/code/tsz/scripts/conformance/tsc-cache-full.json --tsz-binary ./target-codex/dist-fast/tsz --filter 'jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne' --verbose --print-fingerprints --write-diff-artifacts --diff-artifacts-dir artifacts/conformance/jsx-pragma-namespace-cycle --workers 2 --max-worker-rss-mb 1024 --max-compilations-per-worker 10`
