@@ -161,23 +161,26 @@ impl<'a> CheckerState<'a> {
             .get_extended(error_node)
             .map(|ext| self.property_access_is_direct_write_target(ext.parent))
             .unwrap_or(false);
-        if !is_write_target
-            && let Some(&class_sym_id) = self.ctx.binder.node_symbols.get(&class_idx.0)
+        if let Some(&class_sym_id) = self.ctx.binder.node_symbols.get(&class_idx.0)
             && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
             && let Some(ref members) = class_symbol.members
             && let Some(member_sym_id) = members.get(property_name)
         {
-            self.ctx
-                .referenced_symbols
-                .borrow_mut()
-                .insert(member_sym_id);
-            // Also track in the property-specific set so TS6138 can distinguish
-            // genuine property reads (this.x, destructuring of this) from
-            // parameter variable references that get conflated during dedup.
-            self.ctx
-                .referenced_as_property
-                .borrow_mut()
-                .insert(member_sym_id);
+            if is_write_target {
+                self.ctx.written_symbols.borrow_mut().insert(member_sym_id);
+            } else {
+                self.ctx
+                    .referenced_symbols
+                    .borrow_mut()
+                    .insert(member_sym_id);
+                // Also track in the property-specific set so TS6138 can distinguish
+                // genuine property reads (this.x, destructuring of this) from
+                // parameter variable references that get conflated during dedup.
+                self.ctx
+                    .referenced_as_property
+                    .borrow_mut()
+                    .insert(member_sym_id);
+            }
         }
 
         let class_chain_summary = self.summarize_class_chain(class_idx);
