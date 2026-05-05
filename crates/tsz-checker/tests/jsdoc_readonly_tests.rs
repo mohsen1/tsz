@@ -4,7 +4,22 @@
 //! when assigned to outside the constructor, and that @extends/@augments
 //! on non-class declarations emits TS8022.
 
-use crate::test_utils::check_js_source_diagnostics;
+use crate::context::CheckerOptions;
+use crate::test_utils::{check_js_source_diagnostics, check_source};
+
+fn check_strict_js_source_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+    check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            no_implicit_this: true,
+            no_implicit_override: true,
+            ..CheckerOptions::default()
+        },
+    )
+}
 
 /// @readonly on class property → TS2540 when assigned outside constructor
 #[test]
@@ -145,6 +160,96 @@ const t = 0;
         ts8021 >= 1,
         "Expected TS8021 for @typedef without type, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn invalid_typedef_prefix_does_not_declare_jsdoc_alias() {
+    let source = r#"
+/**
+ * @typedefx {{ n: number }} Foo
+ */
+
+/** @type {Foo} */
+const value = { n: 1 };
+
+value.n.toFixed();
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2304),
+        "Expected unresolved Foo when @typedefx is ignored, got: {codes:?}",
+    );
+    assert!(
+        !codes.contains(&8021),
+        "Expected no malformed @typedef diagnostic for @typedefx, got: {codes:?}",
+    );
+}
+
+#[test]
+fn invalid_import_prefix_does_not_create_jsdoc_alias() {
+    let source = r#"
+/**
+ * @importx { Foo } from "./types"
+ */
+
+/** @type {Foo} */
+const value = { n: 1 };
+
+value.n.toFixed();
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2304),
+        "Expected unresolved Foo when @importx is ignored, got: {codes:?}",
+    );
+    assert!(
+        !codes.contains(&1109),
+        "Expected no malformed @import diagnostic for @importx, got: {codes:?}",
+    );
+}
+
+#[test]
+fn invalid_this_prefix_does_not_suppress_implicit_this() {
+    let source = r#"
+/**
+ * @thisx {{ n: number }}
+ */
+function f() {
+  this.n.toFixed();
+}
+
+f;
+"#;
+    let diagnostics = check_strict_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2683),
+        "Expected TS2683 when @thisx is ignored, got: {codes:?}",
+    );
+}
+
+#[test]
+fn invalid_override_prefix_does_not_satisfy_no_implicit_override() {
+    let source = r#"
+class Base {
+  m() {}
+}
+
+class Derived extends Base {
+  /** @overridex */
+  m() {}
+}
+
+Derived;
+"#;
+    let diagnostics = check_strict_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&4119),
+        "Expected TS4119 when @overridex is ignored, got: {codes:?}",
     );
 }
 

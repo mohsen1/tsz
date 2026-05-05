@@ -513,7 +513,7 @@ impl<'a> CheckerState<'a> {
             && parameters.nodes.is_empty()
             && self.body_has_arguments_reference(body)
             && let Some(ref jsdoc) = func_jsdoc
-            && !jsdoc.contains("@callback")
+            && !Self::jsdoc_contains_tag(jsdoc, "callback")
         {
             self.check_jsdoc_param_tag_names(jsdoc, &parameters.nodes, idx);
         }
@@ -1256,7 +1256,7 @@ impl<'a> CheckerState<'a> {
             && params.is_empty()
             && self.is_js_file()
             && let Some(ref jsdoc) = func_jsdoc
-            && !jsdoc.contains("@callback")
+            && !Self::jsdoc_contains_tag(jsdoc, "callback")
             && self.body_has_arguments_reference(body)
         {
             let function_has_name = self.function_has_effective_name(idx);

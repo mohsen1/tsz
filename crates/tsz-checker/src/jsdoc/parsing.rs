@@ -294,31 +294,25 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
-        let typedef_pos = jsdoc.find("@typedef");
-        let mut tag_pos = jsdoc.find("@type");
-        while let Some(pos) = tag_pos {
-            let next_char = jsdoc[pos + "@type".len()..].chars().next();
-            if !next_char.is_some_and(|c| c.is_alphabetic()) {
-                if let Some(td_pos) = typedef_pos
-                    && td_pos < pos
-                {
-                    let typedef_rest = &jsdoc[td_pos + "@typedef".len()..pos];
-                    let mut has_non_object_base = false;
-                    if let Some(open) = typedef_rest.find('{')
-                        && let Some(close) = typedef_rest[open..].find('}')
-                    {
-                        let base = typedef_rest[open + 1..open + close].trim();
-                        if base != "Object" && base != "object" && !base.is_empty() {
-                            has_non_object_base = true;
-                        }
-                    }
-                    if !has_non_object_base {
-                        return None; // The @type is absorbed by the @typedef
-                    }
+        let typedef_pos = Self::jsdoc_tag_offset(jsdoc, "typedef");
+        let tag_pos = Self::jsdoc_tag_offset(jsdoc, "type");
+        if let Some(pos) = tag_pos
+            && let Some(td_pos) = typedef_pos
+            && td_pos < pos
+        {
+            let typedef_rest = &jsdoc[td_pos + "@typedef".len()..pos];
+            let mut has_non_object_base = false;
+            if let Some(open) = typedef_rest.find('{')
+                && let Some(close) = typedef_rest[open..].find('}')
+            {
+                let base = typedef_rest[open + 1..open + close].trim();
+                if base != "Object" && base != "object" && !base.is_empty() {
+                    has_non_object_base = true;
                 }
-                break;
             }
-            tag_pos = jsdoc[pos + 1..].find("@type").map(|p| p + pos + 1);
+            if !has_non_object_base {
+                return None; // The @type is absorbed by the @typedef
+            }
         }
         let tag_pos = tag_pos?;
         let rest = &jsdoc[tag_pos + "@type".len()..];
