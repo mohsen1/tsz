@@ -474,6 +474,10 @@ impl<'a> Printer<'a> {
             if has_spread && target_num < es2018_num {
                 // Target is ES2015/ES2016/ES2017: lower to Object.assign()
                 self.emit_object_literal_with_object_assign(&emitted_properties);
+                if self.object_spread_has_recovered_trailing_empty_object(node, &emitted_properties)
+                {
+                    self.write(", {}");
+                }
                 return;
             }
         }
@@ -1216,6 +1220,39 @@ impl<'a> Printer<'a> {
         {
             self.emit_expression(spread.expression);
         }
+    }
+
+    fn object_spread_has_recovered_trailing_empty_object(
+        &self,
+        node: &Node,
+        elements: &[NodeIndex],
+    ) -> bool {
+        if elements.len() != 1 {
+            return false;
+        }
+        let Some(spread_node) = self.arena.get(elements[0]) else {
+            return false;
+        };
+        if spread_node.kind != syntax_kind_ext::SPREAD_ASSIGNMENT {
+            return false;
+        }
+        let Some(spread) = self.arena.get_spread(spread_node) else {
+            return false;
+        };
+        let Some(source) = self.source_text else {
+            return false;
+        };
+        let start = std::cmp::min(
+            self.arena
+                .get(spread.expression)
+                .map_or(spread_node.end, |expr| expr.end) as usize,
+            source.len(),
+        );
+        let end = std::cmp::min(node.end as usize, source.len());
+        if start >= end {
+            return false;
+        }
+        source[start..end].trim_start().starts_with('{')
     }
 }
 
