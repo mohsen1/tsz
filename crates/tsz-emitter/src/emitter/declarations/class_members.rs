@@ -1114,6 +1114,13 @@ impl<'a> Printer<'a> {
                 if init_idx.is_none() {
                     self.write("void 0");
                 } else {
+                    if let Some(init_node) = self.arena.get(*init_idx) {
+                        while self.comment_emit_idx < self.all_comments.len()
+                            && self.all_comments[self.comment_emit_idx].end <= init_node.pos
+                        {
+                            self.comment_emit_idx += 1;
+                        }
+                    }
                     self.with_scoped_static_initializer_context_cleared(|this| {
                         this.emit_expression(*init_idx);
                     });
@@ -1134,6 +1141,13 @@ impl<'a> Printer<'a> {
                 if init_idx.is_none() {
                     self.write("void 0");
                 } else {
+                    if let Some(init_node) = self.arena.get(*init_idx) {
+                        while self.comment_emit_idx < self.all_comments.len()
+                            && self.all_comments[self.comment_emit_idx].end <= init_node.pos
+                        {
+                            self.comment_emit_idx += 1;
+                        }
+                    }
                     self.with_scoped_static_initializer_context_cleared(|this| {
                         this.emit_expression(*init_idx);
                     });
