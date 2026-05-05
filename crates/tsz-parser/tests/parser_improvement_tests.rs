@@ -633,6 +633,27 @@ fn test_regex_missing_parenthesis_reports_ts1005_at_regex_end() {
 }
 
 #[test]
+fn test_unterminated_regex_with_angle_text_reports_ts1161() {
+    for source in ["const r = /<x>;\n", "const r = /a<x>;\n"] {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let _root = parser.parse_source_file();
+
+        let diagnostics = parser.get_diagnostics();
+        let ts1161 = diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ts1161.len(),
+            1,
+            "Expected one TS1161 for ordinary regex angle text in {source:?}, got {diagnostics:?}"
+        );
+        assert_eq!(ts1161[0].start, source.find('/').unwrap() as u32);
+    }
+}
+
+#[test]
 fn test_parenthesized_conditional_object_literal_true_branch_is_not_treated_as_missing_arrow() {
     let source = r#"
 var value = (Math.random() ? {} : null);
