@@ -15,7 +15,7 @@ use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     const JSDOC_PARAM_TAG_NAMES: [&'static str; 3] = ["param", "arg", "argument"];
 
-    fn strip_jsdoc_param_tag_prefix<'s>(text: &'s str) -> Option<(&'static str, &'s str)> {
+    fn strip_jsdoc_param_tag_prefix(text: &str) -> Option<(&'static str, &str)> {
         Self::JSDOC_PARAM_TAG_NAMES
             .iter()
             .find_map(|tag| Self::strip_jsdoc_tag_prefix(text, tag).map(|rest| (*tag, rest)))
@@ -28,7 +28,7 @@ impl<'a> CheckerState<'a> {
             .min_by_key(|(offset, _)| *offset)
     }
 
-    fn jsdoc_tag_source_len(tag: &str) -> usize {
+    const fn jsdoc_tag_source_len(tag: &str) -> usize {
         1 + tag.len()
     }
 
