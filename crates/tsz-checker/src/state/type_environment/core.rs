@@ -755,20 +755,25 @@ impl<'a> CheckerState<'a> {
             return type_id;
         };
 
-        if let Some(&cached) = self
-            .ctx
-            .narrowing_cache
-            .resolve_cache
-            .borrow()
-            .get(&type_id)
-        {
-            return cached;
+        let concrete_remapped_fallback =
+            ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.get());
+        if !concrete_remapped_fallback {
+            if let Some(&cached) = self
+                .ctx
+                .narrowing_cache
+                .resolve_cache
+                .borrow()
+                .get(&type_id)
+            {
+                return cached;
+            }
         }
 
         // Memoize mapped-type expansion for monomorphic inputs.
         // This is a hot path for repeated property access on mapped aliases
         // (e.g., DeepPartial<...>).
-        let can_cache = !self.contains_type_parameters_cached(type_id);
+        let can_cache =
+            !concrete_remapped_fallback && !self.contains_type_parameters_cached(type_id);
 
         if !self.ctx.mapped_eval_set.insert(type_id) {
             return type_id;
@@ -927,6 +932,86 @@ impl<'a> CheckerState<'a> {
                 query::collect_homomorphic_source_property_infos(self.ctx.types, source);
             if !source_props.is_empty() {
                 string_keys = source_props.iter().map(|prop| prop.name).collect();
+            }
+        }
+        let allow_concrete_remapped_fallback =
+            ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.get())
+                && mapped.name_type.is_some()
+                && crate::query_boundaries::assignability::remapped_mapped_type_has_no_outer_type_params(
+                    self.ctx.types,
+                    type_id,
+                );
+        if string_keys.is_empty() && allow_concrete_remapped_fallback {
+            let source_members =
+                query::union_members(self.ctx.types, keys).unwrap_or_else(|| vec![keys]);
+            let mut properties = Vec::new();
+            for source_member in source_members {
+                if matches!(
+                    source_member,
+                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+                ) {
+                    return type_id;
+                }
+
+                let subst = TypeSubstitution::single(mapped.type_param.name, source_member);
+                let Some(name_type) = mapped.name_type else {
+                    return type_id;
+                };
+                let instantiated_name = instantiate_type(self.ctx.types, name_type, &subst);
+                let remapped_name = self.evaluate_type_with_env(instantiated_name);
+                let remapped_names: Vec<Atom> = if let Some(name) =
+                    query::literal_string(self.ctx.types, remapped_name)
+                {
+                    vec![name]
+                } else if let Some(members) = query::union_members(self.ctx.types, remapped_name) {
+                    let mut names = Vec::with_capacity(members.len());
+                    for member in members {
+                        let Some(name) = query::literal_string(self.ctx.types, member) else {
+                            return type_id;
+                        };
+                        names.push(name);
+                    }
+                    if names.is_empty() {
+                        return type_id;
+                    }
+                    names
+                } else {
+                    let names = tsz_solver::type_queries::extract_string_literal_keys(
+                        self.ctx.types,
+                        remapped_name,
+                    );
+                    if names.is_empty() {
+                        return type_id;
+                    }
+                    names
+                };
+
+                let property_type = instantiate_type(self.ctx.types, mapped.template, &subst);
+                let property_type = self.evaluate_type_with_env(property_type);
+                let (optional, readonly) =
+                    query::compute_mapped_modifiers(&mapped, false, false, false);
+
+                for remapped_name in remapped_names {
+                    properties.push(PropertyInfo {
+                        name: remapped_name,
+                        type_id: property_type,
+                        write_type: property_type,
+                        optional,
+                        readonly,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
+                }
+            }
+
+            if !properties.is_empty() {
+                return factory.object(properties);
             }
         }
         if string_keys.is_empty() {
