@@ -1150,13 +1150,15 @@ impl<'a> CheckerState<'a> {
             raw_instance_type,
         ) {
             let evaluated = self.evaluate_type_with_env(raw_instance_type);
-            // After evaluation, if the type still contains type parameters,
-            // we can't resolve it further — bail out.
+            // If evaluation still contains type parameters from an outer generic
+            // context, keep the raw application so member lookup can preserve the
+            // generic props surface (for example React.Component<P>["props"]).
             if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, evaluated)
             {
-                return None;
+                raw_instance_type
+            } else {
+                evaluated
             }
-            evaluated
         } else {
             raw_instance_type
         };
