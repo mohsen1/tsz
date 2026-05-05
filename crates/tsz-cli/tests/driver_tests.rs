@@ -2931,6 +2931,44 @@ fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_oute
 }
 
 #[test]
+fn compile_generic_call_at_yield_expression_in_generic_call2_fixture_has_no_ts2345() {
+    let Some(source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts",
+    ) else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("test.ts"), &source);
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::EsNext);
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("test.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2345: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .collect();
+
+    assert!(
+        ts2345.is_empty(),
+        "Expected fixture to avoid stale TS2345 diagnostics, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
 fn compile_excessive_stack_depth_flat_array_fixture_reports_normalized_jsx_key_target() {
     let Some(source) =
         load_typescript_fixture("TypeScript/tests/cases/compiler/excessiveStackDepthFlatArray.ts")
