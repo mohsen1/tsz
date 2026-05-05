@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-infer-generic-return-extra-ts2769`
-- **PR**: TBD
+- **PR**: #2867
 - **Status**: claimed
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
