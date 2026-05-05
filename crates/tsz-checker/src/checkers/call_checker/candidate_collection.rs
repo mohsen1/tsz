@@ -18,6 +18,35 @@ use tsz_solver::{TupleElement, TypeId};
 const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn call_arg_source_type_annotation_markers(
+        &self,
+        args: &[NodeIndex],
+        arg_type_count: usize,
+    ) -> Vec<bool> {
+        if args.len() != arg_type_count {
+            return vec![false; arg_type_count];
+        }
+        args.iter()
+            .map(|&arg_idx| self.call_arg_source_is_type_assertion(arg_idx))
+            .collect()
+    }
+
+    fn call_arg_source_is_type_assertion(&self, arg_idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::AS_EXPRESSION
+            && node.kind != syntax_kind_ext::TYPE_ASSERTION
+        {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_type_assertion(node)
+            .is_some_and(|assertion| assertion.type_node.is_some())
+    }
+
     /// Collect argument types with contextual typing from expected parameter types.
     ///
     /// This method handles:

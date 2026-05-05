@@ -184,6 +184,11 @@ impl<'a> CheckerState<'a> {
         } else {
             (arg_types.clone(), false)
         };
+        let generic_inference_arg_source_markers = if is_generic_call {
+            self.call_arg_source_type_annotation_markers(args, generic_inference_arg_types.len())
+        } else {
+            Vec::new()
+        };
         let call_resolution_contextual_type = contextual_type;
 
         let (mut result, mut instantiated_predicate, mut generic_instantiated_params) =
@@ -197,6 +202,15 @@ impl<'a> CheckerState<'a> {
                     ),
                     None,
                     None,
+                )
+            } else if generic_inference_arg_source_markers.iter().any(|&m| m) {
+                self.resolve_call_with_checker_adapter_and_arg_sources(
+                    callee_type_for_call,
+                    &generic_inference_arg_types,
+                    force_bivariant_callbacks,
+                    call_resolution_contextual_type,
+                    actual_this_type,
+                    &generic_inference_arg_source_markers,
                 )
             } else {
                 self.resolve_call_with_checker_adapter(
@@ -317,6 +331,8 @@ impl<'a> CheckerState<'a> {
 
             let (retry_generic_arg_types, retry_sanitized) =
                 self.sanitize_generic_inference_arg_types(callee_expr, args, &arg_types);
+            let retry_arg_source_markers =
+                self.call_arg_source_type_annotation_markers(args, retry_generic_arg_types.len());
             let retry = if is_super_call {
                 (
                     self.resolve_new_with_checker_adapter(
@@ -327,6 +343,15 @@ impl<'a> CheckerState<'a> {
                     ),
                     None,
                     None,
+                )
+            } else if retry_arg_source_markers.iter().any(|&m| m) {
+                self.resolve_call_with_checker_adapter_and_arg_sources(
+                    callee_type_for_call,
+                    &retry_generic_arg_types,
+                    force_bivariant_callbacks,
+                    contextual_type,
+                    actual_this_type,
+                    &retry_arg_source_markers,
                 )
             } else {
                 self.resolve_call_with_checker_adapter(

@@ -206,6 +206,29 @@ pub(crate) fn resolve_call<C: AssignabilityChecker>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_call_with_arg_sources<C: AssignabilityChecker>(
+    db: &dyn QueryDatabase,
+    checker: &mut C,
+    func_type: TypeId,
+    arg_types: &[TypeId],
+    force_bivariant_callbacks: bool,
+    contextual_type: Option<TypeId>,
+    actual_this_type: Option<TypeId>,
+    arg_source_is_type_annotation: &[bool],
+) -> tsz_solver::operations::CallWithCheckerResult {
+    tsz_solver::operations::resolve_call_with_checker_and_arg_sources(
+        db,
+        checker,
+        func_type,
+        arg_types,
+        force_bivariant_callbacks,
+        contextual_type,
+        actual_this_type,
+        arg_source_is_type_annotation,
+    )
+}
+
 pub(crate) fn resolve_new<C: AssignabilityChecker>(
     db: &dyn QueryDatabase,
     checker: &mut C,
