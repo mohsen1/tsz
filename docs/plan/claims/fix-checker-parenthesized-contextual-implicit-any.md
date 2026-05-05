@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-parenthesized-contextual-implicit-any`
-- **PR**: TBD
+- **PR**: #2938
 - **Status**: claim
 - **Workstream**: conformance / missing diagnostics
 
