@@ -208,7 +208,7 @@ impl<'a> CheckerState<'a> {
             let template = self
                 .reduce_alias_applications_for_instantiation_display(mapped.template, depth + 1);
             if template != mapped.template {
-                let mut mapped = (*mapped).clone();
+                let mut mapped = *mapped;
                 mapped.template = template;
                 return self.ctx.types.factory().mapped(mapped);
             }
