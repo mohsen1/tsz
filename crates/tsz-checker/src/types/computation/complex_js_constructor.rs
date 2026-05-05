@@ -550,6 +550,12 @@ impl<'a> CheckerState<'a> {
         synthesis_diag_snap.rollback_filtered(&mut self.ctx, |diag| {
             diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
         });
+        if let Some(sym_id) = sym_id {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx
+                .definition_store
+                .register_type_to_def(instance_type, def_id);
+        }
         Some(instance_type)
     }
 

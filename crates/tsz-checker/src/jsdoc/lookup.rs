@@ -439,6 +439,7 @@ impl<'a> CheckerState<'a> {
         let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, &comments, &source_text)?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
+        self.report_invalid_jsdoc_type_predicate_annotation(idx, type_expr);
         self.validate_jsdoc_generic_constraints_at_node(
             idx,
             node.pos,
@@ -1015,6 +1016,7 @@ impl<'a> CheckerState<'a> {
         )?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
+        self.report_invalid_jsdoc_type_predicate_annotation(idx, type_expr);
         // Use the authoritative resolution kernel — no fallback chain needed.
         self.resolve_jsdoc_reference(type_expr)
     }
@@ -1046,7 +1048,87 @@ impl<'a> CheckerState<'a> {
         )?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
+        self.report_invalid_jsdoc_type_predicate_annotation(idx, type_expr);
         self.resolve_jsdoc_reference(type_expr)
+    }
+
+    fn report_invalid_jsdoc_type_predicate_annotation(&mut self, idx: NodeIndex, type_expr: &str) {
+        let Some((predicate_offset, predicate_len)) =
+            Self::invalid_jsdoc_type_predicate_span(type_expr)
+        else {
+            return;
+        };
+        let Some((expr_start, _)) = self.jsdoc_type_expression_span_for_node(idx) else {
+            return;
+        };
+        let start = expr_start.saturating_add(predicate_offset as u32);
+        let end = start.saturating_add(predicate_len as u32);
+        if self.has_diagnostic_code_within_span(
+            start,
+            end,
+            crate::diagnostics::diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+        ) {
+            return;
+        }
+        self.error_at_position(
+            start,
+            predicate_len as u32,
+            crate::diagnostics::diagnostic_messages::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+            crate::diagnostics::diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+        );
+    }
+
+    fn invalid_jsdoc_type_predicate_span(type_expr: &str) -> Option<(usize, usize)> {
+        let trimmed = type_expr.trim();
+        let leading_ws = type_expr.len() - type_expr.trim_start().len();
+        if trimmed.is_empty() || trimmed.starts_with("function") || trimmed.contains("=>") {
+            return None;
+        }
+        if let Some(rest) = trimmed.strip_prefix("asserts ") {
+            let rest = rest.trim_start();
+            let offset =
+                leading_ws + "asserts ".len() + (trimmed["asserts ".len()..].len() - rest.len());
+            return (!rest.is_empty()).then_some((offset, rest.len()));
+        }
+
+        let mut paren_depth = 0u32;
+        let mut bracket_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut angle_depth = 0u32;
+        let bytes = trimmed.as_bytes();
+        let mut i = 0usize;
+        while i + 4 <= bytes.len() {
+            match bytes[i] as char {
+                '(' => paren_depth += 1,
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                '{' => brace_depth += 1,
+                '}' => brace_depth = brace_depth.saturating_sub(1),
+                '<' => angle_depth += 1,
+                '>' => angle_depth = angle_depth.saturating_sub(1),
+                _ => {}
+            }
+            if paren_depth == 0
+                && bracket_depth == 0
+                && brace_depth == 0
+                && angle_depth == 0
+                && bytes.get(i..i + 4) == Some(b" is ")
+            {
+                let left = trimmed[..i].trim();
+                let right = trimmed[i + 4..].trim();
+                if !left.is_empty()
+                    && !right.is_empty()
+                    && left
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+                {
+                    return Some((leading_ws, trimmed.len()));
+                }
+            }
+            i += 1;
+        }
+        None
     }
 
     /// Extract `@satisfies` annotation and its keyword position.

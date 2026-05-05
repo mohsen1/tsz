@@ -1,7 +1,7 @@
 # fix(checker): align JSDoc type-tag cast diagnostics
 
 - **Branch**: `fix/checker-jsdoc-type-tag-cast-diagnostics`
-- **Status**: Claimed
+- **Status**: Ready
 - **Workstream**: 1 (Diagnostic conformance)
 - **Target**: `TypeScript/tests/cases/conformance/jsdoc/jsdocTypeTagCast.ts`
 
@@ -27,8 +27,8 @@ Current divergence:
 
 ## Verification
 
-- `cargo fmt --all --check`
-- `cargo check --package tsz-checker --package tsz-solver`
-- `cargo nextest run --package tsz-checker --test <targeted-test-file>`
-- `./scripts/conformance/conformance.sh run --filter "jsdocTypeTagCast" --verbose`
-- `./scripts/conformance/conformance.sh run --max 200`
+- `cargo fmt --all --check` - passed
+- `cargo check --package tsz-checker --package tsz-solver` - passed
+- `cargo nextest run --package tsz-checker --test jsdoc_type_tag_tests test_jsdoc_type_predicate_cast_emits_ts1228 test_jsdoc_any_cast_string_concat_redeclaration_no_ts2403 test_js_constructor_instance_assignment_source_uses_constructor_name` - passed
+- `./scripts/conformance/conformance.sh run --filter "jsdocTypeTagCast" --verbose` - passed
+- `./scripts/conformance/conformance.sh run --max 200` - passed

@@ -464,6 +464,16 @@ impl<'a> CheckerState<'a> {
             return self.widen_initializer_type_for_mutable_binding(fallback_type);
         }
 
+        if fallback_type == TypeId::ANY
+            && init_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(init_node)
+            && binary.operator_token == SyntaxKind::PlusToken as u16
+            && (self.expression_is_string_syntax(binary.left)
+                || self.expression_is_string_syntax(binary.right))
+        {
+            return TypeId::STRING;
+        }
+
         // Handle bare enum identifier: `var x = E`
         if init_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(init_sym_id) = self.resolve_identifier_symbol(init_idx)
@@ -502,6 +512,14 @@ impl<'a> CheckerState<'a> {
         }
 
         fallback_type
+    }
+
+    fn expression_is_string_syntax(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == SyntaxKind::StringLiteral as u16
+                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        })
     }
 
     /// For TS2403, when the type annotation is `typeof EnumSymbol`, resolve
