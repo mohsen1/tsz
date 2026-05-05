@@ -229,9 +229,10 @@ impl<'a> DeclarationEmitter<'a> {
                 let directly_nameable_type_text = Some(selected_type_text)
                     .filter(|text| self.type_text_is_directly_nameable_reference(text))
                     .or_else(|| {
-                        let printed_is_safe_fallback = printed_type_text.starts_with("import(\"")
-                            || printed_type_text.contains('<')
-                            || printed_type_text.contains('.');
+                        let printed_is_safe_fallback =
+                            Self::type_text_starts_with_import_type(&printed_type_text)
+                                || printed_type_text.contains('<')
+                                || printed_type_text.contains('.');
                         (printed_is_safe_fallback
                             && self.type_text_is_directly_nameable_reference(&printed_type_text))
                         .then_some(printed_type_text.as_str())
@@ -277,8 +278,8 @@ impl<'a> DeclarationEmitter<'a> {
                         // to skip: the name alone doesn't prove the symbol is reachable
                         // from a public path. We must run the portability check whenever
                         // the type text is not an explicit `import("…")` form.
-                        let is_safe_import_type =
-                            directly_nameable_type_text.is_some_and(|t| t.starts_with("import(\""));
+                        let is_safe_import_type = directly_nameable_type_text
+                            .is_some_and(Self::type_text_starts_with_import_type);
                         let is_safe_reused_surface_type =
                             directly_nameable_type_text.is_some_and(|t| {
                                 is_safe_import_type || t.contains('<') || t.contains('.')
@@ -313,9 +314,9 @@ impl<'a> DeclarationEmitter<'a> {
                     if !ran_symbol_check
                         && self.diagnostics.len() == diagnostics_before
                         && has_initializer
-                        && directly_nameable_type_text
-                            .unwrap_or(&printed_type_text)
-                            .starts_with("import(\"")
+                        && Self::type_text_starts_with_import_type(
+                            directly_nameable_type_text.unwrap_or(&printed_type_text),
+                        )
                         && self.import_type_uses_private_package_subpath(
                             directly_nameable_type_text.unwrap_or(&printed_type_text),
                         )
@@ -338,7 +339,7 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     if self.diagnostics.len() == diagnostics_before {
                         let trimmed_type_text = selected_type_text.trim_start();
-                        if trimmed_type_text.starts_with("import(\"")
+                        if Self::type_text_starts_with_import_type(trimmed_type_text)
                             && !trimmed_type_text.contains('<')
                         {
                             let _ = self.emit_non_serializable_import_type_diagnostic(

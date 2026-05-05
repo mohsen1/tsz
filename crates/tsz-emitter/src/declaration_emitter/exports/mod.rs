@@ -105,16 +105,17 @@ impl<'a> DeclarationEmitter<'a> {
         let directly_nameable_type_text = Some(selected_type_text)
             .filter(|text| self.type_text_is_directly_nameable_reference(text))
             .or_else(|| {
-                let printed_is_safe_fallback = printed_type_text.starts_with("import(\"")
-                    || printed_type_text.contains('<')
-                    || printed_type_text.contains('.');
+                let printed_is_safe_fallback =
+                    Self::type_text_starts_with_import_type(&printed_type_text)
+                        || printed_type_text.contains('<')
+                        || printed_type_text.contains('.');
                 (printed_is_safe_fallback
                     && self.type_text_is_directly_nameable_reference(&printed_type_text))
                 .then_some(printed_type_text.as_str())
             });
 
         directly_nameable_type_text.is_some_and(|text| {
-            let is_safe_import_type = text.starts_with("import(\"");
+            let is_safe_import_type = Self::type_text_starts_with_import_type(text);
             is_safe_import_type || text.contains('<') || text.contains('.')
         })
     }
@@ -700,7 +701,7 @@ impl<'a> DeclarationEmitter<'a> {
                                 break;
                             }
                             if let Some(arg_type_text) = arg_type_text
-                                && arg_type_text.starts_with("import(\"")
+                                && Self::type_text_starts_with_import_type(&arg_type_text)
                                 && self.emit_non_portable_import_type_text_diagnostics(
                                     &arg_type_text,
                                     "default",
@@ -1193,7 +1194,7 @@ impl<'a> DeclarationEmitter<'a> {
                         break;
                     }
                     if let Some(arg_type_text) = arg_type_text
-                        && arg_type_text.starts_with("import(\"")
+                        && Self::type_text_starts_with_import_type(&arg_type_text)
                         && self.emit_non_portable_import_type_text_diagnostics(
                             &arg_type_text,
                             "default",
@@ -1239,7 +1240,7 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
             if let Some((file_path, pos, len, diagnostics_before)) = portability_context.as_ref()
                 && self.diagnostics.len() == *diagnostics_before
-                && type_text.starts_with("import(\"")
+                && Self::type_text_starts_with_import_type(&type_text)
                 && self.import_type_uses_private_package_subpath(&type_text)
             {
                 let _ = self.emit_non_portable_import_type_text_diagnostics(
@@ -1255,7 +1256,7 @@ impl<'a> DeclarationEmitter<'a> {
             let printed_type = self.print_type_id(type_id);
             if let Some((file_path, pos, len, diagnostics_before)) = portability_context.as_ref()
                 && self.diagnostics.len() == *diagnostics_before
-                && printed_type.starts_with("import(\"")
+                && Self::type_text_starts_with_import_type(&printed_type)
                 && self.import_type_uses_private_package_subpath(&printed_type)
             {
                 let _ = self.emit_non_portable_import_type_text_diagnostics(
