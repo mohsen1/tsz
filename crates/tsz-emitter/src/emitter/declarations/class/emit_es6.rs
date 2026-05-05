@@ -765,20 +765,18 @@ impl<'a> Printer<'a> {
 
         let mut computed_prop_entries_consumed_by_member_name: Vec<usize> = Vec::new();
         if needs_computed_prop_hoisting && !computed_prop_entries.is_empty() {
-            let mut pending_static_computed_entries = Vec::new();
+            let mut pending_computed_entries = Vec::new();
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
 
                 if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                    if let Some(prop) = self.arena.get_property_decl(member_node)
-                        && self.arena.is_static(&prop.modifiers)
-                        && let Some(entry_idx) = computed_prop_entries
-                            .iter()
-                            .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
+                    if let Some(entry_idx) = computed_prop_entries
+                        .iter()
+                        .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
                     {
-                        pending_static_computed_entries.push(entry_idx);
+                        pending_computed_entries.push(entry_idx);
                     }
                     continue;
                 }
@@ -806,12 +804,12 @@ impl<'a> Printer<'a> {
                 let Some(computed) = self.arena.get_computed_property(computed_name) else {
                     continue;
                 };
-                if pending_static_computed_entries.is_empty() {
+                if pending_computed_entries.is_empty() {
                     continue;
                 }
 
                 let mut comma_parts = Vec::new();
-                for entry_idx in pending_static_computed_entries.drain(..) {
+                for entry_idx in pending_computed_entries.drain(..) {
                     let (temp_name, expr_idx, _) = computed_prop_entries[entry_idx].clone();
                     let expr_text = self.capture_emit(expr_idx);
                     if let Some(temp) = temp_name {
