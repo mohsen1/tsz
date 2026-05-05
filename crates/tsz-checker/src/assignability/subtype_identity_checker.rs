@@ -342,9 +342,6 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        let prev_type = self.array_application_to_array_for_redeclaration(prev_type);
-        let current_type = self.array_application_to_array_for_redeclaration(current_type);
-
         // Nominal identity check: when both types come from different named type
         // references (Application with different bases, or Lazy with different DefIds),
         // tsc's isTypeIdenticalTo rejects them even if structurally equivalent.
@@ -459,21 +456,6 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    fn array_application_to_array_for_redeclaration(&self, type_id: TypeId) -> TypeId {
-        let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
-        else {
-            return type_id;
-        };
-        if args.len() == 1
-            && tsz_solver::TypeDatabase::get_array_base_type(self.ctx.types)
-                .is_some_and(|array_base| base == array_base)
-        {
-            return self.ctx.types.array(args[0]);
-        }
-        type_id
-    }
-
     fn array_var_decl_types_compatible(
         &mut self,
         prev_type: TypeId,
@@ -482,27 +464,15 @@ impl<'a> CheckerState<'a> {
         let prev_elem = self.mutable_array_element_for_redeclaration(prev_type)?;
         let current_elem = self.mutable_array_element_for_redeclaration(current_type)?;
 
-        self.ensure_relation_input_ready(prev_elem);
-        self.ensure_relation_input_ready(current_elem);
-
-        let flags = self.ctx.pack_relation_flags();
-        let env = self.ctx.type_env.borrow();
-        Some(is_redeclaration_identical_with_resolver(
-            self.ctx.types,
-            &*env,
-            prev_elem,
-            current_elem,
-            flags,
-            &self.ctx.inheritance_graph,
-            self.ctx.sound_mode(),
-        ))
+        Some(self.are_var_decl_types_compatible(prev_elem, current_elem))
     }
 
     fn mutable_array_element_for_redeclaration(&self, type_id: TypeId) -> Option<TypeId> {
-        crate::query_boundaries::assignability::mutable_array_element_for_redeclaration(
+        crate::query_boundaries::common::mutable_array_element_for_redeclaration(
             self.ctx.types,
-            self.ctx.definition_store.as_ref(),
             type_id,
+            tsz_solver::TypeDatabase::get_array_base_type(self.ctx.types),
+            Some(self.ctx.definition_store.as_ref()),
         )
     }
 
