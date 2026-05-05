@@ -401,11 +401,81 @@ impl<'a> CheckerState<'a> {
     }
 
     fn find_jsdoc_typedef_name_offset(comment_text: &str, name: &str) -> Option<usize> {
-        let typedef_idx = Self::jsdoc_tag_offset(comment_text, "typedef")?;
-        let after_typedef = typedef_idx + "@typedef".len();
-        let rest = &comment_text[after_typedef..];
-        let name_offset = rest.find(name)?;
-        Some(after_typedef + name_offset)
+        Self::jsdoc_typedef_tag_spans(comment_text)
+            .into_iter()
+            .find_map(|(typedef_idx, segment_end)| {
+                let after_typedef = typedef_idx + "@typedef".len();
+                let rest = &comment_text[after_typedef..segment_end];
+                rest.find(name)
+                    .map(|name_offset| after_typedef + name_offset)
+            })
+    }
+
+    fn jsdoc_typedef_tag_spans(comment_text: &str) -> Vec<(usize, usize)> {
+        let typedef_offsets = Self::jsdoc_tag_offsets(comment_text, "typedef");
+        typedef_offsets
+            .iter()
+            .enumerate()
+            .map(|(idx, &start)| {
+                let end = typedef_offsets
+                    .get(idx + 1)
+                    .copied()
+                    .unwrap_or(comment_text.len());
+                (start, end)
+            })
+            .collect()
+    }
+
+    fn jsdoc_typedef_has_inline_type(comment_text: &str, typedef_pos: usize) -> bool {
+        let after_typedef = typedef_pos + "@typedef".len();
+        comment_text[after_typedef..].trim_start().starts_with('{')
+    }
+
+    fn jsdoc_typedef_segment_has_child_type_tag(segment_text: &str) -> bool {
+        let before_template = Self::jsdoc_tag_offset(segment_text, "template")
+            .map(|template_pos| &segment_text[..template_pos])
+            .unwrap_or(segment_text);
+        ["property", "prop", "type", "member"]
+            .iter()
+            .any(|tag| Self::jsdoc_tag_offset(before_template, tag).is_some())
+    }
+
+    fn jsdoc_type_tag_duplicate_anchor(comment_text: &str, type_tag_pos: usize) -> (usize, u32) {
+        let after = type_tag_pos + "@type".len();
+        let tag_text = &comment_text[after..];
+        let anchor_offset = if let Some(brace_rel) = tag_text.find('{') {
+            let mut depth = 0i32;
+            let mut end = None;
+            for (i, ch) in tag_text[brace_rel..].char_indices() {
+                if ch == '{' {
+                    depth += 1;
+                } else if ch == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(brace_rel + i + 1);
+                        break;
+                    }
+                }
+            }
+            end.map(|e| after + e)
+        } else {
+            None
+        };
+        anchor_offset.map_or((type_tag_pos, "@type".len() as u32), |offset| (offset, 0))
+    }
+
+    fn jsdoc_typedef_missing_type_name_span(
+        comment_text: &str,
+        typedef_pos: usize,
+        segment_end: usize,
+    ) -> (usize, usize) {
+        let after_typedef = typedef_pos + "@typedef".len();
+        let rest = &comment_text[after_typedef..segment_end];
+        let name_start = after_typedef + rest.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+        let name_len = comment_text[name_start..segment_end]
+            .find(|c: char| c.is_whitespace() || c == '*' || c == '/')
+            .unwrap_or(segment_end - name_start);
+        (name_start, name_len)
     }
 
     fn jsdoc_typedef_is_import_alias(info: &crate::jsdoc::types::JsdocTypedefInfo) -> bool {
@@ -460,58 +530,18 @@ impl<'a> CheckerState<'a> {
 
             let comment_text = comment.get_text(source_text);
 
-            // Check if this comment contains @typedef
-            if !Self::jsdoc_contains_tag(comment_text, "typedef") {
-                continue;
-            }
-
-            // Count @type tags (not @typedef or @typeParam etc.)
-            let mut type_tag_count = 0u32;
-            for (match_pos, _) in comment_text.match_indices("@type") {
-                let after = match_pos + "@type".len();
-                // Ensure @type is not a prefix of @typedef, @typeParam, etc.
-                if after < comment_text.len() {
-                    let next_ch = comment_text[after..].chars().next().unwrap_or('\0');
-                    if next_ch.is_ascii_alphanumeric() || next_ch == 'P' {
-                        // Likely @typedef or @typeParam — skip
-                        continue;
-                    }
-                }
-                type_tag_count += 1;
-                if type_tag_count >= 2 {
+            for (segment_start, segment_end) in Self::jsdoc_typedef_tag_spans(comment_text) {
+                let segment_text = &comment_text[segment_start..segment_end];
+                let type_tag_offsets = Self::jsdoc_tag_offsets(segment_text, "type");
+                for type_tag_offset in type_tag_offsets.into_iter().skip(1) {
                     // tsc anchors TS8033 at the current token *after* parsing
-                    // the second `@type {...}` argument — i.e. just past the
-                    // closing `}` of that tag. Mirror that: find the `{...}`
-                    // block that follows this `@type` and anchor the
-                    // diagnostic at the position just past `}`.
-                    let tag_text = &comment_text[after..];
-                    let anchor_offset = if let Some(brace_rel) = tag_text.find('{') {
-                        // Match the closing `}` that balances this `{`,
-                        // respecting nesting so `@type {{ ... }}` works too.
-                        let mut depth = 0i32;
-                        let mut end = None;
-                        for (i, ch) in tag_text[brace_rel..].char_indices() {
-                            if ch == '{' {
-                                depth += 1;
-                            } else if ch == '}' {
-                                depth -= 1;
-                                if depth == 0 {
-                                    end = Some(brace_rel + i + 1);
-                                    break;
-                                }
-                            }
-                        }
-                        end.map(|e| after + e)
-                    } else {
-                        None
-                    };
-                    let (error_pos, error_len) = if let Some(end_off) = anchor_offset {
-                        (comment.pos + end_off as u32, 0u32)
-                    } else {
-                        (comment.pos + match_pos as u32, "@type".len() as u32)
-                    };
+                    // the duplicate `@type {...}` argument, i.e. just past
+                    // the closing `}` of that tag.
+                    let type_tag_pos = segment_start + type_tag_offset;
+                    let (anchor_offset, error_len) =
+                        Self::jsdoc_type_tag_duplicate_anchor(comment_text, type_tag_pos);
                     self.ctx.error(
-                        error_pos,
+                        comment.pos + anchor_offset as u32,
                         error_len,
                         diagnostic_messages::A_JSDOC_TYPEDEF_COMMENT_MAY_NOT_CONTAIN_MULTIPLE_TYPE_TAGS
                             .to_string(),
@@ -544,60 +574,21 @@ impl<'a> CheckerState<'a> {
 
             let comment_text = comment.get_text(source_text);
 
-            // Find @typedef tag (must be the real `@typedef`, not e.g. `@typedefx`)
-            let Some(typedef_pos) = Self::jsdoc_tag_offset(comment_text, "typedef") else {
-                continue;
-            };
-
-            let after_typedef = typedef_pos + "@typedef".len();
-            let rest = &comment_text[after_typedef..];
-
-            // Check if there's a type annotation: @typedef {SomeType} Name
-            let trimmed = rest.trim_start();
-            let has_type = trimmed.starts_with('{');
-
-            let mut has_property = false;
-            let mut after_this_typedef = false;
-            for raw_line in comment_text.lines() {
-                let mut line = raw_line
-                    .trim()
-                    .trim_start_matches("/**")
-                    .trim_start_matches("/*")
-                    .trim_start_matches('*')
-                    .trim();
-                line = line.trim_end_matches("*/").trim();
-                if Self::jsdoc_line_starts_with_tag(line, "typedef") {
-                    after_this_typedef = true;
-                    continue;
-                }
-                if !after_this_typedef {
-                    continue;
-                }
-                if Self::jsdoc_line_starts_with_tag(line, "template") {
-                    break;
-                }
-                if line.starts_with("@property")
-                    || line.starts_with("@prop ")
-                    || line.starts_with("@prop{")
-                    || line.starts_with("@type ")
-                    || line.starts_with("@type{")
-                    || line.starts_with("@member ") && !line.starts_with("@memberOf")
-                    || line.starts_with("@member{") && !line.starts_with("@memberof")
+            for (typedef_pos, segment_end) in Self::jsdoc_typedef_tag_spans(comment_text) {
+                let after_typedef = typedef_pos + "@typedef".len();
+                let segment_text = &comment_text[after_typedef..segment_end];
+                if Self::jsdoc_typedef_has_inline_type(comment_text, typedef_pos)
+                    || Self::jsdoc_typedef_segment_has_child_type_tag(segment_text)
                 {
-                    has_property = true;
-                    break;
+                    continue;
                 }
-            }
 
-            if !has_type && !has_property {
                 // Emit TS8021 at the typedef name position (TSC points at the name, not @typedef)
-                let name_start =
-                    after_typedef + rest.find(|c: char| !c.is_whitespace()).unwrap_or(0);
-                let name_end = name_start
-                    + comment_text[name_start..]
-                        .find(|c: char| c.is_whitespace() || c == '*' || c == '/')
-                        .unwrap_or(comment_text.len() - name_start);
-                let name_len = name_end - name_start;
+                let (name_start, name_len) = Self::jsdoc_typedef_missing_type_name_span(
+                    comment_text,
+                    typedef_pos,
+                    segment_end,
+                );
                 let error_pos = comment.pos + name_start as u32;
                 let error_len = if name_len > 0 {
                     name_len as u32
