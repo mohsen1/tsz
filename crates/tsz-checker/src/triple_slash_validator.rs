@@ -53,13 +53,8 @@ pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
             continue;
         }
 
-        // Check if line starts with ///
-        if !trimmed.starts_with("///") {
-            continue;
-        }
-
-        // Check if it contains <reference path=
-        if !trimmed.contains("<reference") || !trimmed.contains("path=") {
+        // Check if it is an exact <reference> tag with a path attribute.
+        if !is_triple_slash_directive_tag(trimmed, "reference") || !trimmed.contains("path=") {
             continue;
         }
 
@@ -115,8 +110,7 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
         }
 
         if !past_prologue
-            && trimmed.starts_with("///")
-            && trimmed.contains("<reference")
+            && is_triple_slash_directive_tag(trimmed, "reference")
             && trimmed.contains("types=")
             && let Some((name, value_offset_in_line)) =
                 extract_quoted_attr_with_offset(line, "types")
@@ -171,13 +165,8 @@ pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
             continue;
         }
 
-        // Check if line starts with ///
-        if !trimmed.starts_with("///") {
-            continue;
-        }
-
-        // Check if it contains <amd-module name=
-        if !trimmed.contains("<amd-module") || !trimmed.contains("name=") {
+        // Check if it is an exact <amd-module> tag with a name attribute.
+        if !is_triple_slash_directive_tag(trimmed, "amd-module") || !trimmed.contains("name=") {
             continue;
         }
 
@@ -230,8 +219,8 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
             past_prologue = true;
         }
 
-        // Must start with /// and contain <reference (and still be in the prologue)
-        if !past_prologue && trimmed.starts_with("///") && trimmed.contains("<reference") {
+        // Must be an exact <reference> tag and still be in the prologue.
+        if !past_prologue && is_triple_slash_directive_tag(trimmed, "reference") {
             // Check if it's a well-formed directive:
             // Valid forms: path="...", types="...", lib="...", no-default-lib="true"
             let has_valid_path = extract_quoted_attr(trimmed, "path").is_some();
@@ -256,6 +245,29 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
 
 fn is_initial_shebang(position: usize, trimmed: &str) -> bool {
     position == 0 && trimmed.starts_with("#!")
+}
+
+fn is_triple_slash_directive_tag(trimmed: &str, tag: &str) -> bool {
+    let Some(after_slashes) = trimmed.strip_prefix("///") else {
+        return false;
+    };
+    let Some(after_open) = after_slashes.trim_start().strip_prefix('<') else {
+        return false;
+    };
+    let Some(rest) = after_open.strip_prefix(tag) else {
+        return false;
+    };
+
+    if rest.is_empty() {
+        return true;
+    }
+
+    let bytes = rest.as_bytes();
+    match bytes[0] {
+        b'>' => true,
+        b'/' => bytes.len() == 1 || bytes.get(1) == Some(&b'>'),
+        ch => ch.is_ascii_whitespace(),
+    }
 }
 
 /// Extract the value of a named attribute from a reference directive line.
