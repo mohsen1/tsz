@@ -312,6 +312,13 @@ pub struct CheckerContext<'a> {
     /// checker should consume that context and avoid ad-hoc module-existence inference.
     pub report_unresolved_imports: bool,
 
+    /// Whether leading conformance-style source comments may override compiler options.
+    ///
+    /// TypeScript source files can contain comments like `// @strict: false` in
+    /// the conformance suite, but those are not user-facing source directives.
+    /// Normal CLI/LSP/project checking must leave compiler options unchanged.
+    pub allow_source_file_test_pragmas: bool,
+
     /// Whether the current file is an ESM module (per-file determination).
     /// In Node16/NodeNext, `.js`/`.ts` files may be ESM based on the nearest
     /// `package.json` `"type": "module"` field. Set by the driver from module resolver.

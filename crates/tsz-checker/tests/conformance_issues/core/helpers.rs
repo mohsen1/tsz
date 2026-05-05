@@ -94,6 +94,7 @@ pub(crate) fn compile_two_files_get_diagnostics_with_options(
         "b.ts".to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     checker.ctx.set_all_arenas(all_arenas);
     checker.ctx.set_all_binders(all_binders);
@@ -172,6 +173,7 @@ pub(crate) fn compile_named_files_get_diagnostics_with_options_and_import_report
         file_names[entry_idx].clone(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
     checker.ctx.set_all_binders(Arc::clone(&all_binders));
@@ -249,6 +251,7 @@ pub(crate) fn compile_named_files_get_diagnostics_with_lib_and_options(
         file_names[entry_idx].clone(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
     checker.ctx.set_all_binders(Arc::clone(&all_binders));
@@ -313,6 +316,7 @@ pub(crate) fn compile_and_get_diagnostics_with_merged_lib_contexts_and_shared_ca
         "test.ts".to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     if !checker_lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(checker_lib_contexts);
@@ -347,6 +351,7 @@ pub(crate) fn compile_imports_and_get_diagnostics(
         "test.ts".to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
     checker.ctx.report_unresolved_imports = true;
 
     checker.check_source_file(root);
@@ -396,6 +401,7 @@ pub(crate) fn compile_and_get_raw_diagnostics_named(
         file_name.to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
     checker.ctx.report_unresolved_imports = true;
 
     checker.check_source_file(root);
@@ -540,6 +546,7 @@ pub(crate) fn compile_and_get_raw_diagnostics_named_with_lib_and_options(
         file_name.to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     if !checker_lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(checker_lib_contexts);
@@ -589,6 +596,7 @@ pub(crate) fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
         "test.ts".to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     if !checker_lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(checker_lib_contexts);
