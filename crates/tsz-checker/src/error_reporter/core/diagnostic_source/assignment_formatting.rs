@@ -22,6 +22,11 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.typeof_unique_symbol_source_display(anchor_idx) {
             return display;
         }
+        if let Some(display) =
+            self.js_constructor_instance_assignment_source_display(source, anchor_idx)
+        {
+            return display;
+        }
 
         let has_optional_callable_param =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
@@ -920,6 +925,71 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(self.format_property_receiver_type_for_diagnostic(display_type))
+    }
+
+    fn js_constructor_instance_assignment_source_display(
+        &mut self,
+        source: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> Option<String> {
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)?;
+        let expr_idx = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))?;
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        if expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let source_sym = self.resolve_identifier_symbol(expr_idx)?;
+        let source_symbol = self
+            .get_cross_file_symbol(source_sym)
+            .or_else(|| self.ctx.binder.get_symbol(source_sym))?;
+        if (source_symbol.flags & tsz_binder::symbol_flags::VARIABLE) == 0 {
+            return None;
+        }
+
+        let current_file_idx = self.ctx.current_file_idx as u32;
+        let this_pos = expr_node.pos;
+        source_symbol
+            .stable_declarations
+            .iter()
+            .copied()
+            .chain(std::iter::once(source_symbol.stable_value_declaration))
+            .filter_map(|stable_loc| {
+                if !stable_loc.is_known() {
+                    return None;
+                }
+                let file_idx = if stable_loc.has_file_idx() {
+                    stable_loc.file_idx
+                } else {
+                    current_file_idx
+                };
+                let (decl_idx, arena) = self.ctx.node_at_stable_location(stable_loc)?;
+                let decl_node = arena.get(decl_idx)?;
+                let declaration = arena.get_variable_declaration(decl_node)?;
+                if file_idx == current_file_idx && decl_node.pos > this_pos {
+                    return None;
+                }
+
+                let init_idx = arena.skip_parenthesized_and_assertions(declaration.initializer);
+                let init_node = arena.get(init_idx)?;
+                if init_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+                    return None;
+                }
+                let new_expr = arena.get_call_expr(init_node)?;
+                let ctor_idx = arena.skip_parenthesized_and_assertions(new_expr.expression);
+                let ctor_node = arena.get(ctor_idx)?;
+                let ident = arena.get_identifier(ctor_node)?;
+                Some((
+                    file_idx == current_file_idx,
+                    decl_node.pos,
+                    ident.escaped_text.clone(),
+                ))
+            })
+            .max_by_key(|(same_file, decl_pos, _)| (*same_file, *decl_pos))
+            .map(|(_, _, display)| display)
     }
 
     fn call_unknown_array_source_display(

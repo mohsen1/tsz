@@ -18,6 +18,7 @@ use tsz_solver::TypeInterner;
 
 struct Diag {
     code: u32,
+    message_text: String,
 }
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
@@ -121,7 +122,10 @@ fn check_js_internal(source: &str, with_libs: bool) -> Vec<Diag> {
         .ctx
         .diagnostics
         .iter()
-        .map(|d: &Diagnostic| Diag { code: d.code })
+        .map(|d: &Diagnostic| Diag {
+            code: d.code,
+            message_text: d.message_text.clone(),
+        })
         .collect()
 }
 
@@ -162,7 +166,10 @@ fn check_js_with_exact_optional(source: &str) -> Vec<Diag> {
         .ctx
         .diagnostics
         .iter()
-        .map(|d: &Diagnostic| Diag { code: d.code })
+        .map(|d: &Diagnostic| Diag {
+            code: d.code,
+            message_text: d.message_text.clone(),
+        })
         .collect()
 }
 
@@ -537,6 +544,84 @@ var props = {};
         ts2403 >= 1,
         "Expected TS2403 for @type {{object}} vs @type {{Object}} redeclaration, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_jsdoc_type_predicate_cast_emits_ts1228() {
+    let source = r#"
+// @ts-check
+/** @type {number | string} */
+var value;
+if (/** @type {value is string} */ (value === undefined)) {
+}
+"#;
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1228),
+        "Expected TS1228 for a type predicate in a JSDoc @type cast, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_jsdoc_any_cast_string_concat_redeclaration_no_ts2403() {
+    let source = r#"
+// @ts-check
+/** @type {string} */
+var s;
+var s = "" + /** @type {*} */ (4);
+"#;
+    let diagnostics = check_js(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2403),
+        "Did not expect TS2403 when string concatenation with a JSDoc-any cast redeclares a string var, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_js_constructor_instance_assignment_source_uses_constructor_name() {
+    let source = r#"
+// @ts-check
+class SomeBase {
+    constructor() {
+        this.p = 42;
+    }
+}
+class SomeDerived extends SomeBase {
+    constructor() {
+        super();
+        this.x = 42;
+    }
+}
+function SomeFakeClass() {
+    /** @type {string|number} */
+    this.p = "bar";
+}
+var someBase = new SomeBase();
+var someDerived = new SomeDerived();
+var someFakeClass = new SomeFakeClass();
+someFakeClass = someBase;
+someFakeClass = someDerived;
+someBase = someFakeClass;
+"#;
+    let diagnostics = check_js(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2322 for assigning a checked-JS constructor instance to SomeBase, got: {:?}",
+                diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+            )
+        });
+    assert!(
+        ts2322
+            .message_text
+            .contains("Type 'SomeFakeClass' is not assignable to type 'SomeBase'."),
+        "TS2322 should use the constructor instance source name, got: {}",
+        ts2322.message_text
     );
 }
 
