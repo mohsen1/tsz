@@ -1059,16 +1059,34 @@ impl<'a> CheckerState<'a> {
         // checking, but our demand-driven type resolution can resolve many names
         // before any diagnostics are emitted. Counting eagerly here (via Cell)
         // ensures the cap of 10 is reached regardless of processing order.
-        let is_new_node = !self.ctx.name_resolution_reported_nodes.contains(&idx);
+        let is_new_node = !self
+            .ctx
+            .name_resolution_diagnostics
+            .reported_nodes
+            .contains(&idx);
         if is_new_node {
             self.ctx
+                .name_resolution_diagnostics
                 .spelling_suggestions_emitted
-                .set(self.ctx.spelling_suggestions_emitted.get() + 1);
+                .set(
+                    self.ctx
+                        .name_resolution_diagnostics
+                        .spelling_suggestions_emitted
+                        .get()
+                        + 1,
+                );
         }
 
         // Suppress suggestions when the cap is reached for a new node.
         // Already-counted nodes can still get suggestions (repeated resolution).
-        if self.ctx.spelling_suggestions_emitted.get() > 10 && is_new_node {
+        if self
+            .ctx
+            .name_resolution_diagnostics
+            .spelling_suggestions_emitted
+            .get()
+            > 10
+            && is_new_node
+        {
             return Vec::new();
         }
 
@@ -1247,7 +1265,10 @@ impl<'a> CheckerState<'a> {
         // The suggestion counter was already incremented eagerly in
         // `collect_spelling_suggestions`. Just mark the node as reported
         // to prevent future double-counting.
-        self.ctx.name_resolution_reported_nodes.insert(idx);
+        self.ctx
+            .name_resolution_diagnostics
+            .reported_nodes
+            .insert(idx);
 
         // Skip TS2304 for identifiers that are clearly not valid names.
         // These are likely parse errors that were added to the AST for error recovery.

@@ -91,6 +91,22 @@ impl<'a> CheckerState<'a> {
             || self.is_assignable_to(restricted, inst_constraint)
     }
 
+    pub(super) fn infer_result_satisfies_array_like_constraint(
+        &mut self,
+        cond_extends: TypeId,
+        cond_true: TypeId,
+        inst_constraint: TypeId,
+    ) -> bool {
+        let db = self.ctx.types.as_type_database();
+        if !query::is_infer_type(db, cond_true)
+            || !self.target_constraint_is_array_like(inst_constraint)
+        {
+            return false;
+        }
+
+        self.infer_type_appears_as_tuple_rest(cond_extends, cond_true)
+    }
+
     fn type_is_infer_result_conditional(&self, type_id: TypeId) -> bool {
         let db = self.ctx.types.as_type_database();
         query::full_conditional_type_components(db, type_id).is_some_and(
@@ -98,5 +114,37 @@ impl<'a> CheckerState<'a> {
                 cond_false == TypeId::NEVER && query::is_infer_type(db, cond_true)
             },
         )
+    }
+
+    fn target_constraint_is_array_like(&mut self, target: TypeId) -> bool {
+        let resolved = self.resolve_lazy_type(target);
+        let evaluated = self.evaluate_type_for_assignability(resolved);
+        let db = self.ctx.types.as_type_database();
+        [target, resolved, evaluated].into_iter().any(|candidate| {
+            matches!(
+                query::classify_array_like(db, candidate),
+                query::ArrayLikeKind::Array(_)
+                    | query::ArrayLikeKind::Tuple
+                    | query::ArrayLikeKind::Readonly(_)
+            )
+        })
+    }
+
+    fn infer_type_appears_as_tuple_rest(&mut self, pattern: TypeId, infer_type: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let candidates = [
+            pattern,
+            self.resolve_lazy_type(pattern),
+            self.evaluate_type_for_assignability(pattern),
+        ];
+        candidates.into_iter().any(|candidate| {
+            crate::query_boundaries::common::tuple_elements(db, candidate).is_some_and(|elements| {
+                elements.iter().any(|element| {
+                    element.rest
+                        && (element.type_id == infer_type
+                            || self.infer_type_appears_as_tuple_rest(element.type_id, infer_type))
+                })
+            })
+        })
     }
 }

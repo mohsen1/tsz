@@ -1698,11 +1698,8 @@ impl<'a> CheckerState<'a> {
         let import_brace_pattern = format!("{{ {name} }}");
 
         for range in &comment_ranges {
-            // JSDoc tags only appear in block comments (`/* ... */` and
-            // `/** ... */`). Line comments cannot contain them per tsc's
-            // grammar, so skip those to avoid false positives from
-            // commented-out code that happens to mention `@type {X}`.
-            if !range.is_multi_line {
+            // Only real JSDoc block comments can contribute type references.
+            if !tsz_common::comments::is_jsdoc_comment(range, text) {
                 continue;
             }
             let comment_text = range.get_text(text);
