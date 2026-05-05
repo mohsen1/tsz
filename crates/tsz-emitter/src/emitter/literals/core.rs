@@ -92,6 +92,11 @@ impl<'a> Printer<'a> {
             && self
                 .commonjs_exported_var_names
                 .contains(original_text.as_str())
+            && !self
+                .commonjs_exported_var_shadow_stack
+                .iter()
+                .rev()
+                .any(|scope| scope.contains(original_text.as_str()))
         {
             // In CJS modules, inline-exported variable references (let/const/var)
             // are rewritten to `exports.X` for both reads and writes.
