@@ -239,6 +239,48 @@ fn es5_arrow_this_capture_skips_multiple_user_bindings() {
 }
 
 #[test]
+fn private_field_weakmap_name_avoids_user_binding() {
+    let source = r#"const _C_x = "user binding";
+
+class C {
+    #x = 1;
+
+    getX() {
+        return this.#x;
+    }
+}
+
+export const result = [new C().getX(), _C_x];
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _C_x_1;"),
+        "Private field lowering should skip the real _C_x binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C_x_1 = new WeakMap()"),
+        "WeakMap initialization should use the collision-free helper name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("[new C().getX(), _C_x]"),
+        "The user binding must still be referenced by its original name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn commonjs_module_temp_skips_user_binding() {
     let source = r#"import { value } from "foo";
 

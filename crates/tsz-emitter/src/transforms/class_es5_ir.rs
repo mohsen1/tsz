@@ -82,7 +82,8 @@ use crate::transforms::ir::{
     IRPropertyKind, IRSwitchCase,
 };
 use crate::transforms::private_fields_es5::{
-    PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
+    PrivateAccessorInfo, PrivateFieldInfo, collect_enclosing_source_binding_names,
+    collect_private_accessors_with_reserved, collect_private_fields_with_reserved,
 };
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
@@ -1553,8 +1554,19 @@ impl<'a> ES5ClassTransformer<'a> {
         self.class_name = class_name;
 
         // Collect private fields and accessors
-        self.private_fields = collect_private_fields(self.arena, class_idx, &self.class_name);
-        self.private_accessors = collect_private_accessors(self.arena, class_idx, &self.class_name);
+        let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);
+        self.private_fields = collect_private_fields_with_reserved(
+            self.arena,
+            class_idx,
+            &self.class_name,
+            &mut used_private_names,
+        );
+        self.private_accessors = collect_private_accessors_with_reserved(
+            self.arena,
+            class_idx,
+            &self.class_name,
+            &mut used_private_names,
+        );
         self.auto_accessors = collect_auto_accessor_fields(self.arena, class_idx, &self.class_name);
 
         // Check for extends clause

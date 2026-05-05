@@ -26,7 +26,8 @@
 
 use crate::transforms::ir::{IRGeneratorCase, IRMethodName, IRNode, IRParam};
 use crate::transforms::private_fields_es5::{
-    collect_private_accessors, collect_private_fields, is_private_identifier,
+    collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
+    collect_private_fields_with_reserved, is_private_identifier,
 };
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -82,8 +83,19 @@ impl<'a> ES5ClassTransformer<'a> {
         self.class_name = class_name.clone();
 
         // Collect private fields and accessors
-        let private_fields = collect_private_fields(self.arena, class_idx, &class_name);
-        let private_accessors = collect_private_accessors(self.arena, class_idx, &class_name);
+        let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);
+        let private_fields = collect_private_fields_with_reserved(
+            self.arena,
+            class_idx,
+            &class_name,
+            &mut used_private_names,
+        );
+        let private_accessors = collect_private_accessors_with_reserved(
+            self.arena,
+            class_idx,
+            &class_name,
+            &mut used_private_names,
+        );
 
         // Get base class
         let base_class = self.get_extends_class(&class_data.heritage_clauses);
