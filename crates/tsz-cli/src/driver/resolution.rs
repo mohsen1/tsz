@@ -575,11 +575,11 @@ pub(crate) fn collect_module_requests_from_text(
 fn text_may_contain_module_specifiers(text: &str) -> bool {
     // All module specifier patterns require at least one of these keywords:
     // - `import` for ES imports and dynamic import()
-    // - `require(` for CommonJS require calls
+    // - `require` for CommonJS require calls, including trivia before `(`
     // - `from '` or `from "` for re-exports like `export { x } from 'y'`
     // - `declare module` for ambient module declarations
     text.contains("import")
-        || text.contains("require(")
+        || text.contains("require")
         || text.contains("from '")
         || text.contains("from \"")
         || text.contains("declare module")
