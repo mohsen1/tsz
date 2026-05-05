@@ -1437,6 +1437,63 @@ y = "AbC";
 }
 
 #[test]
+fn test_type_literal_local_intrinsic_utility_aliases_shadow_lib_intrinsics() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+export {};
+
+type Uppercase<T> = { custom: T };
+type NoInfer<T> = { custom: T };
+
+type UpperBox = {
+  value: Uppercase<"abc">;
+};
+
+type NoInferBox = {
+  value: NoInfer<string>;
+};
+
+const upperOk: UpperBox = { value: { custom: "abc" } };
+const upperBad: UpperBox = { value: "ABC" };
+
+const noInferOk: NoInferBox = { value: { custom: "abc" } };
+const noInferBad: NoInferBox = { value: "abc" };
+
+upperOk;
+upperBad;
+noInferOk;
+noInferBad;
+"#,
+    );
+
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        messages.len(),
+        2,
+        "Expected only the two string assignments to fail, got: {diagnostics:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| message
+            .contains("Type 'string' is not assignable to type 'Uppercase<\"abc\">'.")),
+        "Expected local Uppercase alias target, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|message| message
+            .contains("Type 'string' is not assignable to type 'NoInfer<string>'.")),
+        "Expected local NoInfer alias target, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().all(|message| !message.contains("\"ABC\"")),
+        "Local Uppercase alias should not lower to the string intrinsic, got: {messages:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_string_mapping_alias_displays_resolved_literal_target() {
     let source = r#"
 type A = "aA";
