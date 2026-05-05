@@ -107,23 +107,35 @@ impl<'a> CheckerState<'a> {
         );
         // Include parenthesized expressions in contextual refresh args
         // so that `(callback)` gets the correct contextual type per-overload.
+        let union_contextual_param_types: Vec<_> = args
+            .iter()
+            .enumerate()
+            .map(|(i, _)| ctx_helper.get_parameter_type_for_call(i, args.len()))
+            .collect();
         let contextual_refresh_args: Vec<_> = args
             .iter()
             .copied()
-            .filter(|&arg_idx| {
+            .enumerate()
+            .filter_map(|(i, arg_idx)| {
                 if self.argument_needs_contextual_type(arg_idx) {
-                    return true;
+                    return Some(arg_idx);
+                }
+                if self.expression_needs_contextual_signature_instantiation(
+                    arg_idx,
+                    union_contextual_param_types.get(i).copied().flatten(),
+                ) {
+                    return Some(arg_idx);
                 }
                 // Also include parenthesized expressions that might contain callbacks
                 let mut current = arg_idx;
                 for _ in 0..10 {
                     let Some(node) = self.ctx.arena.get(current) else {
-                        return false;
+                        return None;
                     };
                     if node.kind == syntax_kind_ext::ARROW_FUNCTION
                         || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                     {
-                        return true;
+                        return Some(arg_idx);
                     }
                     if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
                         && let Some(paren) = self.ctx.arena.get_parenthesized(node)
@@ -131,9 +143,9 @@ impl<'a> CheckerState<'a> {
                         current = paren.expression;
                         continue;
                     }
-                    return false;
+                    return None;
                 }
-                false
+                None
             })
             .collect();
         let refresh_all_args = |this: &mut Self| {
@@ -969,19 +981,136 @@ impl<'a> CheckerState<'a> {
                         })
                         .collect::<Vec<_>>()
                     };
-                    self.collect_call_argument_types_with_context(
-                        args,
-                        |i, _arg_count| {
-                            refreshed_contextual_types
+                    if !return_sub_for_preinfer.is_empty() {
+                        let tracked_type_params: rustc_hash::FxHashSet<_> =
+                            sig.type_params.iter().map(|tp| tp.name).collect();
+                        let mut progressive_sub = {
+                            let mut sub = self.extract_arg_inference_substitution(
+                                &sig.params,
+                                instantiated_params,
+                                &sig.type_params,
+                            );
+                            for tp in &sig.type_params {
+                                if let Some(ty) = return_sub_for_preinfer.get(tp.name) {
+                                    sub.insert(tp.name, ty);
+                                }
+                            }
+                            sub
+                        };
+                        let mut progressive_args = Vec::with_capacity(args.len());
+                        for (i, &arg_idx) in args.iter().enumerate() {
+                            let contextual_params = sig
+                                .params
+                                .iter()
+                                .map(|param| {
+                                    let mut instantiated_param = *param;
+                                    instantiated_param.type_id =
+                                        crate::query_boundaries::common::instantiate_type(
+                                            self.ctx.types,
+                                            param.type_id,
+                                            &progressive_sub,
+                                        );
+                                    instantiated_param
+                                })
+                                .collect::<Vec<_>>();
+                            let contextual_type = contextual_params
                                 .get(i)
-                                .copied()
-                                .flatten()
-                                .or_else(|| candidate_param_types.get(i).copied().flatten())
-                        },
-                        false,
-                        None,
-                        candidate_callable_ctx,
-                    )
+                                .map(|p| (p.type_id, p.rest))
+                                .or_else(|| {
+                                    let last = contextual_params.last()?;
+                                    last.rest.then_some((last.type_id, true))
+                                })
+                                .map(|(param_type, rest)| {
+                                    let param_type = if rest {
+                                        self.rest_argument_element_type_with_env(param_type)
+                                    } else {
+                                        param_type
+                                    };
+                                    self.normalize_contextual_call_param_type(param_type)
+                                })
+                                .or_else(|| candidate_param_types.get(i).copied().flatten());
+                            let arg_type = self.compute_single_call_argument_type(
+                                arg_idx,
+                                contextual_type,
+                                false,
+                                i,
+                                args.len(),
+                                true,
+                                candidate_callable_ctx,
+                            );
+                            let arg_for_refinement = contextual_type
+                                .map(|expected| {
+                                    self.instantiate_generic_function_argument_against_target_params(
+                                        arg_type, expected,
+                                    )
+                                })
+                                .unwrap_or(arg_type);
+                            progressive_args.push(arg_for_refinement);
+                            if let Some(shape_param) =
+                                sig.params.get(i).map(|p| p.type_id).or_else(|| {
+                                    let last = sig.params.last()?;
+                                    last.rest.then_some(last.type_id)
+                                })
+                            {
+                                let mut arg_substitution =
+                                    crate::query_boundaries::common::TypeSubstitution::new();
+                                let mut visited = rustc_hash::FxHashSet::default();
+                                self.collect_return_context_substitution(
+                                    shape_param,
+                                    arg_for_refinement,
+                                    &tracked_type_params,
+                                    &mut arg_substitution,
+                                    &mut visited,
+                                );
+                                for (&name, &ty) in arg_substitution.map() {
+                                    if ty == TypeId::UNKNOWN
+                                        || ty == TypeId::ERROR
+                                        || self.target_contains_blocking_return_context_type_params(
+                                            ty,
+                                            &tracked_type_params,
+                                        )
+                                        || return_sub_for_preinfer.get(name).is_some()
+                                    {
+                                        continue;
+                                    }
+                                    let should_update = match progressive_sub.get(name) {
+                                        None => true,
+                                        Some(existing) if existing == ty => false,
+                                        Some(existing) => {
+                                            existing == TypeId::UNKNOWN
+                                                || existing == TypeId::ERROR
+                                                || crate::query_boundaries::common::contains_type_parameters(
+                                                    self.ctx.types,
+                                                    existing,
+                                                )
+                                                || crate::query_boundaries::common::contains_infer_types(
+                                                    self.ctx.types,
+                                                    existing,
+                                                )
+                                        }
+                                    };
+                                    if should_update {
+                                        progressive_sub.insert(name, ty);
+                                    }
+                                }
+                            }
+                        }
+                        progressive_args
+                    } else {
+                        self.collect_call_argument_types_with_context(
+                            args,
+                            |i, _arg_count| {
+                                refreshed_contextual_types
+                                    .get(i)
+                                    .copied()
+                                    .flatten()
+                                    .or_else(|| candidate_param_types.get(i).copied().flatten())
+                            },
+                            false,
+                            None,
+                            candidate_callable_ctx,
+                        )
+                    }
                 } else {
                     self.collect_call_argument_types_with_context(
                         args,
