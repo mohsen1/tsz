@@ -225,3 +225,27 @@ type NestedTuple = UseNestedArray<[[]]>;
         "Should NOT emit TS2344 for tuple-rest infer results or nested tuple array constraints, got: {ts2344_errors:?}"
     );
 }
+
+#[test]
+fn test_mapped_key_infer_subset_satisfies_keyof_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type KeysWithoutStringIndex<T> =
+    { [K in keyof T]: string extends K ? never : K } extends { [_ in keyof T]: infer U }
+    ? U
+    : never;
+
+export type RemoveIdxSgn<T> = Pick<T, KeysWithoutStringIndex<T>>;
+"#,
+    );
+
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Mapped key infer result should be accepted as a keyof subset. Got: {ts2344_errors:?}"
+    );
+}

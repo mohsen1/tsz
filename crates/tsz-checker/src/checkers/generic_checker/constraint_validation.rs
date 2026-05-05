@@ -350,6 +350,13 @@ impl<'a> CheckerState<'a> {
                                                         inst_constraint,
                                                     )
                                                 || self
+                                                    .infer_result_satisfies_via_mapped_key_subset(
+                                                        cond_check,
+                                                        cond_extends,
+                                                        cond_true,
+                                                        inst_constraint,
+                                                    )
+                                                || self
                                                     .infer_result_satisfies_via_application_arg_constraints(
                                                         type_arg,
                                                         inst_constraint,
@@ -796,6 +803,12 @@ impl<'a> CheckerState<'a> {
                                         inst_constraint,
                                     )
                                     || self.infer_result_satisfies_array_like_constraint(
+                                        cond_extends,
+                                        cond_true,
+                                        inst_constraint,
+                                    )
+                                    || self.infer_result_satisfies_via_mapped_key_subset(
+                                        cond_check,
                                         cond_extends,
                                         cond_true,
                                         inst_constraint,
