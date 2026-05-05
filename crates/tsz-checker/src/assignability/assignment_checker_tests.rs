@@ -891,6 +891,95 @@ fn generic_conditional_type_alias_stays_deferred() {
 }
 
 #[test]
+fn deferred_conditional_target_assignability_fingerprints() {
+    let source = r#"
+type Distributive<T> = T extends { a: number } ? { a: number } : { b: number };
+
+function f2<T>(t1: { x: T; y: T }, t2: T extends T ? { x: T; y: T } : never) {
+    t1 = t2;
+    t2 = t1;
+}
+
+function testAssignabilityToConditionalType<T>() {
+    const o = { a: 1, b: 2 };
+    const o2: [T] extends [[infer U]] ? U : { b: number } = o;
+    const o6: Distributive<[T] extends [never] ? { a: number } : never> = o;
+}
+
+type InferBecauseWhyNot<T> = [T] extends [(p: infer P1) => any] ? P1 | T : never;
+function f3<Q extends (arg: any) => any>(x: Q): InferBecauseWhyNot<Q> {
+    return x;
+}
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("T extends T ? { x: T; y: T; } : never")),
+        "expected TS2322 for assigning into deferred `T extends T` target, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("[T] extends [[infer U]] ? U : { b: number; }")),
+        "expected TS2322 for nested-infer conditional target, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("InferBecauseWhyNot<Q>")),
+        "expected TS2322 for tuple-wrapped infer return target, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|msg| !msg.contains("Distributive<[T] extends [never]")),
+        "should not report the `o6` distributive-never case, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_call_with_this_indexed_conditional_parameter_reports_ts2345() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Wrapped<T> = { ___secret: T };
+type Unwrap<T> = T extends Wrapped<infer U> ? U : T;
+declare function set<T, K extends keyof T>(obj: T, key: K, value: Unwrap<T[K]>): Unwrap<T[K]>;
+
+class Foo {
+    prop!: Wrapped<string>;
+    method() {
+        set(this, "prop", "hi");
+    }
+}
+
+set(new Foo(), "prop", "hi");
+"#,
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected only the class-method call to report TS2345, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2345[0].message_text.contains("Unwrap<this[\"prop\"]>"),
+        "expected polymorphic this indexed-access target, got: {ts2345:?}"
+    );
+}
+
+#[test]
 fn private_setter_only_no_false_ts2322() {
     // A class with a set-only private accessor should not emit TS2322
     // when assigning to it. The write type (setter param) is `number`,

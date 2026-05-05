@@ -7,8 +7,10 @@
 
 use std::sync::Arc;
 
-use crate::types::{ConditionalType, TypeData, TypeId};
-use crate::visitor::{contains_type_parameter_named, type_param_info};
+use crate::types::{ConditionalType, IntrinsicKind, TypeData, TypeId};
+use crate::visitor::{
+    conditional_type_id, contains_type_parameter_named, intrinsic_kind, type_param_info,
+};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -51,11 +53,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Extends types must be structurally identical (equivalent).
-        if !self.conditional_extends_types_equivalent(source.extends_type, target.extends_type) {
-            return SubtypeResult::False;
-        }
-
         // Check types must be related in either direction.
         // tsc: isRelatedTo(source.checkType, target.checkType) ||
         //      isRelatedTo(target.checkType, source.checkType)
@@ -66,6 +63,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .check_subtype(target.check_type, source.check_type)
                 .is_true()
         {
+            return SubtypeResult::False;
+        }
+
+        // Extends types must usually be structurally identical (equivalent).
+        // A narrow non-distributive exception is needed for branch-refined
+        // comparisons such as:
+        //
+        //   [T] extends [string] ? Y : AB
+        //     <: [T] extends [number]
+        //          ? ([T] extends [string] ? Y : A)
+        //          : ([T] extends [string] ? Y : B)
+        //
+        // Under the target true branch (`T extends number`), the source must
+        // be in its false branch because `[string]` and `[number]` are disjoint.
+        // Under the target false branch, the original source conditional is
+        // compared recursively against that branch.
+        if !self.conditional_extends_types_equivalent(source.extends_type, target.extends_type) {
+            if let Some(result) =
+                self.check_disjoint_non_distributive_conditional_subtype(source, target)
+            {
+                return result;
+            }
             return SubtypeResult::False;
         }
 
@@ -80,6 +99,115 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             SubtypeResult::False
         }
+    }
+
+    fn check_disjoint_non_distributive_conditional_subtype(
+        &mut self,
+        source: &ConditionalType,
+        target: &ConditionalType,
+    ) -> Option<SubtypeResult> {
+        if source.is_distributive || target.is_distributive {
+            return None;
+        }
+        if !self
+            .conditional_extends_types_definitely_disjoint(source.extends_type, target.extends_type)
+        {
+            return None;
+        }
+
+        let target_true = self.conditional_branch_under_extends_assumption(
+            target.true_type,
+            target.check_type,
+            target.extends_type,
+        );
+        if !self.check_subtype(source.false_type, target_true).is_true() {
+            return Some(SubtypeResult::False);
+        }
+
+        let source_id = self.interner.conditional(*source);
+        Some(self.check_subtype(source_id, target.false_type))
+    }
+
+    fn conditional_branch_under_extends_assumption(
+        &mut self,
+        branch: TypeId,
+        assumed_check_type: TypeId,
+        assumed_extends_type: TypeId,
+    ) -> TypeId {
+        let Some(branch_cond_id) = conditional_type_id(self.interner, branch) else {
+            return branch;
+        };
+        let branch_cond = self.interner.get_conditional(branch_cond_id);
+        if branch_cond.is_distributive || branch_cond.check_type != assumed_check_type {
+            return branch;
+        }
+        if self.conditional_extends_types_equivalent(branch_cond.extends_type, assumed_extends_type)
+            || self
+                .check_subtype(assumed_extends_type, branch_cond.extends_type)
+                .is_true()
+        {
+            branch_cond.true_type
+        } else if self.conditional_extends_types_definitely_disjoint(
+            branch_cond.extends_type,
+            assumed_extends_type,
+        ) {
+            branch_cond.false_type
+        } else {
+            branch
+        }
+    }
+
+    fn conditional_extends_types_definitely_disjoint(&self, left: TypeId, right: TypeId) -> bool {
+        if self.simple_types_definitely_disjoint(left, right) {
+            return true;
+        }
+
+        match (self.interner.lookup(left), self.interner.lookup(right)) {
+            (Some(TypeData::Tuple(left_elements)), Some(TypeData::Tuple(right_elements))) => {
+                let left_elements = self.interner.tuple_list(left_elements);
+                let right_elements = self.interner.tuple_list(right_elements);
+                left_elements.len() == right_elements.len()
+                    && left_elements
+                        .iter()
+                        .zip(right_elements.iter())
+                        .any(|(left, right)| {
+                            !left.rest
+                                && !right.rest
+                                && self
+                                    .simple_types_definitely_disjoint(left.type_id, right.type_id)
+                        })
+            }
+            _ => false,
+        }
+    }
+
+    fn simple_types_definitely_disjoint(&self, left: TypeId, right: TypeId) -> bool {
+        matches!(
+            (
+                intrinsic_kind(self.interner, left),
+                intrinsic_kind(self.interner, right)
+            ),
+            (Some(IntrinsicKind::String), Some(IntrinsicKind::Number))
+                | (Some(IntrinsicKind::Number), Some(IntrinsicKind::String))
+                | (Some(IntrinsicKind::String), Some(IntrinsicKind::Boolean))
+                | (Some(IntrinsicKind::Boolean), Some(IntrinsicKind::String))
+                | (Some(IntrinsicKind::Number), Some(IntrinsicKind::Boolean))
+                | (Some(IntrinsicKind::Boolean), Some(IntrinsicKind::Number))
+                | (Some(IntrinsicKind::Bigint), Some(IntrinsicKind::String))
+                | (Some(IntrinsicKind::String), Some(IntrinsicKind::Bigint))
+                | (Some(IntrinsicKind::Bigint), Some(IntrinsicKind::Number))
+                | (Some(IntrinsicKind::Number), Some(IntrinsicKind::Bigint))
+                | (Some(IntrinsicKind::Bigint), Some(IntrinsicKind::Boolean))
+                | (Some(IntrinsicKind::Boolean), Some(IntrinsicKind::Bigint))
+                | (Some(IntrinsicKind::Symbol), Some(IntrinsicKind::String))
+                | (Some(IntrinsicKind::String), Some(IntrinsicKind::Symbol))
+                | (Some(IntrinsicKind::Symbol), Some(IntrinsicKind::Number))
+                | (Some(IntrinsicKind::Number), Some(IntrinsicKind::Symbol))
+                | (Some(IntrinsicKind::Symbol), Some(IntrinsicKind::Boolean))
+                | (Some(IntrinsicKind::Boolean), Some(IntrinsicKind::Symbol))
+                | (Some(IntrinsicKind::Symbol), Some(IntrinsicKind::Bigint))
+                | (Some(IntrinsicKind::Bigint), Some(IntrinsicKind::Symbol))
+        )
     }
 
     /// Check if a conditional type source is assignable to a concrete target.
@@ -379,6 +507,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: &ConditionalType,
     ) -> SubtypeResult {
+        let target_id = self.interner.conditional(*target);
+        if source == target_id {
+            return SubtypeResult::True;
+        }
+        if let Some(source_cond_id) = conditional_type_id(self.interner, source) {
+            let source_cond = self.interner.get_conditional(source_cond_id);
+            if source_cond.check_type == target.check_type
+                && source_cond.extends_type == target.extends_type
+                && source_cond.true_type == target.true_type
+                && source_cond.false_type == target.false_type
+                && source_cond.is_distributive == target.is_distributive
+            {
+                return SubtypeResult::True;
+            }
+        }
+
+        let target_contains_unbound_infer =
+            crate::type_queries::contains_infer_types_db(self.interner, target.extends_type)
+                || crate::type_queries::contains_infer_types_db(self.interner, target.true_type)
+                || crate::type_queries::contains_infer_types_db(self.interner, target.false_type);
+        let target_has_generic_extends =
+            crate::visitor::contains_type_parameters(self.interner, target.check_type)
+                && crate::visitor::contains_type_parameters(self.interner, target.extends_type);
+
         // Strategy 1: Distributive constraint evaluation for target-position conditionals.
         //
         // When the target conditional has a distributive check type parameter with a constraint,
@@ -399,7 +551,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This doesn't help. The correct approach is: try evaluating the conditional with
         // the source as the check type. If the source satisfies the extends clause,
         // check source against the true branch (with source substituted for check_type).
-        if target.is_distributive
+        if !target_contains_unbound_infer
+            && target.is_distributive
             && let Some(param_info) = type_param_info(self.interner, target.check_type)
         {
             // If the source is itself a type parameter with a constraint that satisfies
@@ -424,6 +577,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
             }
+        }
+
+        if target_contains_unbound_infer || target_has_generic_extends {
+            return SubtypeResult::False;
         }
 
         // Strategy 2: Both branches must be supertypes of source.

@@ -15,8 +15,8 @@ use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
 use crate::types::{IntrinsicKind, TypeApplicationId, TypeData, TypeId};
 use crate::visitor::{
-    application_id, array_element_type, contains_this_type, enum_components, lazy_def_id,
-    literal_value, union_list_id,
+    application_id, array_element_type, conditional_type_id, contains_this_type, enum_components,
+    lazy_def_id, literal_value, union_list_id,
 };
 
 // Global thread-local fuel counter for cross-instance subtype check termination.
@@ -591,6 +591,74 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.guard.leave(pair);
                 leave_global!();
                 return SubtypeResult::True;
+            }
+        }
+
+        // Deferred conditional targets containing `infer` must be checked in their
+        // raw form when the check context is still generic. Eager evaluation can
+        // bind the infer variables from a broad constraint and incorrectly accept
+        // assignments that tsc rejects until instantiation.
+        if !self.bypass_evaluation
+            && let Some(target_cond_id) = conditional_type_id(self.interner, target)
+        {
+            let target_cond = self.interner.get_conditional(target_cond_id);
+            let target_has_infer = crate::type_queries::contains_infer_types_db(
+                self.interner,
+                target_cond.extends_type,
+            ) || crate::type_queries::contains_infer_types_db(
+                self.interner,
+                target_cond.true_type,
+            ) || crate::type_queries::contains_infer_types_db(
+                self.interner,
+                target_cond.false_type,
+            );
+            let target_is_deferred_context =
+                crate::visitor::contains_type_parameters(self.interner, target_cond.check_type)
+                    || crate::visitor::contains_type_parameters(
+                        self.interner,
+                        target_cond.extends_type,
+                    )
+                    || crate::visitor::contains_type_parameters(
+                        self.interner,
+                        target_cond.true_type,
+                    )
+                    || crate::visitor::contains_type_parameters(
+                        self.interner,
+                        target_cond.false_type,
+                    )
+                    || contains_this_type(self.interner, target_cond.check_type)
+                    || contains_this_type(self.interner, target_cond.extends_type)
+                    || contains_this_type(self.interner, target_cond.true_type)
+                    || contains_this_type(self.interner, target_cond.false_type);
+
+            if target_has_infer && target_is_deferred_context {
+                let evaluated_source = self.evaluate_type(source);
+                if evaluated_source == target
+                    || conditional_type_id(self.interner, evaluated_source).is_some_and(
+                        |source_cond_id| {
+                            let source_cond = self.interner.get_conditional(source_cond_id);
+                            source_cond.check_type == target_cond.check_type
+                                && source_cond.extends_type == target_cond.extends_type
+                                && source_cond.true_type == target_cond.true_type
+                                && source_cond.false_type == target_cond.false_type
+                                && source_cond.is_distributive == target_cond.is_distributive
+                        },
+                    )
+                {
+                    if let Some(dp) = def_entered {
+                        self.def_guard.leave(dp);
+                    }
+                    self.guard.leave(pair);
+                    leave_global!();
+                    return SubtypeResult::True;
+                }
+                let result = self.subtype_of_conditional_target(source, &target_cond);
+                if let Some(dp) = def_entered {
+                    self.def_guard.leave(dp);
+                }
+                self.guard.leave(pair);
+                leave_global!();
+                return result;
             }
         }
 
