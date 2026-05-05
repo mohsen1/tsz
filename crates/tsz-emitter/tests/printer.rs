@@ -124,6 +124,23 @@ fn object_spread_recovery_keeps_trailing_empty_object() {
 }
 
 #[test]
+fn optional_instantiation_recovery_emits_optional_call() {
+    let source = "declare let f: { <T>(): T };\nconst b1 = f?.<number>;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("const b1 = f === null || f === void 0 ? void 0 : f();"),
+        "Malformed optional instantiation should recover as an optional call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn decorated_anonymous_class_expression_sets_empty_function_name() {
     let source = "declare let dec: any;\n(@dec class {});";
     let output = parse_lower_print(
