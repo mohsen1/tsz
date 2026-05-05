@@ -10,6 +10,7 @@ use crate::instantiation::instantiate::{
 };
 use crate::types::{
     MappedType, MappedTypeId, PropertyInfo, PropertyLookup, TupleElement, TypeApplicationId,
+    TypeParamInfo,
 };
 
 impl<'a> PropertyAccessEvaluator<'a> {
@@ -514,6 +515,38 @@ impl<'a> PropertyAccessEvaluator<'a> {
         PropertyAccessResult::simple(self.any_args_function(return_type))
     }
 
+    fn application_base_type_params(
+        &self,
+        base: TypeId,
+        symbol: Option<tsz_binder::SymbolId>,
+    ) -> Vec<TypeParamInfo> {
+        if crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
+            .is_some_and(|array_base| array_base == base)
+        {
+            return crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
+                .to_vec();
+        }
+
+        if let Some(sym_id) = symbol {
+            let symbol_ref = crate::types::SymbolRef(sym_id.0);
+            let symbol_params = self.resolver().get_type_params(symbol_ref);
+            let lazy_params = self
+                .resolver()
+                .symbol_to_def_id(symbol_ref)
+                .and_then(|def_id| self.resolver().get_lazy_type_params(def_id));
+            match (symbol_params, lazy_params) {
+                (Some(symbol), Some(lazy)) if !symbol.is_empty() && lazy.len() > symbol.len() => {
+                    return lazy;
+                }
+                (Some(symbol), _) if !symbol.is_empty() => return symbol,
+                (_, Some(lazy)) if !lazy.is_empty() => return lazy,
+                _ => {}
+            }
+        }
+
+        Vec::new()
+    }
+
     /// Resolve property access on a generic Application type (e.g., `D<string>`) nominally.
     ///
     /// This preserves nominal identity for classes/interfaces instead of structurally
@@ -554,26 +587,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Try to find the property in the Object's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
-                // Get type params from the array base type (stored during test setup).
-                //
-                // GUARD: only apply array_base_type_params when this Application's
-                // base is actually the registered global Array. For other generic
-                // interfaces resolved to Object (e.g., BigInt64Array<TArrayBuffer>),
-                // these are *Array's* type-params, not the resolved interface's, and
-                // substituting with them is a no-op-or-worse. Without this guard,
-                // method return types like `(): BigInt64Array<TArrayBuffer>` get a
-                // wrong-substitution that yields a different `TypeId` than the
-                // receiver's own property lookup, surfacing as TS2719 ("Two
-                // different types with this name exist") on assignability checks
-                // (see project_iter21_typed_array_variance_root_cause.md).
-                let is_global_array_base =
-                    crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
-                        .is_some_and(|b| b == app.base);
-                let type_params = if is_global_array_base {
-                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
-                } else {
-                    &[]
-                };
+                let type_params = self.application_base_type_params(app.base, shape.symbol);
 
                 // Instantiate the property type with type-param substitution (only
                 // when we have valid type-params for this base). Then ALWAYS run
@@ -586,7 +600,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     prop.type_id
                 } else {
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
@@ -607,22 +621,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Try to find the property in the ObjectWithIndex's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
-                // GUARD: only apply array_base_type_params when this Application's
-                // base is the registered global Array. See Object branch above.
-                let is_global_array_base =
-                    crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
-                        .is_some_and(|b| b == app.base);
-                let type_params = if is_global_array_base {
-                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
-                } else {
-                    &[]
-                };
+                let type_params = self.application_base_type_params(app.base, shape.symbol);
 
                 let instantiated_prop_type = if type_params.is_empty() {
                     prop.type_id
                 } else {
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
@@ -650,25 +655,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Try to find the property in the Callable's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
-                // For Callable properties, we need to substitute type parameters.
-                // GUARD: only apply array_base_type_params when this Application's
-                // base is the registered global Array. See Object branch above —
-                // the array_base_type_params are *Array's* params, only valid when
-                // the Application's base actually references the global Array.
-                let is_global_array_base =
-                    crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
-                        .is_some_and(|b| b == app.base);
-                let type_params = if is_global_array_base {
-                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
-                } else {
-                    &[]
-                };
+                let type_params = self.application_base_type_params(app.base, shape.symbol);
 
                 let instantiated_prop_type = if type_params.is_empty() {
                     prop.type_id
                 } else {
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());

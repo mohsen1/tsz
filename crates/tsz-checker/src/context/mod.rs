@@ -671,6 +671,11 @@ pub struct CheckerContext<'a> {
     pub diagnostics: Vec<Diagnostic>,
     /// Set of already-emitted diagnostics (start, code) for deduplication.
     pub emitted_diagnostics: FxHashSet<(u32, u32)>,
+    /// Call-expression nodes that resolved to TS2769 during the current
+    /// speculative context. Used so overload resolution can reject outer
+    /// candidates whose callback bodies contain a failed nested overload even
+    /// when the nested diagnostic is rolled back or suppressed for recovery.
+    pub no_overload_call_nodes: FxHashSet<u32>,
     /// Callback return-type TS2322 diagnostics that were emitted during
     /// function body checking but may be pruned by arg collection filters.
     /// Stored separately so they can be restored after pruning and used to

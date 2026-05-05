@@ -719,6 +719,7 @@ impl<'a> CheckerState<'a> {
                 fallback_return,
                 ..
             } => {
+                self.ctx.no_overload_call_nodes.insert(call_idx.0);
                 let overload_failures_disagree = failures.len() > 1
                     && failures.windows(2).any(|pair| {
                         pair[0].code != pair[1].code

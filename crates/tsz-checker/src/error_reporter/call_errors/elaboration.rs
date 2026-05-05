@@ -1150,8 +1150,11 @@ impl<'a> CheckerState<'a> {
         // `Type '"name"' is not assignable to type '"name"'`.
         let mapped_surface_names =
             self.generic_mapped_receiver_explicit_property_names(effective_param_type);
-        if self.target_has_missing_required_properties_from_source(&obj, effective_param_type)
-            && mapped_surface_names.is_empty()
+        if self.target_has_missing_required_properties_from_source(
+            &obj,
+            source_type,
+            effective_param_type,
+        ) && mapped_surface_names.is_empty()
         {
             return false;
         }
@@ -1887,13 +1890,25 @@ impl<'a> CheckerState<'a> {
     fn target_has_missing_required_properties_from_source(
         &mut self,
         obj: &tsz_parser::parser::node::LiteralExprData,
+        source_type: TypeId,
         target_type: TypeId,
     ) -> bool {
-        // Collect source property names from the object literal
+        // Collect source property names from the object literal.
         let mut source_prop_names = std::collections::HashSet::new();
         for &elem_idx in &obj.elements.nodes {
             if let Some(prop_name) = self.object_literal_property_name_from_elem(elem_idx) {
                 source_prop_names.insert(prop_name);
+            }
+        }
+        // Spreads contribute properties that are not represented as named AST
+        // elements. Include the synthesized source shape so `{ ...m, title:
+        // undefined }` is not treated as missing `yearReleased` from `m`.
+        let source_type = self.evaluate_type_for_assignability(source_type);
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source_type)
+        {
+            for prop in &shape.properties {
+                source_prop_names.insert(self.ctx.types.resolve_atom(prop.name).to_string());
             }
         }
 

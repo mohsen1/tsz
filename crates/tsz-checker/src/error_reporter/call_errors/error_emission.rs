@@ -6,6 +6,7 @@ use crate::diagnostics::{
 };
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
+    ResolvedDiagnosticAnchor,
 };
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
@@ -417,6 +418,48 @@ impl<'a> CheckerState<'a> {
                     != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
             })
             .collect();
+        let callback_body_failure_span = if !argument_failures.is_empty() {
+            let callback_spans: Vec<(u32, u32)> = self
+                .logical_call_argument_nodes(idx)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|&arg_idx| self.is_callback_like_argument(arg_idx))
+                .flat_map(|arg_idx| self.callback_body_spans(arg_idx))
+                .collect();
+            let mut shared = None;
+            let mut all_callback_body_spans = !callback_spans.is_empty();
+            for failure in &argument_failures {
+                let Some(span) = failure.span.as_ref() else {
+                    all_callback_body_spans = false;
+                    break;
+                };
+                if !callback_spans
+                    .iter()
+                    .any(|(start, end)| span.start >= *start && span.start < *end)
+                {
+                    all_callback_body_spans = false;
+                    break;
+                }
+                if let Some((start, length)) = shared {
+                    if start != span.start || length != span.length {
+                        all_callback_body_spans = false;
+                        break;
+                    }
+                } else {
+                    shared = Some((span.start, span.length));
+                }
+            }
+            all_callback_body_spans
+                .then_some(shared)
+                .flatten()
+                .map(|(start, length)| ResolvedDiagnosticAnchor {
+                    node_idx: idx,
+                    start,
+                    length,
+                })
+        } else {
+            None
+        };
         let remaining_failures_are_count_mismatches = remaining_failures.iter().all(|failure| {
             matches!(
                 failure.code,
@@ -614,7 +657,9 @@ impl<'a> CheckerState<'a> {
         } else {
             idx
         };
-        let Some(anchor) = self.resolve_diagnostic_anchor(anchor_idx, anchor_kind) else {
+        let Some(anchor) = callback_body_failure_span
+            .or_else(|| self.resolve_diagnostic_anchor(anchor_idx, anchor_kind))
+        else {
             return;
         };
         let mut related = Vec::new();
