@@ -6,7 +6,7 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, keyword_to_text_static};
 use tsz_solver::TypeId;
 
 /// Extract a property name from a non-computed property name node.
@@ -18,6 +18,11 @@ use tsz_solver::TypeId;
 /// when symbol resolution or special formatting is needed.
 pub(crate) fn get_literal_property_name(arena: &NodeArena, name_idx: NodeIndex) -> Option<String> {
     let name_node = arena.get(name_idx)?;
+
+    if let Some(keyword) = SyntaxKind::try_from_u16(name_node.kind).and_then(keyword_to_text_static)
+    {
+        return Some(keyword.to_string());
+    }
 
     // Identifier
     if let Some(ident) = arena.get_identifier(name_node) {

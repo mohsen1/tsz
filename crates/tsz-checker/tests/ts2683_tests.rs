@@ -373,6 +373,27 @@ fn get_js_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn js_plain_function_read_without_constructor_evidence_emits_ts2683() {
+    let src = r#"
+function plain() {
+    return this.missing
+}
+
+plain
+"#;
+
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "Expected TS2683 for plain JS function `this` read, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2339),
+        "Expected implicit-any `this` to avoid a TS2339 cascade, got: {diags:?}"
+    );
+}
+
+#[test]
 fn js_constructor_function_with_this_assignments_no_ts2683() {
     // In JS files, function declarations with `this.prop = value` are constructor
     // functions. tsc types `this` as the constructed instance and does NOT emit

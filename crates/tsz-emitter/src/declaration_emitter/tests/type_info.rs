@@ -973,6 +973,49 @@ export namespace C {
 }
 
 #[test]
+fn test_type_application_elides_trailing_default_type_argument() {
+    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
+    let _root = parser.parse_source_file();
+    let binder = BinderState::new();
+
+    let interner = TypeInterner::new();
+    let promise_def = DefId(9301);
+    let resolve_atom = interner.intern_string("ResolveType");
+    let reject_atom = interner.intern_string("RejectType");
+    let promise_type = interner.application(
+        interner.lazy(promise_def),
+        vec![TypeId::STRING, TypeId::ANY],
+    );
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .def_to_name
+        .insert(promise_def, "TPromise".to_string());
+    type_cache.def_type_params.insert(
+        promise_def.0,
+        vec![
+            tsz_solver::types::TypeParamInfo {
+                name: resolve_atom,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            tsz_solver::types::TypeParamInfo {
+                name: reject_atom,
+                constraint: None,
+                default: Some(TypeId::ANY),
+                is_const: false,
+            },
+        ],
+    );
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(promise_type);
+
+    assert_eq!(printed, "TPromise<string>");
+}
+
+#[test]
 fn test_object_literal_enum_values_preserve_typeof_and_widen_members() {
     let output = emit_dts_with_binding(
         r#"

@@ -66,8 +66,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name_idx: tsz_parser::parser::NodeIndex,
     ) {
-        // Suppress when file has parse errors (tsc's grammarErrorOnNode pattern).
-        if name_idx.is_none() || self.has_syntax_parse_errors() {
+        if name_idx.is_none() {
             return;
         }
         let Some(name_node) = self.ctx.arena.get(name_idx) else {

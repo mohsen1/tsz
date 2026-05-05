@@ -405,6 +405,12 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .symbol_resolution_set
                     .contains(&tsz_binder::SymbolId(sym_id));
+                if !use_flow_sensitive_query
+                    && let Some(declared_type) =
+                        self.declared_value_type_for_type_query_symbol(tsz_binder::SymbolId(sym_id))
+                {
+                    return self.get_enum_namespace_type_for_value(declared_type);
+                }
                 if use_flow_sensitive_query {
                     let flow_resolved = query_expr_type(self, true);
                     let flow_is_lazy = lazy_def_id(self.ctx.types, flow_resolved).is_some();
@@ -633,6 +639,88 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn declared_value_type_for_type_query_symbol(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<TypeId> {
+        if let Some(type_id) = self
+            .ctx
+            .symbol_types
+            .get(&sym_id)
+            .copied()
+            .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+        {
+            return Some(type_id);
+        }
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl = symbol.value_declaration;
+        if decl.is_none() {
+            decl = symbol.primary_declaration()?;
+        }
+        let decl_node = self.ctx.arena.get(decl)?;
+        let type_annotation = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+            decl.type_annotation
+                .is_some()
+                .then_some(decl.type_annotation)
+        } else if decl_node.kind == syntax_kind_ext::PARAMETER {
+            let param = self.ctx.arena.get_parameter(decl_node)?;
+            param
+                .type_annotation
+                .is_some()
+                .then_some(param.type_annotation)
+        } else if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let parent = self.ctx.arena.get_extended(decl)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::PARAMETER {
+                let param = self.ctx.arena.get_parameter(parent_node)?;
+                (param.name == decl && param.type_annotation.is_some())
+                    .then_some(param.type_annotation)
+            } else if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+                (var_decl.name == decl && var_decl.type_annotation.is_some())
+                    .then_some(var_decl.type_annotation)
+            } else {
+                None
+            }
+        } else {
+            None
+        }?;
+
+        if self.is_direct_typeof_query_for_symbol(type_annotation, sym_id) {
+            return None;
+        }
+
+        Some(self.get_type_from_type_node(type_annotation))
+            .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+    }
+
+    fn is_direct_typeof_query_for_symbol(
+        &self,
+        type_annotation: NodeIndex,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_QUERY {
+            return false;
+        }
+        let Some(type_query) = self.ctx.arena.get_type_query(node) else {
+            return false;
+        };
+        self.ctx
+            .binder
+            .get_node_symbol(type_query.expr_name)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, type_query.expr_name)
+            })
+            == Some(sym_id)
     }
 
     pub(crate) fn const_array_to_enum_member_literal_type_query(

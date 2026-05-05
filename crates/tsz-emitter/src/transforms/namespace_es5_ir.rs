@@ -535,6 +535,70 @@ impl<'a> NamespaceES5Transformer<'a> {
         Some(IRNode::ASTRef(member_idx))
     }
 
+    fn is_uninitialized_exported_var_member(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let var_idx = if member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_data) = self.arena.get_export_decl(member_node)
+        {
+            export_data.export_clause
+        } else {
+            member_idx
+        };
+
+        let Some(var_node) = self.arena.get(var_idx) else {
+            return false;
+        };
+        if var_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_data) = self.arena.get_variable(var_node) else {
+            return false;
+        };
+        let is_exported = member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            || self
+                .arena
+                .has_modifier(&var_data.modifiers, SyntaxKind::ExportKeyword);
+        if !is_exported {
+            return false;
+        }
+
+        var_data.declarations.nodes.iter().all(|&decl_list_idx| {
+            self.arena
+                .get_variable_at(decl_list_idx)
+                .is_none_or(|decl_list| {
+                    decl_list.declarations.nodes.iter().all(|&decl_idx| {
+                        self.arena
+                            .get_variable_declaration_at(decl_idx)
+                            .is_none_or(|decl| decl.initializer.is_none())
+                    })
+                })
+        })
+    }
+
+    fn is_class_like_member(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        if member_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+            return true;
+        }
+        if member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_data) = self.arena.get_export_decl(member_node)
+            && let Some(inner) = self.arena.get(export_data.export_clause)
+        {
+            return inner.kind == syntax_kind_ext::CLASS_DECLARATION;
+        }
+        false
+    }
+
+    fn is_stray_export_keyword_member(&self, member_idx: NodeIndex) -> bool {
+        self.arena
+            .get(member_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::ExportKeyword as u16)
+    }
+
     /// Flatten a module name into parts (handles both identifiers and qualified names)
     ///
     /// For qualified names like `A.B.C` (parsed as nested `MODULE_DECLARATIONs`), returns `["A", "B", "C"]`.
@@ -743,24 +807,32 @@ impl<'a> NamespaceES5Transformer<'a> {
                 // before the next declaration. Capture those comments here so they can
                 // be emitted immediately after the current statement.
                 let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
-                let trailing_standalone =
-                    self.extract_standalone_comments_in_range(code_end, stmt_node.end);
+                let trailing_standalone = if self.is_class_like_member(stmt_idx) {
+                    Vec::new()
+                } else {
+                    self.extract_standalone_comments_in_range(code_end, stmt_node.end)
+                };
 
                 // Extract leading comments between previous end and this statement.
                 let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
-                if prev_end <= actual_start {
-                    let leading_comments = self.extract_comments_in_range(prev_end, actual_start);
-                    for c in leading_comments {
-                        result.push(c);
-                    }
-                } else if prev_end == stmt_node.pos && prev_stmt_pos <= actual_start {
-                    // Parser trivia-skipping can move `stmt_node.end` to the next statement token,
-                    // which can skip standalone comments on blank lines. Recover those comments
-                    // by probing from the previous statement start as a fallback.
-                    let fallback_comments =
-                        self.extract_comments_in_range(prev_stmt_pos, actual_start);
-                    for c in fallback_comments {
-                        result.push(c);
+                if !self.is_uninitialized_exported_var_member(stmt_idx)
+                    && !self.is_stray_export_keyword_member(stmt_idx)
+                {
+                    if prev_end <= actual_start {
+                        let leading_comments =
+                            self.extract_comments_in_range(prev_end, actual_start);
+                        for c in leading_comments {
+                            result.push(c);
+                        }
+                    } else if prev_end == stmt_node.pos && prev_stmt_pos <= actual_start {
+                        // Parser trivia-skipping can move `stmt_node.end` to the next statement token,
+                        // which can skip standalone comments on blank lines. Recover those comments
+                        // by probing from the previous statement start as a fallback.
+                        let fallback_comments =
+                            self.extract_comments_in_range(prev_stmt_pos, actual_start);
+                        for c in fallback_comments {
+                            result.push(c);
+                        }
                     }
                 }
 
@@ -927,6 +999,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                     None
                 }
             }
+            k if k == SyntaxKind::ExportKeyword as u16 => None,
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.transform_function_in_namespace(ns_name, member_idx, force_export)
             }
@@ -1189,7 +1262,11 @@ impl<'a> NamespaceES5Transformer<'a> {
             let (decls, temps) =
                 convert_exported_variable_declarations(self.arena, &var_data.declarations, ns_name);
             self.hoisted_temps.borrow_mut().extend(temps);
-            Some(IRNode::Sequence(decls))
+            if decls.is_empty() {
+                None
+            } else {
+                Some(IRNode::Sequence(decls))
+            }
         } else {
             let empty_decl_keyword =
                 self.declaration_keyword_from_var_declarations(&var_data.declarations);

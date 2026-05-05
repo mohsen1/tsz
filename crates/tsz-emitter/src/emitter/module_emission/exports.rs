@@ -775,6 +775,21 @@ impl<'a> Printer<'a> {
                                     continue;
                                 }
 
+                                if self.ctx.module_state.runtime_decl_names_computed
+                                    && self
+                                        .ctx
+                                        .module_state
+                                        .value_declaration_names
+                                        .contains(&local_name)
+                                    && !self
+                                        .ctx
+                                        .module_state
+                                        .runtime_declaration_names
+                                        .contains(&local_name)
+                                {
+                                    continue;
+                                }
+
                                 self.write_export_property_access(&export_name);
                                 self.write(" = ");
                                 // When the local name was inlined (no local var exists),

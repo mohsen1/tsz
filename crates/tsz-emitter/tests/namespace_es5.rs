@@ -107,6 +107,61 @@ fn test_cjs_exported_namespace_iife_tail_folding() {
 }
 
 #[test]
+fn test_cjs_exported_namespace_uninitialized_var_qualifies_references() {
+    let source = r#"export namespace m1 {
+    /** b's comment*/
+    export var b: number;
+    /** foo's comment*/
+    function foo() {
+        return b;
+    }
+    export namespace m2 {
+        export class c {
+        };
+        /** i*/
+        export var i = new c();
+    }
+}"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+    {
+        let ns_idx = if let Some(stmt_node) = parser.arena.get(stmt_idx)
+            && let Some(export_decl) = parser.arena.get_export_decl(stmt_node)
+        {
+            export_decl.export_clause
+        } else {
+            stmt_idx
+        };
+
+        let mut emitter = NamespaceES5Emitter::with_commonjs(&parser.arena, true);
+        emitter.set_source_text(source);
+        emitter.set_target_es5(true);
+        let output = emitter.emit_exported_namespace(ns_idx);
+        assert!(
+            output.contains("return m1.b;"),
+            "References to uninitialized exported vars should be namespace-qualified. Got:\n{output}"
+        );
+        assert!(
+            !output.contains("b's comment"),
+            "No-op exported var comments should not be emitted. Got:\n{output}"
+        );
+        assert!(
+            !output.lines().any(|line| line.trim() == "export"),
+            "Namespace output should not contain stray export keyword lines. Got:\n{output}"
+        );
+        assert_eq!(
+            output.matches("/** i*/").count(),
+            1,
+            "Initialized export comments should be emitted once. Got:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn test_nested_namespace_uses_var_at_es5_target() {
     // At ES5 target, nested namespaces inside IIFEs must use `var`, not `let`
     let source = "namespace m { namespace m2 { export class c { } } }";

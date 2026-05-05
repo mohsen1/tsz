@@ -537,6 +537,7 @@ function foo<T>(a: T) {
 #[test]
 fn test_spread_object_literal_to_index_signature_no_false_ts2322() {
     let source = r#"
+type Record<K extends keyof any, T> = { [P in K]: T };
 const foo: Record<never, never> = {}
 interface RecordOfRecords extends Record<keyof any, RecordOfRecords> {}
 const recordOfRecords: RecordOfRecords = {}

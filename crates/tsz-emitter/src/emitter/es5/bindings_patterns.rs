@@ -1444,10 +1444,13 @@ impl<'a> Printer<'a> {
         let counter = self.ctx.destructuring_state.for_of_counter;
 
         // TypeScript's variable naming pattern:
-        // Top-level: e_N (error container), _a (temp for return function)
-        // For loop: _b (iterator), _c (result), _d (done), _e (guard)
+        // - Simple identifier expression `arr`: iterator=arr_1, result=arr_1_1
+        // - Complex expression: iterator=_d, result=_e (generic temps)
+        // - Top-level hoisted: _a (done), e_N (error), _b (return), _c (value)
+        // - For loop: _d (guard)
         // Catch: e_N_1 (error value, not pre-declared)
         let error_container_name = format!("e_{}", counter + 1);
+        let loop_done_name = self.get_temp_var_name();
         let return_temp_name = self
             .reserved_iterator_return_temps
             .remove(&for_of_idx)
@@ -1459,17 +1462,48 @@ impl<'a> Printer<'a> {
         // allocating this loop's iterator/result vars.
         self.preallocate_nested_iterator_return_temps(for_in_of.statement);
 
-        let loop_iterator_name = self.get_temp_var_name(); // _b
-        let loop_result_name = self.get_temp_var_name(); // _c
-        let loop_done_name = self.get_temp_var_name(); // _d
-        let loop_guard_name = self.get_temp_var_name(); // _e
+        let value_temp_name = self.get_temp_var_name();
+        let loop_guard_name = self.get_temp_var_name();
+        let (loop_iterator_name, loop_result_name) = if let Some(expr_node) =
+            self.arena.get(for_in_of.expression)
+            && expr_node.is_identifier()
+            && let Some(ident) = self.arena.get_identifier(expr_node)
+        {
+            let base = self.arena.resolve_identifier_text(ident).to_string();
+            let mut iter_name = None;
+            for suffix in 1..=100 {
+                let candidate = format!("{base}_{suffix}");
+                if !self.file_identifiers.contains(&candidate)
+                    && !self.generated_temp_names.contains(&candidate)
+                {
+                    iter_name = Some(candidate);
+                    break;
+                }
+            }
+            if let Some(iter_name) = iter_name {
+                self.generated_temp_names.insert(iter_name.clone());
+                let result_name = format!("{iter_name}_1");
+                self.generated_temp_names.insert(result_name.clone());
+                (iter_name, result_name)
+            } else {
+                let a = self.get_temp_var_name();
+                let b = self.get_temp_var_name();
+                (a, b)
+            }
+        } else {
+            let a = self.get_temp_var_name();
+            let b = self.get_temp_var_name();
+            (a, b)
+        };
         let catch_error_name = format!("e_{}_1", counter + 1);
 
         self.ctx.destructuring_state.for_of_counter += 1;
 
-        // Hoist error container + return temp to the top of the source file scope.
+        // Hoist done/error/return/value temps to the top of the source file scope.
+        self.hoisted_for_of_temps.push(loop_done_name.clone());
         self.hoisted_for_of_temps.push(error_container_name.clone());
         self.hoisted_for_of_temps.push(return_temp_name.clone());
+        self.hoisted_for_of_temps.push(value_temp_name.clone());
 
         // try block
         self.write("try {");
@@ -1483,7 +1517,7 @@ impl<'a> Printer<'a> {
             self.emit_comments_before_pos(actual_start);
         }
 
-        // for (var _e = true, iterable_1 = __asyncValues(iterable), iterable_1_1 = [await/yield] iterable_1.next(), _d = iterable_1_1.done, !_d; _e = true) {
+        // for (var _d = true, iterable_1 = __asyncValues(iterable), iterable_1_1; iterable_1_1 = [await/yield] iterable_1.next(), _a = iterable_1_1.done, !_a; _d = true) {
         let await_or_yield = if self.ctx.emit_await_as_yield {
             "yield"
         } else {
@@ -1509,6 +1543,8 @@ impl<'a> Printer<'a> {
             self.write("), ");
         }
         self.write(&loop_result_name);
+        self.write("; ");
+        self.write(&loop_result_name);
         self.write(" = ");
         self.write(await_or_yield);
         self.write(" ");
@@ -1517,7 +1553,7 @@ impl<'a> Printer<'a> {
         self.write(&loop_done_name);
         self.write(" = ");
         self.write(&loop_result_name);
-        self.write(".done; !");
+        self.write(".done, !");
         self.write(&loop_done_name);
         self.write("; ");
         self.write(&loop_guard_name);
@@ -1668,14 +1704,18 @@ impl<'a> Printer<'a> {
             self.write_line();
         } else {
             // Normal (non-using) path
-            // Emit the value binding: var item = _c.value;
-            self.emit_for_of_value_binding_iterator_es5_async(
-                for_in_of.initializer,
-                &loop_result_name,
-            );
+            self.write(&value_temp_name);
+            self.write(" = ");
+            self.write(&loop_result_name);
+            self.write(".value;");
             self.write_line();
             self.write(&loop_guard_name);
             self.write(" = false;");
+            self.write_line();
+            self.emit_for_of_value_binding_iterator_es5_async(
+                for_in_of.initializer,
+                &value_temp_name,
+            );
             self.write_line();
 
             // Emit the loop body

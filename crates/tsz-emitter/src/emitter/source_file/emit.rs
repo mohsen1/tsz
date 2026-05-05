@@ -896,6 +896,13 @@ impl<'a> Printer<'a> {
                     self.ctx.options.preserve_const_enums,
                 );
             self.ctx.module_state.value_decl_names_computed = true;
+            self.ctx.module_state.runtime_declaration_names =
+                module_commonjs::build_runtime_declaration_names(
+                    self.arena,
+                    &source.statements.nodes,
+                    self.ctx.options.preserve_const_enums,
+                );
+            self.ctx.module_state.runtime_decl_names_computed = true;
         }
 
         let has_top_level_using = !self.ctx.options.target.supports_es2025()

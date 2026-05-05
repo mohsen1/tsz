@@ -965,17 +965,7 @@ impl<'a> CheckerState<'a> {
         let Some(jsdoc) = self.try_leading_jsdoc(comments, pos, source_text) else {
             return false;
         };
-        // Match `@type` but not `@typedef` (which uses a different shape).
-        let mut search = jsdoc.as_str();
-        while let Some(pos) = search.find("@type") {
-            let after = &search[pos + "@type".len()..];
-            let next = after.chars().next();
-            if !matches!(next, Some(c) if c.is_ascii_alphanumeric() || c == '_') {
-                return true;
-            }
-            search = &after[next.map_or(0, |c| c.len_utf8())..];
-        }
-        false
+        Self::jsdoc_contains_tag(&jsdoc, "type")
     }
 
     /// Extract the type expression text from a leading `@satisfies {TypeExpr}` JSDoc comment
@@ -1037,8 +1027,7 @@ impl<'a> CheckerState<'a> {
 
         // Look for a JSDoc comment that ends right before or overlaps the parameter position
         if let Some(content) = self.try_leading_jsdoc(comments, param_node.pos, source_text) {
-            // Check if the JSDoc contains @type {something}
-            return content.contains("@type");
+            return Self::jsdoc_contains_tag(&content, "type");
         }
 
         false
@@ -1077,7 +1066,7 @@ impl<'a> CheckerState<'a> {
             };
             if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 && let Some(jsdoc) = self.try_leading_jsdoc(comments, parent_node.pos, source_text)
-                && jsdoc.contains("@type")
+                && Self::jsdoc_contains_tag(&jsdoc, "type")
             {
                 return true;
             }

@@ -1400,17 +1400,37 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source_ty: TypeId,
         target_ty: TypeId,
     ) -> bool {
-        let Some(source_fn) = Self::get_contextual_signature_cached(self.interner, source_ty)
-        else {
-            return false;
-        };
-        let Some(target_fn) = Self::get_contextual_signature_cached(self.interner, target_ty)
-        else {
-            return false;
-        };
-
-        self.conflicting_contextual_param_candidate_substitution(&source_fn, &target_fn)
+        self.conflicting_contextual_signature_instantiation_type(source_ty, target_ty)
             .is_some()
+    }
+
+    pub(crate) fn conflicting_contextual_signature_instantiation_type(
+        &mut self,
+        source_ty: TypeId,
+        target_ty: TypeId,
+    ) -> Option<TypeId> {
+        let source_fn = Self::get_contextual_signature_cached(self.interner, source_ty)?;
+        let target_fn = Self::get_contextual_signature_cached(self.interner, target_ty)?;
+
+        let substitution =
+            self.conflicting_contextual_param_candidate_substitution(&source_fn, &target_fn)?;
+        let instantiated = FunctionShape {
+            type_params: vec![],
+            params: target_fn.params.clone(),
+            this_type: target_fn.this_type,
+            return_type: instantiate_type(self.interner, source_fn.return_type, &substitution),
+            type_predicate: source_fn.type_predicate.as_ref().map(|pred| TypePredicate {
+                asserts: pred.asserts,
+                target: pred.target,
+                type_id: pred
+                    .type_id
+                    .map(|ty| instantiate_type(self.interner, ty, &substitution)),
+                parameter_index: pred.parameter_index,
+            }),
+            is_constructor: target_fn.is_constructor,
+            is_method: target_fn.is_method,
+        };
+        Some(self.interner.function(instantiated))
     }
 
     fn conflicting_contextual_param_candidate_substitution(

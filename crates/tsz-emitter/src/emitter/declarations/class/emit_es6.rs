@@ -35,6 +35,7 @@ impl<'a> Printer<'a> {
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
+        let class_name_is_real = class.name.is_some();
         let class_name = if class.name.is_none() {
             assignment_prefix
                 .as_ref()
@@ -236,7 +237,7 @@ impl<'a> Printer<'a> {
                 };
                 auto_accessor_members.push((member_idx, storage_name.clone(), init, is_static));
                 if is_static {
-                    if auto_accessor_class_alias.is_none() {
+                    if lower_auto_accessors_to_weakmap && auto_accessor_class_alias.is_none() {
                         auto_accessor_class_alias = Some(self.make_unique_name());
                     }
                     auto_accessor_static_inits.push((storage_name, init));
@@ -318,49 +319,94 @@ impl<'a> Printer<'a> {
             || !private_accessors.is_empty();
 
         if has_any_private_lowering {
-            // Collect all variable names needed for declaration
+            // Collect all variable names needed for declaration.
+            //
+            // tsc's order, see e.g. `privateNameInInExpressionTransform`:
+            //   1. WeakSet for instance methods/accessors (`_C_instances`)
+            //   2. Class alias for static members (`_a`)
+            //   3. Private members in *source* order (per-class)
+            //
+            // Grouping by category (all instance fields → all static fields →
+            // all methods → all accessors) does not match tsc — tsc walks the
+            // class body once and emits each var as it encounters the member.
             let mut var_names: Vec<String> = Vec::new();
+
+            // WeakSet for instance methods/accessors (first in tsc's emit)
+            if let Some(ref ws_name) = instances_weakset_name {
+                var_names.push(ws_name.clone());
+            }
 
             // Class alias for static members
             if let Some(ref alias) = private_class_alias {
                 var_names.push(alias.clone());
             }
 
-            // WeakSet for instance methods/accessors
-            if let Some(ref ws_name) = instances_weakset_name {
-                var_names.push(ws_name.clone());
-            }
-
-            // Instance field WeakMaps
-            for field in &private_fields {
-                if !field.is_static {
-                    var_names.push(field.weakmap_name.clone());
-                }
-            }
-
-            // Static field value containers
-            for field in &private_fields {
-                if field.is_static {
-                    var_names.push(field.weakmap_name.clone());
-                }
-            }
-
-            // Private method function vars
-            for method in &private_methods {
-                var_names.push(method.fn_var_name.clone());
-            }
-
-            // Private accessor function vars
-            for accessor in &private_accessors {
-                if let Some(ref name) = accessor.get_var_name
-                    && accessor.getter_body.is_some()
-                {
-                    var_names.push(name.clone());
-                }
-                if let Some(ref name) = accessor.set_var_name
-                    && accessor.setter_body.is_some()
-                {
-                    var_names.push(name.clone());
+            // Private members in source order. Walk `class.members.nodes`
+            // once and look up each member's pre-computed info entry by
+            // private-identifier name. Accessors share a private name across
+            // get/set, so we dedupe within an accessor pair.
+            let mut emitted_accessor_names: rustc_hash::FxHashSet<String> =
+                rustc_hash::FxHashSet::default();
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                let private_name = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .arena
+                        .get_property_decl(member_node)
+                        .and_then(|p| get_private_field_name(self.arena, p.name)),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(member_node)
+                        .and_then(|m| get_private_field_name(self.arena, m.name)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(member_node)
+                            .and_then(|a| get_private_field_name(self.arena, a.name))
+                    }
+                    _ => None,
+                };
+                let Some(private_name) = private_name else {
+                    continue;
+                };
+                let clean_name = private_name.strip_prefix('#').unwrap_or(&private_name);
+                match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        if let Some(field) = private_fields.iter().find(|f| f.name == clean_name) {
+                            var_names.push(field.weakmap_name.clone());
+                        }
+                    }
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        if let Some(method) = private_methods.iter().find(|m| m.name == clean_name)
+                        {
+                            var_names.push(method.fn_var_name.clone());
+                        }
+                    }
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        if !emitted_accessor_names.insert(clean_name.to_string()) {
+                            continue;
+                        }
+                        if let Some(accessor) =
+                            private_accessors.iter().find(|a| a.name == clean_name)
+                        {
+                            if let Some(ref name) = accessor.get_var_name
+                                && accessor.getter_body.is_some()
+                            {
+                                var_names.push(name.clone());
+                            }
+                            if let Some(ref name) = accessor.set_var_name
+                                && accessor.setter_body.is_some()
+                            {
+                                var_names.push(name.clone());
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -604,6 +650,13 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
+        let class_expr_set_function_name = class_expr_static_temp.as_ref().and_then(|_| {
+            if class.name.is_none() {
+                self.resolve_class_expr_binding_name(_idx)
+            } else {
+                None
+            }
+        });
 
         // Computed property name hoisting for targets < ES2022.
         // tsc hoists non-constant computed property name expressions to temp variables
@@ -1261,6 +1314,7 @@ impl<'a> Printer<'a> {
         let prev_scoped_class_expression_self_alias =
             self.scoped_class_expression_self_alias.take();
         if let Some(temp) = class_expr_temp.as_ref()
+            && class_name_is_real
             && !class_name.is_empty()
             && class_name != *temp
         {
@@ -1946,14 +2000,20 @@ impl<'a> Printer<'a> {
             // they're emitted in their existing trailing batch instead.
             let interleave_blocks = !self.defer_class_static_blocks;
             enum CommaItem {
+                SetFunctionName(String),
                 Field(StaticFieldInit),
                 Block(NodeIndex, usize),
             }
             let owned_field_inits = std::mem::take(&mut static_field_inits);
-            let mut comma_items: Vec<(u32, CommaItem)> = owned_field_inits
-                .into_iter()
-                .map(|init| (init.2, CommaItem::Field(init)))
-                .collect();
+            let mut comma_items: Vec<(u32, CommaItem)> = Vec::new();
+            if let Some(name) = class_expr_set_function_name.as_ref() {
+                comma_items.push((node.pos, CommaItem::SetFunctionName(name.clone())));
+            }
+            comma_items.extend(
+                owned_field_inits
+                    .into_iter()
+                    .map(|init| (init.2, CommaItem::Field(init))),
+            );
             if interleave_blocks {
                 let blocks = std::mem::take(&mut deferred_static_blocks);
                 for (block_idx, comment_idx) in blocks {
@@ -1965,6 +2025,9 @@ impl<'a> Printer<'a> {
 
             for (_pos, item) in comma_items {
                 match item {
+                    CommaItem::SetFunctionName(name) => {
+                        self.emit_class_expr_set_function_name_comma_item(temp, &name);
+                    }
                     CommaItem::Field((
                         name_emit,
                         init_idx,
@@ -2073,9 +2136,32 @@ impl<'a> Printer<'a> {
                 self.write(";");
                 self.write_line();
             }
+            let mut next_static_block = 0usize;
             for (name_emit, init_idx, _member_pos, leading_comments, trailing_comments) in
                 &static_field_inits
             {
+                if !self.defer_class_static_blocks {
+                    while next_static_block < deferred_static_blocks.len() {
+                        let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
+                        let block_pos = self.arena.get(block_idx).map_or(u32::MAX, |node| node.pos);
+                        if block_pos >= *_member_pos {
+                            break;
+                        }
+                        let prev_this_alias = self.scoped_static_this_alias.clone();
+                        let prev_super_alias = self.scoped_static_super_base_alias.clone();
+                        self.scoped_static_this_alias =
+                            static_initializer_this_binding.map(std::sync::Arc::from);
+                        self.scoped_static_super_base_alias =
+                            static_initializer_super_base.map(std::sync::Arc::from);
+                        self.emit_static_block_iife_expression(block_idx, comment_idx);
+                        self.scoped_static_this_alias = prev_this_alias;
+                        self.scoped_static_super_base_alias = prev_super_alias;
+                        self.write(";");
+                        self.write_line();
+                        next_static_block += 1;
+                    }
+                }
+
                 // Emit saved leading comments from the original static property declaration
                 for (comment_text, source_pos) in leading_comments {
                     self.write_comment_with_reindent(comment_text, Some(*source_pos));
@@ -2169,6 +2255,26 @@ impl<'a> Printer<'a> {
                     self.write_comment(comment_text);
                 }
                 self.write_line();
+            }
+            if !self.defer_class_static_blocks {
+                while next_static_block < deferred_static_blocks.len() {
+                    let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
+                    let prev_this_alias = self.scoped_static_this_alias.clone();
+                    let prev_super_alias = self.scoped_static_super_base_alias.clone();
+                    self.scoped_static_this_alias =
+                        static_initializer_this_binding.map(std::sync::Arc::from);
+                    self.scoped_static_super_base_alias =
+                        static_initializer_super_base.map(std::sync::Arc::from);
+                    self.emit_static_block_iife_expression(block_idx, comment_idx);
+                    self.scoped_static_this_alias = prev_this_alias;
+                    self.scoped_static_super_base_alias = prev_super_alias;
+                    self.write(";");
+                    self.write_line();
+                    next_static_block += 1;
+                }
+                if next_static_block > 0 {
+                    deferred_static_blocks.clear();
+                }
             }
         }
 
@@ -2465,6 +2571,9 @@ impl<'a> Printer<'a> {
             && !self.defer_class_static_blocks
             && !deferred_static_blocks.is_empty()
         {
+            if let Some(name) = class_expr_set_function_name.as_ref() {
+                self.emit_class_expr_set_function_name_comma_item(temp, name);
+            }
             self.emit_static_block_iife_comma_items_with_context(
                 deferred_static_blocks,
                 static_initializer_this_binding,

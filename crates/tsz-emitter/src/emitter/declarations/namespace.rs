@@ -5,6 +5,29 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Lowering plan for a single declarator inside `export var ... = init;`
+/// at namespace scope.
+enum NamespaceExportChunk {
+    /// `M.foo = init`
+    Simple { target: String, init: NodeIndex },
+    /// `_a = init, M.x = _a.x, M.y = _a.y` — destructuring lowering.
+    Destruct(DestructSegment),
+}
+
+struct DestructSegment {
+    /// Temp name (`_a`) introduced for the initializer.
+    temp: String,
+    /// Initializer expression assigned to the temp first.
+    init: NodeIndex,
+    /// Each entry produces `M.<target> = _a<access>`.
+    bindings: Vec<(String, DestructAccess)>,
+}
+
+enum DestructAccess {
+    Index(usize),
+    Key(String),
+}
+
 /// Rewrite enum IIFE IR from `E || (E = {})` to `E = NS.E || (NS.E = {})`
 /// for exported enums in namespaces.
 pub(in crate::emitter) fn rewrite_enum_iife_for_namespace_export(
@@ -491,12 +514,13 @@ impl<'a> Printer<'a> {
         }
         if let Some(block) = self.arena.get_module_block(body_node)
             && let Some(stmts) = &block.statements
-        {
-            return stmts
+            && stmts
                 .nodes
                 .iter()
                 .copied()
-                .any(|stmt| self.namespace_statement_conflicts_iife_param(stmt, ns_name));
+                .any(|stmt| self.namespace_statement_conflicts_iife_param(stmt, ns_name))
+        {
+            return true;
         }
         // Use source text scan: search for the identifier as a binding in the body.
         // This catches parameters, local vars, nested functions/classes at any depth.
@@ -506,16 +530,86 @@ impl<'a> Printer<'a> {
             // decisions and emit incorrectly. Surface span errors instead of
             // returning a false-negative; fall back to false only when source
             // text is literally unavailable.
+            let declare_ranges = self.collect_declare_statement_ranges(body_node);
             return match crate::safe_slice::slice(
                 text,
                 body_node.pos as usize,
                 body_node.end as usize,
             ) {
-                Ok(body_text) => Self::text_has_binding_named(body_text, ns_name),
+                Ok(body_text) => {
+                    let body_pos = body_node.pos as usize;
+                    let masked = Self::mask_ranges_static(body_text, body_pos, &declare_ranges);
+                    Self::text_has_binding_named(&masked, ns_name)
+                }
                 Err(_) => false,
             };
         }
         false
+    }
+
+    /// Collect (pos, end) byte ranges of every statement inside a namespace
+    /// body that is type-only (`declare`). Their bodies are erased at emit
+    /// time, so identifiers introduced inside them — including a same-named
+    /// inner namespace — must not be counted when deciding whether to rename
+    /// the IIFE parameter.
+    fn collect_declare_statement_ranges(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> Vec<(usize, usize)> {
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return ranges;
+        };
+        let Some(stmts) = &block.statements else {
+            return ranges;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            // Resolve the inner declaration. `export declare ...` parses as an
+            // EXPORT_DECLARATION wrapping the real decl, whose modifier list
+            // carries `declare`.
+            let (decl_node, decl_pos, decl_end) = if stmt_node.kind
+                == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export) = self.arena.get_export_decl(stmt_node)
+                && let Some(inner) = self.arena.get(export.export_clause)
+            {
+                (inner, stmt_node.pos as usize, stmt_node.end as usize)
+            } else {
+                (stmt_node, stmt_node.pos as usize, stmt_node.end as usize)
+            };
+            let modifiers = match decl_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
+                    .arena
+                    .get_variable(decl_node)
+                    .and_then(|v| v.modifiers.clone()),
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .arena
+                    .get_function(decl_node)
+                    .and_then(|f| f.modifiers.clone()),
+                k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                    .arena
+                    .get_class(decl_node)
+                    .and_then(|c| c.modifiers.clone()),
+                k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                    .arena
+                    .get_enum(decl_node)
+                    .and_then(|e| e.modifiers.clone()),
+                k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                    .arena
+                    .get_module(decl_node)
+                    .and_then(|m| m.modifiers.clone()),
+                _ => None,
+            };
+            if self
+                .arena
+                .has_modifier(&modifiers, SyntaxKind::DeclareKeyword)
+            {
+                ranges.push((decl_pos, decl_end));
+            }
+        }
+        ranges
     }
 
     fn namespace_statement_conflicts_iife_param(&self, stmt_idx: NodeIndex, ns_name: &str) -> bool {
@@ -534,9 +628,48 @@ impl<'a> Printer<'a> {
             if inner_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                 return false;
             }
+            // `export declare ...` is type-only and erased at emit, so it
+            // cannot shadow the IIFE parameter — even if the inner declaration
+            // shares a name with the namespace.
+            if self.declaration_is_declare(export.export_clause) {
+                return false;
+            }
             return self.declaration_conflicts_iife_param(export.export_clause, ns_name);
         }
+        // Same rule for non-exported `declare` declarations.
+        if self.declaration_is_declare(stmt_idx) {
+            return false;
+        }
         self.declaration_conflicts_iife_param(stmt_idx, ns_name)
+    }
+
+    fn declaration_is_declare(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let modifiers = match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
+                .arena
+                .get_variable(node)
+                .and_then(|v| v.modifiers.clone()),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(node)
+                .and_then(|f| f.modifiers.clone()),
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.arena.get_class(node).and_then(|c| c.modifiers.clone())
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(node).and_then(|e| e.modifiers.clone())
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                .arena
+                .get_module(node)
+                .and_then(|m| m.modifiers.clone()),
+            _ => None,
+        };
+        self.arena
+            .has_modifier(&modifiers, SyntaxKind::DeclareKeyword)
     }
 
     fn declaration_conflicts_iife_param(&self, decl_idx: NodeIndex, ns_name: &str) -> bool {
@@ -629,6 +762,8 @@ impl<'a> Printer<'a> {
                             "function",
                             "class",
                             "import",
+                            "module",
+                            "namespace",
                             // TS parameter modifiers
                             "private",
                             "public",
@@ -656,6 +791,30 @@ impl<'a> Printer<'a> {
             }
         }
         false
+    }
+
+    /// Replace bytes inside `ranges` (absolute source positions) with spaces in
+    /// `body_text`, where `body_text` starts at absolute offset `body_pos`.
+    /// Used to neutralize identifiers that come from `declare` (ambient)
+    /// declarations before running the source-text binding scan.
+    fn mask_ranges_static(body_text: &str, body_pos: usize, ranges: &[(usize, usize)]) -> String {
+        if ranges.is_empty() {
+            return body_text.to_string();
+        }
+        let mut bytes = body_text.as_bytes().to_vec();
+        for &(start, end) in ranges {
+            let local_start = start.saturating_sub(body_pos);
+            let local_end = end.saturating_sub(body_pos).min(bytes.len());
+            if local_start >= bytes.len() {
+                continue;
+            }
+            for b in &mut bytes[local_start..local_end] {
+                if !b.is_ascii_whitespace() {
+                    *b = b' ';
+                }
+            }
+        }
+        String::from_utf8(bytes).unwrap_or_else(|_| body_text.to_string())
     }
 
     /// Strip single-line and block comments from text, replacing them with spaces.
@@ -906,6 +1065,12 @@ impl<'a> Printer<'a> {
                     local_exports.insert(name.clone());
                 }
                 entry.extend(local_exports.iter().cloned());
+                if ns_name != leaf_name {
+                    self.namespace_prior_exports
+                        .entry(ns_name.clone())
+                        .or_default()
+                        .extend(local_exports.iter().cloned());
+                }
 
                 // Class/fn/enum names from EARLIER reopenings of this same
                 // namespace must also qualify in this block (their IIFE
@@ -1185,6 +1350,12 @@ impl<'a> Printer<'a> {
             // class/fn/enum names (which are still in lexical scope as IIFE
             // locals here) and qualify references that should stay bare.
             if !leaf_name.is_empty() {
+                if ns_name != leaf_name {
+                    self.namespace_prior_class_fn_enum_exports
+                        .entry(ns_name.clone())
+                        .or_default()
+                        .extend(class_fn_enum_names.iter().cloned());
+                }
                 self.namespace_prior_class_fn_enum_exports
                     .entry(class_fn_enum_root_name)
                     .or_default()
@@ -1701,9 +1872,12 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Collect all initialized (name, initializer) pairs across declaration lists.
-        // TSC emits multiple exports as a comma expression: `ns.a = 1, ns.c = 2;`
-        let mut assignments: Vec<(String, NodeIndex)> = Vec::new();
+        // Each declarator becomes either a simple `M.name = init` chunk or a
+        // destructuring chunk: `_a = init, M.x = _a.x, M.y = _a.y`.
+        // We collect them in source order, then emit them as a single comma
+        // expression. Each destructuring chunk also requires a `var _a;`
+        // declaration to be emitted before the comma expression.
+        let mut chunks: Vec<NamespaceExportChunk> = Vec::new();
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -1725,31 +1899,165 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                let mut names = Vec::new();
-                self.collect_binding_names(decl.name, &mut names);
-                for name in names {
-                    assignments.push((name, decl.initializer));
+                let Some(name_node) = self.arena.get(decl.name) else {
+                    continue;
+                };
+
+                // Simple identifier: `export var foo = init` → `M.foo = init`.
+                if name_node.kind == SyntaxKind::Identifier as u16 {
+                    let mut names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut names);
+                    for name in names {
+                        chunks.push(NamespaceExportChunk::Simple {
+                            target: name,
+                            init: decl.initializer,
+                        });
+                    }
+                    continue;
+                }
+
+                // Destructuring pattern: lower into temp + indexed/keyed access.
+                // Falls back to the simple path if the pattern contains nested
+                // patterns or rest elements that we don't yet handle here.
+                if let Some(seg) =
+                    self.try_build_destruct_segment(name_node.kind, decl.name, decl.initializer)
+                {
+                    chunks.push(NamespaceExportChunk::Destruct(seg));
+                } else {
+                    let mut names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut names);
+                    for name in names {
+                        chunks.push(NamespaceExportChunk::Simple {
+                            target: name,
+                            init: decl.initializer,
+                        });
+                    }
                 }
             }
         }
 
-        // Emit as comma expression: ns.a = 1, ns.c = 2;
-        if !assignments.is_empty() {
-            for (i, (name, init)) in assignments.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.write(ns_name);
-                self.write(".");
-                self.write(name);
-                self.write(" = ");
-                self.emit_expression(*init);
-            }
-            self.write(";");
-            let token_end = self.find_token_end_before_trivia(outer_stmt.pos, comment_upper_bound);
-            self.emit_trailing_comments_before(token_end, comment_upper_bound);
-            self.write_line();
+        if chunks.is_empty() {
+            return;
         }
+
+        // Emit `var _a;` declarations on their own lines first (one per
+        // destructuring chunk).
+        for chunk in &chunks {
+            if let NamespaceExportChunk::Destruct(seg) = chunk {
+                self.write("var ");
+                self.write(&seg.temp);
+                self.write(";");
+                self.write_line();
+            }
+        }
+
+        // Build the comma chain in declarator order.
+        let mut first = true;
+        for chunk in &chunks {
+            match chunk {
+                NamespaceExportChunk::Simple { target, init } => {
+                    if first {
+                        first = false;
+                    } else {
+                        self.write(", ");
+                    }
+                    self.write(ns_name);
+                    self.write(".");
+                    self.write(target);
+                    self.write(" = ");
+                    self.emit_expression(*init);
+                }
+                NamespaceExportChunk::Destruct(seg) => {
+                    if first {
+                        first = false;
+                    } else {
+                        self.write(", ");
+                    }
+                    self.write(&seg.temp);
+                    self.write(" = ");
+                    self.emit_expression(seg.init);
+                    for (target, access) in &seg.bindings {
+                        self.write(", ");
+                        self.write(ns_name);
+                        self.write(".");
+                        self.write(target);
+                        self.write(" = ");
+                        self.write(&seg.temp);
+                        match access {
+                            DestructAccess::Index(i) => {
+                                self.write("[");
+                                self.write(&i.to_string());
+                                self.write("]");
+                            }
+                            DestructAccess::Key(k) => {
+                                self.write(".");
+                                self.write(k);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.write(";");
+        let token_end = self.find_token_end_before_trivia(outer_stmt.pos, comment_upper_bound);
+        self.emit_trailing_comments_before(token_end, comment_upper_bound);
+        self.write_line();
+    }
+
+    /// Build a destructuring lowering plan for a top-level binding pattern.
+    /// Returns `None` if the pattern contains rest elements, defaults, or
+    /// nested patterns we don't currently lower at namespace scope.
+    fn try_build_destruct_segment(
+        &mut self,
+        kind: u16,
+        name_idx: NodeIndex,
+        init: NodeIndex,
+    ) -> Option<DestructSegment> {
+        let name_node = self.arena.get(name_idx)?;
+        let pattern = self.arena.get_binding_pattern(name_node)?;
+        let is_array = kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+        let is_object = kind == syntax_kind_ext::OBJECT_BINDING_PATTERN;
+        if !is_array && !is_object {
+            return None;
+        }
+        let mut bindings: Vec<(String, DestructAccess)> = Vec::new();
+        for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+            let elem_node = self.arena.get(elem_idx)?;
+            if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            let elem = self.arena.get_binding_element(elem_node)?;
+            // Bail on rest/defaults/nested — keep lowering local to the simple
+            // shapes tsc emits inline.
+            if elem.dot_dot_dot_token || !elem.initializer.is_none() {
+                return None;
+            }
+            let inner_name_node = self.arena.get(elem.name)?;
+            if inner_name_node.kind != SyntaxKind::Identifier as u16 {
+                return None;
+            }
+            let target = self.get_identifier_text_idx(elem.name);
+            if is_array {
+                bindings.push((target, DestructAccess::Index(i)));
+            } else {
+                let source_key = if elem.property_name.is_none() {
+                    self.get_identifier_text_idx(elem.name)
+                } else {
+                    self.get_identifier_text_idx(elem.property_name)
+                };
+                bindings.push((target, DestructAccess::Key(source_key)));
+            }
+        }
+        if bindings.is_empty() {
+            return None;
+        }
+        let temp = self.make_unique_name();
+        Some(DestructSegment {
+            temp,
+            init,
+            bindings,
+        })
     }
 
     /// Returns true when a variable statement node has no initializers in any of its

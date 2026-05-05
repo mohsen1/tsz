@@ -196,9 +196,6 @@ pub(super) fn collect_runtime_exported_var_names_in_stmt(
                                 else {
                                     continue;
                                 };
-                                if decl.initializer.is_none() {
-                                    continue;
-                                }
                                 names.insert(name);
                             }
                         }
