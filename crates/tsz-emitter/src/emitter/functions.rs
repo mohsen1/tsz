@@ -234,44 +234,6 @@ impl<'a> Printer<'a> {
         self.pop_temp_scope();
     }
 
-    fn arrow_concise_body_needs_temp_prologue(&self, body: NodeIndex) -> bool {
-        !self.ctx.options.target.supports_es2020()
-            && self.param_initializer_generates_hoisted_temp(body)
-    }
-
-    fn emit_arrow_concise_body_with_temp_prologue(&mut self, body: NodeIndex) {
-        self.write("{");
-        self.write_line();
-        self.increase_indent();
-        let hoist_offset = self.writer.len();
-        let hoist_line = self.writer.current_line();
-
-        let prev_emitting_function_body_block = self.emitting_function_body_block;
-        self.emitting_function_body_block = true;
-        self.function_scope_depth += 1;
-        self.write("return ");
-        self.emit(body);
-        self.write(";");
-        self.function_scope_depth -= 1;
-        self.emitting_function_body_block = prev_emitting_function_body_block;
-
-        if !self.hoisted_assignment_temps.is_empty() {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
-            let var_decl = format!(
-                "{}var {};",
-                indent,
-                self.hoisted_assignment_temps.join(", ")
-            );
-            self.writer
-                .insert_line_at(hoist_offset, hoist_line, &var_decl);
-            self.hoisted_assignment_temps.clear();
-        }
-
-        self.write_line();
-        self.decrease_indent();
-        self.write("}");
-    }
-
     fn emit_arrow_function_native_with_default_prologue(
         &mut self,
         func: &tsz_parser::parser::node::FunctionData,
@@ -422,7 +384,7 @@ impl<'a> Printer<'a> {
         })
     }
 
-    fn param_initializer_generates_hoisted_temp(&self, idx: NodeIndex) -> bool {
+    pub(super) fn param_initializer_generates_hoisted_temp(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
         };
