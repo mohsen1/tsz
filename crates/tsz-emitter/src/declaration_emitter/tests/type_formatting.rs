@@ -54,6 +54,49 @@ fn test_global_class_name_shadowed_by_type_param_uses_global_this() {
 }
 
 #[test]
+fn test_inferred_generic_function_type_omits_synthesized_optional_undefined() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let f_name = interner.intern_string("f");
+    let value_name = interner.intern_string("value");
+    let t_param = tsz_solver::TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let u_param = tsz_solver::TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+    let u_type = interner.type_param(u_param);
+    let callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::optional(
+            value_name,
+            interner.union(vec![t_type, TypeId::UNDEFINED]),
+        )],
+        u_type,
+    ));
+    let outer = interner.function(FunctionShape {
+        type_params: vec![t_param, u_param],
+        params: vec![ParamInfo::required(f_name, callback)],
+        this_type: None,
+        return_type: u_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner).print_type(outer);
+
+    assert_eq!(printed, "<T, U>(f: (value?: T) => U) => U");
+}
+
+#[test]
 fn test_function_variable_type_preserves_inline_parameter_comments() {
     let output = emit_dts(
         r#"

@@ -5,7 +5,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::types::TypeId;
+use tsz_solver::types::{TypeData, TypeId};
 use tsz_solver::visitor;
 
 use super::{
@@ -265,8 +265,55 @@ impl<'a> TypePrinter<'a> {
         }
     }
 
-    const fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
+    fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
+        let Some(list_id) = visitor::union_list_id(self.interner, type_id) else {
+            return type_id;
+        };
+        let members = self.interner.type_list(list_id);
+        if !members.contains(&TypeId::UNDEFINED) {
+            return type_id;
+        }
+
+        let non_undefined = members
+            .iter()
+            .copied()
+            .filter(|&member| member != TypeId::UNDEFINED)
+            .collect::<Vec<_>>();
+
+        if non_undefined.len() == 1 && self.optional_param_can_elide_undefined(non_undefined[0], 0)
+        {
+            return non_undefined[0];
+        }
+
         type_id
+    }
+
+    fn optional_param_can_elide_undefined(&self, type_id: TypeId, depth: u8) -> bool {
+        if depth > 8 {
+            return false;
+        }
+
+        match self.interner.lookup(type_id) {
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => true,
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                self.optional_param_can_elide_undefined(app.base, depth + 1)
+                    || app
+                        .args
+                        .iter()
+                        .copied()
+                        .any(|arg| self.optional_param_can_elide_undefined(arg, depth + 1))
+            }
+            Some(TypeData::Array(elem)) | Some(TypeData::ReadonlyType(elem)) => {
+                self.optional_param_can_elide_undefined(elem, depth + 1)
+            }
+            Some(TypeData::Tuple(tuple_id)) => self
+                .interner
+                .tuple_list(tuple_id)
+                .iter()
+                .any(|elem| self.optional_param_can_elide_undefined(elem.type_id, depth + 1)),
+            _ => false,
+        }
     }
 
     pub(crate) fn property_is_accessor(&self, property: &tsz_solver::types::PropertyInfo) -> bool {
