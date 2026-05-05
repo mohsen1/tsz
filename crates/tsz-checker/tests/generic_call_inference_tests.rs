@@ -1031,6 +1031,31 @@ const result = make(42);
     );
 }
 
+#[test]
+fn noinfer_blocks_inferred_generic_call_candidates() {
+    let source = r#"
+declare function choose<T>(value: T, fallback: NoInfer<T>): T;
+choose("a", "b");
+choose("a", "a");
+
+type NI<T> = NoInfer<T>;
+declare function chooseAlias<T>(value: T, fallback: NI<T>): T;
+chooseAlias("a", "b");
+
+declare function choosePlain<T>(value: T, fallback: T): T;
+choosePlain("a", "b");
+
+choose<"a">("a", "b");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        3,
+        "NoInfer fallback positions and explicit type args should reject \"b\", while plain T should infer from both arguments. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Inference with multiple callbacks ────────────────────────────────
 
 #[test]

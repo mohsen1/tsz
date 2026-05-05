@@ -375,6 +375,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             })
             .collect();
+        let mut noinfer_param_vars = FxHashSet::default();
+        for param in &instantiated_params {
+            placeholder_visited.clear();
+            self.collect_noinfer_placeholder_vars_in_type(
+                param.type_id,
+                &var_map,
+                &mut noinfer_param_vars,
+                &mut placeholder_probe_map,
+                &mut placeholder_visited,
+            );
+        }
 
         // Track bare return type placeholder for conditional seeding after Round 1
         let mut return_type_bare_var: Option<(crate::inference::infer::InferenceVar, TypeId)> =
@@ -1792,7 +1803,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         //   <T extends string>(a: T) => T  -- T="z" preserved
                         //   <T>(a: T) => T                  -- T="z" widened to string
                         if infer_ctx.all_candidates_are_fresh_literals(var) {
-                            crate::widen_literal_type(self.interner.as_type_database(), ty)
+                            if noinfer_param_vars.contains(&var) {
+                                let mut literal_bounds = lower_bounds
+                                    .iter()
+                                    .copied()
+                                    .filter(|bound| !bound.is_any_unknown_or_error())
+                                    .collect::<Vec<_>>();
+                                literal_bounds.dedup();
+                                if literal_bounds.is_empty() {
+                                    ty
+                                } else {
+                                    crate::utils::union_or_single(self.interner, literal_bounds)
+                                }
+                            } else {
+                                crate::widen_literal_type(self.interner.as_type_database(), ty)
+                            }
                         } else if self.inference_type_contains_fresh_object_or_array(ty) {
                             crate::operations::widening::widen_type_for_inference(
                                 self.interner.as_type_database(),
