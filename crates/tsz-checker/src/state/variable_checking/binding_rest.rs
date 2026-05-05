@@ -91,7 +91,7 @@ impl<'a> CheckerState<'a> {
 
     /// Collect static property names from all non-rest sibling elements in
     /// an object binding pattern.
-    fn collect_non_rest_property_names(&self, pattern_idx: NodeIndex) -> Vec<String> {
+    pub(crate) fn collect_non_rest_property_names(&self, pattern_idx: NodeIndex) -> Vec<String> {
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return Vec::new();
         };
@@ -170,7 +170,7 @@ impl<'a> CheckerState<'a> {
     /// (getters/setters) in source declaration order. This keeps the
     /// `Omit<T, "method" | "getter" | "setter">` rendering identical between
     /// tsz and tsc.
-    fn collect_unspreadable_prototype_names_from(&self, type_id: TypeId) -> Vec<String> {
+    pub(crate) fn collect_unspreadable_prototype_names_from(&self, type_id: TypeId) -> Vec<String> {
         let shape = query::object_shape(self.ctx.types, type_id).or_else(|| {
             let constraint = query::type_parameter_constraint(self.ctx.types, type_id)?;
             query::object_shape(self.ctx.types, constraint)
