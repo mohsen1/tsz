@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/parser-fuzz-array-recovery-fingerprint`
-- **PR**: TBD
+- **PR**: #3289
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
