@@ -613,15 +613,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2397: Declaration name conflicts with built-in global identifier.
-        // tsc emits TS2397 when a variable is declared with the name `undefined` or `globalThis`.
-        // `globalThis` only conflicts in script files (non-modules), since module-scoped
+        // tsc emits TS2397 when a variable is declared with the name `undefined` or `globalThis`
+        // in a script file. Both names only conflict in non-module files because module-scoped
         // declarations don't pollute the global scope.
         if let Some(ref name) = var_name {
-            let should_emit = if name == "globalThis" {
-                !self.ctx.binder.is_external_module()
-            } else {
-                name == "undefined"
-            };
+            let should_emit = (name == "globalThis" || name == "undefined")
+                && !self.ctx.binder.is_external_module();
             if should_emit {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 let message = format_message(

@@ -1575,10 +1575,10 @@ impl<'a> CheckerState<'a> {
                 {
                     continue;
                 }
-                // In module files, `namespace undefined` doesn't conflict with the
-                // global `undefined` — it's module-scoped.  tsc only emits TS2397
-                // for namespace `undefined` in global (non-module) scripts.
-                if is_external_module && node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                // In module files, any declaration of `undefined` is module-scoped
+                // and does not conflict with the global `undefined`. tsc only emits
+                // TS2397 for `undefined` declarations in script (non-module) files.
+                if is_external_module {
                     continue;
                 }
                 let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
