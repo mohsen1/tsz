@@ -552,14 +552,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return res;
         }
 
-        // `Array<T>` and `T[]` are redeclaration-identical when their element
-        // types are identical. Do this before normalization, since normalization
-        // expands lib-backed `Application(Array, [T])` into an object shape.
-        if let (Some(a_elem), Some(b_elem)) = (
-            self.array_element_for_redeclaration(a),
-            self.array_element_for_redeclaration(b),
-        ) {
-            return self.are_types_identical_for_redeclaration(a_elem, b_elem);
+        if let Some(result) = self.array_redeclaration_identity(a, b) {
+            return result;
         }
 
         // 5. Normalize Application/Mapped/Lazy types before structural comparison.
@@ -588,6 +582,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
         if a_norm == TypeId::ANY || b_norm == TypeId::ANY {
             return false;
+        }
+
+        if let Some(result) = self.array_redeclaration_identity(a_norm, b_norm) {
+            return result;
         }
 
         // 5 pre-check: Callable signature type parameter identity.
@@ -675,8 +673,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // Also handle cases where normalization itself exposes direct array types.
         if let (Some(a_elem), Some(b_elem)) = (
-            self.array_element_for_redeclaration(a),
-            self.array_element_for_redeclaration(b),
+            self.mutable_array_element_for_redeclaration(a),
+            self.mutable_array_element_for_redeclaration(b),
         ) {
             return self.are_types_identical_for_redeclaration(a_elem, b_elem);
         }
@@ -752,23 +750,37 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         fwd && bwd
     }
 
-    fn array_element_for_redeclaration(&self, type_id: TypeId) -> Option<TypeId> {
+    fn array_redeclaration_identity(&mut self, a: TypeId, b: TypeId) -> Option<bool> {
+        let a_elem = self.mutable_array_element_for_redeclaration(a)?;
+        let b_elem = self.mutable_array_element_for_redeclaration(b)?;
+
+        Some(self.are_types_identical_for_redeclaration(a_elem, b_elem))
+    }
+
+    fn mutable_array_element_for_redeclaration(&self, type_id: TypeId) -> Option<TypeId> {
+        if type_id.is_intrinsic() {
+            return None;
+        }
+
         match self.interner.lookup(type_id) {
             Some(TypeData::Array(elem)) => Some(elem),
             Some(TypeData::Application(app_id)) => {
+                let array_base = self
+                    .subtype
+                    .resolver
+                    .get_array_base_type()
+                    .or_else(|| self.interner.get_array_base_type())?;
+                let array_display_base = self.interner.get_array_display_base_type();
                 let app = self.interner.type_application(app_id);
-                if app.args.len() == 1
-                    && self
-                        .subtype
-                        .resolver
-                        .get_array_base_type()
-                        .or_else(|| self.interner.get_array_base_type())
-                        .is_some_and(|array_base| app.base == array_base)
-                {
-                    Some(app.args[0])
-                } else {
-                    None
-                }
+                let base_alias = self.interner.get_display_alias(app.base);
+                let is_array_application = app.base == array_base
+                    || array_display_base.is_some_and(|display_base| display_base == app.base)
+                    || base_alias.is_some_and(|alias| {
+                        alias == array_base
+                            || array_display_base.is_some_and(|display_base| display_base == alias)
+                    });
+
+                (is_array_application && app.args.len() == 1).then_some(app.args[0])
             }
             _ => None,
         }

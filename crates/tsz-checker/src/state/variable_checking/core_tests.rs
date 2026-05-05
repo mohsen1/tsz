@@ -476,6 +476,32 @@ var v: Pair<1, 2>;
     }
 
     #[test]
+    fn array_shorthand_redecl_no_false_ts2403() {
+        let source = r#"
+interface Bullean { }
+interface BulleanConstructor {
+    new(v1?: any): Bullean;
+    <T>(v2?: T): v2 is T;
+}
+declare var Bullean: BulleanConstructor;
+declare let realanys: any[];
+var ys: any[];
+var ys = realanys.filter(Boolean);
+var foos: Array<boolean>;
+var foos = [true, true, false, null].filter((thing): thing is boolean => thing !== null);
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for Array<T> vs T[] redecl: {ts2403:?}"
+        );
+    }
+
+    #[test]
     fn identity_mapped_type_no_false_ts2403() {
         // Mapped type application should evaluate to same structure.
         // Uses inline identity mapped type (no lib dependency).

@@ -4,6 +4,14 @@ use tsz_solver::{
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
 
+pub(crate) fn mutable_array_element_for_redeclaration(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::mutable_array_element_for_redeclaration(db, def_store, type_id)
+}
+
 pub(crate) fn remapped_mapped_type_has_no_outer_type_params(
     db: &dyn TypeDatabase,
     type_id: TypeId,
