@@ -1418,6 +1418,28 @@ export declare namespace foo {
 }
 
 #[test]
+fn test_export_default_function_with_late_bound_assignment_emits_default_alias() {
+    let source = r#"
+export default function someFunc() {
+    return "hello!";
+}
+
+someFunc.someProp = "yo";
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+    let expected = r#"declare function someFunc(): string;
+declare namespace someFunc {
+    var someProp: string;
+}
+export default someFunc;"#;
+    assert!(
+        output.contains(expected),
+        "Expected default function expandos to emit through a merged namespace alias: {output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_function_reserved_alias_avoids_existing_member_name() {
     let source = r#"
 export function foo() {}
