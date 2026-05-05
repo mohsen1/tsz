@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/type-parameter-constraint-fingerprints`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: https://github.com/mohsen1/tsz/pull/3426
+- **Status**: draft
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
