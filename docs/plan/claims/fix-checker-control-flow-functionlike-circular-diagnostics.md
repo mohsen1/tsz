@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-control-flow-functionlike-circular-diagnostics`
-- **PR**: #2827
+- **PR**: #2931
 - **Status**: ready
 - **Workstream**: conformance / missing diagnostics
 
