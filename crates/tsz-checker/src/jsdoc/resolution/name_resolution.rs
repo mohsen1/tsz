@@ -843,13 +843,12 @@ impl<'a> CheckerState<'a> {
         return_type_str: &str,
         params_inner: &str,
     ) -> (Option<TypeId>, Option<tsz_solver::TypePredicate>) {
-        // Try `asserts param` or `asserts param is Type`
-        if let Some(rest) = return_type_str.strip_prefix("asserts ") {
-            let rest = rest.trim();
+        let (is_asserts, rest) = Self::split_jsdoc_asserts_prefix(return_type_str);
+        if is_asserts {
             // Check for `asserts param is Type`
-            if let Some(is_idx) = Self::find_word_boundary(rest, " is ") {
+            if let Some((is_idx, is_end)) = Self::find_jsdoc_type_predicate_is(rest) {
                 let param_name = rest[..is_idx].trim();
-                let type_str = rest[is_idx + 4..].trim();
+                let type_str = rest[is_end..].trim();
                 let pred_type = self.jsdoc_type_from_expression(type_str);
                 let (target, parameter_index) =
                     self.jsdoc_type_predicate_target(param_name, params_inner);
@@ -875,9 +874,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Try `param is Type` (non-assertion type predicate)
-        if let Some(is_idx) = Self::find_word_boundary(return_type_str, " is ") {
+        if let Some((is_idx, is_end)) = Self::find_jsdoc_type_predicate_is(return_type_str) {
             let param_name = return_type_str[..is_idx].trim();
-            let type_str = return_type_str[is_idx + 4..].trim();
+            let type_str = return_type_str[is_end..].trim();
             // Validate that param_name is a simple identifier, not a type expression
             if param_name
                 .chars()
@@ -898,11 +897,6 @@ impl<'a> CheckerState<'a> {
 
         // Regular return type
         (self.jsdoc_type_from_expression(return_type_str), None)
-    }
-
-    /// Find ` is ` at a word boundary (not inside a type expression).
-    fn find_word_boundary(s: &str, needle: &str) -> Option<usize> {
-        s.find(needle)
     }
 
     /// Build a `TypePredicateTarget` from a parameter name.

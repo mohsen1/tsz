@@ -17,6 +17,41 @@ fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn checked_js_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        allow_js: true,
+        check_js: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .into_iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 #[test]
 fn shadowed_builtin_guard_names_do_not_narrow() {
     let diagnostics = strict_diagnostics(
@@ -1024,6 +1059,61 @@ function g(x) {
     assert!(
         relevant.is_empty(),
         "JSDoc @return {{x is number}} should create type predicate, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn jsdoc_assertion_return_predicate_accepts_tab_whitespace() {
+    let source = concat!(
+        "// @ts-check\n",
+        "\n",
+        "/**\n",
+        " * @param {unknown} value\n",
+        " * @returns {asserts\tvalue\tis\tstring}\n",
+        " */\n",
+        "function assertString(value) {}\n",
+        "\n",
+        "/** @type {string | number} */\n",
+        "let maybe = \"ok\";\n",
+        "\n",
+        "assertString(maybe);\n",
+        "maybe.toUpperCase();\n",
+    );
+
+    let diagnostics = checked_js_diagnostics(source);
+
+    assert!(
+        diagnostics.is_empty(),
+        "JSDoc @returns assertion predicates should accept tab whitespace: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn jsdoc_callback_assertion_predicate_accepts_tab_whitespace() {
+    let source = concat!(
+        "// @ts-check\n",
+        "\n",
+        "/**\n",
+        " * @callback AssertString\n",
+        " * @param {unknown} value\n",
+        " * @returns {asserts\tvalue\tis\tstring}\n",
+        " */\n",
+        "\n",
+        "/** @type {AssertString} */\n",
+        "const assertString = (value) => {};\n",
+        "\n",
+        "/** @type {string | number} */\n",
+        "let maybe = \"ok\";\n",
+        "\n",
+        "assertString(maybe);\n",
+        "maybe.toUpperCase();\n",
+    );
+
+    let diagnostics = checked_js_diagnostics(source);
+
+    assert!(
+        diagnostics.is_empty(),
+        "JSDoc @callback assertion predicates should accept tab whitespace: {diagnostics:#?}"
     );
 }
 

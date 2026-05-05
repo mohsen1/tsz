@@ -2710,18 +2710,11 @@ impl<'a> CheckerState<'a> {
             let end = after_open.find('}')?;
             let type_expr = after_open[..end].trim();
 
-            // Check for "asserts" prefix
-            let (is_asserts, remainder) =
-                if let Some(after_asserts) = type_expr.strip_prefix("asserts ") {
-                    (true, after_asserts.trim())
-                } else {
-                    (false, type_expr)
-                };
+            let (is_asserts, remainder) = Self::split_jsdoc_asserts_prefix(type_expr);
 
-            // Look for " is " separator (the type predicate pattern)
-            if let Some(is_pos) = remainder.find(" is ") {
+            if let Some((is_pos, is_end)) = Self::find_jsdoc_type_predicate_is(remainder) {
                 let param_name = remainder[..is_pos].trim();
-                let type_str = remainder[is_pos + 4..].trim();
+                let type_str = remainder[is_end..].trim();
                 // Validate param_name is a simple identifier or "this"
                 if !param_name.is_empty()
                     && (param_name == "this"
