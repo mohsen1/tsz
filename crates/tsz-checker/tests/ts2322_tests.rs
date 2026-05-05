@@ -4784,3 +4784,58 @@ fn test_ts2322_too_many_parameters_emits_chained_target_signature_elaboration() 
         mismatch.related_information
     );
 }
+
+// =============================================================================
+// @ts-nocheck / @ts-check pragma: must only honour directives in comments
+// (issue #2821)
+// =============================================================================
+
+#[test]
+fn test_ts_nocheck_in_string_literal_does_not_suppress_ts2322() {
+    // A string literal containing "@ts-nocheck" must NOT suppress checking.
+    // Only a `// @ts-nocheck` or `/* @ts-nocheck */` comment in the leading
+    // trivia of the file suppresses diagnostics.
+    let source = r#"const marker = "@ts-nocheck";
+const n: number = "not a number";
+"#;
+    let diags = compile_with_options(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "@ts-nocheck inside a string literal must not suppress TS2322; got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts_nocheck_in_real_comment_suppresses_checking() {
+    // Sanity check: a genuine `// @ts-nocheck` leading comment should still
+    // suppress diagnostics (the pre-existing behaviour must be preserved).
+    let source = r#"// @ts-nocheck
+const n: number = "not a number";
+"#;
+    let diags = compile_with_options(source, "test.ts", CheckerOptions::default());
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "// @ts-nocheck in leading comment should suppress TS2322; got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts_nocheck_after_code_does_not_suppress_ts2322() {
+    // A `// @ts-nocheck` comment that appears *after* real code is not
+    // a leading-trivia directive and must not suppress subsequent errors.
+    let source = r#"const marker = 1;
+// @ts-nocheck
+const n: number = "not a number";
+"#;
+    let diags = compile_with_options(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "@ts-nocheck after real code must not suppress TS2322; got: {diags:?}"
+    );
+}

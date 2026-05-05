@@ -331,6 +331,74 @@ pub fn is_triple_slash_directive(comment: &CommentRange, source: &str) -> bool {
     text.starts_with("///")
 }
 
+/// Check whether `directive` appears inside a comment in the **leading trivia**
+/// of `source` (i.e. before the first non-whitespace, non-comment byte).
+///
+/// This is the correct way to detect `@ts-check` / `@ts-nocheck` file-level
+/// pragmas: TypeScript only honours them when they appear in a `//` or `/* */`
+/// comment that precedes all real source code.  A raw substring scan over the
+/// entire file is wrong because it would trigger on string literals, template
+/// literals, and any other non-comment occurrence of the directive text.
+///
+/// The search is **case-insensitive** to match tsc's behaviour.
+#[must_use]
+pub fn has_ts_directive_in_leading_trivia(source: &str, directive: &str) -> bool {
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    let directive_lower = directive.to_ascii_lowercase();
+    let mut pos = 0;
+
+    // Skip UTF-8 BOM (EF BB BF)
+    if bytes.get(..3) == Some(&[0xEF, 0xBB, 0xBF]) {
+        pos = 3;
+    }
+
+    while pos < len {
+        match bytes[pos] {
+            // Skip whitespace
+            b' ' | b'\t' | b'\r' | b'\n' => {
+                pos += 1;
+            }
+            b'/' if pos + 1 < len => match bytes[pos + 1] {
+                b'/' => {
+                    // Single-line comment: `// ... <newline>`
+                    let comment_start = pos + 2;
+                    let line_end = bytes[pos..]
+                        .iter()
+                        .position(|&b| b == b'\n')
+                        .map(|off| pos + off)
+                        .unwrap_or(len);
+                    let comment_text = &source[comment_start..line_end];
+                    if comment_text.to_ascii_lowercase().contains(&directive_lower) {
+                        return true;
+                    }
+                    pos = line_end;
+                }
+                b'*' => {
+                    // Block comment: `/* ... */`
+                    let comment_start = pos + 2;
+                    let close = source[comment_start..]
+                        .find("*/")
+                        .map(|off| comment_start + off)
+                        .unwrap_or(len.saturating_sub(2));
+                    let comment_text = &source[comment_start..close];
+                    if comment_text.to_ascii_lowercase().contains(&directive_lower) {
+                        return true;
+                    }
+                    pos = close + 2;
+                    if pos > len {
+                        pos = len;
+                    }
+                }
+                _ => break, // `/x` — real code; stop scanning leading trivia
+            },
+            _ => break, // Any other non-whitespace byte is real code
+        }
+    }
+
+    false
+}
+
 /// Extract the content of a `JSDoc` comment (without the delimiters).
 #[must_use]
 pub fn get_jsdoc_content(comment: &CommentRange, source: &str) -> String {

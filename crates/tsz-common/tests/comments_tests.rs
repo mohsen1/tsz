@@ -677,3 +677,117 @@ fn test_comment_range_debug() {
     assert!(debug.contains("pos"));
     assert!(debug.contains("end"));
 }
+
+// =============================================================================
+// has_ts_directive_in_leading_trivia
+// =============================================================================
+
+#[test]
+fn test_leading_trivia_nocheck_in_line_comment() {
+    // Directive inside a `//` comment → should be found.
+    assert!(has_ts_directive_in_leading_trivia(
+        "// @ts-nocheck\nconst n: number = 'x';",
+        "@ts-nocheck"
+    ));
+}
+
+#[test]
+fn test_leading_trivia_nocheck_in_block_comment() {
+    assert!(has_ts_directive_in_leading_trivia(
+        "/* @ts-nocheck */\nconst n: number = 'x';",
+        "@ts-nocheck"
+    ));
+}
+
+#[test]
+fn test_leading_trivia_nocheck_in_string_literal_not_found() {
+    // The directive is inside a string literal, not a comment — must not trigger.
+    assert!(!has_ts_directive_in_leading_trivia(
+        r#"const marker = "@ts-nocheck";
+const n: number = "not a number";"#,
+        "@ts-nocheck"
+    ));
+}
+
+#[test]
+fn test_leading_trivia_check_in_string_literal_not_found() {
+    assert!(!has_ts_directive_in_leading_trivia(
+        r#"const marker = "@ts-check";
+/** @type {number} */
+const n = "not a number";"#,
+        "@ts-check"
+    ));
+}
+
+#[test]
+fn test_leading_trivia_directive_after_code_not_found() {
+    // Directive inside a comment that comes after real code → not leading trivia.
+    assert!(!has_ts_directive_in_leading_trivia(
+        "const x = 1;\n// @ts-nocheck\nconst n: number = 'x';",
+        "@ts-nocheck"
+    ));
+}
+
+#[test]
+fn test_leading_trivia_empty_source() {
+    assert!(!has_ts_directive_in_leading_trivia("", "@ts-nocheck"));
+    assert!(!has_ts_directive_in_leading_trivia("", "@ts-check"));
+}
+
+#[test]
+fn test_leading_trivia_whitespace_only() {
+    assert!(!has_ts_directive_in_leading_trivia(
+        "   \n\t\n  ",
+        "@ts-nocheck"
+    ));
+}
+
+#[test]
+fn test_leading_trivia_case_insensitive() {
+    // tsc is case-insensitive for these pragmas.
+    assert!(has_ts_directive_in_leading_trivia(
+        "// @TS-NOCHECK\nconst x = 1;",
+        "@ts-nocheck"
+    ));
+}
+
+#[test]
+fn test_leading_trivia_multiple_comments_before_code() {
+    // Both a blank comment and then the directive comment — should still match.
+    assert!(has_ts_directive_in_leading_trivia(
+        "// generated file\n// @ts-nocheck\nconst x = 1;",
+        "@ts-nocheck"
+    ));
+}
+
+#[test]
+fn test_leading_trivia_check_not_nocheck() {
+    // @ts-check should not match when searching for @ts-nocheck.
+    assert!(!has_ts_directive_in_leading_trivia(
+        "// @ts-check\nconst x = 1;",
+        "@ts-nocheck"
+    ));
+    assert!(has_ts_directive_in_leading_trivia(
+        "// @ts-check\nconst x = 1;",
+        "@ts-check"
+    ));
+}
+
+#[test]
+fn test_leading_trivia_bom_prefix_handled() {
+    // UTF-8 BOM followed by the directive comment.
+    let bom = "\u{FEFF}";
+    let source = format!("{bom}// @ts-nocheck\nconst x = 1;");
+    assert!(has_ts_directive_in_leading_trivia(&source, "@ts-nocheck"));
+}
+
+#[test]
+fn test_leading_trivia_directive_inside_normal_comment_in_string() {
+    // A `//` appears inside a string value — not a real comment; the
+    // scanner only stops at the first non-trivia byte.  The `/` of `"a // b"`
+    // is NOT a comment because the opening `"` appears first.
+    assert!(!has_ts_directive_in_leading_trivia(
+        r#"const s = "a // @ts-nocheck b"; const n: number = "x";"#,
+        "@ts-nocheck"
+    ));
+}
