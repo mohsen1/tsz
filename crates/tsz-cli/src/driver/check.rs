@@ -3281,6 +3281,29 @@ mod tests {
         .diagnostics
     }
 
+    #[test]
+    fn cloned_checker_libs_preserve_strict_builtin_iterator_return() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+declare const map: Map<string, number>;
+const value: number = map.values().next().value;
+interface Next<A> {
+    readonly done?: boolean;
+    readonly value: A;
+}
+const result: Next<number> = map.values().next();
+"#,
+        );
+        let ts2322_count = diagnostics
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .count();
+        assert_eq!(
+            ts2322_count, 2,
+            "expected cloned checker libs to preserve strict built-in iterator return diagnostics, got: {diagnostics:#?}"
+        );
+    }
+
     fn mapped_type_indexed_access_constraint_repro() -> &'static str {
         r#"type Identity<T> = { [K in keyof T]: T[K] };
 
