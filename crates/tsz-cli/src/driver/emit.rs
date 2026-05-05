@@ -513,9 +513,16 @@ pub(crate) fn emit_outputs(
                 }
 
                 if declaration_bundle_path.is_some() {
+                    let declaration_module_name = file
+                        .is_external_module
+                        .then(|| {
+                            bundled_module_name(context.base_dir, context.root_dir, &input_path)
+                        })
+                        .flatten();
                     declaration_bundle_chunks.push(bundle_declaration_output(
                         &contents,
                         context.options.printer.module,
+                        declaration_module_name.as_deref(),
                     ));
                 } else {
                     outputs.push(OutputFile {
@@ -1244,15 +1251,23 @@ fn join_declaration_bundle_chunks(chunks: &[String], new_line: &str) -> String {
     bundled
 }
 
-fn bundle_declaration_output(contents: &str, module_kind: ModuleKind) -> String {
+fn bundle_declaration_output(
+    contents: &str,
+    module_kind: ModuleKind,
+    fallback_module_name: Option<&str>,
+) -> String {
     if !matches!(module_kind, ModuleKind::AMD) {
         return contents.to_string();
     }
 
-    wrap_amd_declaration_output(contents).unwrap_or_else(|| contents.to_string())
+    wrap_amd_declaration_output(contents, fallback_module_name)
+        .unwrap_or_else(|| contents.to_string())
 }
 
-fn wrap_amd_declaration_output(contents: &str) -> Option<String> {
+fn wrap_amd_declaration_output(
+    contents: &str,
+    fallback_module_name: Option<&str>,
+) -> Option<String> {
     let mut directive_lines = Vec::new();
     let mut body_lines = Vec::new();
     let mut in_header = true;
@@ -1261,7 +1276,7 @@ fn wrap_amd_declaration_output(contents: &str) -> Option<String> {
     for line in contents.lines() {
         if in_header && line.trim_start().starts_with("///") {
             directive_lines.push(line.to_string());
-            if amd_module_name.is_none() {
+            if amd_module_name.is_none() && is_amd_module_directive(line) {
                 amd_module_name = extract_amd_module_name(line);
             }
             continue;
@@ -1270,7 +1285,7 @@ fn wrap_amd_declaration_output(contents: &str) -> Option<String> {
         body_lines.push(line.to_string());
     }
 
-    let amd_module_name = amd_module_name?;
+    let amd_module_name = amd_module_name.or_else(|| fallback_module_name.map(str::to_string))?;
     let mut wrapped = String::new();
     for directive in directive_lines {
         wrapped.push_str(&directive);
@@ -1306,6 +1321,19 @@ fn extract_amd_module_name(line: &str) -> Option<String> {
     let quote = quote as char;
     let end = after[1..].find(quote)?;
     Some(after[1..1 + end].to_string())
+}
+
+fn is_amd_module_directive(line: &str) -> bool {
+    let Some(rest) = line.trim_start().strip_prefix("///") else {
+        return false;
+    };
+    let Some(after_tag) = rest.trim_start().strip_prefix("<amd-module") else {
+        return false;
+    };
+    match after_tag.chars().next() {
+        None => true,
+        Some(ch) => ch.is_ascii_whitespace() || matches!(ch, '/' | '>'),
+    }
 }
 
 fn rewrite_ambient_module_member_line(line: &str) -> String {

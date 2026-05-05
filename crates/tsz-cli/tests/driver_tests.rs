@@ -2412,6 +2412,85 @@ fn compile_single_source_amd_outfile_emits_bundle() {
 }
 
 #[test]
+fn compile_single_source_amd_declaration_outfile_wraps_module_name() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "ignoreDeprecations": "6.0",
+            "module": "amd",
+            "outFile": "dist/bundle.js",
+            "strict": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "export const value = 1;");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(result.diagnostics.is_empty());
+    let bundle =
+        std::fs::read_to_string(base.join("dist/bundle.d.ts")).expect("read declaration bundle");
+    assert_eq!(
+        bundle,
+        r#"declare module "index" {
+    export const value = 1;
+}"#
+    );
+}
+
+#[test]
+fn compile_amd_declaration_outfile_uses_source_name_with_dependency_directive() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "ignoreDeprecations": "6.0",
+            "module": "amd",
+            "outFile": "dist/bundle.js",
+            "strict": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"/// <amd-dependency name="legacyAlias" path="legacy/module" />
+export const value = 1;"#,
+    );
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(result.diagnostics.is_empty());
+    let bundle =
+        std::fs::read_to_string(base.join("dist/bundle.d.ts")).expect("read declaration bundle");
+    assert_eq!(
+        bundle,
+        r#"/// <amd-dependency name="legacyAlias" path="legacy/module" />
+declare module "index" {
+    export const value = 1;
+}"#
+    );
+}
+
+#[test]
 fn compile_with_source_map_emits_map_outputs() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
