@@ -1,8 +1,3 @@
-//! Condition-based type narrowing for `FlowAnalyzer`.
-//!
-//! Handles switch clause narrowing, binary/logical expression narrowing,
-//! typeof/instanceof/in guards, and boolean comparison narrowing.
-
 use super::FlowAnalyzer;
 use crate::query_boundaries::common::{is_union_type, union_members};
 use crate::query_boundaries::flow as flow_boundary;
