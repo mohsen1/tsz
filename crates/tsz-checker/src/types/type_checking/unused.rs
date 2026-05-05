@@ -1649,9 +1649,12 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Checks if a symbol name appears to be used in a JSDoc comment.
-    /// This uses a fast string search over the file text to suppress false
-    /// positive unused local errors for symbols referenced in JSDoc tags
-    /// like `{@link X}`, `@import { X }`, `@type {X}`, etc.
+    /// This restricts the pattern search to actual block-comment ranges so
+    /// JSDoc-looking text inside string literals, regular code, or
+    /// regex/template literals does not falsely suppress TS6196 / TS6133.
+    /// Mirrors tsc's behavior where only real `/** ... */` comments
+    /// contribute symbol references via `@type`, `@import`, `@param`,
+    /// `@returns`, `@template`, and `{@link ...}` tags.
     fn is_symbol_used_in_jsdoc(&self, name: &str) -> bool {
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return false;
@@ -1675,15 +1678,29 @@ impl<'a> CheckerState<'a> {
             format!("@template {name}"),
         ];
 
-        for p in &patterns {
-            if text.contains(p) {
+        let comment_ranges = tsz_common::comments::get_comment_ranges(text);
+        let import_brace_pattern = format!("{{ {name} }}");
+
+        for range in &comment_ranges {
+            // JSDoc tags only appear in block comments (`/* ... */` and
+            // `/** ... */`). Line comments cannot contain them per tsc's
+            // grammar, so skip those to avoid false positives from
+            // commented-out code that happens to mention `@type {X}`.
+            if !range.is_multi_line {
+                continue;
+            }
+            let comment_text = range.get_text(text);
+
+            for p in &patterns {
+                if comment_text.contains(p) {
+                    return true;
+                }
+            }
+
+            // Match JSDoc import with whitespace: `@import { Type } from ...`.
+            if comment_text.contains(&import_brace_pattern) && comment_text.contains("@import") {
                 return true;
             }
-        }
-
-        // Match JSDoc import with whitespace: `@import { Type } from ...`
-        if text.contains(&format!("{{ {name} }}")) && text.contains("@import") {
-            return true;
         }
 
         false
