@@ -22,6 +22,8 @@ pub struct AstToIr<'a> {
     current_this_substitution: Cell<Option<ThisSubstitution>>,
     /// Whether we're inside a derived class (has extends clause) — needed for super lowering
     has_super: bool,
+    /// Generated super parameter name for the class IIFE.
+    super_name: String,
     /// Whether we're inside a static member — super access uses `_super.X` (no .prototype)
     is_static: bool,
     /// Optional identifier substitution for class self-references in decorated class bodies.
@@ -33,13 +35,14 @@ pub struct AstToIr<'a> {
 }
 
 impl<'a> AstToIr<'a> {
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             this_captured: Cell::new(false),
             transforms: None,
             current_this_substitution: Cell::new(None),
             has_super: false,
+            super_name: "_super".to_string(),
             is_static: false,
             identifier_substitution: None,
             temp_var_counter: Cell::new(0),
@@ -50,6 +53,11 @@ impl<'a> AstToIr<'a> {
     /// Set whether we're inside a derived class (for super lowering)
     pub const fn with_super(mut self, has_super: bool) -> Self {
         self.has_super = has_super;
+        self
+    }
+
+    pub fn with_super_name(mut self, super_name: String) -> Self {
+        self.super_name = super_name;
         self
     }
 
@@ -723,7 +731,10 @@ impl<'a> AstToIr<'a> {
                     return IRNode::assign(
                         IRNode::id("_this"),
                         IRNode::logical_or(
-                            IRNode::call(IRNode::prop(IRNode::id("_super"), "call"), call_args),
+                            IRNode::call(
+                                IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
+                                call_args,
+                            ),
                             IRNode::this(),
                         ),
                     );
@@ -771,14 +782,14 @@ impl<'a> AstToIr<'a> {
                 let super_proto_method = if self.is_static {
                     // Static: _super.method
                     IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id("_super")),
+                        object: Box::new(IRNode::id(self.super_name.clone())),
                         property: method_name.into(),
                     }
                 } else {
                     // Instance: _super.prototype.method
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::PropertyAccess {
-                            object: Box::new(IRNode::id("_super")),
+                            object: Box::new(IRNode::id(self.super_name.clone())),
                             property: "prototype".to_string().into(),
                         }),
                         property: method_name.into(),
@@ -810,10 +821,10 @@ impl<'a> AstToIr<'a> {
             if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
                 let index_expr = self.convert_expression(access.name_or_argument);
                 let super_base = if self.is_static {
-                    IRNode::id("_super")
+                    IRNode::id(self.super_name.clone())
                 } else {
                     IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id("_super")),
+                        object: Box::new(IRNode::id(self.super_name.clone())),
                         property: "prototype".to_string().into(),
                     }
                 };
@@ -912,13 +923,13 @@ impl<'a> AstToIr<'a> {
             {
                 return if self.is_static {
                     IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id("_super")),
+                        object: Box::new(IRNode::id(self.super_name.clone())),
                         property: name.into(),
                     }
                 } else {
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::PropertyAccess {
-                            object: Box::new(IRNode::id("_super")),
+                            object: Box::new(IRNode::id(self.super_name.clone())),
                             property: "prototype".to_string().into(),
                         }),
                         property: name.into(),
@@ -951,10 +962,10 @@ impl<'a> AstToIr<'a> {
             {
                 let index = self.convert_expression(access.name_or_argument);
                 let super_base = if self.is_static {
-                    IRNode::id("_super")
+                    IRNode::id(self.super_name.clone())
                 } else {
                     IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id("_super")),
+                        object: Box::new(IRNode::id(self.super_name.clone())),
                         property: "prototype".to_string().into(),
                     }
                 };

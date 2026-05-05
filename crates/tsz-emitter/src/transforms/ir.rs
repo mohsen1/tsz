@@ -260,6 +260,7 @@ pub enum IRNode {
     ES5ClassIIFE {
         name: Cow<'static, str>,
         base_class: Option<Box<Self>>,
+        super_param: Option<Cow<'static, str>>,
         body: Vec<Self>,
         /// `WeakMap` declarations for private fields (before the IIFE)
         weakmap_decls: Vec<String>,
@@ -276,7 +277,10 @@ pub enum IRNode {
     StaticBlockIIFE { statements: Vec<Self> },
 
     /// __extends helper call: `__extends(ClassName, _super);`
-    ExtendsHelper { class_name: Cow<'static, str> },
+    ExtendsHelper {
+        class_name: Cow<'static, str>,
+        super_name: Cow<'static, str>,
+    },
 
     /// ES5 class expression application:
     /// `/** @class */ (_a.apply(void 0, [(Base)]))`

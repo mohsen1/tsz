@@ -308,6 +308,7 @@ pub struct ES5ClassTransformer<'a> {
     class_name: String,
     has_extends: bool,
     extends_null: bool,
+    super_name: String,
     private_fields: Vec<PrivateFieldInfo>,
     private_accessors: Vec<PrivateAccessorInfo>,
     auto_accessors: Vec<AutoAccessorFieldInfo>,
@@ -345,6 +346,7 @@ impl<'a> ES5ClassTransformer<'a> {
             class_name: String::new(),
             has_extends: false,
             extends_null: false,
+            super_name: "_super".to_string(),
             private_fields: Vec::new(),
             private_accessors: Vec::new(),
             auto_accessors: Vec::new(),
@@ -382,6 +384,26 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
+    }
+
+    fn fresh_super_name(&self) -> String {
+        let mut suffix = 0usize;
+        loop {
+            let candidate = if suffix == 0 {
+                "_super".to_string()
+            } else {
+                format!("_super_{suffix}")
+            };
+            if !self
+                .arena
+                .identifiers
+                .iter()
+                .any(|identifier| identifier.escaped_text == candidate)
+            {
+                return candidate;
+            }
+            suffix += 1;
+        }
     }
 
     /// Check if an expression (possibly wrapped in type assertions) is side-effect-free.
@@ -680,6 +702,7 @@ impl<'a> ES5ClassTransformer<'a> {
     fn make_converter(&self) -> AstToIr<'a> {
         let mut converter = AstToIr::new(self.arena)
             .with_super(self.has_extends)
+            .with_super_name(self.super_name.clone())
             .with_temp_var_counter(self.temp_var_counter.get());
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
@@ -1576,6 +1599,11 @@ impl<'a> ES5ClassTransformer<'a> {
             self.arena,
             &class_data.heritage_clauses,
         );
+        self.super_name = if self.has_extends {
+            self.fresh_super_name()
+        } else {
+            "_super".to_string()
+        };
 
         // Scan property declarations for computed names that need hoisting.
         // This must happen before constructor/member IR emission so that temps
@@ -1698,6 +1726,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if self.has_extends {
             body.push(IRNode::ExtendsHelper {
                 class_name: self.class_name.clone().into(),
+                super_name: self.super_name.clone().into(),
             });
         }
 
@@ -1817,6 +1846,7 @@ impl<'a> ES5ClassTransformer<'a> {
         Some(IRNode::ES5ClassIIFE {
             name: self.class_name.clone().into(),
             base_class: base_class.map(Box::new),
+            super_param: self.has_extends.then(|| self.super_name.clone().into()),
             body,
             weakmap_decls,
             weakmap_inits,
@@ -1939,9 +1969,13 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Simple: return _super !== null && _super.apply(this, arguments) || this;
                     ctor_body.push(IRNode::ret(Some(IRNode::logical_or(
                         IRNode::logical_and(
-                            IRNode::binary(IRNode::id("_super"), "!==", IRNode::NullLiteral),
+                            IRNode::binary(
+                                IRNode::id(self.super_name.clone()),
+                                "!==",
+                                IRNode::NullLiteral,
+                            ),
                             IRNode::call(
-                                IRNode::prop(IRNode::id("_super"), "apply"),
+                                IRNode::prop(IRNode::id(self.super_name.clone()), "apply"),
                                 vec![IRNode::this(), IRNode::id("arguments")],
                             ),
                         ),
@@ -1953,9 +1987,13 @@ impl<'a> ES5ClassTransformer<'a> {
                         "_this",
                         Some(IRNode::logical_or(
                             IRNode::logical_and(
-                                IRNode::binary(IRNode::id("_super"), "!==", IRNode::NullLiteral),
+                                IRNode::binary(
+                                    IRNode::id(self.super_name.clone()),
+                                    "!==",
+                                    IRNode::NullLiteral,
+                                ),
                                 IRNode::call(
-                                    IRNode::prop(IRNode::id("_super"), "apply"),
+                                    IRNode::prop(IRNode::id(self.super_name.clone()), "apply"),
                                     vec![IRNode::this(), IRNode::id("arguments")],
                                 ),
                             ),
@@ -2276,7 +2314,10 @@ impl<'a> ES5ClassTransformer<'a> {
         IRNode::var_decl(
             "_this",
             Some(IRNode::logical_or(
-                IRNode::call(IRNode::prop(IRNode::id("_super"), "call"), args),
+                IRNode::call(
+                    IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
+                    args,
+                ),
                 IRNode::this(),
             )),
         )
@@ -2300,7 +2341,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // return _super.call(this, args...) || this;
         IRNode::ret(Some(IRNode::logical_or(
-            IRNode::call(IRNode::prop(IRNode::id("_super"), "call"), args),
+            IRNode::call(
+                IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
+                args,
+            ),
             IRNode::this(),
         )))
     }

@@ -1174,6 +1174,7 @@ impl<'a> IRPrinter<'a> {
             IRNode::ES5ClassIIFE {
                 name,
                 base_class,
+                super_param,
                 body,
                 weakmap_decls,
                 weakmap_inits,
@@ -1203,7 +1204,7 @@ impl<'a> IRPrinter<'a> {
                     self.write(" = /** @class */ (function (");
                 }
                 if base_class.is_some() {
-                    self.write("_super");
+                    self.write(super_param.as_deref().unwrap_or("_super"));
                 }
                 self.write(") {");
                 self.write_line();
@@ -1259,11 +1260,16 @@ impl<'a> IRPrinter<'a> {
                     self.write("})();");
                 }
             }
-            IRNode::ExtendsHelper { class_name } => {
+            IRNode::ExtendsHelper {
+                class_name,
+                super_name,
+            } => {
                 self.write_helper("__extends");
                 self.write("(");
                 self.write(class_name);
-                self.write(", _super);");
+                self.write(", ");
+                self.write(super_name);
+                self.write(");");
             }
             IRNode::ES5ClassApply {
                 factory,
