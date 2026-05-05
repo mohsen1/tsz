@@ -1038,7 +1038,7 @@ fn is_nested_same_wrapper_assignability_message(message: &str) -> bool {
     let Some(source_head) = generic_head(source) else {
         return false;
     };
-    if !source_head.ends_with("Promise") && !source_head.ends_with("PromiseLike") {
+    if source_head != "Promise" && source_head != "PromiseLike" {
         return false;
     }
     if generic_head(target) != Some(source_head) {

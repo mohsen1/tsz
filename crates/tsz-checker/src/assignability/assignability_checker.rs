@@ -771,7 +771,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_nested_same_wrapper_application_assignment(
-        &self,
+        &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
@@ -782,17 +782,7 @@ impl<'a> CheckerState<'a> {
         // This correctly handles `PromiseLike<PromiseLike<T>>` vs `PromiseLike<T>`
         // (coinductively compatible via the then-method cycle) without making
         // ordinary generic classes like `A<A<number>>` assignable to `A<number>`.
-        fn is_promise_like_wrapper(display: &str) -> bool {
-            let Some((head, _)) = display.split_once('<') else {
-                return false;
-            };
-            let head = head.trim();
-            head.ends_with("Promise") || head.ends_with("PromiseLike")
-        }
-
-        let source_display = self.format_type(source);
-        let target_display = self.format_type(target);
-        if !is_promise_like_wrapper(&source_display) || !is_promise_like_wrapper(&target_display) {
+        if !self.is_promise_like_application_pair(source, target) {
             return false;
         }
 
@@ -812,6 +802,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        let source_display = self.format_type(source);
+        let target_display = self.format_type(target);
+
         fn generic_head(display: &str) -> Option<&str> {
             display.split_once('<').map(|(head, _)| head.trim())
         }
@@ -819,7 +812,7 @@ impl<'a> CheckerState<'a> {
         let Some(source_head) = generic_head(&source_display) else {
             return false;
         };
-        if !source_head.ends_with("Promise") && !source_head.ends_with("PromiseLike") {
+        if source_head != "Promise" && source_head != "PromiseLike" {
             return false;
         }
         if generic_head(&target_display) != Some(source_head) {
