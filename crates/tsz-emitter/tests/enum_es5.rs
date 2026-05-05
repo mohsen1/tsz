@@ -297,6 +297,32 @@ fn test_constant_folding_complex_expression() {
 }
 
 #[test]
+fn test_enum_initializer_erases_type_only_wrappers() {
+    let output =
+        transform_enum("enum E { A = (1 as number), B = (<number>2), C = 3! satisfies number }");
+
+    assert!(
+        output.contains("E[E[\"A\"] = 1] = \"A\""),
+        "as-expression initializer should emit valid JS, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"B\"] = 2] = \"B\""),
+        "type-assertion initializer should emit valid JS, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"C\"] = 3] = \"C\""),
+        "non-null/satisfies initializer should emit valid JS, got: {output}"
+    );
+    assert!(
+        !output.contains(" as ")
+            && !output.contains("satisfies")
+            && !output.contains("<number>")
+            && !output.contains("!"),
+        "TypeScript-only syntax should not leak into JS output: {output}"
+    );
+}
+
+#[test]
 fn test_no_folding_for_non_constant_expressions() {
     // External function call cannot be folded
     let output = transform_enum("enum E { A = foo() }");
