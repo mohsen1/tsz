@@ -202,7 +202,8 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_idx: NodeIndex,
     ) {
-        let actual_display = self.format_type_diagnostic(arg_type);
+        let display_arg_type = common::widen_literal_type(self.ctx.types, arg_type);
+        let actual_display = self.format_type_diagnostic(display_arg_type);
         let target_display = self.format_type_diagnostic(param_type);
         let message = format_message(
             diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
@@ -304,6 +305,9 @@ impl<'a> CheckerState<'a> {
         mismatch_index: usize,
         expected: TypeId,
     ) -> TypeId {
+        if common::contains_type_parameters(self.ctx.types, expected) {
+            return expected;
+        }
         if common::literal_value(self.ctx.types, expected).is_some() {
             return expected;
         }
@@ -667,6 +671,8 @@ impl<'a> CheckerState<'a> {
                     arg_types,
                     index,
                 );
+                let preserve_type_parameter_expected_display =
+                    common::contains_type_parameters(self.ctx.types, expected);
                 let reported_expected = if let Some(expected) = polymorphic_this_expected {
                     expected
                 } else if common::contains_this_type(self.ctx.types, expected) {
@@ -807,6 +813,12 @@ impl<'a> CheckerState<'a> {
                             );
                         } else if prefer_argument_level_return_mismatch || aggregate_rest_mismatch {
                             self.error_argument_not_assignable_at(
+                                reported_actual,
+                                reported_expected,
+                                arg_idx,
+                            );
+                        } else if preserve_type_parameter_expected_display {
+                            self.error_argument_not_assignable_preserving_param_display(
                                 reported_actual,
                                 reported_expected,
                                 arg_idx,
