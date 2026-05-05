@@ -12,6 +12,7 @@ fn parses_defaults() {
 
     assert_eq!(args.target, None);
     assert_eq!(args.module, None);
+    assert_eq!(args.ignore_deprecations, None);
     assert!(args.out_dir.is_none());
     assert!(args.project.is_none());
     assert!(!args.strict);
@@ -261,6 +262,17 @@ fn parses_type_checking_flags() {
     assert!(args.no_unchecked_indexed_access);
     assert!(args.no_implicit_override);
     assert!(args.no_property_access_from_index_signature);
+}
+
+#[test]
+fn parses_ignore_deprecations() {
+    let args = CliArgs::try_parse_from(["tsz", "--ignoreDeprecations", "6.0"])
+        .expect("--ignoreDeprecations should parse");
+    assert_eq!(args.ignore_deprecations.as_deref(), Some("6.0"));
+
+    let args = CliArgs::try_parse_from(["tsz", "--ignore-deprecations", "6.0"])
+        .expect("--ignore-deprecations alias should parse");
+    assert_eq!(args.ignore_deprecations.as_deref(), Some("6.0"));
 }
 
 #[test]
