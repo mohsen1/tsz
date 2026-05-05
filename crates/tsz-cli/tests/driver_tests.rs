@@ -12328,6 +12328,67 @@ export const y = x.item;
 }
 
 #[test]
+fn checked_js_async_jsdoc_promise_prefixed_alias_reports_ts1064() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "module": "commonjs",
+    "target": "es2020",
+    "types": []
+  },
+  "files": ["main.js"]
+}"#,
+    );
+    write_file(
+        &base.join("main.js"),
+        r#"// @ts-check
+
+/**
+ * @template T
+ * @typedef {{ value: T }} PromiseButNot
+ */
+
+/** @type {function(): Promise<string>} */
+const ok = async () => "ok";
+
+/** @type {function(): PromiseButNot<string>} */
+const f = async () => "ok";
+
+ok;
+f;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts1064: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1064)
+        .collect();
+    assert_eq!(
+        ts1064.len(),
+        1,
+        "expected TS1064 only for PromiseButNot, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts1064[0].message_text.contains("PromiseButNot<string>"),
+        "expected TS1064 to suggest wrapping PromiseButNot<string>, got: {:?}",
+        ts1064[0]
+    );
+}
+
+#[test]
 fn namespace_import_alias_const_enum_member_condition_reports_ts2845() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;

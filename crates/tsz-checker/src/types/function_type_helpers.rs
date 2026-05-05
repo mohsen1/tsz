@@ -631,7 +631,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let trimmed = ret_type_str.trim();
-        if trimmed.starts_with("Promise") || trimmed.starts_with("PromiseLike") {
+        if Self::jsdoc_return_type_is_exact_promise_reference(trimmed) {
             return;
         }
 
@@ -705,6 +705,14 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
             );
         }
+    }
+
+    fn jsdoc_return_type_is_exact_promise_reference(trimmed: &str) -> bool {
+        let Some(rest) = trimmed.strip_prefix("Promise") else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        rest.is_empty() || rest.starts_with('<') || rest.starts_with(".<")
     }
 
     /// Check if a type is a type alias application that resolves to Promise.
