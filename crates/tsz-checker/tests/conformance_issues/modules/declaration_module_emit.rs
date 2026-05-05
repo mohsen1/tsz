@@ -2099,6 +2099,66 @@ declare class MyArray<T> implements Array<T> {
     );
 }
 
+#[test]
+fn test_module_local_array_interface_in_implements_shadows_global_array() {
+    let source = r#"
+export {};
+
+interface Array<T> {
+    custom: T;
+}
+
+class Box implements Array<number> {
+    custom = 1;
+}
+
+new Box().custom.toFixed();
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+
+    assert!(
+        !has_error(&diagnostics, 2420),
+        "Expected module-local Array<number> to be checked instead of global number[]. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Expected Box.custom to remain visible after the implements check. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_module_local_array_interface_missing_member_uses_local_display() {
+    let source = r#"
+export {};
+
+interface Array<T> {
+    custom: T;
+}
+
+class Box implements Array<number> {}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2420 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2420)
+        .expect("Expected TS2420 for missing local Array.custom member");
+
+    assert!(
+        ts2420.1.contains("interface 'Array<number>'"),
+        "Expected local interface display name in TS2420. Actual diagnostic: {ts2420:#?}"
+    );
+    assert!(
+        ts2420.1.contains("custom"),
+        "Expected TS2420 to mention the local Array.custom member. Actual diagnostic: {ts2420:#?}"
+    );
+    assert!(
+        !ts2420.1.contains("number[]"),
+        "Did not expect global array display name for module-local Array. Actual diagnostic: {ts2420:#?}"
+    );
+}
+
 /// Regression test: when an object literal property uses `this` as the value
 /// and the `this` type is not assignable to the expected property type, the
 /// elaboration should emit TS2322 ("Type X is not assignable to type Y"),
