@@ -531,8 +531,7 @@ impl<'a> DeclarationEmitter<'a> {
 
                     // Handle the optional 'as' clause (key remapping)
                     if mapped_type.name_type.is_some() {
-                        self.write(" as ");
-                        self.emit_mapped_type_name_type(mapped_type.name_type);
+                        self.emit_mapped_type_as_clause(mapped_type.name_type);
                     }
 
                     self.write("]");
@@ -1135,14 +1134,14 @@ impl<'a> DeclarationEmitter<'a> {
         self.expand_portable_mapped_object_text(self.arena, inner)
     }
 
-    fn emit_mapped_type_constraint(&mut self, constraint_idx: NodeIndex) {
+    pub(in crate::declaration_emitter) fn emit_mapped_type_constraint(
+        &mut self,
+        constraint_idx: NodeIndex,
+    ) {
         if let Some(node) = self.arena.get(constraint_idx)
             && let Some(text) = self.get_source_slice(node.pos, node.end)
         {
-            let text = text.trim();
-            let text = text.split_once(" as ").map_or(text, |(before, _)| before);
-            let text = text.strip_suffix(" as").unwrap_or(text).trim_end();
-            let text = text.strip_suffix(']').unwrap_or(text).trim_end();
+            let text = Self::mapped_type_constraint_source_text(&text);
             if !text.is_empty() {
                 self.write(text);
                 return;
@@ -1152,13 +1151,14 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_type(constraint_idx);
     }
 
-    fn emit_mapped_type_name_type(&mut self, name_type_idx: NodeIndex) {
+    pub(in crate::declaration_emitter) fn emit_mapped_type_name_type(
+        &mut self,
+        name_type_idx: NodeIndex,
+    ) {
         if let Some(node) = self.arena.get(name_type_idx)
             && let Some(text) = self.get_source_slice(node.pos, node.end)
         {
-            let text = text.trim();
-            let text = text.strip_prefix("as ").unwrap_or(text).trim_start();
-            let text = text.strip_suffix(']').unwrap_or(text).trim_end();
+            let text = Self::mapped_type_name_source_text(&text);
             if !text.is_empty() {
                 self.write(text);
                 return;
@@ -1166,5 +1166,165 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_type(name_type_idx);
+    }
+
+    pub(in crate::declaration_emitter) fn emit_mapped_type_as_clause(
+        &mut self,
+        name_type_idx: NodeIndex,
+    ) {
+        self.write(" as ");
+
+        if let Some(node) = self.arena.get(name_type_idx)
+            && let Some(text) = self.get_source_slice(node.pos, node.end)
+        {
+            let text = Self::mapped_type_name_source_text(&text);
+            if !text.is_empty() {
+                self.write(text);
+                return;
+            }
+        }
+
+        let start = self.writer.len();
+        self.emit_mapped_type_name_type(name_type_idx);
+        let emitted = self.writer.get_output()[start..].to_string();
+        let normalized = Self::mapped_type_name_source_text(&emitted);
+        if normalized != emitted.trim() {
+            let normalized = normalized.to_string();
+            self.writer.truncate(start);
+            self.write(&normalized);
+        }
+    }
+
+    fn mapped_type_constraint_source_text(text: &str) -> &str {
+        let text = text.trim();
+        let text = Self::split_mapped_as_clause(text)
+            .map(|(before, _)| before.trim_end())
+            .unwrap_or_else(|| Self::trim_trailing_mapped_as_keyword(text));
+        Self::trim_unbalanced_closing_bracket(text)
+    }
+
+    fn mapped_type_name_source_text(text: &str) -> &str {
+        let text = text.trim();
+        let text = Self::split_mapped_as_clause(text)
+            .map(|(_, after)| after.trim_start())
+            .unwrap_or_else(|| Self::trim_leading_mapped_as_keyword(text));
+        Self::trim_unbalanced_closing_bracket(text)
+    }
+
+    fn trim_leading_mapped_as_keyword(text: &str) -> &str {
+        let mut trimmed = text.trim_start();
+        while let Some(after_as) = trimmed.strip_prefix("as") {
+            let has_boundary = after_as
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
+            if !has_boundary {
+                break;
+            }
+            trimmed = after_as.trim_start();
+        }
+        trimmed
+    }
+
+    fn split_mapped_as_clause(text: &str) -> Option<(&str, &str)> {
+        for (idx, _) in text.match_indices("as") {
+            let before = &text[..idx];
+            let after = &text[idx + 2..];
+            let before_boundary = before
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
+            let after_boundary = after
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
+            if before_boundary && after_boundary {
+                return Some((before, after));
+            }
+        }
+        None
+    }
+
+    fn trim_trailing_mapped_as_keyword(text: &str) -> &str {
+        let trimmed = text.trim_end();
+        let Some(before_as) = trimmed.strip_suffix("as") else {
+            return trimmed;
+        };
+        let had_separator = before_as
+            .chars()
+            .next_back()
+            .is_some_and(char::is_whitespace);
+        let before_as = before_as.trim_end();
+        let has_boundary = before_as
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
+        if had_separator || has_boundary {
+            before_as
+        } else {
+            trimmed
+        }
+    }
+
+    fn trim_unbalanced_closing_bracket(text: &str) -> &str {
+        let trimmed = text.trim_end();
+        if !trimmed.ends_with(']') {
+            return trimmed;
+        }
+
+        let opens = trimmed.chars().filter(|&ch| ch == '[').count();
+        let closes = trimmed.chars().filter(|&ch| ch == ']').count();
+        if closes > opens {
+            trimmed[..trimmed.len() - 1].trim_end()
+        } else {
+            trimmed
+        }
+    }
+
+    const fn is_identifier_part(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DeclarationEmitter;
+
+    #[test]
+    fn mapped_type_source_text_splits_compact_as_clause_after_indexed_access() {
+        assert_eq!(
+            DeclarationEmitter::mapped_type_constraint_source_text("T[number]as Item[Attr]"),
+            "T[number]"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_constraint_source_text("T[number] as"),
+            "T[number]"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_constraint_source_text("keyof T as"),
+            "keyof T"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_name_source_text("T[number]as Item[Attr]"),
+            "Item[Attr]"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_name_source_text("as `get${Capitalize<string & K>}`"),
+            "`get${Capitalize<string & K>}`"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_name_source_text(
+                "as as `get${Capitalize<string & K>}`"
+            ),
+            "`get${Capitalize<string & K>}`"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_name_source_text("asserts T"),
+            "asserts T"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_constraint_source_text("keyof T]"),
+            "keyof T"
+        );
     }
 }

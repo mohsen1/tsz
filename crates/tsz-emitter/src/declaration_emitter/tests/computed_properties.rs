@@ -131,6 +131,28 @@ export type Remap<T> = {
 }
 
 #[test]
+fn test_mapped_type_as_clause_after_indexed_access_constraint() {
+    let output = emit_dts(
+        r#"
+export function makeCompleteLookupMapping<T extends ReadonlyArray<any>, Attr extends keyof T[number]>(ops: T, attr: Attr): {
+    [Item in T[number] as Item[Attr]]: Item;
+} {
+    return null as any;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("[Item in T[number] as Item[Attr]]: Item;"),
+        "Expected indexed-access mapped constraint to keep one key-remapping `as`: {output}"
+    );
+    assert!(
+        !output.contains("as as"),
+        "Did not expect duplicate `as` in mapped type: {output}"
+    );
+}
+
+#[test]
 fn test_override_modifier_stripped_in_dts() {
     // tsc strips `override` from class members in .d.ts output —
     // it is not part of the declaration surface.

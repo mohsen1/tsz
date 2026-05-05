@@ -2008,7 +2008,17 @@ impl<'a> TypePrinter<'a> {
         };
 
         let param_name = self.resolve_atom(mapped.type_param.name);
-        let constraint = self.print_type(mapped.constraint);
+        let mut constraint = self.print_type(mapped.constraint);
+        let recovered_as_clause = if mapped.name_type.is_none() {
+            Self::split_recovered_mapped_as_clause(&constraint)
+                .map(|(before, after)| (before.to_string(), after.to_string()))
+        } else {
+            None
+        };
+        let recovered_as_clause = recovered_as_clause.map(|(before, after)| {
+            constraint = before;
+            after
+        });
 
         let mut nested = self.clone();
         if let Some(indent) = nested.indent_level {
@@ -2017,7 +2027,10 @@ impl<'a> TypePrinter<'a> {
         let template = nested.print_type(mapped.template);
 
         let as_clause = if let Some(name_type) = mapped.name_type {
-            format!(" as {}", self.print_type(name_type))
+            let name_type = self.print_type(name_type);
+            format!(" as {}", Self::mapped_name_type_text(&name_type))
+        } else if let Some(name_type) = recovered_as_clause {
+            format!(" as {name_type}")
         } else {
             String::new()
         };
@@ -2034,6 +2047,64 @@ impl<'a> TypePrinter<'a> {
                 "{{ {readonly_prefix}[{param_name} in {constraint}{as_clause}]{optional_suffix}: {template} }}"
             )
         }
+    }
+
+    fn trim_mapped_constraint_trailing_as(constraint: &str) -> &str {
+        let trimmed = constraint.trim_end();
+        let Some(before_as) = trimmed.strip_suffix("as") else {
+            return trimmed;
+        };
+
+        let had_separator = before_as
+            .chars()
+            .next_back()
+            .is_some_and(char::is_whitespace);
+        let before_as = before_as.trim_end();
+        let has_keyword_boundary = before_as
+            .chars()
+            .next_back()
+            .is_some_and(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$');
+
+        if had_separator || has_keyword_boundary {
+            before_as
+        } else {
+            trimmed
+        }
+    }
+
+    fn mapped_name_type_text(name_type: &str) -> &str {
+        let mut name_type = Self::trim_mapped_constraint_trailing_as(name_type).trim_start();
+        while let Some(after_as) = name_type.strip_prefix("as") {
+            let has_keyword_boundary = after_as.chars().next().is_some_and(|ch| {
+                ch.is_whitespace() || !Self::is_identifier_part_for_mapped_as(ch)
+            });
+            if !has_keyword_boundary {
+                break;
+            }
+            name_type = after_as.trim_start();
+        }
+        name_type
+    }
+
+    fn split_recovered_mapped_as_clause(constraint: &str) -> Option<(&str, &str)> {
+        for (idx, _) in constraint.match_indices("as") {
+            let before = &constraint[..idx];
+            let after = &constraint[idx + 2..];
+            let before_boundary = before.chars().next_back().is_some_and(|ch| {
+                ch.is_whitespace() || !Self::is_identifier_part_for_mapped_as(ch)
+            });
+            let after_boundary = after.chars().next().is_some_and(|ch| {
+                ch.is_whitespace() || !Self::is_identifier_part_for_mapped_as(ch)
+            });
+            if before_boundary && after_boundary {
+                return Some((before.trim_end(), after.trim_start()));
+            }
+        }
+        None
+    }
+
+    const fn is_identifier_part_for_mapped_as(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
     }
 
     pub(crate) fn print_index_access(&self, container: TypeId, index: TypeId) -> String {
@@ -2169,5 +2240,34 @@ mod tests {
             TypePrinter::replace_type_param_name_with_any("S[]", "S"),
             "any[]"
         );
+    }
+
+    #[test]
+    fn mapped_constraint_trims_parser_recovered_as_keyword() {
+        assert_eq!(
+            TypePrinter::trim_mapped_constraint_trailing_as("T[number]as"),
+            "T[number]"
+        );
+        assert_eq!(
+            TypePrinter::trim_mapped_constraint_trailing_as("T[number] as"),
+            "T[number]"
+        );
+        assert_eq!(
+            TypePrinter::trim_mapped_constraint_trailing_as("Alias"),
+            "Alias"
+        );
+        assert_eq!(
+            TypePrinter::split_recovered_mapped_as_clause("T[number]as Item[Attr]"),
+            Some(("T[number]", "Item[Attr]"))
+        );
+        assert_eq!(
+            TypePrinter::mapped_name_type_text("as `get${Capitalize<string & K>}`"),
+            "`get${Capitalize<string & K>}`"
+        );
+        assert_eq!(
+            TypePrinter::mapped_name_type_text("as as `get${Capitalize<string & K>}`"),
+            "`get${Capitalize<string & K>}`"
+        );
+        assert_eq!(TypePrinter::mapped_name_type_text("asserts T"), "asserts T");
     }
 }
