@@ -173,6 +173,30 @@ impl<'a> CheckerState<'a> {
                     |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                // Name-based DefId fallback for qualified names whose
+                // NodeIndex resolver path can't see imported namespace
+                // members (e.g. cross-file `util.OmitKeys` references inside
+                // an alias body whose TypeReference node was bound in a
+                // sibling file). Without this fallback the lowering writes
+                // `Application(UnresolvedTypeName("util.OmitKeys"), args)`,
+                // which silently disappears from downstream object spread
+                // and intersection reduction.
+                let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                        .or_else(|| {
+                            crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+                                type_name,
+                                self.ctx.binder,
+                                self.ctx.global_file_locals_index.as_deref(),
+                                self.ctx
+                                    .all_binders
+                                    .as_ref()
+                                    .map(|binders| binders.as_ref().as_slice()),
+                                &self.ctx.lib_contexts,
+                            )
+                            .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
+                        })
+                };
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
@@ -180,7 +204,8 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &value_resolver,
                 )
-                .with_type_param_bindings(type_param_bindings);
+                .with_type_param_bindings(type_param_bindings)
+                .with_name_def_id_resolver(&name_resolver);
                 let mut type_id = lowering.lower_type(idx);
                 if query::get_application_info(self.ctx.types, type_id).is_none()
                     && let Some(args) = &type_ref.type_arguments
@@ -685,6 +710,24 @@ impl<'a> CheckerState<'a> {
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                 let lazy_type_params_resolver =
                     |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+                // Name-based DefId fallback (see sibling lowering above for
+                // rationale).
+                let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                        .or_else(|| {
+                            crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+                                type_name,
+                                self.ctx.binder,
+                                self.ctx.global_file_locals_index.as_deref(),
+                                self.ctx
+                                    .all_binders
+                                    .as_ref()
+                                    .map(|binders| binders.as_ref().as_slice()),
+                                &self.ctx.lib_contexts,
+                            )
+                            .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
+                        })
+                };
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
@@ -693,7 +736,8 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings)
-                .with_lazy_type_params_resolver(&lazy_type_params_resolver);
+                .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+                .with_name_def_id_resolver(&name_resolver);
                 let mut result = lowering.lower_type(idx);
 
                 // Ensure Application types from lib types have their base DefId
