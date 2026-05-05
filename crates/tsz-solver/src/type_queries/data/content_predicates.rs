@@ -283,23 +283,55 @@ pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> b
     }
 }
 
-/// Check if a type is a spread marker tuple `[...T]` created by the checker
-/// for generic `TypeParameter` spreads. These are 1-element rest tuples whose
-/// inner type is a `TypeParameter`.
+/// Check if a type is a spread marker tuple created by the checker.
 pub fn is_spread_marker_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
     if let Some(TypeData::Tuple(elems_id)) = db.lookup(type_id) {
         let elems = db.tuple_list(elems_id);
-        elems.len() == 1
-            && elems[0].rest
-            && matches!(
+        if elems.len() != 1 || !elems[0].rest {
+            return false;
+        }
+        elems[0]
+            .name
+            .is_some_and(|name| db.resolve_atom(name) == "__tsz_spread_argument__")
+            || matches!(
                 db.lookup(elems[0].type_id),
                 Some(TypeData::TypeParameter(_))
             )
     } else {
         false
+    }
+}
+
+pub fn rest_type_needs_aggregate_argument_check(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            rest_type_needs_aggregate_argument_check(db, inner)
+        }
+        Some(TypeData::Union(members)) => db.type_list(members).iter().any(|&member| {
+            let member = match db.lookup(member) {
+                Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => inner,
+                _ => member,
+            };
+            matches!(db.lookup(member), Some(TypeData::Tuple(_)))
+                || rest_type_needs_aggregate_argument_check(db, member)
+        }),
+        Some(
+            TypeData::Application(_)
+            | TypeData::Conditional(_)
+            | TypeData::Intersection(_)
+            | TypeData::Lazy(_)
+            | TypeData::Mapped(_)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::IndexAccess(_, _),
+        ) => true,
+        _ => false,
     }
 }
 

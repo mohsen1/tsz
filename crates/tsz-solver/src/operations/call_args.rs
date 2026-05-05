@@ -681,7 +681,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }))
     }
 
-    fn rest_type_needs_aggregate_argument_check(&mut self, type_id: TypeId) -> bool {
+    pub(crate) fn arg_targets_aggregate_rest_param(
+        &mut self,
+        params: &[ParamInfo],
+        arg_index: usize,
+        arg_type: TypeId,
+    ) -> bool {
+        let Some(rest_param) = params.last().filter(|param| param.rest) else {
+            return false;
+        };
+        let rest_start = params.len().saturating_sub(1);
+        if arg_index < rest_start {
+            return false;
+        }
+        if self.spread_argument_marker_inner(arg_type).is_some() {
+            return false;
+        }
+
+        let rest_type = self.unwrap_readonly(rest_param.type_id);
+        let rest_type = self.evaluate_rest_param_type(rest_type);
+        self.rest_type_needs_aggregate_argument_check(rest_type)
+    }
+
+    pub(crate) fn rest_type_needs_aggregate_argument_check(&mut self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
         }
@@ -689,12 +711,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 self.rest_type_needs_aggregate_argument_check(inner)
             }
-            Some(TypeData::Tuple(_)) => true,
             Some(TypeData::Union(members)) => {
                 let members: Vec<_> = self.interner.type_list(members).iter().copied().collect();
-                members
-                    .into_iter()
-                    .any(|member| self.rest_type_needs_aggregate_argument_check(member))
+                members.into_iter().any(|member| {
+                    let member = self.unwrap_readonly(member);
+                    matches!(self.interner.lookup(member), Some(TypeData::Tuple(_)))
+                        || self.rest_type_needs_aggregate_argument_check(member)
+                })
             }
             Some(
                 TypeData::Application(_)
@@ -770,6 +793,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .map(|member| self.normalize_spread_actual_type(member))
                     .collect();
                 self.interner.union(normalized)
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                shape
+                    .number_index
+                    .as_ref()
+                    .map(|index| self.interner.array(index.value_type))
+                    .unwrap_or(type_id)
+            }
+            Some(TypeData::Application(_)) => {
+                let evaluated = self.checker.evaluate_type(type_id);
+                let element =
+                    crate::contextual::rest_argument_element_type(self.interner, evaluated);
+                if element != evaluated {
+                    self.interner.array(element)
+                } else if let Some(
+                    TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id),
+                ) = self.interner.lookup(evaluated)
+                {
+                    let shape = self.interner.object_shape(shape_id);
+                    shape
+                        .number_index
+                        .as_ref()
+                        .map(|index| self.interner.array(index.value_type))
+                        .unwrap_or(type_id)
+                } else {
+                    type_id
+                }
             }
             _ => type_id,
         }
@@ -1099,7 +1150,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// Uses the checker's `evaluate_type` which has access to the full `TypeResolver`,
     /// unlike `QueryDatabase::evaluate_type` which uses a `NoopResolver`.
-    fn evaluate_rest_param_type(&mut self, type_id: TypeId) -> TypeId {
+    pub(crate) fn evaluate_rest_param_type(&mut self, type_id: TypeId) -> TypeId {
         if type_id.is_intrinsic() {
             return type_id;
         }
@@ -1244,6 +1295,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             Some(TypeData::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
                 let has_infer_arg = app.args.iter().any(|arg| var_map.contains_key(arg));
+                let has_spread_marker_arg = arg_types[rest_start..]
+                    .iter()
+                    .any(|&arg| self.spread_argument_marker_inner(arg).is_some());
+                let evaluated_rest_type = self.evaluate_rest_param_type(rest_param_type);
+                if self.rest_type_needs_aggregate_argument_check(evaluated_rest_type)
+                    && !has_spread_marker_arg
+                {
+                    return None;
+                }
                 if has_infer_arg {
                     Some((rest_start, rest_param_type, 0))
                 } else {
@@ -1272,6 +1332,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             arg_types[start_index..end_index]
                 .iter()
                 .flat_map(|&ty| {
+                    if let Some(inner) = self.spread_argument_marker_inner(ty) {
+                        return vec![TupleElement {
+                            type_id: inner,
+                            name: None,
+                            optional: false,
+                            rest: true,
+                        }];
+                    }
                     // Recognize spread marker tuples [...T] from the checker.
                     // Only match markers whose inner type is a TypeParameter.
                     if let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(ty) {

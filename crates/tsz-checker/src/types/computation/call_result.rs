@@ -9,9 +9,7 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TupleElement, TypeData, TypeId};
-
-const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
+use tsz_solver::{TupleElement, TypeId};
 
 pub(super) struct CallResultContext<'a> {
     pub(super) callee_expr: NodeIndex,
@@ -116,17 +114,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_spread_argument_marker_type(&self, type_id: TypeId) -> bool {
-        let Some(TypeData::Tuple(elems_id)) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-        let elems = self.ctx.types.tuple_list(elems_id);
-        let [elem] = &*elems else {
-            return false;
-        };
-        elem.rest
-            && elem.name.is_some_and(|name| {
-                self.ctx.types.resolve_atom(name) == SPREAD_ARGUMENT_MARKER_NAME
-            })
+        common::is_spread_marker_tuple(self.ctx.types.as_type_database(), type_id)
     }
 
     fn literalized_aggregate_actual_for_call_args(
@@ -535,9 +523,17 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let aggregate_literal_actual =
-                    self.literalized_aggregate_actual_for_call_args(args, index, actual);
-                let aggregate_rest_mismatch = common::tuple_elements(self.ctx.types, actual)
+                    if self.format_type_diagnostic(expected).contains("<unknown>") {
+                        None
+                    } else {
+                        self.literalized_aggregate_actual_for_call_args(args, index, actual)
+                    };
+                let original_is_spread_marker = arg_types.get(index).is_some_and(|&ty| {
+                    common::is_spread_marker_tuple(self.ctx.types.as_type_database(), ty)
+                });
+                let aggregate_rest_mismatch = (common::tuple_elements(self.ctx.types, actual)
                     .is_some()
+                    || original_is_spread_marker)
                     && arg_types
                         .get(index)
                         .copied()
@@ -679,13 +675,7 @@ impl<'a> CheckerState<'a> {
                         actual,
                     );
                     if !suppress_weak && !elaborated {
-                        if prefer_argument_level_return_mismatch {
-                            self.error_argument_not_assignable_at(
-                                reported_actual,
-                                reported_expected,
-                                arg_idx,
-                            );
-                        } else if aggregate_rest_mismatch {
+                        if prefer_argument_level_return_mismatch || aggregate_rest_mismatch {
                             self.error_argument_not_assignable_at(
                                 reported_actual,
                                 reported_expected,

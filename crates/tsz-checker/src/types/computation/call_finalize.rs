@@ -238,41 +238,70 @@ impl<'a> CheckerState<'a> {
                         let last = instantiated_params.last()?;
                         last.rest.then_some(last)
                     }) {
-                        let evaluated_param = self.evaluate_type_with_env(param.type_id);
-                        // Detect variadic tuple spread markers: when a generic type
-                        // parameter spread `...u` (where u: U extends SomeArray[])
-                        // is collected, the call checker wraps it as `[...U]` (a
-                        // single-rest-element tuple).  For the post-inference
-                        // assignability check we need to compare the spread marker
-                        // against the full rest parameter array type, not the
-                        // element type, because `[...U]` represents the whole
-                        // spread, not an individual element.
-                        let arg_is_variadic_spread_marker = param.rest
+                        let original_is_spread_marker = arg_types.get(index).is_some_and(|&ty| {
+                            common::is_spread_marker_tuple(self.ctx.types.as_type_database(), ty)
+                        });
+                        let aggregate_rest_mismatch = param.rest
+                            && (common::tuple_elements(self.ctx.types, actual).is_some()
+                                || original_is_spread_marker)
                             && arg_types
                                 .get(index)
-                                .and_then(|&arg_ty| common::tuple_elements(self.ctx.types, arg_ty))
-                                .is_some_and(|elems| elems.len() == 1 && elems[0].rest);
-                        let expected_param = if arg_is_variadic_spread_marker {
-                            // Use the full rest parameter type (the array itself),
-                            // not its element type. The arg `[...U]` will be
-                            // compared structurally against this array type.
-                            evaluated_param
-                        } else {
-                            expected_param_types
-                                .get(index)
                                 .copied()
-                                .flatten()
-                                .unwrap_or_else(|| {
-                                    if param.rest {
-                                        self.rest_argument_element_type_with_env(evaluated_param)
-                                    } else {
-                                        evaluated_param
-                                    }
-                                })
-                        };
-                        let expected_param =
-                            if is_type_parameter_type(self.ctx.types, expected_param) {
-                                common::type_parameter_constraint(self.ctx.types, expected_param)
+                                .is_none_or(|original| original != actual);
+                        if aggregate_rest_mismatch {
+                            allow_contextual_mismatch_deferral = false;
+                            (
+                                CallResult::ArgumentTypeMismatch {
+                                    index,
+                                    expected,
+                                    actual,
+                                    fallback_return,
+                                },
+                                false,
+                            )
+                        } else {
+                            let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                            // Detect variadic tuple spread markers: when a generic type
+                            // parameter spread `...u` (where u: U extends SomeArray[])
+                            // is collected, the call checker wraps it as `[...U]` (a
+                            // single-rest-element tuple).  For the post-inference
+                            // assignability check we need to compare the spread marker
+                            // against the full rest parameter array type, not the
+                            // element type, because `[...U]` represents the whole
+                            // spread, not an individual element.
+                            let arg_is_variadic_spread_marker = param.rest
+                                && arg_types
+                                    .get(index)
+                                    .and_then(|&arg_ty| {
+                                        common::tuple_elements(self.ctx.types, arg_ty)
+                                    })
+                                    .is_some_and(|elems| elems.len() == 1 && elems[0].rest);
+                            let expected_param = if arg_is_variadic_spread_marker {
+                                // Use the full rest parameter type (the array itself),
+                                // not its element type. The arg `[...U]` will be
+                                // compared structurally against this array type.
+                                evaluated_param
+                            } else {
+                                expected_param_types
+                                    .get(index)
+                                    .copied()
+                                    .flatten()
+                                    .unwrap_or_else(|| {
+                                        if param.rest {
+                                            self.rest_argument_element_type_with_env(
+                                                evaluated_param,
+                                            )
+                                        } else {
+                                            evaluated_param
+                                        }
+                                    })
+                            };
+                            let expected_param =
+                                if is_type_parameter_type(self.ctx.types, expected_param) {
+                                    common::type_parameter_constraint(
+                                        self.ctx.types,
+                                        expected_param,
+                                    )
                                     .filter(|constraint| {
                                         !common::contains_type_parameters(
                                             self.ctx.types,
@@ -280,93 +309,98 @@ impl<'a> CheckerState<'a> {
                                         )
                                     })
                                     .unwrap_or(expected_param)
-                            } else {
-                                expected_param
-                            };
-                        // Use the substituted parameter type (with `unknown` for
-                        // unresolved type parameters) to match tsc's diagnostic
-                        // output. tsc displays the post-inference parameter type;
-                        // when inference fails for an unconstrained type parameter
-                        // it defaults to `unknown` and tsc surfaces that explicitly
-                        // (e.g. `A<unknown>` rather than the raw `A<T>` from the
-                        // signature source text).
-                        let reported_expected_param = expected_param;
-                        let arg_type = args
-                            .get(index)
-                            .copied()
-                            .map(|arg_idx| {
-                                self.refreshed_generic_call_arg_type_with_context(
-                                    arg_idx,
-                                    arg_types.get(index).copied().unwrap_or(TypeId::UNKNOWN),
-                                    Some(expected_param),
-                                )
-                            })
-                            .unwrap_or(TypeId::UNKNOWN);
-                        let fresh_assignable = self
-                            .is_assignable_to_with_env(arg_type, expected_param)
-                            || self
-                                .is_assignable_via_contextual_signatures(arg_type, expected_param);
-                        let excess_property_recovery = if !fresh_assignable {
-                            args.get(index)
+                                } else {
+                                    expected_param
+                                };
+                            // Use the substituted parameter type (with `unknown` for
+                            // unresolved type parameters) to match tsc's diagnostic
+                            // output. tsc displays the post-inference parameter type;
+                            // when inference fails for an unconstrained type parameter
+                            // it defaults to `unknown` and tsc surfaces that explicitly
+                            // (e.g. `A<unknown>` rather than the raw `A<T>` from the
+                            // signature source text).
+                            let reported_expected_param = expected_param;
+                            let arg_type = args
+                                .get(index)
                                 .copied()
-                                .filter(|&arg_idx| {
-                                    self.ctx.arena.get(arg_idx).is_some_and(|arg_node| {
-                                        arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                    })
-                                })
-                                .is_some_and(|arg_idx| {
-                                    if self
-                                        .ctx
-                                        .generic_excess_skip
-                                        .as_ref()
-                                        .is_some_and(|skip| index < skip.len() && skip[index])
-                                    {
-                                        return false;
-                                    }
-                                    if is_type_parameter_type(self.ctx.types, expected_param) {
-                                        return false;
-                                    }
-                                    if self.contextual_type_is_unresolved_for_argument_refresh(
-                                        expected_param,
-                                    ) {
-                                        return false;
-                                    }
-                                    let excess_snap = self.ctx.snapshot_diagnostics();
-                                    self.check_object_literal_excess_properties(
-                                        arg_type,
-                                        expected_param,
+                                .map(|arg_idx| {
+                                    self.refreshed_generic_call_arg_type_with_context(
                                         arg_idx,
-                                    );
-                                    self.ctx.has_speculative_diagnostics(&excess_snap)
+                                        arg_types.get(index).copied().unwrap_or(TypeId::UNKNOWN),
+                                        Some(expected_param),
+                                    )
                                 })
-                        } else {
-                            false
-                        };
-                        // Use contains_type_parameters (not just is_type_parameter_type) so that
-                        // callable expected types like `(...args: A) => B` — where A and B are
-                        // outer inference variables, not quantified in the signature — also
-                        // participate in deferral. `should_defer_contextual_argument_mismatch`
-                        // applies the real policy; this guard just avoids calling it for
-                        // fully-concrete expected types where deferral is never appropriate.
-                        let defer_mismatch =
-                            common::contains_type_parameters(self.ctx.types, expected_param)
-                                && self.should_defer_contextual_argument_mismatch(
+                                .unwrap_or(TypeId::UNKNOWN);
+                            let fresh_assignable = self
+                                .is_assignable_to_with_env(arg_type, expected_param)
+                                || self.is_assignable_via_contextual_signatures(
                                     arg_type,
                                     expected_param,
                                 );
-                        if !fresh_assignable && !excess_property_recovery && !defer_mismatch {
-                            allow_contextual_mismatch_deferral = false;
+                            let excess_property_recovery = if !fresh_assignable {
+                                args.get(index)
+                                    .copied()
+                                    .filter(|&arg_idx| {
+                                        self.ctx.arena.get(arg_idx).is_some_and(|arg_node| {
+                                            arg_node.kind
+                                                == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                        })
+                                    })
+                                    .is_some_and(|arg_idx| {
+                                        if self
+                                            .ctx
+                                            .generic_excess_skip
+                                            .as_ref()
+                                            .is_some_and(|skip| index < skip.len() && skip[index])
+                                        {
+                                            return false;
+                                        }
+                                        if is_type_parameter_type(self.ctx.types, expected_param) {
+                                            return false;
+                                        }
+                                        if self.contextual_type_is_unresolved_for_argument_refresh(
+                                            expected_param,
+                                        ) {
+                                            return false;
+                                        }
+                                        let excess_snap = self.ctx.snapshot_diagnostics();
+                                        self.check_object_literal_excess_properties(
+                                            arg_type,
+                                            expected_param,
+                                            arg_idx,
+                                        );
+                                        self.ctx.has_speculative_diagnostics(&excess_snap)
+                                    })
+                            } else {
+                                false
+                            };
+                            // Use contains_type_parameters (not just is_type_parameter_type) so that
+                            // callable expected types like `(...args: A) => B` — where A and B are
+                            // outer inference variables, not quantified in the signature — also
+                            // participate in deferral. `should_defer_contextual_argument_mismatch`
+                            // applies the real policy; this guard just avoids calling it for
+                            // fully-concrete expected types where deferral is never appropriate.
+                            let defer_mismatch =
+                                common::contains_type_parameters(self.ctx.types, expected_param)
+                                    && self.should_defer_contextual_argument_mismatch(
+                                        arg_type,
+                                        expected_param,
+                                    );
+                            if !fresh_assignable && !excess_property_recovery && !defer_mismatch {
+                                allow_contextual_mismatch_deferral = false;
+                            }
+                            recovered_argument_mismatch =
+                                fresh_assignable || excess_property_recovery;
+                            (
+                                CallResult::ArgumentTypeMismatch {
+                                    index,
+                                    expected: reported_expected_param,
+                                    actual: arg_type,
+                                    fallback_return,
+                                },
+                                fresh_assignable || excess_property_recovery,
+                            )
                         }
-                        recovered_argument_mismatch = fresh_assignable || excess_property_recovery;
-                        (
-                            CallResult::ArgumentTypeMismatch {
-                                index,
-                                expected: reported_expected_param,
-                                actual: arg_type,
-                                fallback_return,
-                            },
-                            fresh_assignable || excess_property_recovery,
-                        )
                     } else {
                         (
                             CallResult::ArgumentTypeMismatch {

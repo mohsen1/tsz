@@ -13,7 +13,7 @@ use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TupleElement, TypeData, TypeId};
+use tsz_solver::{TupleElement, TypeId};
 
 const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
 
@@ -827,38 +827,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let rest_type = ctx.get_rest_parameter_type(effective_index)?;
-        Self::rest_type_needs_aggregate_argument_check(self.ctx.types, rest_type)
-            .then_some(rest_type)
-    }
-
-    fn rest_type_needs_aggregate_argument_check(
-        db: &dyn tsz_solver::TypeDatabase,
-        type_id: TypeId,
-    ) -> bool {
-        if type_id.is_intrinsic() {
-            return false;
+        if crate::query_boundaries::common::tuple_elements(self.ctx.types, rest_type).is_some()
+            && !crate::query_boundaries::common::is_union_type(self.ctx.types, rest_type)
+        {
+            return None;
         }
-        match db.lookup(type_id) {
-            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
-                Self::rest_type_needs_aggregate_argument_check(db, inner)
-            }
-            Some(TypeData::Tuple(_)) => true,
-            Some(TypeData::Union(members)) => db
-                .type_list(members)
-                .iter()
-                .any(|&member| Self::rest_type_needs_aggregate_argument_check(db, member)),
-            Some(
-                TypeData::Application(_)
-                | TypeData::Conditional(_)
-                | TypeData::Intersection(_)
-                | TypeData::Lazy(_)
-                | TypeData::Mapped(_)
-                | TypeData::Object(_)
-                | TypeData::ObjectWithIndex(_)
-                | TypeData::IndexAccess(_, _),
-            ) => true,
-            _ => false,
-        }
+        crate::query_boundaries::checkers::call::rest_type_needs_aggregate_argument_check(
+            self.ctx.types,
+            rest_type,
+        )
+        .then_some(rest_type)
     }
 
     fn spread_argument_marker_type(&mut self, spread_type: TypeId) -> TypeId {

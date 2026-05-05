@@ -253,6 +253,11 @@ f1("foo");
 #[test]
 fn test_array_like_rest_rejects_aggregate_rest_arguments() {
     let source = r#"
+interface Array<E> {
+    length: number;
+    [n: number]: E;
+}
+
 interface CoolArray<E> extends Array<E> {
     hello: number;
 }
@@ -278,6 +283,30 @@ baz(1, 2);
                 && d.message_text.contains("CoolArray<number>")
         }),
         "Expected aggregate TS2345 for explicit CoolArray rest type argument, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[]")
+                && d.message_text.contains("CoolArray<never>")
+        }),
+        "Expected empty aggregate rest mismatch to infer CoolArray<never>, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[number]")
+                && d.message_text.contains("CoolArray<unknown>")
+        }),
+        "Expected direct scalar aggregate rest mismatch to widen to [number] vs CoolArray<unknown>, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[number, number]")
+                && d.message_text.contains("CoolArray<unknown>")
+        }),
+        "Expected multi-arg aggregate rest mismatch to widen to [number, number] vs CoolArray<unknown>, got diagnostics: {diagnostics:#?}"
     );
 }
 
