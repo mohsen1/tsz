@@ -762,9 +762,16 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(func) = self.arena.get_function(func_node) else {
             return;
         };
+        let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
+        let has_late_bound_default_namespace =
+            !late_bound_members.is_empty() && self.get_identifier_text(func.name).is_some();
 
         self.write_indent();
-        self.write("export default function ");
+        if has_late_bound_default_namespace {
+            self.write("declare function ");
+        } else {
+            self.write("export default function ");
+        }
         self.emit_node(func.name);
 
         let jsdoc_template_params = if func
@@ -937,6 +944,19 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        if has_late_bound_default_namespace {
+            self.emit_ts_late_bound_function_namespace_from_members(
+                func.name,
+                false,
+                &late_bound_members,
+            );
+            self.write_indent();
+            self.write("export default ");
+            self.emit_node(func.name);
+            self.write(";");
+            self.write_line();
+            return;
+        }
         if self.source_is_js_file {
             self.emit_js_function_like_class_if_needed(
                 func.name,
