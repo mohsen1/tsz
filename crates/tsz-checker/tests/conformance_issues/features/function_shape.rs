@@ -850,6 +850,43 @@ f1 = f3;
 }
 
 #[test]
+fn test_tuple_union_rest_with_equivalent_merged_prefix_assigns_both_directions() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+declare let f1: (x: string, ...args: [string] | [number, boolean]) => void;
+declare let f4: (...args: [string, string] | [string, number, boolean]) => void;
+
+f4 = f1;
+f1 = f4;
+
+type RestParams = [y: string] | [y: number];
+declare let ff1: (...rest: [string, string] | [string, number]) => void;
+declare let ff2: (x: string, ...rest: RestParams) => void;
+
+ff1 = ff2;
+ff2 = ff1;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !relevant.iter().any(|(code, _)| *code == 2322),
+        "Merged tuple-prefix rest signatures should be mutually assignable. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_spy_comparison_checking_reports_ts2339() {
     if !lib_files_available() {
         return;
