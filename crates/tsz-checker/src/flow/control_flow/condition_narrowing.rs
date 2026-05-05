@@ -1476,25 +1476,10 @@ impl<'a> FlowAnalyzer<'a> {
         // This handles cases like: if (x === y) { ... }
         // where both x and y are variables (not just literals)
         if is_strict {
-            // Helper to get flow type of the "other" node
-            let get_other_flow_type = |other_node: NodeIndex| -> Option<TypeId> {
-                let node_types = self.node_types?;
-                let initial_type = *node_types.get(&other_node.0)?;
-
-                // CRITICAL FIX: Use flow analysis if we have a valid flow node
-                // This gets the flow-narrowed type of the other reference
-                if antecedent_id.is_some() {
-                    Some(self.get_flow_type(other_node, initial_type, antecedent_id))
-                } else {
-                    // Fallback for tests or when no flow context exists
-                    Some(initial_type)
-                }
-            };
-
             // Check if target is on the left side (x === y, target is x)
             if self.is_matching_reference(bin.left, target) {
                 // We need the type of the RIGHT side (y)
-                if let Some(right_type) = get_other_flow_type(bin.right) {
+                if let Some(right_type) = self.flow_comparison_type(bin.right, antecedent_id) {
                     if effective_truth {
                         return narrowing.narrow_type(
                             type_id,
@@ -1514,7 +1499,7 @@ impl<'a> FlowAnalyzer<'a> {
             // Check if target is on the right side (y === x, target is x)
             if self.is_matching_reference(bin.right, target) {
                 // We need the type of the LEFT side (y)
-                if let Some(left_type) = get_other_flow_type(bin.left) {
+                if let Some(left_type) = self.flow_comparison_type(bin.left, antecedent_id) {
                     if effective_truth {
                         return narrowing.narrow_type(
                             type_id,
@@ -1533,6 +1518,76 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         type_id
+    }
+
+    fn flow_comparison_type(
+        &self,
+        other_node: NodeIndex,
+        antecedent_id: FlowNodeId,
+    ) -> Option<TypeId> {
+        if let Some(node_types) = self.node_types
+            && let Some(&initial_type) = node_types.get(&other_node.0)
+        {
+            return if antecedent_id.is_some() {
+                Some(self.get_flow_type(other_node, initial_type, antecedent_id))
+            } else {
+                Some(initial_type)
+            };
+        }
+
+        if let Some(literal_type) = self.literal_type_from_node_for_unknown_target(other_node) {
+            return Some(literal_type);
+        }
+
+        let other_node = self.skip_parenthesized(other_node);
+        let sym_id = self.binder.resolve_identifier(self.arena, other_node)?;
+        let sym_ref = tsz_solver::SymbolRef(sym_id.0);
+        if let Some(env) = self.type_environment.as_ref() {
+            let env = env.borrow();
+            if let Some(ty) = env.get(sym_ref) {
+                return Some(ty);
+            }
+        }
+        self.resolve_symbol_to_lazy(sym_ref)
+            .or_else(|| self.objectish_annotation_comparison_type(sym_id))
+    }
+
+    fn objectish_annotation_comparison_type(&self, sym_id: SymbolId) -> Option<TypeId> {
+        let symbol = self.binder.get_symbol(sym_id)?;
+        let mut decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.declarations.first().copied()?
+        };
+        if let Some(decl_node) = self.arena.get(decl_idx)
+            && decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+        {
+            decl_idx = ext.parent;
+        }
+
+        let decl_node = self.arena.get(decl_idx)?;
+        let annotation = if decl_node.kind == syntax_kind_ext::PARAMETER {
+            self.arena.get_parameter(decl_node)?.type_annotation
+        } else if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            self.arena
+                .get_variable_declaration(decl_node)?
+                .type_annotation
+        } else {
+            return None;
+        };
+        let annotation_node = self.arena.get(annotation)?;
+        match annotation_node.kind {
+            k if k == SyntaxKind::ObjectKeyword as u16
+                || k == syntax_kind_ext::TYPE_LITERAL
+                || k == syntax_kind_ext::FUNCTION_TYPE
+                || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+            {
+                Some(TypeId::OBJECT)
+            }
+            _ => None,
+        }
     }
 
     /// Handle boolean comparison narrowing: `expr === true`, `expr === false`,

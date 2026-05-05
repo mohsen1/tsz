@@ -1124,6 +1124,7 @@ impl<'a> FlowAnalyzer<'a> {
             .or_else(|| self.reference_symbol(reference))
             .is_some_and(|sid| self.is_control_flow_typed_any_symbol(sid));
         let skip_cache_for_control_flow_typed_any = control_flow_typed_any_symbol;
+        let skip_cache_for_explicit_unknown = initial_type == TypeId::UNKNOWN;
 
         // Use a synthetic cache symbol for references that don't resolve to a symbol
         // (for example complex/property references). This enables cache reuse while
@@ -1167,6 +1168,7 @@ impl<'a> FlowAnalyzer<'a> {
             // stack overflow when types contain type parameters.
             if !is_switch_clause
                 && (!skip_cache_for_control_flow_typed_any || is_loop_label_node)
+                && !skip_cache_for_explicit_unknown
                 && (!initial_has_type_params || is_loop_label_node)
                 && let Some(cache) = self.flow_cache
             {
@@ -1995,6 +1997,7 @@ impl<'a> FlowAnalyzer<'a> {
                 && cacheable_walk
                 && (!skip_cache_for_control_flow_typed_any
                     || flow.has_any_flags(flow_flags::LOOP_LABEL))
+                && !skip_cache_for_explicit_unknown
             {
                 let final_has_type_params = self.contains_type_parameters_cached(final_type);
 
