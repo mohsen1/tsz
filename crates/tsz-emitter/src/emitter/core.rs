@@ -332,6 +332,10 @@ pub struct Printer<'a> {
     /// Populated on ESM with `--importHelpers`; consulted by `write_helper`.
     pub(crate) helper_import_aliases: FxHashMap<String, String>,
 
+    /// CommonJS `tslib` helper import binding for `--importHelpers`.
+    /// Defaults to `tslib_1`, but is allocated per file to avoid user bindings.
+    pub(crate) commonjs_tslib_import_binding: String,
+
     /// Set of generated temp names (_a, _b, etc.) to avoid collisions.
     /// Tracks ALL generated temp names across destructuring and for-of lowering.
     pub(crate) generated_temp_names: FxHashSet<String>,
@@ -861,6 +865,7 @@ impl<'a> Printer<'a> {
             comment_emit_idx: 0,
             file_identifiers: FxHashSet::default(),
             helper_import_aliases: FxHashMap::default(),
+            commonjs_tslib_import_binding: "tslib_1".to_string(),
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),

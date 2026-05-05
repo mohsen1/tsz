@@ -908,6 +908,7 @@ impl<'a> Printer<'a> {
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             es5_emitter.set_tslib_prefix(true);
+            es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_printer_options(self.ctx.options.clone());
         if let Some(text) = self.source_text_for_map() {
@@ -1062,6 +1063,7 @@ impl<'a> Printer<'a> {
         emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             emitter.set_tslib_prefix(true);
+            emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         // For class expressions, emit as expression (no `let C = ` wrapper)
         if node.kind == syntax_kind_ext::CLASS_EXPRESSION {

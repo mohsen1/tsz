@@ -38,6 +38,26 @@ fn recovered_jsx_unary_type_assertion_preserves_trailing_less_than() {
     assert_eq!(output.trim_end(), "\"use strict\";\n~< /> <\n;");
 }
 
+#[test]
+fn js_satisfies_binary_expression_is_erased() {
+    let source = "var v = undefined satisfies 1;";
+    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(output.trim_end(), "\"use strict\";\nvar v = undefined;");
+}
+
 /// Case clause with a single non-block statement on the same source line
 /// should be emitted on one line: `case true: return "true";`
 #[test]

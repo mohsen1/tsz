@@ -307,6 +307,8 @@ impl<'a> CheckerState<'a> {
         // Same Infer guard for the top-level result: don't cache results
         // containing unbound infer types from partially-evaluated conditional types.
         if use_cache
+            && !crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
+            && !crate::query_boundaries::common::contains_this_type(self.ctx.types, final_result)
             && !contains_infer_types_db(self.ctx.types, final_result)
             && !contains_type_query_db(self.ctx.types, final_result)
         {
@@ -353,6 +355,8 @@ impl<'a> CheckerState<'a> {
         for (k, v) in entries {
             if k != v
                 && !k.is_intrinsic()
+                && !crate::query_boundaries::common::contains_this_type(self.ctx.types, k)
+                && !crate::query_boundaries::common::contains_this_type(self.ctx.types, v)
                 && !contains_infer_types_db(self.ctx.types, v)
                 && !contains_type_query_db(self.ctx.types, v)
             {

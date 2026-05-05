@@ -1948,6 +1948,69 @@ const Hoc = <Tag extends Tags>(
     );
 }
 
+/// Regression for <https://github.com/mohsen1/tsz/issues/3227>.
+///
+/// `apply_jsx_library_managed_attributes` previously discarded the LMA
+/// evaluation whenever `format_type(evaluated)` contained the substring
+/// `Factory<`. That printer-output check spuriously triggered for any user
+/// type happening to be named `Factory`, producing a false TS2741 for the
+/// optional prop. With the heuristic removed, LMA must still erase the
+/// required prop whose default is provided through `defaultProps`.
+#[test]
+fn test_jsx_library_managed_attributes_with_user_named_factory_generic() {
+    let user_named_generic_sources = [
+        ("Factory", "value: Factory<number>"),
+        ("Builder", "value: Builder<number>"),
+    ];
+
+    for (type_name, prop_decl) in user_named_generic_sources {
+        let source = format!(
+            r#"
+declare namespace JSX {{
+    interface Element {{}}
+    interface ElementClass {{}}
+    interface IntrinsicElements {{}}
+    type LibraryManagedAttributes<C, P> =
+        C extends {{ defaultProps: infer D }}
+            ? {{ [K in keyof P]?: P[K] }}
+            : P;
+}}
+
+interface {type_name}<T> {{
+    make(): T;
+}}
+
+interface Props {{
+    {prop_decl};
+    other: number;
+}}
+
+declare function Comp(props: Props): JSX.Element;
+declare namespace Comp {{
+    const defaultProps: {{
+        {prop_decl};
+    }};
+}}
+
+const _ok = <Comp other={{0}} />;
+"#
+        );
+
+        let diags = jsx_diagnostics(&source);
+        assert!(
+            !has_code(
+                &diags,
+                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+            ),
+            "JSX LibraryManagedAttributes must mark props with a default as optional regardless of user-chosen type names; user generic `{type_name}<T>` produced TS2741: {diags:?}"
+        );
+        assert!(
+            !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "JSX LibraryManagedAttributes erasure must not introduce TS2322 for user generic `{type_name}<T>`: {diags:?}"
+        );
+    }
+}
+
 #[test]
 fn jsx_library_managed_attributes_preserves_factory_named_prop_defaults() {
     let source = r#"
