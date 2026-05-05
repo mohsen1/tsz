@@ -1076,6 +1076,10 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 Some(type_text)
             })
+            .or_else(|| {
+                self.local_variable_initializer_type_text(identifier_idx)
+                    .filter(|text| !text.is_empty() && text != "any")
+            })
     }
 
     pub(in crate::declaration_emitter) fn function_return_identifier_declared_type_id(
