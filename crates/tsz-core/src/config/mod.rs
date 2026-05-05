@@ -750,14 +750,25 @@ pub fn resolve_compiler_options(
     }
 
     if let Some(factory) = options.jsx_factory.as_deref() {
+        // tsc preserves `jsxFactory` verbatim — even when invalid. The
+        // TS5067 / TS5059 diagnostics surface separately during config
+        // validation; emit uses whatever was configured.
         resolved.checker.jsx_factory = factory.to_string();
         resolved.checker.jsx_factory_from_config = true;
     } else if let Some(ns) = options.react_namespace.as_deref() {
         resolved.checker.jsx_factory = format!("{ns}.createElement");
     }
     if let Some(frag) = options.jsx_fragment_factory.as_deref() {
-        resolved.checker.jsx_fragment_factory = frag.to_string();
-        resolved.checker.jsx_fragment_factory_from_config = true;
+        // tsc falls back to `React.Fragment` when `jsxFragmentFactory` is not
+        // a valid identifier chain (e.g. `234`). Asymmetric with `jsxFactory`
+        // by design — see the test pair `reactNamespaceInvalidInput` (factory
+        // preserved) vs `jsxFactoryAndJsxFragmentFactoryErrorNotIdentifier`
+        // (fragment factory falls back).
+        if is_valid_identifier_or_qualified_name(frag) {
+            resolved.checker.jsx_fragment_factory = frag.to_string();
+            resolved.checker.jsx_fragment_factory_from_config = true;
+        }
+        // else: keep default `React.Fragment`
     }
     if let Some(source) = options.jsx_import_source.as_deref() {
         resolved.checker.jsx_import_source = source.to_string();
