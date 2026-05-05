@@ -1576,18 +1576,24 @@ impl<'a> CheckerState<'a> {
             let parent_idx = info.parent;
             let parent = self.ctx.arena.get(parent_idx)?;
             if parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                let grandparent_idx = self.ctx.arena.node_info(parent_idx)?.parent;
-                let grandparent = self.ctx.arena.get(grandparent_idx)?;
-                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(grandparent)
-                    && var_decl.initializer == parent_idx
-                    && var_decl.type_annotation.is_some()
-                {
-                    return self.node_text(var_decl.type_annotation).and_then(|text| {
-                        self.sanitize_type_annotation_text_for_diagnostic(text, true)
-                    });
+                let mut container_idx = parent_idx;
+                loop {
+                    let grandparent_idx = self.ctx.arena.node_info(container_idx)?.parent;
+                    let grandparent = self.ctx.arena.get(grandparent_idx)?;
+                    if let Some(var_decl) = self.ctx.arena.get_variable_declaration(grandparent)
+                        && var_decl.initializer == container_idx
+                        && var_decl.type_annotation.is_some()
+                    {
+                        return self.sanitize_type_annotation_text_for_diagnostic(
+                            self.node_text(var_decl.type_annotation)?,
+                            true,
+                        );
+                    }
+                    if grandparent.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                        break;
+                    }
+                    container_idx = grandparent_idx;
                 }
-                // Check for inline JSDoc @satisfies annotation on the object literal
-                // e.g. `/** @satisfies {Record<Keys, unknown>} */ ({ x: 1 })`
                 if let Some(jsdoc_satisfies_text) =
                     self.jsdoc_satisfies_type_text_for_node(parent_idx)
                 {
@@ -1966,7 +1972,6 @@ impl<'a> CheckerState<'a> {
             if guard > 256 {
                 break;
             }
-
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
@@ -1987,7 +1992,6 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
-
             current = ext.parent;
         }
 

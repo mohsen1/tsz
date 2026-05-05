@@ -1394,7 +1394,15 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> (String, String) {
-        let (source_str, _) = self.format_top_level_assignability_message_types(source, target);
+        let source_str = if self
+            .array_literal_element_source_widening_required_for_display(anchor_idx, source, target)
+        {
+            let widened = self.widen_type_for_display(source);
+            self.format_assignability_type_for_message(widened, target)
+        } else {
+            self.format_top_level_assignability_message_types(source, target)
+                .0
+        };
         let target_str = self.format_type_for_diagnostic_role(
             target,
             DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },

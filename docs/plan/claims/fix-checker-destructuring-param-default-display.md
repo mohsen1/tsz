@@ -1,8 +1,8 @@
-# [WIP] fix(checker): widen destructuring parameter default diagnostics
+# fix(checker): widen destructuring parameter default diagnostics
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-destructuring-param-default-display`
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 - **Claimed**: 2026-05-05 10:25:28 UTC
 
@@ -18,12 +18,23 @@ argument array elements; `tsz` currently reports literal types (`"string"`,
 ## Files Touched
 
 - `docs/plan/claims/fix-checker-destructuring-param-default-display.md`
-- Production and regression-test files TBD after root-cause diagnosis.
+- `crates/tsz-checker/src/error_reporter/assignability.rs`
+- `crates/tsz-checker/src/error_reporter/assignability_helpers.rs`
+- `crates/tsz-checker/src/error_reporter/call_errors/elaboration.rs`
+- `crates/tsz-checker/src/error_reporter/call_errors/elaboration_array_mismatch.rs`
+- `crates/tsz-checker/src/error_reporter/call_errors_tests.rs`
+- `crates/tsz-checker/src/error_reporter/core/diagnostic_source/assignment_formatting.rs`
+- `crates/tsz-checker/src/error_reporter/core/type_display.rs`
+- `crates/tsz-checker/src/error_reporter/properties.rs`
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter "destructuringParameterDeclaration1ES5" --verbose`.
-- Planned: focused checker regression for destructuring parameter default
-  diagnostic display.
-- Planned: relevant `cargo check`, `cargo nextest run`, and conformance smoke
-  before marking ready.
+- `cargo check --package tsz-checker` passed.
+- `cargo nextest run -p tsz-checker --lib ts2322_array_literal_elaboration_widens_destructuring_default_sources ts2322_array_literal_elaboration_preserves_same_primitive_literal_targets ts2345_array_literal_tuple_overflow_elaborates_element_mismatch_to_ts2322` passed (3/3).
+- `./scripts/conformance/conformance.sh run --filter "destructuringParameterDeclaration1ES5" --verbose` passed (2/2).
+- `./scripts/conformance/conformance.sh run --max 200` passed (200/200).
+- `scripts/safe-run.sh --limit 75% -- ./scripts/conformance/conformance.sh run` completed with `12453/12582` passed, `+2` net (`12451 -> 12453`), and three FAIL-to-PASS improvements:
+  - `TypeScript/tests/cases/compiler/normalizedIntersectionTooComplex.ts`
+  - `TypeScript/tests/cases/compiler/objectLiteralExcessProperties.ts`
+  - `TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration1ES5.ts`
+- The full run had one timeout, `TypeScript/tests/cases/compiler/mappedTypeRecursiveInference.ts`; a focused verbose rerun of `mappedTypeRecursiveInference` passed (2/2, no timeout).

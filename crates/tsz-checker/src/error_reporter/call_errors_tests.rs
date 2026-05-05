@@ -593,6 +593,69 @@ a5([1, 2]);
 }
 
 #[test]
+fn ts2322_array_literal_elaboration_widens_destructuring_default_sources() {
+    let source = r#"
+function b6([a, z, y] = [undefined, null, undefined]) { }
+b6(["string", 1, 2]);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+
+    for expected in [
+        "Type 'string' is not assignable to type 'undefined'.",
+        "Type 'number' is not assignable to type 'null'.",
+        "Type 'number' is not assignable to type 'undefined'.",
+    ] {
+        assert!(
+            messages.iter().any(|message| message.contains(expected)),
+            "expected widened TS2322 message `{expected}`, got: {messages:#?}"
+        );
+    }
+
+    assert!(
+        messages.iter().all(|message| {
+            !message.contains("Type '\"string\"'")
+                && !message.contains("Type '1'")
+                && !message.contains("Type '2'")
+        }),
+        "array literal elaboration should not preserve literal source display here, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn ts2322_array_literal_elaboration_preserves_same_primitive_literal_targets() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+function takesLiteral(value: ["a"]) { }
+takesLiteral(["b"]);
+"#,
+    );
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '\"b\"' is not assignable to type '\"a\"'.")),
+        "same-primitive literal targets should preserve the source literal, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("Type 'string' is not assignable to type '\"a\"'.")),
+        "same-primitive literal targets should not widen to the primitive source, got: {messages:#?}"
+    );
+}
+
+#[test]
 fn inferred_generic_call_suppresses_ts2345_when_other_argument_is_error() {
     let source = r#"
 declare let anythingAny: any;

@@ -147,6 +147,9 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| self.format_excess_property_target_type(target));
         if let Some(annotation_text) = self.excess_property_target_annotation_text_for_site(idx) {
             let annotation_display = self.format_annotation_like_type(&annotation_text);
+            if self.excess_property_site_is_nested_in_nested_array_literal(idx) {
+                return annotation_display;
+            }
             if inferred_display.starts_with('{') && annotation_display.contains("object &") {
                 return annotation_display;
             }
@@ -188,6 +191,31 @@ impl<'a> CheckerState<'a> {
             }
         }
         Self::collapse_pick_literal_union_display(&inferred_display).unwrap_or(inferred_display)
+    }
+
+    fn excess_property_site_is_nested_in_nested_array_literal(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        loop {
+            let Some(parent_idx) = self.ctx.arena.parent_of(current) else {
+                return false;
+            };
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                let mut array_depth = 0;
+                let mut container_idx = parent_idx;
+                while let Some(grandparent_idx) = self.ctx.arena.parent_of(container_idx)
+                    && let Some(grandparent) = self.ctx.arena.get(grandparent_idx)
+                    && grandparent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                {
+                    array_depth += 1;
+                    container_idx = grandparent_idx;
+                }
+                return array_depth >= 2;
+            }
+            current = parent_idx;
+        }
     }
 
     /// If `display` looks like a generic application of the form `Name<...>`
