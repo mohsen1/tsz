@@ -97,25 +97,11 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        let base_is_simple = self.is_simple_logical_assignment_base(access.expression);
-        let needs_base_temp = if is_element_access {
-            // Element access: tsc always temps both base and index
-            true
-        } else {
-            // Property access: temp only for complex base
-            !base_is_simple
-        };
-
-        if !needs_base_temp {
-            // Simple property access: `obj.prop **= y` → `obj.prop = Math.pow(obj.prop, y)`
-            self.emit(original_left);
-            self.write(" = Math.pow(");
-            self.emit(unwrapped_left);
-            self.write(", ");
-            self.emit(right);
-            self.write(")");
-            return;
-        }
+        // tsc always temps the base for property/element access in `**=`
+        // lowering, even when the base is a simple identifier. The spec
+        // requires the LHS receiver to be evaluated once, so the lowered
+        // `lhs.prop = Math.pow(lhs.prop, rhs)` form must capture the
+        // receiver in a temp before re-reading the property.
 
         // Emit the RHS into a buffer first, so inner `**=` expressions allocate
         // their temps before we allocate ours (matching tsc's bottom-up order).

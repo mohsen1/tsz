@@ -182,6 +182,33 @@ fn test_exponentiation_downlevel_to_math_pow() {
     assert!(output.contains("y = Math.pow(y, 3)"));
 }
 
+/// `obj.prop **= rhs` must capture the receiver in a temp before
+/// re-reading the property, even when the receiver is a simple
+/// identifier. The lowered shape `obj.prop = Math.pow(obj.prop, rhs)`
+/// would re-evaluate the receiver-name lookup twice; tsc avoids this
+/// with `(_a = obj).prop = Math.pow(_a.prop, rhs)` so any future
+/// getter/Proxy on `obj` would only fire once. This locks that in.
+#[test]
+fn test_exponentiation_assignment_property_access_temps_simple_base() {
+    let source = "let x3 = { a: 2 };\nx3.a **= 4;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("(_a = x3).a = Math.pow(_a.a, 4)"),
+        "Property-access `**=` must temp the receiver even for a simple identifier base.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("x3.a = Math.pow(x3.a"),
+        "Property-access `**=` must not re-emit the receiver expression twice.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn test_optional_call_downlevel_to_conditional() {
     let source = "const fn = () => 1;\nconst obj = { m() { return this; } };\nfn?.();\nobj?.m();\nobj.m?.();\nobj?.m?.();\n";
