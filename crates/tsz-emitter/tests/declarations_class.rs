@@ -856,3 +856,32 @@ fn class_name_references_in_lowered_static_elements_use_class_value_alias() {
         "private initializers should run before lowered static elements, and all lowered class-name references should use the captured class value.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn static_private_accessor_class_body_references_use_alias() {
+    let source = r#"class A2 {
+    static get #prop() { return ""; }
+    static set #prop(param: string) { }
+
+    constructor() {
+        console.log(A2.#prop);
+        let a: typeof A2 = A2;
+        a.#prop;
+    }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("let a = _a;"),
+        "class-body references to a class declaration with static private accessors should use the private class alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(a, _a, \"a\", _A2_prop_get);"),
+        "subsequent static private accessor reads should keep the receiver variable and use the class alias as state.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = A2"),
+        "post-class alias initialization should still reference the real class name.\nOutput:\n{output}"
+    );
+}
