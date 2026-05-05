@@ -488,6 +488,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // apply to recursive structural comparisons of property types.
         let prev_in_property_check = self.in_property_check;
         self.in_property_check = true;
+        let generic_args_start = self.instantiated_generic_method_args.len();
+        if allow_bivariant {
+            self.extend_instantiated_generic_method_args(source_receiver);
+            self.extend_instantiated_generic_method_args(target_receiver);
+        }
         let result = self.check_property_types(
             source,
             target,
@@ -497,8 +502,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             target_read,
             allow_bivariant,
         );
+        self.instantiated_generic_method_args
+            .truncate(generic_args_start);
         self.in_property_check = prev_in_property_check;
         result
+    }
+
+    fn extend_instantiated_generic_method_args(&mut self, receiver: Option<TypeId>) {
+        let Some(receiver) = receiver else {
+            return;
+        };
+        let application = match self.interner.lookup(receiver) {
+            Some(crate::types::TypeData::Application(app_id)) => Some(app_id),
+            _ => self.interner.get_display_alias(receiver).and_then(|alias| {
+                match self.interner.lookup(alias) {
+                    Some(crate::types::TypeData::Application(app_id)) => Some(app_id),
+                    _ => None,
+                }
+            }),
+        };
+
+        if let Some(app_id) = application {
+            let app = self.interner.type_application(app_id);
+            self.instantiated_generic_method_args
+                .extend(app.args.iter().copied());
+        }
     }
 
     /// Inner property type comparison with `in_property_check` already set.

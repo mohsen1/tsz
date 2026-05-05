@@ -51,7 +51,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // parameters. Resetting to `false` here also matches tsc, where
         // level-3+ recursions start fresh without the Callback bit.
         let in_callback_param_check = self.in_callback_param_check;
+        let in_bivariant_callback_return_check = self.in_bivariant_callback_return_check;
         self.in_callback_param_check = false;
+        self.in_bivariant_callback_return_check = false;
 
         // Generic source vs generic target (same arity): normalize both signatures so they
         // can be compared structurally.
@@ -582,11 +584,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Return type is covariant
+        // Return type is normally covariant. In tsc's BivariantCallback mode
+        // (the callback signature comparison reached from a bivariant method
+        // parameter), callback returns are accepted in either direction.
         let return_result = self.check_return_compat(
             source_instantiated.return_type,
             target_instantiated.return_type,
         );
+        let return_result = if in_bivariant_callback_return_check && !return_result.is_true() {
+            self.check_subtype(
+                target_instantiated.return_type,
+                source_instantiated.return_type,
+            )
+        } else {
+            return_result
+        };
         if !return_result.is_true() {
             self.type_param_equivalences.truncate(equiv_start);
             return SubtypeResult::False;
@@ -851,6 +863,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check parameter types
+        let saved_force_strict_callback_params = self.force_strict_callback_param_variance;
+        self.force_strict_callback_param_variance = in_callback_param_check;
         let result = (|| -> SubtypeResult {
             // Compare fixed parameters (using unpacked params)
             let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
@@ -975,6 +989,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             SubtypeResult::True
         })();
+        self.force_strict_callback_param_variance = saved_force_strict_callback_params;
 
         // If the inference-based comparison failed and we used inference for the
         // generic source → non-generic target case, retry with constraint erasure.

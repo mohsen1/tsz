@@ -180,6 +180,26 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// `getSingleCallSignature` returns undefined inside callback mode and the
     /// next callback recursion starts fresh through `compareTypes`.
     pub(crate) in_callback_param_check: bool,
+    /// The immediate callback signature comparison should use
+    /// `BivariantCallback` return compatibility. This is set only when the
+    /// callback comparison is reached from a bivariant method/constructor slot.
+    pub(crate) in_bivariant_callback_return_check: bool,
+    /// True only while the immediate callback signature comparison is checking
+    /// its own parameter list. Nested function comparisons reached through
+    /// `compareTypes` must start fresh, so `are_parameters_compatible_impl`
+    /// clears this around recursive subtype calls.
+    pub(crate) force_strict_callback_param_variance: bool,
+    /// Type arguments from the current generic application receiver while
+    /// comparing a method property. If a callable method parameter is exactly
+    /// one of these args, it originated as a generic type-parameter slot and
+    /// should keep normal method bivariance, matching tsc's
+    /// `isInstantiatedGenericParameter` guard.
+    pub(crate) instantiated_generic_method_args: Vec<TypeId>,
+    /// Original `strict_function_types` values saved while
+    /// `check_subtype_with_method_variance` temporarily enables bivariant
+    /// method parameters. Return-type comparisons consult this so method
+    /// bivariance does not leak into returned function types.
+    pub(crate) method_bivariance_strict_stack: Vec<bool>,
     /// Optional inheritance graph for O(1) nominal class subtype checking.
     /// When provided, enables fast nominal checks for class inheritance.
     pub inheritance_graph: Option<&'a crate::classes::inheritance::InheritanceGraph>,
@@ -274,6 +294,10 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
             in_callback_param_check: false,
+            in_bivariant_callback_return_check: false,
+            force_strict_callback_param_variance: false,
+            instantiated_generic_method_args: Vec::new(),
+            method_bivariance_strict_stack: Vec::new(),
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,
@@ -316,6 +340,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
             in_callback_param_check: false,
+            in_bivariant_callback_return_check: false,
+            force_strict_callback_param_variance: false,
+            instantiated_generic_method_args: Vec::new(),
+            method_bivariance_strict_stack: Vec::new(),
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,

@@ -62,6 +62,10 @@ name = "promise_callback_variance_tests"
 path = "tests/promise_callback_variance_tests.rs"
 
 [[test]]
+name = "covariant_callbacks_tests"
+path = "tests/covariant_callbacks_tests.rs"
+
+[[test]]
 name = "ts2449_parameter_decorator_no_tdz_tests"
 path = "tests/ts2449_parameter_decorator_no_tdz_tests.rs"
 

@@ -251,9 +251,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // so check_parameter_compatibility uses bivariant parameter checks.
             // This only affects parameter variance, NOT return type variance.
             let prev = self.strict_function_types;
+            self.method_bivariance_strict_stack.push(prev);
             self.strict_function_types = false;
             let result = self.check_subtype(source, target);
             self.strict_function_types = prev;
+            self.method_bivariance_strict_stack.pop();
             return result;
         }
         self.check_subtype(source, target)
