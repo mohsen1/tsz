@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/tagged-template-overload-diagnostics`
-- **PR**: TBD
+- **PR**: #2760
 - **Status**: claim
 - **Workstream**: Conformance / tagged template overload diagnostics
 
