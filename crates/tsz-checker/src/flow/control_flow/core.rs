@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use tsz_binder::BinderState;
 use tsz_binder::{FlowNode, FlowNodeArena, FlowNodeId, SymbolId, flow_flags};
 use tsz_common::interner::Atom;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{GuardSense, ParamInfo, TupleElement, TypeId, TypePredicate};
@@ -259,6 +259,122 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
         simplified
+    }
+
+    fn reference_is_evolving_array_symbol(&self, reference: NodeIndex) -> bool {
+        let Some(sym_id) = self.reference_symbol(reference) else {
+            return false;
+        };
+        if self.is_control_flow_typed_any_symbol(sym_id) {
+            return true;
+        }
+
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let value_decl = symbol.value_declaration;
+        let Some(mut decl_node) = self.arena.get(value_decl) else {
+            return false;
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.arena.get_extended(value_decl)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            decl_node = parent_node;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if decl.type_annotation.is_some() || decl.initializer.is_none() {
+            return false;
+        }
+        self.arena.get(decl.initializer).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                && self
+                    .arena
+                    .get_literal_expr(node)
+                    .is_some_and(|lit| lit.elements.nodes.is_empty())
+        })
+    }
+
+    fn array_mutation_evolved_type(
+        &self,
+        current_type: TypeId,
+        call: &CallExprData,
+        reference: NodeIndex,
+    ) -> (TypeId, bool) {
+        if !self.reference_is_evolving_array_symbol(reference) {
+            return (current_type, true);
+        }
+
+        let Some(callee_node) = self.arena.get(call.expression) else {
+            return (current_type, true);
+        };
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return (current_type, true);
+        };
+        let Some(name_node) = self.arena.get(access.name_or_argument) else {
+            return (current_type, true);
+        };
+        let method_name = if let Some(ident) = self.arena.get_identifier(name_node) {
+            ident.escaped_text.as_str()
+        } else if let Some(literal) = self.arena.get_literal(name_node) {
+            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                literal.text.as_str()
+            } else {
+                return (current_type, true);
+            }
+        } else {
+            return (current_type, true);
+        };
+        if method_name != "push" && method_name != "unshift" {
+            return (current_type, true);
+        }
+
+        let Some(args) = &call.arguments else {
+            return (current_type, true);
+        };
+        let Some(current_element) = query::get_array_element_type(self.interner, current_type)
+        else {
+            return (current_type, true);
+        };
+
+        let mut element_types = Vec::new();
+        if current_element != TypeId::ANY && current_element != TypeId::NEVER {
+            element_types.push(current_element);
+        }
+        for &arg in &args.nodes {
+            if !arg.is_some() {
+                continue;
+            }
+            let Some(arg_type) = self
+                .node_types
+                .and_then(|node_types| node_types.get(&arg.0).copied())
+                .or_else(|| self.literal_type_from_node(arg))
+            else {
+                return (current_type, false);
+            };
+            if arg_type == TypeId::ERROR {
+                return (current_type, false);
+            }
+            element_types.push(query::widen_literal_to_primitive(self.interner, arg_type));
+        }
+        if element_types.is_empty() {
+            return (current_type, true);
+        }
+
+        let element_type = self.simplify_flow_merge_types(element_types);
+        let element_type = if element_type.len() == 1 {
+            element_type[0]
+        } else {
+            query::union_types(self.interner, element_type)
+        };
+        (query::array_type(self.interner, element_type), true)
     }
 
     /// Returns true when two types represent the same union member set.
@@ -1699,7 +1815,13 @@ impl<'a> FlowAnalyzer<'a> {
                             continue;
                         }
                         // Antecedent is ready - get its result
-                        *results.get(&ant).unwrap_or(&current_type)
+                        let antecedent_type = *results.get(&ant).unwrap_or(&current_type);
+                        let (evolved_type, complete) =
+                            self.array_mutation_evolved_type(antecedent_type, call, reference);
+                        if !complete {
+                            cacheable_walk = false;
+                        }
+                        evolved_type
                     } else {
                         current_type
                     }

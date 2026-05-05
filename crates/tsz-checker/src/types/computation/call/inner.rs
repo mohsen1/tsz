@@ -2527,6 +2527,14 @@ impl<'a> CheckerState<'a> {
             // Deferral logic removed to fix missing TS2345 errors
         }
 
+        if let CallResult::ArgumentTypeMismatch {
+            fallback_return, ..
+        } = result
+            && self.call_is_simple_evolving_array_mutation(call.expression)
+        {
+            result = CallResult::Success(fallback_return);
+        }
+
         if let CallResult::Success(return_type) = result {
             for (index, &actual) in arg_types.iter().enumerate() {
                 let expected = finalized_contextual_param_types
