@@ -1,6 +1,9 @@
-use tsz_common::common::ScriptTarget;
-use tsz_emitter::emitter::JsxEmit;
+use tsz_common::common::{ModuleKind, ScriptTarget};
+use tsz_emitter::context::emit::EmitContext;
+use tsz_emitter::emitter::{JsxEmit, Printer as EmitterPrinter, PrinterOptions};
+use tsz_emitter::lowering::LoweringPass;
 use tsz_emitter::output::printer::PrintOptions;
+use tsz_parser::ParserState;
 
 #[path = "test_support.rs"]
 mod test_support;
@@ -14,6 +17,17 @@ fn emit_jsx(source: &str, jsx: JsxEmit, target: ScriptTarget) -> String {
         ..Default::default()
     };
     parse_and_print_named_with_opts("test.tsx", source, opts)
+}
+
+fn emit_jsx_with_printer_options(source: &str, opts: PrinterOptions) -> String {
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
 }
 
 // =============================================================================
@@ -212,5 +226,79 @@ fn classic_spread_child_unwraps_plain_parentheses() {
     assert!(
         !output.contains("...(arr)"),
         "Redundant outer parens must not survive.\nOutput:\n{output}"
+    );
+}
+
+// =============================================================================
+// moduleDetection=legacy + JSX automatic runtime
+// =============================================================================
+
+/// Regression: `moduleDetection: "legacy"` keeps a non-module file as a
+/// script even when it uses JSX. tsc emits the `_jsx(...)` calls bare —
+/// no `import { jsx as _jsx } from "react/jsx-runtime"` is added,
+/// because adding it would silently promote the file to an ES module.
+#[test]
+fn react_jsx_under_module_detection_legacy_skips_runtime_import() {
+    let source = "namespace JSX {}\nclass Component {\n    render() { return <div />; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::System,
+        jsx: JsxEmit::ReactJsx,
+        module_detection_legacy: true,
+        ..Default::default()
+    };
+    let output = emit_jsx_with_printer_options(source, opts);
+
+    assert!(
+        !output.contains("react/jsx-runtime"),
+        "Legacy detection must not auto-add the JSX runtime import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_jsx(\"div\""),
+        "JSX call must still emit (referencing _jsx as undefined globals).\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: with `moduleDetection: "auto"` (default) and the same
+/// non-module-syntax file, the JSX runtime import IS added (which then
+/// makes the file an ES module).
+#[test]
+fn react_jsx_under_module_detection_auto_adds_runtime_import() {
+    let source = "namespace JSX {}\nclass Component {\n    render() { return <div />; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        // module=None to skip the System.register wrapper for this assertion;
+        // the import-emission decision is what we want to test.
+        module: ModuleKind::None,
+        jsx: JsxEmit::ReactJsx,
+        module_detection_legacy: false,
+        ..Default::default()
+    };
+    let output = emit_jsx_with_printer_options(source, opts);
+
+    assert!(
+        output.contains("from \"react/jsx-runtime\""),
+        "Auto detection should auto-add the JSX runtime import.\nOutput:\n{output}"
+    );
+}
+
+/// Under `module=System` + legacy detection, tsc still emits a top-level
+/// `"use strict";` even though the file is a non-module script. This is
+/// because System modules imply strict mode.
+#[test]
+fn react_jsx_under_module_detection_legacy_system_emits_use_strict() {
+    let source = "namespace JSX {}\nclass Component {\n    render() { return <div />; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::System,
+        jsx: JsxEmit::ReactJsx,
+        module_detection_legacy: true,
+        ..Default::default()
+    };
+    let output = emit_jsx_with_printer_options(source, opts);
+
+    assert!(
+        output.starts_with("\"use strict\";"),
+        "module=System + legacy detection on a non-module file must still emit `use strict`.\nOutput:\n{output}"
     );
 }

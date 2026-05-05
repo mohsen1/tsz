@@ -2797,10 +2797,16 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     match args.module_detection {
         Some(ModuleDetection::Force) => {
             options.printer.module_detection_force = true;
+            options.printer.module_detection_legacy = false;
         }
-        Some(ModuleDetection::Auto | ModuleDetection::Legacy) => {
+        Some(ModuleDetection::Legacy) => {
+            options.printer.module_detection_force = false;
+            options.printer.module_detection_legacy = true;
+        }
+        Some(ModuleDetection::Auto) => {
             // Explicitly opting out of force mode
             options.printer.module_detection_force = false;
+            options.printer.module_detection_legacy = false;
         }
         None => {
             // When module detection is not set via CLI, check if the CLI also overrides
