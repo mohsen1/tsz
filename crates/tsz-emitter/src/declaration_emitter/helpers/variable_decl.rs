@@ -956,7 +956,14 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(type_text);
                 } else {
-                    self.write(&self.print_type_id(return_type_id));
+                    let return_type_text = if let Some(ref type_params) = func.type_parameters
+                        && !type_params.nodes.is_empty()
+                    {
+                        self.print_type_id_with_outer_type_params(return_type_id, type_params)
+                    } else {
+                        self.print_type_id(return_type_id)
+                    };
+                    self.write(&return_type_text);
                 }
                 return true;
             }
