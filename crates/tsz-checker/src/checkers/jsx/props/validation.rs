@@ -419,6 +419,7 @@ impl<'a> CheckerState<'a> {
     fn format_jsx_missing_props_target_type(
         &mut self,
         target_type: TypeId,
+        display_source_type: TypeId,
         preferred_target_display: Option<&str>,
     ) -> String {
         let target_display = self.format_type(target_type);
@@ -433,6 +434,31 @@ impl<'a> CheckerState<'a> {
                 return alias_display;
             }
             return display.to_string();
+        }
+
+        if let Some(display) = preferred_target_display
+            && display.contains("IntrinsicClassAttributes<")
+            && display.contains("children?:")
+        {
+            let bare_props = display.split(" & ").find(|part| {
+                !part.starts_with("IntrinsicAttributes")
+                    && !part.starts_with("IntrinsicClassAttributes<")
+                    && !part.starts_with("{ children?:")
+            });
+            if let Some(bare_props) = bare_props
+                && !bare_props.is_empty()
+            {
+                return bare_props.to_string();
+            }
+        }
+
+        let stripped_display_type =
+            self.strip_jsx_children_injection_for_display(display_source_type);
+        if stripped_display_type != display_source_type {
+            let stripped_display = self.format_type(stripped_display_type);
+            if !stripped_display.starts_with('{') && !stripped_display.is_empty() {
+                return stripped_display;
+            }
         }
 
         if preferred_target_display.is_none()
@@ -909,6 +935,7 @@ impl<'a> CheckerState<'a> {
         let source_type = self.format_jsx_provided_attrs_source_type(provided_attrs);
         let target_type = self.format_jsx_missing_props_target_type(
             preferred_target,
+            props_type,
             preferred_target_display.filter(|display| !display.is_empty()),
         );
 
