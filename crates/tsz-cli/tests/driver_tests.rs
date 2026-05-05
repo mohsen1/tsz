@@ -5179,6 +5179,56 @@ fn compile_resolves_relative_imports_from_files_list() {
 }
 
 #[test]
+fn compile_reports_unsupported_files_list_extension() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["foo.txt"]
+        }"#,
+    );
+    write_file(&base.join("foo.txt"), "not typescript");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts6054: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code
+                == diagnostic_codes::FILE_HAS_AN_UNSUPPORTED_EXTENSION_THE_ONLY_SUPPORTED_EXTENSIONS_ARE
+        })
+        .collect();
+    assert_eq!(
+        ts6054.len(),
+        1,
+        "Expected TS6054 for unsupported explicit files entry, got: {:?}",
+        result.diagnostics
+    );
+    let diagnostic = ts6054[0];
+    assert!(
+        diagnostic.message_text.contains("foo.txt")
+            && diagnostic.message_text.contains("'.ts'")
+            && diagnostic.message_text.contains("'.d.mts'"),
+        "Expected unsupported extension message with supported TS extensions, got: {diagnostic:?}"
+    );
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .any(|info| info.message_text.contains("Part of 'files' list")),
+        "Expected TS6054 to explain the files-list inclusion reason, got: {diagnostic:?}"
+    );
+}
+
+#[test]
 fn compile_resolves_paths_mappings() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
