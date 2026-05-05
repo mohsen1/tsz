@@ -497,6 +497,7 @@ impl<'a> CheckerState<'a> {
         });
 
         if !has_any_heritage {
+            self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
             return derived_type;
         }

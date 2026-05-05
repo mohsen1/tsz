@@ -4526,3 +4526,27 @@ const iter3 = iter2.flatMap(() => g1);
         "Expected Iterator<string> heritage diagnostics to show scoped abstract defaults. Got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_map_iterator_next_uses_strict_builtin_iterator_return() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+declare const map: Map<string, number>;
+const value: number = map.values().next().value;
+interface Next<A> {
+    readonly done?: boolean;
+    readonly value: A;
+}
+const result: Next<number> = map.values().next();
+"#,
+    );
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected strict built-in iterator return to report both MapIterator.next assignments. Got: {diagnostics:#?}"
+    );
+}
