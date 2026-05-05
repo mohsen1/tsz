@@ -18,6 +18,25 @@ function formatDurationMs(value, fractionDigits = 0) {
   return `${ms.toFixed(fractionDigits)}ms`;
 }
 
+function durationLabelFitsBar(label, widthPx) {
+  const width = Number(widthPx);
+  if (!Number.isFinite(width) || width <= 0) return false;
+
+  // Bench labels use the monospace 0.8rem style plus 0.45rem horizontal padding
+  // on each side. Estimate conservatively so labels move outside before clipping.
+  const approximateTextWidth = String(label).length * 8;
+  const horizontalPadding = 14.5;
+  return width >= approximateTextWidth + horizontalPadding;
+}
+
+function renderBenchmarkBar(kind, widthPx, label) {
+  const width = Number.isFinite(Number(widthPx)) ? Math.max(0, Number(widthPx)) : 0;
+  const placementClass = durationLabelFitsBar(label, width) ? "" : " value-outside";
+  return `<div class="bench-bar ${kind}${placementClass}" style="width: ${width.toFixed(2)}px">
+          <span class="bench-bar-value">${label}</span>
+        </div>`;
+}
+
 function formatSpeedupLabel(tszMs, tsgoMs) {
   const tsz = Number(tszMs);
   const tsgo = Number(tsgoMs);
@@ -39,6 +58,27 @@ function hasTiming(value) {
 function fastestTiming(row) {
   const timings = [row?.tsz_ms, row?.tsgo_ms].map(Number).filter((time) => Number.isFinite(time) && time > 0);
   return timings.length ? Math.min(...timings) : Infinity;
+}
+
+function tszSpeedupScore(row) {
+  const tsz = Number(row?.tsz_ms);
+  const tsgo = Number(row?.tsgo_ms);
+  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) {
+    return -Infinity;
+  }
+  return tsgo / tsz;
+}
+
+function compareByTszSpeedup(a, b) {
+  const aScore = tszSpeedupScore(a);
+  const bScore = tszSpeedupScore(b);
+  if (aScore !== bScore) return bScore - aScore;
+
+  const aFastest = fastestTiming(a);
+  const bFastest = fastestTiming(b);
+  if (aFastest !== bFastest) return aFastest - bFastest;
+
+  return String(a?.name || "").localeCompare(String(b?.name || ""));
 }
 
 function hasSuccessfulTiming(row) {
@@ -1285,16 +1325,6 @@ function generateCharts(data, mode = "projects") {
   if (!results.length && !failedResults.length) return "";
 
   const barMaxWidth = 420;
-  const visibleCategories = categories
-    .filter((category) => categoryBelongsToMode(category, mode))
-    .sort((a, b) => {
-      if (mode !== "projects") return 0;
-      const aFastest = Math.min(...(grouped.get(a) || []).map(fastestTiming));
-      const bFastest = Math.min(...(grouped.get(b) || []).map(fastestTiming));
-      if (aFastest !== bFastest) return aFastest - bFastest;
-      return categoryTitle(a).localeCompare(categoryTitle(b));
-    });
-  const visibleFailedResults = failedResults.filter((row) => failedBelongsToMode(row, mode));
   const entriesForCategory = (category) => {
     const entries = (grouped.get(category) || []).slice();
     if (isExternalLibraryCategory(category)) {
@@ -1306,6 +1336,20 @@ function generateCharts(data, mode = "projects") {
     }
     return entries;
   };
+  const categoryTszSpeedupScore = (category) => Math.max(
+    -Infinity,
+    ...entriesForCategory(category).map(tszSpeedupScore),
+  );
+  const visibleCategories = categories
+    .filter((category) => categoryBelongsToMode(category, mode))
+    .sort((a, b) => {
+      if (mode !== "projects") return 0;
+      const aScore = categoryTszSpeedupScore(a);
+      const bScore = categoryTszSpeedupScore(b);
+      if (aScore !== bScore) return bScore - aScore;
+      return categoryTitle(a).localeCompare(categoryTitle(b));
+    });
+  const visibleFailedResults = failedResults.filter((row) => failedBelongsToMode(row, mode));
   const chartMaxMs = Math.max(
     1,
     ...visibleCategories
@@ -1324,9 +1368,7 @@ function generateCharts(data, mode = "projects") {
 
     entries.sort((a, b) => {
       if (isProject) {
-        const aFastest = fastestTiming(a);
-        const bFastest = fastestTiming(b);
-        if (aFastest !== bFastest) return aFastest - bFastest;
+        return compareByTszSpeedup(a, b);
       } else {
         const aLines = Number(a.lines) || 0;
         const bLines = Number(b.lines) || 0;
@@ -1347,9 +1389,11 @@ function generateCharts(data, mode = "projects") {
 
     for (const r of entries) {
       const decorated = decorateRow(r, category, { isAggregate: r.is_aggregate });
-      const tszWidth = Math.max(2, (r.tsz_ms / chartMaxMs) * barMaxWidth);
-      const tsgoWidth = Math.max(2, (r.tsgo_ms / chartMaxMs) * barMaxWidth);
+      const tszWidth = (r.tsz_ms / chartMaxMs) * barMaxWidth;
+      const tsgoWidth = (r.tsgo_ms / chartMaxMs) * barMaxWidth;
       const winnerLabel = formatSpeedupLabel(r.tsz_ms, r.tsgo_ms);
+      const tszLabel = formatDurationMs(r.tsz_ms);
+      const tsgoLabel = formatDurationMs(r.tsgo_ms);
 
       const metaParts = isProject
         ? [`${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`]
@@ -1361,16 +1405,12 @@ function generateCharts(data, mode = "projects") {
     <p class="bench-focus">${escapeHtml(decorated.focus)}</p>
     <div class="bench-bars">
       <div class="bench-bar-row">
-  <span class="bench-bar-label">tsz</span>
-        <div class="bench-bar tsz" style="width: ${tszWidth}px">
-          <span class="bench-bar-value">${formatDurationMs(r.tsz_ms)}</span>
-        </div>
+        <span class="bench-bar-label">tsz</span>
+        ${renderBenchmarkBar("tsz", tszWidth, tszLabel)}
       </div>
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsgo</span>
-        <div class="bench-bar tsgo" style="width: ${tsgoWidth}px">
-          <span class="bench-bar-value">${formatDurationMs(r.tsgo_ms)}</span>
-        </div>
+        ${renderBenchmarkBar("tsgo", tsgoWidth, tsgoLabel)}
       </div>
       ${winnerLabel ? `<div class="bench-winner">${winnerLabel}</div>` : ""}
     </div>
@@ -1394,8 +1434,8 @@ function generateCharts(data, mode = "projects") {
     for (const r of visibleFailedResults) {
       const category = categoryFor(r.name || "", r.lines);
       const decorated = decorateRow(r, category);
-      const tszWidth = hasTiming(r.tsz_ms) ? Math.max(2, (r.tsz_ms / chartMaxMs) * barMaxWidth) : 0;
-      const tsgoWidth = hasTiming(r.tsgo_ms) ? Math.max(2, (r.tsgo_ms / chartMaxMs) * barMaxWidth) : 0;
+      const tszWidth = hasTiming(r.tsz_ms) ? (r.tsz_ms / chartMaxMs) * barMaxWidth : 0;
+      const tsgoWidth = hasTiming(r.tsgo_ms) ? (r.tsgo_ms / chartMaxMs) * barMaxWidth : 0;
       const metaParts = [decorated.kind, `${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`];
       html += `  <div class="bench-row bench-row-error">
     <div class="bench-name"><a href="${decorated.url}">${escapeHtml(displayName(r.name))}</a></div>
@@ -1405,13 +1445,13 @@ function generateCharts(data, mode = "projects") {
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsz</span>
         ${hasTiming(r.tsz_ms)
-          ? `<div class="bench-bar tsz" style="width: ${tszWidth}px"><span class="bench-bar-value">${formatDurationMs(r.tsz_ms)}</span></div>`
+          ? renderBenchmarkBar("tsz", tszWidth, formatDurationMs(r.tsz_ms))
           : `<span class="bench-bar-status">failed</span>`}
       </div>
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsgo</span>
         ${hasTiming(r.tsgo_ms)
-          ? `<div class="bench-bar tsgo" style="width: ${tsgoWidth}px"><span class="bench-bar-value">${formatDurationMs(r.tsgo_ms)}</span></div>`
+          ? renderBenchmarkBar("tsgo", tsgoWidth, formatDurationMs(r.tsgo_ms))
           : `<span class="bench-bar-status">n/a</span>`}
       </div>
     </div>
