@@ -2493,9 +2493,18 @@ impl BinderState {
             return;
         };
 
-        // Track for functions and namespace-like roots.
-        // Classes are excluded: tsc does not allow expando assignments on class
-        // constructor types (`class C {} C.x = 1;` → TS2339).
+        let is_js_like_source = arena.source_files.first().is_some_and(|source_file| {
+            let file_name = source_file.file_name.to_ascii_lowercase();
+            !source_file.is_declaration_file
+                && (file_name.ends_with(".js")
+                    || file_name.ends_with(".jsx")
+                    || file_name.ends_with(".mjs")
+                    || file_name.ends_with(".cjs"))
+        });
+
+        // Track for functions and namespace-like roots. Class roots are only
+        // expando-capable in JS files; TS files must keep `class C {} C.x = 1`
+        // as a TS2339 error.
         //
         // Don't track prototype element-access expandos (e.g.
         // `F.prototype[sym] = val`). TSC's late-bound assignment
@@ -2503,12 +2512,14 @@ impl BinderState {
         // should emit TS7053 rather than suppress it.
         let is_prototype_element_access = obj_key.split('.').any(|segment| segment == "prototype")
             && lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
-        if (symbol.flags
+        let is_function_or_namespace_root = (symbol.flags
             & (symbol_flags::FUNCTION
                 | symbol_flags::VALUE_MODULE
                 | symbol_flags::NAMESPACE_MODULE))
-            != 0
-            && (symbol.flags & symbol_flags::CLASS) == 0
+            != 0;
+        let is_js_class_root = is_js_like_source && (symbol.flags & symbol_flags::CLASS) != 0;
+        if ((is_function_or_namespace_root && (symbol.flags & symbol_flags::CLASS) == 0)
+            || is_js_class_root)
             && !is_prototype_element_access
         {
             Arc::make_mut(&mut self.expando_properties)
