@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix-ts2345-contextual-literal-inference`
-- **PR**: TBD
+- **PR**: #2762
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
