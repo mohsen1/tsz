@@ -1011,15 +1011,35 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         // Find the symbol's home arena
-        let delegate_arena: Option<&tsz_parser::NodeArena> = self
+        let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
             .ctx
             .binder
             .symbol_arenas
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref);
+        let mut delegate_file_idx = None;
+
+        let needs_cross_file_delegation = delegate_arena
+            .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
+            && self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .is_some_and(|file_idx| {
+                    let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
+                    !std::ptr::eq(target_arena, self.ctx.arena)
+                });
+
+        if needs_cross_file_delegation {
+            let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
+                "needs_cross_file_delegation derived from resolve_symbol_file_index returning true",
+            );
+            delegate_arena = Some(self.ctx.get_arena_for_file(file_idx as u32));
+            delegate_file_idx = Some(file_idx);
+        }
 
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
-        let query_file_idx = self.ctx.get_file_idx_for_arena(symbol_arena);
+        let query_file_idx =
+            delegate_file_idx.or_else(|| self.ctx.get_file_idx_for_arena(symbol_arena));
         if let Some(file_idx) = query_file_idx
             && let Some((cached_type, cached_params)) = self
                 .ctx
@@ -1048,10 +1068,15 @@ impl<'a> CheckerState<'a> {
         // Use the target file's binder when available so that node→symbol
         // lookups (e.g. `get_node_symbol` for private member `parent_id`)
         // resolve correctly instead of returning `None`.
-        let delegate_binder = self
-            .ctx
-            .get_binder_for_arena(symbol_arena)
-            .unwrap_or(self.ctx.binder);
+        let delegate_binder = if let Some(file_idx) = delegate_file_idx {
+            self.ctx
+                .get_binder_for_file(file_idx)
+                .unwrap_or(self.ctx.binder)
+        } else {
+            self.ctx
+                .get_binder_for_arena(symbol_arena)
+                .unwrap_or(self.ctx.binder)
+        };
 
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             symbol_arena,
@@ -1063,6 +1088,7 @@ impl<'a> CheckerState<'a> {
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaClass,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         for &id in &self.ctx.class_instance_resolution_set {
             checker.ctx.class_instance_resolution_set.insert(id);
         }

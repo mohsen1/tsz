@@ -232,6 +232,62 @@ const bad: Key<[any, any], 2> = 0;
 }
 
 #[test]
+fn test_conditional_infer_matches_explicit_this_parameters() {
+    let source = r#"
+type MyThis<T> = T extends (this: infer U, ...args: any[]) => any ? U : never;
+type MyOmitThis<T> = T extends (this: any, ...args: infer A) => infer R ? (...args: A) => R : T;
+
+type FnType = (this: { x: number }, y: string) => boolean;
+
+type ThisFromFnType = MyThis<FnType>;
+let badFromFnType: ThisFromFnType = { x: "wrong" };
+
+type NoThisFromFnType = MyOmitThis<FnType>;
+declare const noThisFromFnType: NoThisFromFnType;
+let boolFromFnType: boolean = noThisFromFnType("ok");
+noThisFromFnType.call({ x: 1 }, "ok");
+
+function withThis(this: { x: number }, y: string): boolean {
+  return this.x > y.length;
+}
+
+type ThisParameterType<T> = T extends (this: infer U, ...args: any[]) => any ? U : unknown;
+type OmitThisParameter<T> = T extends (this: any, ...args: infer A) => infer R ? (...args: A) => R : T;
+
+type BuiltinThis = ThisParameterType<typeof withThis>;
+let badBuiltinThis: BuiltinThis = { x: "wrong" };
+
+type BuiltinNoThis = OmitThisParameter<typeof withThis>;
+declare const builtinNoThis: BuiltinNoThis;
+let boolFromBuiltin: boolean = builtinNoThis("ok");
+builtinNoThis.call({ x: 1 }, "ok");
+
+type FirstParam<T> = T extends (arg: infer A) => any ? A : never;
+let badFirstParam: FirstParam<(arg: string) => void> = 123;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let ts2322_count = codes.iter().filter(|&&code| code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        3,
+        "Expected two inferred-this assignment errors plus ordinary parameter control, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !codes.contains(&2684),
+        "Omitted-this function types should not retain the original this parameter, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_object_indexed_by_tuple_length_conditional_key() {
     let source = r#"
 type Length<T extends any[]> = T["length"];

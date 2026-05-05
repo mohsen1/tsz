@@ -497,6 +497,44 @@ function f({ x }) {
 }
 
 #[test]
+fn checked_js_jsdoc_param_prefix_tag_does_not_report_ts8024() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"
+// @ts-check
+
+/**
+ * @paramx {number} value
+ */
+function acceptsAnything(value) {
+  return value;
+}
+
+acceptsAnything("not a number");
+"#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 8024),
+        "Did not expect TS8024 for a non-param JSDoc tag prefix. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7006),
+        "Expected TS7006 because @paramx should not type the function parameter. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn checked_js_jsdoc_overload_prefix_tag_does_not_report_ts7012() {
     let diagnostics = compile_named_files(
         &[(

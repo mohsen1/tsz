@@ -194,5 +194,6 @@ mod portability_resolve;
 mod type_inference;
 mod type_param_rewrite;
 mod type_printing;
+mod type_printing_paths;
 mod variable_decl;
 mod visibility;

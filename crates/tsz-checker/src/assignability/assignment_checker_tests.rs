@@ -752,6 +752,32 @@ let foo: Record<E, any> = {};
 }
 
 #[test]
+fn mapped_type_assertion_source_preserves_alias_display() {
+    let source = r#"
+type HomomorphicMappedType<T> = { [P in keyof T]: T[P] extends string ? boolean : null };
+
+function test<T extends [number] | readonly [string]>() {
+    const arr: any[] = [] as HomomorphicMappedType<T>;
+}
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for readonly tuple mapped type assertion");
+    assert!(
+        diag.message_text
+            .contains("Type 'HomomorphicMappedType<T>' is not assignable to type 'any[]'."),
+        "TS2322 should preserve the mapped alias assertion display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("[T[0] extends string"),
+        "TS2322 should not expand the mapped alias assertion to its tuple body, got: {diag:?}"
+    );
+}
+
+#[test]
 fn function_expression_assignment_reports_outer_signature_mismatch() {
     let source = r#"
 interface T {

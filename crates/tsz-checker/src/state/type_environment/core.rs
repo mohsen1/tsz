@@ -387,7 +387,19 @@ impl<'a> CheckerState<'a> {
         // to ensure the TypeIds in the body match the TypeIds in the substitution.
         // Previously we called type_reference_symbol_type and get_type_params_for_symbol
         // separately, which created DIFFERENT TypeIds for the same type parameters.
-        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        let (mut body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+            && crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, body_type)
+                .is_some_and(|shape| !shape.construct_signatures.is_empty())
+            && let Some(def_id) = self.ctx.get_existing_def_id(sym_id)
+            && let Ok(env) = self.ctx.type_env.try_borrow()
+            && let Some(instance_type) = env.get_class_instance_type(def_id)
+        {
+            body_type = instance_type;
+        }
 
         if body_type == TypeId::ANY || body_type == TypeId::ERROR {
             return type_id;
@@ -564,7 +576,10 @@ impl<'a> CheckerState<'a> {
                         // match at the Application level for infer pattern matching.
                         arg
                     }
-                    _ => self.evaluate_type_with_env(arg),
+                    _ => {
+                        let evaluated = self.evaluate_type_with_env(arg);
+                        self.resolve_type_query_type(evaluated)
+                    }
                 }
             })
             .collect();
