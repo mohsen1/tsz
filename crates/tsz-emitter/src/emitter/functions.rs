@@ -178,6 +178,7 @@ impl<'a> Printer<'a> {
         // arrow bodies during block emission.
         self.push_temp_scope();
         self.remove_namespace_exported_parameter_names(&func.parameters.nodes);
+        self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
 
         // If we have pending object rest params and a concise body, convert to block body
         if !body_is_block && !self.pending_object_rest_params.is_empty() {
@@ -226,6 +227,7 @@ impl<'a> Printer<'a> {
             self.emitting_function_body_block = prev_emitting_function_body_block;
         }
 
+        self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.pop_temp_scope();
     }
@@ -252,6 +254,7 @@ impl<'a> Printer<'a> {
         self.push_temp_scope();
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         self.remove_namespace_exported_parameter_names(&func.parameters.nodes);
+        self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         self.write("{");
         self.write_line();
         self.increase_indent();
@@ -280,6 +283,7 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+        self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.pop_temp_scope();
     }
@@ -987,6 +991,7 @@ impl<'a> Printer<'a> {
         let prev_rewrite_args = self.ctx.rewrite_arguments_to_arguments_1;
         self.ctx.rewrite_arguments_to_arguments_1 = false;
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         for &param_idx in &func.parameters.nodes {
             if let Some(param) = self.arena.get_parameter_at(param_idx) {
                 let name = self.get_identifier_text_idx(param.name);
@@ -996,6 +1001,7 @@ impl<'a> Printer<'a> {
             }
         }
         self.emit(func.body);
+        self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.ctx.rewrite_arguments_to_arguments_1 = prev_rewrite_args;
         self.ctx.flags.in_generator = prev_in_generator;

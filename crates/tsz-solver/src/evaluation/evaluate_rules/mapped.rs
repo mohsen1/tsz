@@ -119,6 +119,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Get the constraint - this tells us what keys to iterate over
         let constraint = mapped.constraint;
 
+        if let Some(name_type) = mapped.name_type
+            && (crate::type_queries::contains_type_parameters_db(self.interner(), constraint)
+                || crate::type_queries::contains_type_parameters_except_name_db(
+                    self.interner(),
+                    name_type,
+                    mapped.type_param.name,
+                ))
+        {
+            tracing::trace!(
+                constraint = ?self.interner().lookup(constraint),
+                name_type = ?self.interner().lookup(name_type),
+                "evaluate_mapped: DEFERRED - generic remapped mapped type"
+            );
+            return self.interner().mapped(*mapped);
+        }
+
         // SPECIAL CASE: Don't expand mapped types over type parameters.
         // When the constraint is `keyof T` where T is a type parameter, we should
         // keep the mapped type deferred. Even though we might be able to evaluate

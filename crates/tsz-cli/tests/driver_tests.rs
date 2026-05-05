@@ -66,6 +66,57 @@ fn default_args() -> CliArgs {
     CliArgs::try_parse_from(["tsz"]).expect("default args should parse")
 }
 
+#[test]
+fn source_file_test_pragmas_do_not_override_project_options() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "allowJs": true,
+            "checkJs": true,
+            "noUnusedLocals": true
+          },
+          "files": ["strict-off.js", "unused-off.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("strict-off.js"),
+        r#"// @strict: false
+function takesAny(value) {
+  return value;
+}
+
+takesAny(1);
+"#,
+    );
+    write_file(
+        &base.join("unused-off.ts"),
+        r#"// @noUnusedLocals: false
+export {};
+
+const unused = 1;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&7006),
+        "source @strict pragma should not suppress project strict/noImplicitAny, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&6133),
+        "source @noUnusedLocals pragma should not suppress project noUnusedLocals, got: {codes:?}"
+    );
+}
+
 fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_loader::LibFile>> {
     let lib_paths = crate::config::resolve_default_lib_files(target).expect("default libs");
     let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
@@ -126,6 +177,154 @@ export = Foo;
         "Expected TS2458 for duplicate AMD module name directives, got: {:?}",
         result.diagnostics
     );
+}
+
+#[test]
+fn compile_triple_slash_prefix_tags_are_comments() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("reference-path-prefix.ts"),
+        r#"/// <referencex path="./missing-file" />
+
+export const pathCase = 1;
+"#,
+    );
+    write_file(
+        &base.join("reference-types-prefix.ts"),
+        r#"/// <referencex types="missing-prefix-types" />
+
+export const typesCase = 1;
+"#,
+    );
+    write_file(
+        &base.join("malformed-reference-prefix.ts"),
+        r#"/// <referencex path=./missing-file />
+
+export const malformedCase = 1;
+"#,
+    );
+    write_file(
+        &base.join("amd-module-prefix.ts"),
+        r#"/// <amd-modulex name="first" />
+/// <amd-module name="second" />
+
+export const amdCase = 1;
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true
+          },
+          "files": [
+            "reference-path-prefix.ts",
+            "reference-types-prefix.ts",
+            "malformed-reference-prefix.ts",
+            "amd-module-prefix.ts"
+          ]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    for unexpected in [1084, 2458, 2688, 6231] {
+        assert!(
+            !codes.contains(&unexpected),
+            "prefix triple-slash tags should be comments; got diagnostics: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn compile_import_elision_ignores_string_and_block_comment_text() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("string-literal.ts"),
+        r#"import { Foo } from "./dep";
+
+const label = "Foo";
+
+label;
+"#,
+    );
+    write_file(
+        &base.join("block-comment.ts"),
+        r#"import { Foo } from "./dep";
+
+/* Foo */
+const label = "bar";
+
+label;
+"#,
+    );
+    write_file(
+        &base.join("line-comment.ts"),
+        r#"import { Foo } from "./dep";
+
+// Foo
+const label = "bar";
+
+label;
+"#,
+    );
+    write_file(&base.join("dep.ts"), "export const Foo = 1;\n");
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "esnext",
+            "strict": true,
+            "outDir": "dist"
+          },
+          "files": [
+            "string-literal.ts",
+            "block-comment.ts",
+            "line-comment.ts",
+            "dep.ts"
+          ]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+
+    let string_js =
+        fs::read_to_string(base.join("dist/string-literal.js")).expect("read string output");
+    let block_js =
+        fs::read_to_string(base.join("dist/block-comment.js")).expect("read block output");
+    let line_js = fs::read_to_string(base.join("dist/line-comment.js")).expect("read line output");
+
+    for output in [&string_js, &block_js, &line_js] {
+        assert!(
+            !output.contains("import { Foo }"),
+            "unused Foo import should be elided; output:\n{output}"
+        );
+        assert!(
+            output.contains("export {};"),
+            "module marker should remain after import elision; output:\n{output}"
+        );
+    }
+    assert!(string_js.contains("const label = \"Foo\";"));
+    assert!(block_js.contains("/* Foo */"));
+    assert!(line_js.contains("// Foo"));
 }
 
 #[test]
@@ -2063,6 +2262,48 @@ fn compile_with_tsconfig_emits_outputs() {
     assert!(result.diagnostics.is_empty());
     assert!(base.join("dist/src/index.js").is_file());
     assert!(base.join("dist/src/index.d.ts").is_file());
+}
+
+#[test]
+fn compile_single_source_amd_outfile_emits_bundle() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "amd",
+            "outFile": "dist/bundle.js",
+            "strict": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(&base.join("main.ts"), "export const value = 1;");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(result.diagnostics.is_empty());
+    assert!(
+        base.join("dist/bundle.js").is_file(),
+        "expected outFile bundle, emitted: {:?}",
+        result.emitted_files
+    );
+    assert!(
+        !base.join("main.js").exists(),
+        "single-source outFile should not emit per-file main.js"
+    );
+    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    assert!(
+        bundle.contains("define(\"main\", [\"require\", \"exports\"], function"),
+        "expected named AMD outFile wrapper, got:\n{bundle}"
+    );
 }
 
 #[test]
@@ -12083,6 +12324,67 @@ export const y = x.item;
     assert!(
         !result.diagnostics.iter().any(|d| d.code == 1340),
         "Did not expect TS1340 for bare import type of export= class module, got: {result:?}"
+    );
+}
+
+#[test]
+fn checked_js_async_jsdoc_promise_prefixed_alias_reports_ts1064() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "module": "commonjs",
+    "target": "es2020",
+    "types": []
+  },
+  "files": ["main.js"]
+}"#,
+    );
+    write_file(
+        &base.join("main.js"),
+        r#"// @ts-check
+
+/**
+ * @template T
+ * @typedef {{ value: T }} PromiseButNot
+ */
+
+/** @type {function(): Promise<string>} */
+const ok = async () => "ok";
+
+/** @type {function(): PromiseButNot<string>} */
+const f = async () => "ok";
+
+ok;
+f;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts1064: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1064)
+        .collect();
+    assert_eq!(
+        ts1064.len(),
+        1,
+        "expected TS1064 only for PromiseButNot, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts1064[0].message_text.contains("PromiseButNot<string>"),
+        "expected TS1064 to suggest wrapping PromiseButNot<string>, got: {:?}",
+        ts1064[0]
     );
 }
 

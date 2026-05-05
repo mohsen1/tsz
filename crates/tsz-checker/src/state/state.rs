@@ -172,6 +172,15 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Allow conformance-harness source comments such as `// @strict: false`
+    /// to override checker options for this state.
+    ///
+    /// Normal project checking leaves this disabled so source comments cannot
+    /// mutate real compiler options.
+    pub const fn enable_source_file_test_pragmas(&mut self) {
+        self.ctx.allow_source_file_test_pragmas = true;
+    }
+
     /// Create a new `CheckerState` with a shared `DefinitionStore`.
     ///
     /// This ensures that all type definitions (interfaces, type aliases, etc.) across
@@ -1422,23 +1431,25 @@ impl<'a> CheckerState<'a> {
                 // unchanged, and the current flow node can reach that confirmed node
                 // via a straight-line chain (no CONDITION/ASSIGNMENT/BRANCH_LABEL nodes),
                 // we know flow analysis will return the declared type again.
-                let stable_key = (sym_id, cached);
-                let confirmed_flow = self
-                    .ctx
-                    .symbol_flow_confirmed
-                    .borrow()
-                    .get(&stable_key)
-                    .copied();
-                if let Some(confirmed_flow) = confirmed_flow
-                    && self.is_straight_line_flow_to(flow_node, confirmed_flow, sym_id)
-                {
-                    // Update the confirmed flow node to the current one so
-                    // the next access only needs to walk back a few steps.
-                    self.ctx
+                if cached != TypeId::UNKNOWN {
+                    let stable_key = (sym_id, cached);
+                    let confirmed_flow = self
+                        .ctx
                         .symbol_flow_confirmed
-                        .borrow_mut()
-                        .insert(stable_key, flow_node);
-                    return cached;
+                        .borrow()
+                        .get(&stable_key)
+                        .copied();
+                    if let Some(confirmed_flow) = confirmed_flow
+                        && self.is_straight_line_flow_to(flow_node, confirmed_flow, sym_id)
+                    {
+                        // Update the confirmed flow node to the current one so
+                        // the next access only needs to walk back a few steps.
+                        self.ctx
+                            .symbol_flow_confirmed
+                            .borrow_mut()
+                            .insert(stable_key, flow_node);
+                        return cached;
+                    }
                 }
             }
 
@@ -1482,7 +1493,7 @@ impl<'a> CheckerState<'a> {
                     );
                     if widened_cached == narrowed {
                         // Update stable flow cache: flow returned declared type
-                        if should_narrow {
+                        if should_narrow && cached != TypeId::UNKNOWN {
                             self.update_symbol_flow_confirmed(idx, cached, true);
                         }
                         return cached;
@@ -1493,7 +1504,7 @@ impl<'a> CheckerState<'a> {
                     }
                 } else {
                     // Flow returned declared type unchanged — update stable cache
-                    if should_narrow {
+                    if should_narrow && cached != TypeId::UNKNOWN {
                         self.update_symbol_flow_confirmed(idx, cached, true);
                     }
                 }
@@ -1625,6 +1636,7 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .get_node_symbol(idx)
                     .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+                && result != TypeId::UNKNOWN
             {
                 let stable_key = (sym_id, result);
                 let confirmed_flow = self
@@ -1678,7 +1690,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Update stable flow cache based on whether narrowing occurred
-            if narrowed == result {
+            if narrowed == result && result != TypeId::UNKNOWN {
                 self.update_symbol_flow_confirmed(idx, result, true);
             } else {
                 self.update_symbol_flow_confirmed(idx, result, false);

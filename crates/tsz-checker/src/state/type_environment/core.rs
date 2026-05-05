@@ -6,6 +6,7 @@ use crate::query_boundaries::state::type_environment as query;
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
+use std::cell::Cell;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -14,6 +15,10 @@ use tsz_solver::MappedTypeId;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::{CallSignature, CallableShape, ParamInfo};
+
+thread_local! {
+    static ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK: Cell<bool> = const { Cell::new(false) };
+}
 
 // Global instantiation depth and fuel counters now live in
 // `EvaluationSession` (shared via `Rc` on `CheckerContext::eval_session`).
@@ -793,6 +798,22 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    pub(crate) fn evaluate_concrete_remapped_mapped_type_with_resolution(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.set(false));
+            }
+        }
+
+        ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.set(true));
+        let _reset = Reset;
+        self.evaluate_mapped_type_with_resolution(type_id)
+    }
+
     pub(crate) fn evaluate_mapped_type_with_resolution_inner(
         &mut self,
         type_id: TypeId,
@@ -892,7 +913,21 @@ impl<'a> CheckerState<'a> {
         // Iterate the source keys. Name remapping is applied per key below so
         // generic `as` clauses that cannot produce exact property names keep the
         // mapped type deferred instead of expanding to the original key space.
-        let string_keys: Vec<_> = query::extract_string_literal_keys(self.ctx.types, keys);
+        let mut string_keys: Vec<_> = query::extract_string_literal_keys(self.ctx.types, keys);
+        if string_keys.is_empty()
+            && ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.get())
+            && crate::query_boundaries::assignability::remapped_mapped_type_has_no_outer_type_params(
+                self.ctx.types,
+                type_id,
+            )
+            && let Some(source) = is_homomorphic_source
+        {
+            let source_props =
+                query::collect_homomorphic_source_property_infos(self.ctx.types, source);
+            if !source_props.is_empty() {
+                string_keys = source_props.iter().map(|prop| prop.name).collect();
+            }
+        }
         if string_keys.is_empty() {
             // Can't evaluate - return original
             return type_id;

@@ -979,4 +979,41 @@ impl<'a> CheckerState<'a> {
 
         ordered.into_iter().map(|(_, name)| name).collect()
     }
+
+    pub(crate) fn try_report_concrete_remapped_mapped_missing_property(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        let resolved = self.resolve_lazy_type(source);
+        if !crate::query_boundaries::assignability::remapped_mapped_type_has_no_outer_type_params(
+            self.ctx.types,
+            resolved,
+        ) {
+            return false;
+        }
+        let evaluated = self.evaluate_concrete_remapped_mapped_type_with_resolution(resolved);
+        if evaluated == resolved || self.is_assignable_to(evaluated, target) {
+            return false;
+        }
+        let before = self.ctx.diagnostics.len();
+        let original = self.format_type_for_assignability_message(resolved);
+        let replacement_type = self.format_type_for_assignability_message(evaluated);
+        self.error_type_not_assignable_with_reason_at(evaluated, target, diag_idx);
+        if let Some(diag) = self.ctx.diagnostics.get_mut(before)
+            && diag.code
+                == crate::diagnostics::diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        {
+            let replacement = format!("in type '{replacement_type}' but required");
+            if diag.message_text.contains(&original) {
+                diag.message_text = diag.message_text.replace(&original, &replacement_type);
+            } else if let Some((prefix, rest)) = diag.message_text.split_once("in type '")
+                && let Some((_, suffix)) = rest.split_once("' but required")
+            {
+                diag.message_text = format!("{prefix}{replacement}{suffix}");
+            }
+        }
+        true
+    }
 }

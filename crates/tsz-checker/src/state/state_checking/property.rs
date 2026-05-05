@@ -1,4 +1,3 @@
-use crate::context::TypingRequest;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -9,10 +8,63 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn report_excess_function_like_implicit_any(&mut self, func_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            && node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::METHOD_DECLARATION
+            && node.kind != syntax_kind_ext::GET_ACCESSOR
+            && node.kind != syntax_kind_ext::SET_ACCESSOR
+        {
+            return false;
+        }
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        for &param_idx in &func.parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.type_annotation.is_some() {
+                continue;
+            }
+            let param_name = self.parameter_name_for_error(param.name);
+            if param_name.is_empty() {
+                continue;
+            }
+            let Some((start, end)) = self.get_node_span(param.name) else {
+                continue;
+            };
+            let template = tsz_common::diagnostics::get_message_template(
+                crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+            )
+            .unwrap_or("");
+            let message = crate::diagnostics::format_message(template, &[&param_name, "any"]);
+            self.ctx
+                .deferred_excess_property_implicit_any_diagnostics
+                .push(tsz_common::diagnostics::Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    start,
+                    end.saturating_sub(start),
+                    message,
+                    crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+                ));
+        }
+        if func.body.is_some() {
+            self.check_for_nested_function_ts7006(func.body);
+        }
+        true
+    }
+
     fn check_excess_property_initializer_implicit_any(
         &mut self,
         elem_idx: NodeIndex,
-        target: TypeId,
+        _target: TypeId,
     ) {
         let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
             return;
@@ -21,75 +73,23 @@ impl<'a> CheckerState<'a> {
         match elem_node.kind {
             syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                 if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                    let contextual_type = self
-                        .get_property_name_resolved(prop.name)
-                        .and_then(|name| {
-                            self.contextual_object_literal_property_type(target, &name)
-                        })
-                        .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
-
-                    if let Some(contextual_type) = contextual_type {
-                        let request = TypingRequest::with_contextual_type(contextual_type);
-                        self.invalidate_initializer_for_context_change(prop.initializer);
-                        self.get_type_of_node_with_request(prop.initializer, &request);
-                    } else {
+                    self.invalidate_initializer_for_context_change(prop.initializer);
+                    if !self.report_excess_function_like_implicit_any(prop.initializer) {
                         self.check_for_nested_function_ts7006(prop.initializer);
                     }
                 }
             }
-            syntax_kind_ext::METHOD_DECLARATION => {
-                if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
-                    let contextual_type = self
-                        .get_property_name_resolved(method.name)
-                        .and_then(|name| {
-                            self.contextual_object_literal_property_type(target, &name)
-                        })
-                        .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
-
-                    if let Some(contextual_type) = contextual_type {
-                        let request = TypingRequest::with_contextual_type(contextual_type);
-                        self.invalidate_function_like_for_contextual_retry(elem_idx);
-                        self.get_type_of_function_with_request(elem_idx, &request);
-                    } else {
-                        for (pi, &param_idx) in method.parameters.nodes.iter().enumerate() {
-                            if let Some(param_node) = self.ctx.arena.get(param_idx)
-                                && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                            {
-                                self.maybe_report_implicit_any_parameter(param, false, pi);
-                            }
-                        }
-                        if method.body.is_some() {
-                            self.check_for_nested_function_ts7006(method.body);
-                        }
-                    }
-                }
+            syntax_kind_ext::METHOD_DECLARATION
+                if self.ctx.arena.get_method_decl(elem_node).is_some() =>
+            {
+                self.invalidate_function_like_for_contextual_retry(elem_idx);
+                self.report_excess_function_like_implicit_any(elem_idx);
             }
-            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
-                if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
-                    let contextual_type = self
-                        .get_property_name_resolved(accessor.name)
-                        .and_then(|name| {
-                            self.contextual_object_literal_property_type(target, &name)
-                        })
-                        .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
-
-                    if let Some(contextual_type) = contextual_type {
-                        let request = TypingRequest::with_contextual_type(contextual_type);
-                        self.invalidate_function_like_for_contextual_retry(elem_idx);
-                        self.get_type_of_function_with_request(elem_idx, &request);
-                    } else {
-                        for (pi, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
-                            if let Some(param_node) = self.ctx.arena.get(param_idx)
-                                && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                            {
-                                self.maybe_report_implicit_any_parameter(param, false, pi);
-                            }
-                        }
-                        if accessor.body.is_some() {
-                            self.check_for_nested_function_ts7006(accessor.body);
-                        }
-                    }
-                }
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR
+                if self.ctx.arena.get_accessor(elem_node).is_some() =>
+            {
+                self.invalidate_function_like_for_contextual_retry(elem_idx);
+                self.report_excess_function_like_implicit_any(elem_idx);
             }
             _ => {}
         }
@@ -254,6 +254,85 @@ impl<'a> CheckerState<'a> {
         if generic_mapped_excess.is_some() {
             self.emit_tracked_excess_property(generic_mapped_excess, target);
             return;
+        }
+
+        if let Some(members) = query::intersection_members(self.ctx.types, union_check_target) {
+            let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
+            for source_prop in source_props {
+                if explicit_property_names.is_some()
+                    && !explicit_property_names
+                        .as_ref()
+                        .is_some_and(|names| names.contains(&source_prop.name))
+                {
+                    continue;
+                }
+
+                let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+                let mut accepted = false;
+                let mut checked_any_member = false;
+                let mut uncertain = false;
+
+                for &member in &members {
+                    let resolved_member = self.resolve_type_for_property_access(member);
+                    if self
+                        .generic_mapped_receiver_lacks_explicit_property(member, prop_name.as_ref())
+                        || self.generic_mapped_receiver_lacks_explicit_property(
+                            resolved_member,
+                            prop_name.as_ref(),
+                        )
+                    {
+                        checked_any_member = true;
+                        continue;
+                    }
+
+                    match self.resolve_property_access_with_env(resolved_member, prop_name.as_ref())
+                    {
+                        tsz_solver::operations::property::PropertyAccessResult::Success {
+                            type_id,
+                            ..
+                        }
+                        | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                            property_type: Some(type_id),
+                            ..
+                        } if type_id != TypeId::ERROR => {
+                            accepted = true;
+                            break;
+                        }
+                        tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                            ..
+                        } => {
+                            checked_any_member = true;
+                        }
+                        _ => {
+                            if let Some(shape) = query::object_shape(self.ctx.types, resolved_member)
+                            {
+                                if shape.string_index.is_some() {
+                                    accepted = true;
+                                    break;
+                                }
+                                checked_any_member = true;
+                            } else if resolved_member == TypeId::OBJECT
+                                || query::is_type_parameter_like(self.ctx.types, resolved_member)
+                            {
+                                uncertain = true;
+                            } else {
+                                checked_any_member = true;
+                            }
+                        }
+                    }
+                }
+
+                if !accepted && checked_any_member && !uncertain {
+                    let report_idx = self
+                        .find_object_literal_property_element(idx, source_prop.name)
+                        .unwrap_or(idx);
+                    self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
+                }
+            }
+            if first_excess.is_some() {
+                self.emit_tracked_excess_property(first_excess, target);
+                return;
+            }
         }
 
         // Handle union targets first using type_queries. For named type aliases,

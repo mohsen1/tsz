@@ -642,6 +642,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     };
                 }
 
+                if self.intersection_result_exceeds_complexity_limit(&results) {
+                    self.interner().mark_union_too_complex();
+                }
+
                 let mut type_id = if results.len() == 1 {
                     results[0]
                 } else {
@@ -1028,6 +1032,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // in resolve_string_property, resolve_number_property, etc.
         // We return the original type here and let the normal resolution handle it.
         type_id
+    }
+
+    fn intersection_result_exceeds_complexity_limit(&self, results: &[TypeId]) -> bool {
+        use crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT;
+
+        let mut cross_product_size = 1usize;
+        for &result in results {
+            if let Some(TypeData::Union(members)) = self.interner().lookup(result) {
+                cross_product_size =
+                    cross_product_size.saturating_mul(self.interner().type_list(members).len());
+                if cross_product_size >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// For intersections of a discriminated union with a literal discriminant object

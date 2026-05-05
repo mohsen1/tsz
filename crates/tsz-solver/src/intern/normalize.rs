@@ -812,7 +812,6 @@ impl TypeInterner {
                 LiteralValue::BigInt(_) => Some(PrimitiveClass::Bigint),
             },
             TypeData::UniqueSymbol(_) => Some(PrimitiveClass::Symbol),
-            TypeData::TemplateLiteral(_) => Some(PrimitiveClass::String),
             _ => None,
         }
     }
@@ -865,6 +864,17 @@ impl TypeInterner {
             if matches!(t_data, Some(TypeData::Literal(_))) {
                 // Both are literals - only subtype if identical (handled above)
                 return false;
+            }
+
+            if matches!(
+                (&s_data, &t_data),
+                (
+                    Some(TypeData::Literal(LiteralValue::String(_))),
+                    Some(TypeData::TemplateLiteral(_))
+                )
+            ) {
+                let mut checker = crate::relations::subtype::SubtypeChecker::new(self);
+                return checker.is_subtype_of(source, target);
             }
 
             // Check if target is a union containing a compatible primitive

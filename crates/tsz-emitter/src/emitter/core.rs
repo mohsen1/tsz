@@ -162,6 +162,8 @@ pub struct PrinterOptions {
     pub jsx_fragment_factory: Option<String>,
     /// Module specifier for automatic JSX runtime (e.g. "react")
     pub jsx_import_source: Option<String>,
+    /// Module name to use for AMD/System outFile bundles.
+    pub bundled_module_name: Option<String>,
     /// When true, suppress "use strict" emission even if module kind is CJS.
     /// Set when module was overridden from ESM/preserve to CJS for .cts/.cjs files.
     pub suppress_use_strict: bool,
@@ -212,6 +214,7 @@ impl Default for PrinterOptions {
             jsx_factory: None,
             jsx_fragment_factory: None,
             jsx_import_source: None,
+            bundled_module_name: None,
             suppress_use_strict: false,
             strict_null_checks: false,
             verbatim_module_syntax: false,
@@ -439,6 +442,10 @@ pub struct Printer<'a> {
     /// Names of variables exported from the current CJS module.
     /// Used to qualify identifier reads: `x` → `exports.x` in expression positions.
     pub(crate) commonjs_exported_var_names: FxHashSet<String>,
+
+    /// Function parameter names that shadow CJS-exported variables in the current
+    /// function scope. These must keep resolving to the local parameter binding.
+    pub(crate) commonjs_exported_var_shadow_stack: Vec<FxHashSet<String>>,
 
     /// Deferred local export bindings active for the current wrapped region.
     /// Maps local variable names to their exported names so nested variable
@@ -874,6 +881,7 @@ impl<'a> Printer<'a> {
             namespace_exported_names: FxHashSet::default(),
             namespace_parent_exported_names: FxHashSet::default(),
             commonjs_exported_var_names: FxHashSet::default(),
+            commonjs_exported_var_shadow_stack: Vec::new(),
             deferred_local_export_bindings: None,
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,

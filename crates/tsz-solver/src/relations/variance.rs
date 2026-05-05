@@ -948,16 +948,22 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     /// Template literals: types in spans are at current polarity.
     fn visit_template_literal(&mut self, template_id: u32) {
+        let before = self.result;
         let spans = self
             .computer
             .db
             .template_list(TemplateLiteralId(template_id));
         let current_polarity = self.get_current_polarity();
+        self.inside_unreliable_application += 1;
 
         for span in spans.iter() {
             if let TemplateSpan::Type(type_id) = span {
                 self.visit_with_polarity(*type_id, current_polarity);
             }
+        }
+        self.inside_unreliable_application -= 1;
+        if self.result != before {
+            self.result |= Variance::REJECTION_UNRELIABLE;
         }
     }
 

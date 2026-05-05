@@ -863,6 +863,39 @@ foo("um", []);
 }
 
 #[test]
+fn ts2769_assignment_rhs_overload_mismatch_anchors_argument() {
+    let source = r#"
+let cond: boolean;
+declare function foo(x: string): number;
+declare function foo(x: number): string;
+
+function g() {
+    let x: string | number | boolean;
+    x = "";
+    while (cond) {
+        x = foo(x);
+    }
+}
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2769)
+        .expect("expected TS2769");
+
+    let arg_start = source.find("foo(x)").expect("expected overload call") as u32 + 4;
+    assert_eq!(
+        diag.start, arg_start,
+        "TS2769 should anchor at the offending argument inside assignment RHS"
+    );
+    assert_eq!(
+        diag.length, 1,
+        "TS2769 should cover only the argument token"
+    );
+}
+
+#[test]
 fn ts2769_provisional_callback_failures_anchor_callee_not_callback_argument() {
     let source = r#"
 declare var func: {

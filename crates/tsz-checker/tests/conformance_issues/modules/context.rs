@@ -812,6 +812,78 @@ declare namespace JSX {
 }
 
 #[test]
+fn test_react_jsx_runtime_comment_import_does_not_duplicate_intrinsic_index_signature() {
+    let diagnostics = compile_named_project_get_diagnostics_with_options(
+        &[
+            (
+                "/app.tsx",
+                r#"
+import { jsx } from "react/jsx-runtime";
+
+const node = <custom-tag />;
+jsx;
+node;
+"#,
+            ),
+            (
+                "/node_modules/@types/react/package.json",
+                r#"
+{
+  "name": "@types/react",
+  "version": "0.0.1",
+  "main": "",
+  "types": "index.d.ts",
+  "exports": {
+    "./*.js": "./*.js",
+    "./*": "./*.js"
+  }
+}
+"#,
+            ),
+            (
+                "/node_modules/@types/react/index.d.ts",
+                r#"
+export {};
+
+export namespace JSX {
+  interface IntrinsicElements {
+    [elemName: string]: {};
+  }
+}
+"#,
+            ),
+            (
+                "/node_modules/@types/react/jsx-runtime.d.ts",
+                r#"
+// A comment that looks like import "."; should not merge another JSX namespace.
+export function jsx(type: string, props: unknown, key?: string): unknown;
+
+export namespace JSX {
+  interface IntrinsicElements {
+    "custom-tag": {};
+  }
+}
+"#,
+            ),
+        ],
+        CheckerOptions {
+            module: ModuleKind::NodeNext,
+            target: ScriptTarget::ES2015,
+            jsx_mode: JsxMode::ReactJsx,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, message)| {
+            *code != 2374 || !message.contains("Duplicate index signature for type 'string'")
+        }),
+        "Did not expect TS2374 from a JSX runtime comment-only import. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_array_buffer_view_uses_lib_default_type_argument_without_ts2314() {
     if load_lib_files_for_test().is_empty() {
         return;

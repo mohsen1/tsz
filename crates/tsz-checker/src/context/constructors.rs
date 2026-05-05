@@ -57,6 +57,7 @@ impl<'a> CheckerContext<'a> {
             compiler_options,
             capabilities,
             report_unresolved_imports: false,
+            allow_source_file_test_pragmas: false,
             file_is_esm: None,
             file_is_esm_map: None,
             spelling_suggestions_emitted: std::cell::Cell::new(0),
@@ -154,6 +155,7 @@ impl<'a> CheckerContext<'a> {
             callback_return_type_errors: Vec::new(),
             modules_with_ts2307_emitted: FxHashSet::default(),
             deferred_truthiness_diagnostics: Vec::new(),
+            deferred_excess_property_implicit_any_diagnostics: Vec::new(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: FxHashSet::default(),
             circular_type_aliases: FxHashSet::default(),
@@ -595,6 +597,7 @@ impl<'a> CheckerContext<'a> {
 
         // Propagate parent state that is safe across arenas.
         ctx.no_implicit_override = parent.no_implicit_override;
+        ctx.allow_source_file_test_pragmas = parent.allow_source_file_test_pragmas;
         if !parent.lib_contexts.is_empty() {
             ctx.set_lib_contexts_shared(Arc::clone(&parent.lib_contexts));
             ctx.set_actual_lib_file_count(parent.actual_lib_file_count);

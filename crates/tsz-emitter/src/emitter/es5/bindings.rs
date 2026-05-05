@@ -681,11 +681,64 @@ impl<'a> Printer<'a> {
                 self.arena,
                 decl.initializer,
             );
+            // `var { foo, baz } = foo;` — the LHS pattern reassigns `foo`,
+            // and `var foo = foo.foo, baz = foo.baz` would read the
+            // already-clobbered `foo` for `baz`. Force the fallback path so a
+            // temp captures the original RHS first.
+            if !ident_text.is_empty()
+                && self.binding_pattern_reassigns_identifier(pattern_node, &ident_text)
+            {
+                self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
+                return;
+            }
             self.emit_es5_destructuring_pattern_direct(pattern_node, &ident_text, first);
             return;
         }
 
         self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
+    }
+
+    /// Walk a binding pattern (object or array) and return true if it
+    /// rebinds the identifier `name` anywhere. Nested patterns are walked
+    /// recursively. Default initializers and computed property names are
+    /// ignored — they're evaluated separately and don't contribute to the
+    /// rebinding hazard we're guarding against.
+    fn binding_pattern_reassigns_identifier(&self, pattern_node: &Node, name: &str) -> bool {
+        let elements = match pattern_node.kind {
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+                    return false;
+                };
+                pattern.elements.nodes.clone()
+            }
+            _ => return false,
+        };
+        for elem_idx in elements {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            let Some(name_node) = self.arena.get(elem.name) else {
+                continue;
+            };
+            if name_node.is_identifier() {
+                if crate::transforms::emit_utils::identifier_text_or_empty(self.arena, elem.name)
+                    == name
+                {
+                    return true;
+                }
+            } else if self.binding_pattern_reassigns_identifier(name_node, name) {
+                return true;
+            }
+        }
+        false
     }
 
     pub(in crate::emitter) fn emit_es5_destructuring_fallback(

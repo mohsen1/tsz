@@ -1680,27 +1680,98 @@ impl<'a> TypeFormatter<'a> {
         ))
     }
 
-    pub(super) fn format_template_literal(&mut self, spans: &[TemplateSpan]) -> String {
-        let mut result = String::from("`");
+    fn template_literal_spans_for_interpolation_display(
+        &self,
+        type_id: TypeId,
+    ) -> Option<Vec<TemplateSpan>> {
+        if let Some(TypeData::TemplateLiteral(spans_id)) = self.interner.lookup(type_id) {
+            return Some(
+                self.interner
+                    .template_list(spans_id)
+                    .iter()
+                    .cloned()
+                    .collect(),
+            );
+        }
+
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+        let def_store = self.def_store?;
+        let def = def_store.get(def_id)?;
+        if def.kind != crate::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body = def.body?;
+        let TypeData::TemplateLiteral(spans_id) = self.interner.lookup(body)? else {
+            return None;
+        };
+        Some(
+            self.interner
+                .template_list(spans_id)
+                .iter()
+                .cloned()
+                .collect(),
+        )
+    }
+
+    fn push_template_literal_text(result: &mut String, text: &str) {
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t");
+        result.push_str(&escaped);
+    }
+
+    fn push_template_literal_interpolation(&mut self, result: &mut String, type_id: TypeId) {
+        if let Some(nested) = self.template_literal_spans_for_interpolation_display(type_id) {
+            self.push_template_literal_spans(result, &nested);
+            return;
+        }
+
+        if let Some(TypeData::Literal(literal)) = self.interner.lookup(type_id) {
+            match literal {
+                LiteralValue::String(atom) | LiteralValue::BigInt(atom) => {
+                    let text = self.atom(atom);
+                    Self::push_template_literal_text(result, &text);
+                }
+                LiteralValue::Number(number) => {
+                    let text =
+                        crate::relations::subtype::rules::literals::format_number_for_template(
+                            number.0,
+                        );
+                    Self::push_template_literal_text(result, &text);
+                }
+                LiteralValue::Boolean(value) => {
+                    result.push_str(if value { "true" } else { "false" });
+                }
+            }
+            return;
+        }
+
+        result.push_str("${");
+        result.push_str(&self.format(type_id));
+        result.push('}');
+    }
+
+    fn push_template_literal_spans(&mut self, result: &mut String, spans: &[TemplateSpan]) {
         for span in spans {
             match span {
                 TemplateSpan::Text(text) => {
                     let text = self.atom(*text);
-                    // Escape special characters consistently with string literals
-                    let escaped = text
-                        .replace('\\', "\\\\")
-                        .replace('\n', "\\n")
-                        .replace('\r', "\\r")
-                        .replace('\t', "\\t");
-                    result.push_str(&escaped);
+                    Self::push_template_literal_text(result, &text);
                 }
                 TemplateSpan::Type(type_id) => {
-                    result.push_str("${");
-                    result.push_str(&self.format(*type_id));
-                    result.push('}');
+                    self.push_template_literal_interpolation(result, *type_id);
                 }
             }
         }
+    }
+
+    pub(super) fn format_template_literal(&mut self, spans: &[TemplateSpan]) -> String {
+        let mut result = String::from("`");
+        self.push_template_literal_spans(&mut result, spans);
         result.push('`');
         result
     }

@@ -149,6 +149,7 @@ impl<'a> Printer<'a> {
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         for &param_idx in &func.parameters.nodes {
             if let Some(param) = self.arena.get_parameter_at(param_idx) {
                 let name = self.get_identifier_text_idx(param.name);
@@ -158,6 +159,7 @@ impl<'a> Printer<'a> {
             }
         }
         self.emit(func.body);
+        self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.ctx.flags.in_generator = prev_in_generator;
         self.declared_namespace_names = prev_declared;
