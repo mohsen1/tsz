@@ -1007,6 +1007,7 @@ impl<'a> CheckerState<'a> {
             .arena
             .get_identifier(expr_node)
             .is_some_and(|ident| ident.escaped_text == "Symbol")
+            && self.is_identifier_reference_to_global_symbol(call.expression)
     }
 
     /// Get the binder SymbolId for a variable declaration's name node.
