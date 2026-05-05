@@ -48,6 +48,43 @@ fn check_without_lib_with_minimal_core_globals(source: &str) -> Vec<Diagnostic> 
     check_without_lib_with_minimal_core_globals_except(&[], source)
 }
 
+fn check_with_no_lib_and_minimal_core_globals(source: &str) -> Vec<Diagnostic> {
+    let mut full_source = String::new();
+    for &(_, decl) in MINIMAL_CORE_GLOBAL_DECLS {
+        full_source.push_str(decl);
+        full_source.push('\n');
+    }
+    full_source.push_str(source);
+
+    let mut parser = ParserState::new("test.ts".to_string(), full_source);
+    let root = parser.parse_source_file();
+
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            no_lib: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.clone()
+}
+
 fn check_without_lib_with_minimal_core_globals_except(
     omitted: &[&str],
     source: &str,
@@ -163,6 +200,32 @@ fn promise_like_type_reference_emits_ts2304_with_minimal_core_globals() {
             .iter()
             .any(|d| d.code == 2304 && d.message_text.contains("'PromiseLike'")),
         "Expected TS2304 for PromiseLike type reference without libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nolib_arraylike_and_promiselike_references_emit_ts2304() {
+    let diagnostics = check_with_no_lib_and_minimal_core_globals(
+        r#"
+declare const a: ArrayLike<string>;
+declare const p: PromiseLike<string>;
+
+a[0].toUpperCase();
+p.then(value => value.toUpperCase());
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2304 && d.message_text.contains("'ArrayLike'")),
+        "Expected TS2304 for ArrayLike under noLib, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2304 && d.message_text.contains("'PromiseLike'")),
+        "Expected TS2304 for PromiseLike under noLib, got: {diagnostics:?}"
     );
 }
 
