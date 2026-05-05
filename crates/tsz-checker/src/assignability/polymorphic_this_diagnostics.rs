@@ -4,6 +4,21 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn emit_polymorphic_this_call_assignment_error(
+        &mut self,
+        source_idx: NodeIndex,
+        target: TypeId,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        if let Some(display_source) =
+            self.polymorphic_this_call_assignment_source(source_idx, target)
+        {
+            self.error_type_not_assignable_at_with_display_types(display_source, target, diag_idx);
+            return true;
+        }
+        false
+    }
+
     pub(super) fn polymorphic_this_call_assignment_source(
         &mut self,
         source_idx: NodeIndex,
