@@ -7,7 +7,7 @@
 //! Similarly, when the source object has index signatures (dictionary types),
 //! the reverse inference must reverse through the index signature value type.
 
-use crate::test_utils::check_source_codes;
+use crate::test_utils::{check_source_codes, check_source_diagnostics};
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -499,6 +499,57 @@ const x: number = result[0];
     assert!(
         !codes.contains(&2345),
         "Expected no TS2345: array literal should be inferred as tuple when contextual type is a homomorphic Application, got: {codes:?}"
+    );
+}
+
+#[test]
+fn homomorphic_mapped_rest_tuple_context_preserves_element_types() {
+    // homomorphicMappedTypeWithNonHomomorphicInstantiationSpreadable1.ts:
+    // `[...HandleOptions<T[K]>]` is an all-rest tuple context whose rest element
+    // is a homomorphic mapped type application. It still needs tuple inference
+    // so reverse mapped inference can recover a distinct T[K] per array element.
+    let code = r#"
+type HandleOptions<O> = {
+    [I in keyof O]: {
+        value: O[I];
+    };
+};
+
+declare function func1<
+    T extends Record<string, readonly any[]>,
+>(fields: {
+    [K in keyof T]: {
+        label: string;
+        options: [...HandleOptions<T[K]>];
+    };
+}): T;
+
+const result = func1({
+    prop: {
+        label: "first",
+        options: [
+            { value: 123 },
+            { value: "foo" },
+        ],
+    },
+    other: {
+        label: "second",
+        options: [
+            { value: "bar" },
+            { value: true },
+        ],
+    },
+});
+"#;
+    let diagnostics = check_source_diagnostics(code);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 for homomorphic mapped rest tuple inference, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.start, d.length, d.message_text.as_str()))
+            .collect::<Vec<_>>()
     );
 }
 

@@ -461,7 +461,16 @@ impl<'a> CheckerState<'a> {
                         applicable,
                     )
                     .is_some();
-                if has_type_param_rest || is_intersection_context {
+                // Full contextual evaluation can expand `HandleOptions<T[K]>` to an
+                // object/index-signature type, so also inspect the original tuple rest
+                // before mapped-application identity is erased.
+                let has_homomorphic_mapped_rest = elems
+                    .iter()
+                    .any(|e| e.rest && self.is_homomorphic_mapped_rest_context(e.type_id))
+                    || original_contextual_type.is_some_and(|original| {
+                        self.tuple_type_has_homomorphic_mapped_rest(original)
+                    });
+                if has_type_param_rest || is_intersection_context || has_homomorphic_mapped_rest {
                     Some(elems)
                 } else {
                     None
@@ -1024,6 +1033,39 @@ impl<'a> CheckerState<'a> {
         };
         let (body_type, _type_params) = self.type_reference_symbol_type_with_params(sym_id);
         query::is_homomorphic_mapped_type_context(self.ctx.types, body_type)
+    }
+
+    fn is_homomorphic_mapped_rest_context(&mut self, type_id: tsz_solver::TypeId) -> bool {
+        use crate::query_boundaries::common as query;
+        query::is_homomorphic_mapped_type_context(self.ctx.types, type_id)
+            || self.original_context_is_homomorphic_mapped_application(type_id)
+            || self.mapped_type_has_generic_keyof_source(type_id)
+            || {
+                let evaluated = self.evaluate_application_type(type_id);
+                evaluated != type_id && self.mapped_type_has_generic_keyof_source(evaluated)
+            }
+    }
+
+    fn tuple_type_has_homomorphic_mapped_rest(&mut self, type_id: tsz_solver::TypeId) -> bool {
+        use crate::query_boundaries::common as query;
+        query::array_applicable_type(self.ctx.types, type_id)
+            .and_then(|applicable| query::tuple_elements(self.ctx.types, applicable))
+            .is_some_and(|elems| {
+                elems
+                    .iter()
+                    .any(|e| e.rest && self.is_homomorphic_mapped_rest_context(e.type_id))
+            })
+    }
+
+    fn mapped_type_has_generic_keyof_source(&self, type_id: tsz_solver::TypeId) -> bool {
+        use crate::query_boundaries::common as query;
+        let Some(mapped) = query::mapped_type_info(self.ctx.types, type_id) else {
+            return false;
+        };
+        let Some(keyof_source) = query::keyof_inner_type(self.ctx.types, mapped.constraint) else {
+            return false;
+        };
+        query::contains_type_parameters(self.ctx.types, keyof_source)
     }
 
     /// Resolve array element type from union members by checking number index signatures.
