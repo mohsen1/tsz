@@ -11,6 +11,16 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn present_callable_property_target_display_type(&self, target_type: TypeId) -> TypeId {
+        let stripped =
+            crate::query_boundaries::common::remove_undefined(self.ctx.types, target_type);
+        if stripped != target_type && self.stripped_property_context_is_callable(stripped) {
+            stripped
+        } else {
+            target_type
+        }
+    }
+
     pub(in crate::error_reporter::call_errors) fn contextual_keyof_parameter_display(
         &mut self,
         param_type: TypeId,
@@ -1480,12 +1490,17 @@ impl<'a> CheckerState<'a> {
                     && !self.is_assignable_to(duplicate_source_for_check, target_prop_type)
                 {
                     let source_prop_type_for_diagnostic =
-                        self.widen_function_like_call_source(duplicate_source_for_check);
+                        crate::query_boundaries::assignability::rewrite_function_error_slots_to_any(
+                            self.ctx.types,
+                            self.widen_function_like_call_source(duplicate_source_for_check),
+                        );
                     let target_for_diag = if target_prop_type != target_prop_type_for_diagnostic {
                         target_prop_type_for_diagnostic
                     } else {
                         target_prop_type
                     };
+                    let target_for_diag =
+                        self.present_callable_property_target_display_type(target_for_diag);
                     if let Some(&first_name_idx) = first_named_property_name_idx.get(&prop_name)
                         && first_name_idx != prop_name_idx
                         && emitted_duplicate_primary.insert(prop_name.clone())
@@ -1513,7 +1528,10 @@ impl<'a> CheckerState<'a> {
                 && !self.is_assignable_to(effective_source_prop, target_prop_type)
             {
                 let source_prop_type_for_diagnostic =
-                    self.widen_function_like_call_source(effective_source_prop);
+                    crate::query_boundaries::assignability::rewrite_function_error_slots_to_any(
+                        self.ctx.types,
+                        self.widen_function_like_call_source(effective_source_prop),
+                    );
                 // Use the diagnostic target type if available (for optional properties),
                 // otherwise use the effective target type
                 let target_for_diag = if overall_target_is_union {
@@ -1526,6 +1544,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     target_prop_type_for_diagnostic
                 };
+                let target_for_diag =
+                    self.present_callable_property_target_display_type(target_for_diag);
                 if duplicate_named_properties.contains(&prop_name) {
                     if let Some(&first_name_idx) = first_named_property_name_idx.get(&prop_name)
                         && first_name_idx != prop_name_idx

@@ -5,7 +5,7 @@
 //! contextual signature references the same type parameters indirectly
 //! (mapped types, conditional types, `infer`).
 
-use crate::test_utils::check_source_codes;
+use crate::test_utils::{check_source_code_messages, check_source_codes};
 
 /// Regression target for
 /// `conformance/types/typeRelationships/typeInference/intraExpressionInferences.ts`
@@ -128,5 +128,129 @@ buildComp({
         "Renamed structural reproduction must still emit TS2322; \
          if this regresses while the original test passes, the fix is \
          hardcoded against the original identifier names. got: {semantic_errors:?}"
+    );
+}
+
+#[test]
+fn intra_expression_inference_homomorphic_mapped_return_diagnostic_surface() {
+    let source = r#"
+class Wrapper<T = any> { public value?: T; }
+type WrappedMap = { [k: string]: Wrapper };
+type Unwrap<D extends WrappedMap> = {
+    [K in keyof D]: D[K] extends Wrapper<infer T> ? T : never;
+};
+type MappingComponent<I extends WrappedMap, O extends WrappedMap> = {
+    setup(): { inputs: I; outputs: O };
+    map?: (inputs: Unwrap<I>) => Unwrap<O>;
+};
+declare function createMappingComponent<I extends WrappedMap, O extends WrappedMap>(
+    def: MappingComponent<I, O>,
+): void;
+createMappingComponent({
+    setup() {
+        return {
+            inputs: {
+                num: new Wrapper<number>(),
+                str: new Wrapper<string>(),
+            },
+            outputs: {
+                bool: new Wrapper<boolean>(),
+                str: new Wrapper<string>(),
+            },
+        };
+    },
+    map(inputs) {
+        return {
+            bool: inputs.nonexistent,
+            str: inputs.num,
+        };
+    },
+});
+"#;
+    let messages = check_source_code_messages(source);
+    let ts2322 = messages
+        .iter()
+        .find_map(|(code, message)| (*code == 2322).then_some(message))
+        .unwrap_or_else(|| panic!("expected TS2322 diagnostic, got: {messages:#?}"));
+
+    assert!(
+        ts2322.contains("bool: any; str: number"),
+        "function return source display should render the error property as any; got: {ts2322}"
+    );
+    assert!(
+        !ts2322.contains("bool: error"),
+        "function return source display should not expose internal error type; got: {ts2322}"
+    );
+    assert!(
+        ts2322.contains(
+            "(inputs: Unwrap<{ num: Wrapper<number>; str: Wrapper<string>; }>) => Unwrap<{ bool: Wrapper<boolean>; str: Wrapper<string>; }>"
+        ),
+        "present optional callable target should display as the callable type; got: {ts2322}"
+    );
+    assert!(
+        !ts2322.contains("| undefined"),
+        "present optional callable target should not display synthetic undefined; got: {ts2322}"
+    );
+}
+
+#[test]
+fn intra_expression_inference_homomorphic_mapped_return_diagnostic_surface_renamed() {
+    let source = r#"
+class Box<X = any> { public value?: X; }
+type BoxMap = { [k: string]: Box };
+type Open<R extends BoxMap> = {
+    [P in keyof R]: R[P] extends Box<infer V> ? V : never;
+};
+type Comp<In extends BoxMap, Out extends BoxMap> = {
+    init(): { src: In; dst: Out };
+    proc?: (src: Open<In>) => Open<Out>;
+};
+declare function buildComp<In extends BoxMap, Out extends BoxMap>(
+    spec: Comp<In, Out>,
+): void;
+buildComp({
+    init() {
+        return {
+            src: {
+                n: new Box<number>(),
+                label: new Box<string>(),
+            },
+            dst: {
+                ok: new Box<boolean>(),
+                label: new Box<string>(),
+            },
+        };
+    },
+    proc(src) {
+        return {
+            ok: src.missing,
+            label: src.n,
+        };
+    },
+});
+"#;
+    let messages = check_source_code_messages(source);
+    let ts2322 = messages
+        .iter()
+        .find_map(|(code, message)| (*code == 2322).then_some(message))
+        .unwrap_or_else(|| panic!("expected TS2322 diagnostic, got: {messages:#?}"));
+
+    assert!(
+        ts2322.contains("ok: any; label: number"),
+        "renamed source display should render the error property as any; got: {ts2322}"
+    );
+    assert!(
+        !ts2322.contains("ok: error"),
+        "renamed source display should not expose internal error type; got: {ts2322}"
+    );
+    assert!(
+        ts2322.contains(
+            "(src: Open<{ n: Box<number>; label: Box<string>; }>) => Open<{ ok: Box<boolean>; label: Box<string>; }>"
+        ),
+        "renamed optional callable target should display as the callable type; got: {ts2322}"
+    );
+    assert!(
+        !ts2322.contains("| undefined"),
+        "renamed optional callable target should not display synthetic undefined; got: {ts2322}"
     );
 }

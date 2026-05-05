@@ -328,8 +328,9 @@ const x: Stuff = {
     }
 }
 
-/// When strictNullChecks is ON, optional property types in TS2322 error messages
-/// SHOULD include `| undefined`.
+/// When strictNullChecks is ON, a present optional callable property is checked
+/// against its callable target surface. The synthetic read-side `| undefined`
+/// should not appear in this property-level function mismatch.
 #[test]
 fn test_optional_property_error_message_with_strict_null_checks() {
     let source = r#"
@@ -382,16 +383,11 @@ const x: Stuff = {
             .collect::<Vec<_>>()
     );
 
-    // The error message SHOULD contain `| undefined` when strictNullChecks is on
-    let has_undefined = ts2322_diags
-        .iter()
-        .any(|d| d.message_text.contains("| undefined"));
-    assert!(
-        has_undefined,
-        "TS2322 error message should contain '| undefined' when strictNullChecks is on. Messages: {:?}",
-        ts2322_diags
-            .iter()
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
-    );
+    for diag in &ts2322_diags {
+        assert!(
+            !diag.message_text.contains("| undefined"),
+            "TS2322 error message for a present optional callable should not contain '| undefined'. Got: {}",
+            diag.message_text
+        );
+    }
 }

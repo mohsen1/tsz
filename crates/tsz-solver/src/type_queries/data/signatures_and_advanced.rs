@@ -358,29 +358,163 @@ pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeI
         return type_id;
     };
 
-    let has_error = shape.params.iter().any(|p| p.type_id == TypeId::ERROR)
-        || shape.return_type == TypeId::ERROR;
-    if !has_error {
-        return type_id;
+    fn rewrite_error_to_any_in_display_type(
+        db: &dyn TypeDatabase,
+        type_id: TypeId,
+        seen: &mut FxHashMap<TypeId, TypeId>,
+    ) -> TypeId {
+        if type_id == TypeId::ERROR {
+            return TypeId::ANY;
+        }
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+        if let Some(rewritten) = seen.get(&type_id) {
+            return *rewritten;
+        }
+        seen.insert(type_id, type_id);
+
+        let rewritten = match db.lookup(type_id) {
+            Some(TypeData::Object(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                let mut changed = false;
+                let properties = shape
+                    .properties
+                    .iter()
+                    .map(|prop| {
+                        let type_id = rewrite_error_to_any_in_display_type(db, prop.type_id, seen);
+                        let write_type =
+                            rewrite_error_to_any_in_display_type(db, prop.write_type, seen);
+                        changed |= type_id != prop.type_id || write_type != prop.write_type;
+                        crate::types::PropertyInfo {
+                            type_id,
+                            write_type,
+                            ..prop.clone()
+                        }
+                    })
+                    .collect();
+                if changed {
+                    db.object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                let mut changed = false;
+                let properties = shape
+                    .properties
+                    .iter()
+                    .map(|prop| {
+                        let type_id = rewrite_error_to_any_in_display_type(db, prop.type_id, seen);
+                        let write_type =
+                            rewrite_error_to_any_in_display_type(db, prop.write_type, seen);
+                        changed |= type_id != prop.type_id || write_type != prop.write_type;
+                        crate::types::PropertyInfo {
+                            type_id,
+                            write_type,
+                            ..prop.clone()
+                        }
+                    })
+                    .collect();
+                let string_index = shape.string_index.map(|mut index| {
+                    let value_type =
+                        rewrite_error_to_any_in_display_type(db, index.value_type, seen);
+                    changed |= value_type != index.value_type;
+                    index.value_type = value_type;
+                    index
+                });
+                let number_index = shape.number_index.map(|mut index| {
+                    let value_type =
+                        rewrite_error_to_any_in_display_type(db, index.value_type, seen);
+                    changed |= value_type != index.value_type;
+                    index.value_type = value_type;
+                    index
+                });
+                if changed {
+                    db.object_with_index(crate::types::ObjectShape {
+                        flags: shape.flags,
+                        properties,
+                        string_index,
+                        number_index,
+                        symbol: shape.symbol,
+                    })
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Union(list_id)) => {
+                let members = db.type_list(list_id);
+                let mut changed = false;
+                let rewritten = members
+                    .iter()
+                    .copied()
+                    .map(|member| {
+                        let rewritten = rewrite_error_to_any_in_display_type(db, member, seen);
+                        changed |= rewritten != member;
+                        rewritten
+                    })
+                    .collect();
+                if changed {
+                    db.union(rewritten)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Array(element)) => {
+                let rewritten = rewrite_error_to_any_in_display_type(db, element, seen);
+                if rewritten != element {
+                    db.array(rewritten)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Tuple(list_id)) => {
+                let elements = db.tuple_list(list_id);
+                let mut changed = false;
+                let rewritten = elements
+                    .iter()
+                    .map(|element| {
+                        let type_id =
+                            rewrite_error_to_any_in_display_type(db, element.type_id, seen);
+                        changed |= type_id != element.type_id;
+                        crate::types::TupleElement {
+                            type_id,
+                            ..*element
+                        }
+                    })
+                    .collect();
+                if changed {
+                    db.tuple(rewritten)
+                } else {
+                    type_id
+                }
+            }
+            _ => type_id,
+        };
+        seen.insert(type_id, rewritten);
+        rewritten
     }
 
+    let mut rewritten_types = FxHashMap::default();
     let params = shape
         .params
         .iter()
         .map(|p| crate::types::ParamInfo {
-            type_id: if p.type_id == TypeId::ERROR {
-                TypeId::ANY
-            } else {
-                p.type_id
-            },
+            type_id: rewrite_error_to_any_in_display_type(db, p.type_id, &mut rewritten_types),
             ..*p
         })
-        .collect();
-    let return_type = if shape.return_type == TypeId::ERROR {
-        TypeId::ANY
-    } else {
-        shape.return_type
-    };
+        .collect::<Vec<_>>();
+    let return_type =
+        rewrite_error_to_any_in_display_type(db, shape.return_type, &mut rewritten_types);
+    let has_error = params
+        .iter()
+        .zip(shape.params.iter())
+        .any(|(rewritten, original)| rewritten.type_id != original.type_id)
+        || return_type != shape.return_type;
+    if !has_error {
+        return type_id;
+    }
 
     db.function(crate::types::FunctionShape {
         type_params: shape.type_params.clone(),
