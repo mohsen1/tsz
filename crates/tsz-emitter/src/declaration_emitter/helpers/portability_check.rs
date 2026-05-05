@@ -333,6 +333,7 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     let ident = &return_type_text[start..i];
                     if ident == "import"
+                        && !Self::type_text_import_starts_mapped_key(&return_type_text, start)
                         && let Some((import_module, type_name)) =
                             self.parse_import_type_text(&return_type_text[start..])
                     {
@@ -351,6 +352,10 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     if Self::is_non_type_text_identifier_candidate(ident)
                         || Self::type_text_identifier_is_member_name(&return_type_text, i)
+                        || Self::type_text_identifier_is_mapped_key_import_member(
+                            &return_type_text,
+                            start,
+                        )
                     {
                         continue;
                     }
@@ -1522,6 +1527,38 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
         self.emit_non_portable_symbol_declaration_diagnostic(sym_id, decl_name, file, pos, length)
+    }
+
+    fn type_text_identifier_is_mapped_key_import_member(type_text: &str, start: usize) -> bool {
+        let before_ident = &type_text[..start];
+        let Some(dot_pos) = before_ident.rfind('.') else {
+            return false;
+        };
+        if !before_ident[dot_pos + 1..]
+            .chars()
+            .all(|ch| ch.is_ascii_whitespace())
+        {
+            return false;
+        }
+
+        let before_dot = before_ident[..dot_pos].trim_end();
+        let Some(import_start) = before_dot.rfind("import(") else {
+            return false;
+        };
+        let Some((start_in_candidate, _, tail)) =
+            Self::next_import_type_text(&before_dot[import_start..])
+        else {
+            return false;
+        };
+        if start_in_candidate != 0 || !tail.trim().is_empty() {
+            return false;
+        }
+
+        before_dot[..import_start].trim_end().ends_with(" in")
+    }
+
+    fn type_text_import_starts_mapped_key(type_text: &str, start: usize) -> bool {
+        type_text[..start].trim_end().ends_with(" in")
     }
 
     pub(crate) fn emit_non_portable_import_type_text_diagnostics(
