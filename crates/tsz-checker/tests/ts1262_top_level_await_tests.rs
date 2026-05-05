@@ -6,7 +6,7 @@
 //! once any TS1262 existed in diagnostics.  Both shortcuts together suppressed every
 //! diagnostic beyond the first.
 //!
-//! Regression test for GitHub issue #2816.
+//! Regression test for `GitHub` issue #2816.
 
 use tsz_checker::test_utils::check_source_codes;
 
