@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/node-modules-cjs-emit-diagnostics`
-- **PR**: TBD
+- **PR**: #3024
 - **Status**: claim
 - **Workstream**: conformance / node modules diagnostics
 
