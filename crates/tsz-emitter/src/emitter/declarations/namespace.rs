@@ -491,12 +491,13 @@ impl<'a> Printer<'a> {
         }
         if let Some(block) = self.arena.get_module_block(body_node)
             && let Some(stmts) = &block.statements
-        {
-            return stmts
+            && stmts
                 .nodes
                 .iter()
                 .copied()
-                .any(|stmt| self.namespace_statement_conflicts_iife_param(stmt, ns_name));
+                .any(|stmt| self.namespace_statement_conflicts_iife_param(stmt, ns_name))
+        {
+            return true;
         }
         // Use source text scan: search for the identifier as a binding in the body.
         // This catches parameters, local vars, nested functions/classes at any depth.
@@ -629,6 +630,8 @@ impl<'a> Printer<'a> {
                             "function",
                             "class",
                             "import",
+                            "module",
+                            "namespace",
                             // TS parameter modifiers
                             "private",
                             "public",
@@ -906,6 +909,12 @@ impl<'a> Printer<'a> {
                     local_exports.insert(name.clone());
                 }
                 entry.extend(local_exports.iter().cloned());
+                if ns_name != leaf_name {
+                    self.namespace_prior_exports
+                        .entry(ns_name.clone())
+                        .or_default()
+                        .extend(local_exports.iter().cloned());
+                }
 
                 // Class/fn/enum names from EARLIER reopenings of this same
                 // namespace must also qualify in this block (their IIFE
@@ -1185,6 +1194,12 @@ impl<'a> Printer<'a> {
             // class/fn/enum names (which are still in lexical scope as IIFE
             // locals here) and qualify references that should stay bare.
             if !leaf_name.is_empty() {
+                if ns_name != leaf_name {
+                    self.namespace_prior_class_fn_enum_exports
+                        .entry(ns_name.clone())
+                        .or_default()
+                        .extend(class_fn_enum_names.iter().cloned());
+                }
                 self.namespace_prior_class_fn_enum_exports
                     .entry(class_fn_enum_root_name)
                     .or_default()
