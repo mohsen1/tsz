@@ -3007,6 +3007,18 @@ impl<'a> Printer<'a> {
             self.deferred_class_static_blocks
                 .extend(deferred_static_blocks);
         } else {
+            if static_field_inits.is_empty()
+                && !deferred_static_blocks.is_empty()
+                && !emit_private_inits_before_static_elements
+                && !class_name.is_empty()
+                && let Some(alias) = static_initializer_class_alias.as_ref()
+            {
+                self.write_line();
+                self.write(alias);
+                self.write(" = ");
+                self.write(&class_name);
+                self.write(";");
+            }
             let prev_self_alias = self.scoped_class_expression_self_alias.clone();
             if let Some(alias) = static_initializer_class_alias.as_ref()
                 && !class_name.is_empty()
