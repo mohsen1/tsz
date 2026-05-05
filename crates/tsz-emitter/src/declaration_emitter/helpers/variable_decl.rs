@@ -1056,7 +1056,14 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("const ");
         self.write(&alias_name);
         self.write(": ");
-        self.write(&self.print_synthetic_class_extends_alias_type(type_id));
+        let type_text = self.print_synthetic_class_extends_alias_type(type_id);
+        let type_text = if type_text == "never" {
+            self.synthetic_class_extends_alias_source_type_text(heritage)
+                .unwrap_or(type_text)
+        } else {
+            type_text
+        };
+        self.write(&type_text);
         self.write(";");
         self.write_line();
         self.emitted_non_exported_declaration = true;

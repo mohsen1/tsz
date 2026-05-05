@@ -48,6 +48,131 @@ struct CallableDeclParts<'b> {
 }
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn synthetic_class_extends_alias_source_type_text(
+        &self,
+        heritage: Option<&NodeList>,
+    ) -> Option<String> {
+        let heritage = heritage?;
+        let (_, expr_idx) = self.non_nameable_extends_heritage_type(heritage)?;
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(expr_node)?;
+        let arguments = call.arguments.as_ref()?;
+        for arg_idx in arguments.nodes.iter().copied() {
+            let Some(arg_node) = self.arena.get(arg_idx) else {
+                continue;
+            };
+            if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                continue;
+            }
+            if let Some(type_text) =
+                self.function_returned_local_class_constructor_type_text(arg_idx)
+            {
+                return Some(type_text);
+            }
+        }
+
+        None
+    }
+
+    fn function_returned_local_class_constructor_type_text(
+        &self,
+        func_idx: NodeIndex,
+    ) -> Option<String> {
+        let func_node = self.arena.get(func_idx)?;
+        let func = self.arena.get_function(func_node)?;
+        let body_node = self.arena.get(func.body)?;
+        let block = self.arena.get_block(body_node)?;
+
+        let returned = block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find_map(|stmt_idx| {
+                let stmt_node = self.arena.get(stmt_idx)?;
+                if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                    return None;
+                }
+                let ret = self.arena.get_return_statement(stmt_node)?;
+                if !ret.expression.is_some() {
+                    return None;
+                }
+                self.skip_parenthesized_expression(ret.expression)
+            })?;
+
+        let returned_node = self.arena.get(returned)?;
+        if returned_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            return self.class_constructor_object_type_text_from_ast(returned);
+        }
+
+        if returned_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let returned_name = self.get_identifier_text(returned)?;
+
+        block.statements.nodes.iter().copied().find_map(|stmt_idx| {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                return None;
+            }
+            let class = self.arena.get_class(stmt_node)?;
+            (self.get_identifier_text(class.name).as_deref() == Some(returned_name.as_str()))
+                .then(|| self.class_constructor_object_type_text_from_ast(stmt_idx))
+                .flatten()
+        })
+    }
+
+    fn class_constructor_object_type_text_from_ast(&self, class_idx: NodeIndex) -> Option<String> {
+        let class_node = self.arena.get(class_idx)?;
+        let class = self.arena.get_class(class_node)?;
+
+        let mut params_text = String::new();
+        if let Some(ctor_idx) = class.members.nodes.iter().copied().find(|&member_idx| {
+            self.arena
+                .get(member_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CONSTRUCTOR)
+        }) {
+            let ctor = self
+                .arena
+                .get(ctor_idx)
+                .and_then(|node| self.arena.get_constructor(node))?;
+            let mut scratch = self.scratch_declaration_emitter();
+            scratch.in_constructor_params = true;
+            scratch.emit_parameters_with_body(&ctor.parameters, ctor.body);
+            scratch.in_constructor_params = false;
+            params_text = scratch.writer.take_output();
+        }
+
+        let mut member_scratch = self.scratch_declaration_emitter();
+        member_scratch.indent_level = self.indent_level + 2;
+        for member_idx in class.members.nodes.iter().copied() {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            member_scratch.emit_class_member(member_idx);
+        }
+        let members = member_scratch.writer.take_output();
+        let members = members.trim_end();
+
+        if members.is_empty() {
+            Some(format!("{{\n    new ({params_text}): {{}};\n}}"))
+        } else {
+            Some(format!(
+                "{{\n    new ({params_text}): {{\n{members}\n    }};\n}}"
+            ))
+        }
+    }
+
     fn type_annotation_text_from_arena_node(
         &self,
         source_arena: &NodeArena,
@@ -2073,7 +2198,9 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn scratch_declaration_emitter(&self) -> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn scratch_declaration_emitter(
+        &self,
+    ) -> DeclarationEmitter<'a> {
         let mut scratch = if let (Some(type_cache), Some(type_interner), Some(binder)) =
             (&self.type_cache, self.type_interner, self.binder)
         {
