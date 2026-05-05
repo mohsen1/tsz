@@ -303,6 +303,34 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn unmatched_decorator_type_assertion_emits_empty_statement() {
+        let source = "@<[[import(obju2c77,\n";
+
+        let mut parser = ParserState::new(
+            "parseUnmatchedTypeAssertion.ts".to_string(),
+            source.to_string(),
+        );
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.trim_end(),
+            "\"use strict\";\n;",
+            "Malformed decorator type assertion should preserve tsc's recovered empty statement.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn esm_suppresses_redundant_export_empty_when_real_exports_exist() {
         // When a file has both `export {};` and `export { C };`, the empty export
         // is redundant and should be suppressed. tsc omits it.
