@@ -918,6 +918,18 @@ impl<'a> CheckerState<'a> {
                                 // is unresolved.
                                 || diag.code
                                     == crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                                // TS2538: "Type 'X' cannot be used as an index
+                                // type" is a structural error about the index
+                                // expression's shape; it doesn't depend on the
+                                // outer contextual type.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE
+                                // TS2348: "Value of type 'X' is not callable.
+                                // Did you mean to include 'new'?" is a
+                                // structural error about a non-callable value
+                                // appearing in call position; not contextual.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW
                                 || diag.start < init_start
                                 || diag.start >= init_end
                         });
