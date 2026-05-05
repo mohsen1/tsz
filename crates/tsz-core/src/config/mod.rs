@@ -189,6 +189,13 @@ pub struct CompilerOptions {
     pub sound: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit: Option<bool>,
+    /// Emit a UTF-8 Byte Order Mark (BOM) in the beginning of output files.
+    #[serde(
+        default,
+        rename = "emitBOM",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub emit_bom: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_check: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
@@ -413,6 +420,7 @@ pub struct ResolvedCompilerOptions {
     pub ts_build_info_file: Option<PathBuf>,
     pub incremental: bool,
     pub no_emit: bool,
+    pub emit_bom: bool,
     pub no_emit_on_error: bool,
     /// Skip module graph expansion from imports/references when checking.
     pub no_resolve: bool,
@@ -971,6 +979,9 @@ pub fn resolve_compiler_options(
 
     if let Some(no_emit) = options.no_emit {
         resolved.no_emit = no_emit;
+    }
+    if let Some(emit_bom) = options.emit_bom {
+        resolved.emit_bom = emit_bom;
     }
     if let Some(no_check) = options.no_check {
         resolved.no_check = no_check;
