@@ -1199,15 +1199,12 @@ pub(super) fn js_file_has_ts_check_pragma(file: &BoundFile) -> bool {
     let Some(source) = file.arena.get_source_file_at(file.source_file) else {
         return false;
     };
-    // Only count `@ts-check` when it appears at the start of a comment; bare
-    // substrings in strings or regexes must not opt the file into checking.
-    // We also keep the historical "later directive wins" precedence: when
-    // both `@ts-check` and `@ts-nocheck` are present, the directive with the
-    // higher byte offset takes precedence, matching tsc's behavior of
-    // honoring the most recent pragma.
-    let text = source.text.as_ref();
-    let ts_check_pos = last_directive_offset(text, "@ts-check");
-    let ts_nocheck_pos = last_directive_offset(text, "@ts-nocheck");
+    let text: &str = source.text.as_ref();
+    // When both directives are present in leading trivia, the last one wins.
+    let ts_check_pos =
+        tsz_common::comments::last_ts_directive_offset_in_leading_trivia(text, "@ts-check");
+    let ts_nocheck_pos =
+        tsz_common::comments::last_ts_directive_offset_in_leading_trivia(text, "@ts-nocheck");
     match (ts_check_pos, ts_nocheck_pos) {
         (Some(check), Some(nocheck)) => check > nocheck,
         (Some(_), None) => true,
@@ -1219,41 +1216,8 @@ pub(super) fn js_file_has_ts_nocheck_pragma(file: &BoundFile) -> bool {
     let Some(source) = file.arena.get_source_file_at(file.source_file) else {
         return false;
     };
-    tsz_common::comments::source_has_ts_nocheck_directive(source.text.as_ref())
-}
-
-/// Return the byte offset of the *last* comment that starts with the given
-/// directive token, or `None` if no such comment exists. Used to choose
-/// between `@ts-check` and `@ts-nocheck` when both appear in the same JS
-/// file (the later directive wins, matching tsc).
-fn last_directive_offset(source: &str, directive: &str) -> Option<u32> {
-    use tsz_common::comments::{CommentRange, get_comment_ranges};
-    fn comment_starts_with(text: &str, directive: &str) -> bool {
-        let inner = if let Some(rest) = text.strip_prefix("//") {
-            rest
-        } else if let Some(rest) = text.strip_prefix("/*") {
-            rest.strip_suffix("*/").unwrap_or(rest)
-        } else {
-            return false;
-        };
-        inner.lines().any(|line| {
-            let trimmed = line.trim_start();
-            let after_star = trimmed.strip_prefix('*').unwrap_or(trimmed).trim_start();
-            if !after_star.starts_with(directive) {
-                return false;
-            }
-            let rest = &after_star[directive.len()..];
-            rest.chars()
-                .next()
-                .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
-        })
-    }
-    let comments: Vec<CommentRange> = get_comment_ranges(source);
-    comments
-        .iter()
-        .rev()
-        .find(|c| comment_starts_with(c.get_text(source), directive))
-        .map(|c| c.pos)
+    let text: &str = source.text.as_ref();
+    tsz_common::comments::source_has_ts_nocheck_directive(text)
 }
 
 /// Convert specific parser diagnostics to `TS8xxx` equivalents for JS files.
@@ -2121,7 +2085,8 @@ pub(super) fn apply_ts_directive_suppression(
     let line_starts = build_line_starts(source_text);
 
     // Check for @ts-nocheck — suppresses TS2578 for unused directives.
-    let has_ts_nocheck = source_text.to_ascii_lowercase().contains("@ts-nocheck");
+    let has_ts_nocheck =
+        tsz_common::comments::has_ts_directive_in_leading_trivia(source_text, "@ts-nocheck");
 
     let mut directive_used = vec![false; directives.len()];
 

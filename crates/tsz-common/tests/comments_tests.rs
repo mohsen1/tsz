@@ -678,7 +678,6 @@ fn test_comment_range_debug() {
     assert!(debug.contains("end"));
 }
 
-// =============================================================================
 // `source_declares_ambient_module` (regression coverage for #2834)
 // =============================================================================
 
@@ -787,4 +786,45 @@ fn check_in_line_comment_is_directive() {
 fn check_in_string_literal_is_not_directive() {
     let src = "const marker = \"@ts-check\";\nconst n = 1;\n";
     assert!(!source_has_ts_check_directive(src));
+}
+
+#[test]
+fn nocheck_after_code_is_not_directive() {
+    let src = "const x = 1;\n// @ts-nocheck\nconst n: number = 1;\n";
+    assert!(!source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_is_case_insensitive() {
+    let src = "// @TS-NOCHECK\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_with_bom_prefix_is_directive() {
+    let src = "\u{FEFF}// @ts-nocheck\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn empty_and_whitespace_sources_do_not_have_directives() {
+    assert!(!has_ts_directive_in_leading_trivia("", "@ts-nocheck"));
+    assert!(!has_ts_directive_in_leading_trivia(
+        "   \n\t\n  ",
+        "@ts-check"
+    ));
+}
+
+#[test]
+fn last_directive_offset_only_considers_leading_trivia() {
+    let src = "// @ts-check\n// @ts-nocheck\nconst n = 1;\n";
+    let check = last_ts_directive_offset_in_leading_trivia(src, "@ts-check").unwrap();
+    let nocheck = last_ts_directive_offset_in_leading_trivia(src, "@ts-nocheck").unwrap();
+    assert!(check < nocheck);
+
+    let after_code = "const x = 1;\n// @ts-check\n";
+    assert_eq!(
+        last_ts_directive_offset_in_leading_trivia(after_code, "@ts-check"),
+        None
+    );
 }
