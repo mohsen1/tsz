@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `codex/conformance-next-20260506-233717`
-- **PR**: TBD
+- **PR**: #3465
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
