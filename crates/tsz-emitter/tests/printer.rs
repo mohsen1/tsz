@@ -1569,3 +1569,50 @@ fn private_field_logical_and_assign_lowers_to_set_get_and_rhs() {
         "Private-field `&&=` must lower to set(get() && rhs).\nOutput:\n{output}"
     );
 }
+
+/// Regression: a nested namespace's name lives in the parent IIFE's
+/// function scope, not at file scope. So a *file-scope* namespace with
+/// the same name must still receive its own `var` declaration. The
+/// lowering pass tracks `declared_names` to suppress duplicate `var`
+/// emits, but the set must reset when entering and exiting a namespace
+/// body — names declared inside a nested IIFE don't leak out.
+#[test]
+fn nested_namespace_name_does_not_suppress_outer_var_declaration() {
+    let source = "namespace m1 {\n    namespace m2 {\n        export var p = 1;\n    }\n}\nnamespace m2 {\n    export var q = 2;\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    // Both the m1.m2 IIFE and the file-scope m2 IIFE need their own
+    // `var m2;` preamble because each lives in a distinct scope.
+    let var_count = output.matches("var m2;").count();
+    assert_eq!(
+        var_count, 2,
+        "Each scope-local `m2` namespace needs its own `var m2;`. Found {var_count}.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: same-named namespace *reopened* at the same scope must
+/// declare `var` only once. (Standard merging.)
+#[test]
+fn reopened_same_scope_namespace_declares_var_only_once() {
+    let source =
+        "namespace m1 {\n    export var p = 1;\n}\nnamespace m1 {\n    export var q = 2;\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    let var_count = output.matches("var m1;").count();
+    assert_eq!(
+        var_count, 1,
+        "Reopened namespace at same scope should declare `var m1;` once. Found {var_count}.\nOutput:\n{output}"
+    );
+}

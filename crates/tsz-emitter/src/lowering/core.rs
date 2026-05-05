@@ -1356,9 +1356,14 @@ impl<'a> LoweringPass<'a> {
         }
 
         // Recurse into namespace body to detect helpers needed by nested declarations
-        // (e.g., classes with extends need __extends, async functions need __awaiter)
+        // (e.g., classes with extends need __extends, async functions need __awaiter).
+        // Save/restore `declared_names`: each namespace IIFE creates a new function
+        // scope, so names declared inside (nested namespaces, enums, etc.) must not
+        // leak out and suppress outer-scope `var` declarations of same-named siblings.
         self.namespace_depth += 1;
+        let prev_declared = std::mem::take(&mut self.declared_names);
         self.visit_module_body(module_decl.body);
+        self.declared_names = prev_declared;
         self.namespace_depth -= 1;
     }
 
