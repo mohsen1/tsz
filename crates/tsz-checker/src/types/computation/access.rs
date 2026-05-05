@@ -1763,3 +1763,7 @@ impl<'a> CheckerState<'a> {
         self.instantiate_callable_result_from_request(idx, result_type, request)
     }
 }
+
+#[cfg(test)]
+#[path = "tests/access.rs"]
+mod tests;

@@ -281,6 +281,20 @@ pub struct DestructuredBindingInfo {
     pub(crate) is_rest: bool,
 }
 
+/// Name-resolution diagnostic counters that must stay coordinated.
+#[derive(Debug, Default)]
+pub struct NameResolutionDiagnostics {
+    /// Count of name resolution attempts (TS2304/TS2552) to limit spelling suggestions.
+    /// tsc caps at 10, counting every resolution failure (not just successful suggestions).
+    pub spelling_suggestions_emitted: Cell<u32>,
+
+    /// Node indices for which a name resolution failure (TS2304/TS2552) has already
+    /// been reported. Used to deduplicate the `spelling_suggestions_emitted` counter
+    /// when the same type reference is resolved multiple times (e.g., due to
+    /// re-evaluation in generic/contextual typing contexts).
+    pub reported_nodes: FxHashSet<NodeIndex>,
+}
+
 /// Shared state for type checking.
 pub struct CheckerContext<'a> {
     /// The `NodeArena` containing the AST.
@@ -333,15 +347,8 @@ pub struct CheckerContext<'a> {
     /// Tracking the current computed property name node for TS2467
     pub checking_computed_property_name: Option<NodeIndex>,
 
-    /// Count of name resolution attempts (TS2304/TS2552) to limit spelling suggestions.
-    /// tsc caps at 10, counting every resolution failure (not just successful suggestions).
-    pub spelling_suggestions_emitted: std::cell::Cell<u32>,
-
-    /// Node indices for which a name resolution failure (TS2304/TS2552) has already
-    /// been reported. Used to deduplicate the `spelling_suggestions_emitted` counter
-    /// when the same type reference is resolved multiple times (e.g., due to
-    /// re-evaluation in generic/contextual typing contexts).
-    pub name_resolution_reported_nodes: FxHashSet<NodeIndex>,
+    /// Name-resolution diagnostic counters and dedupe state.
+    pub name_resolution_diagnostics: NameResolutionDiagnostics,
 
     /// `TypeId`s that represent interfaces extending arrays/tuples.
     /// Used to suppress false TS2559 (weak type) violations for these types,
