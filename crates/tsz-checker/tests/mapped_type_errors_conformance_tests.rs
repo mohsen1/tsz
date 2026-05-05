@@ -171,3 +171,50 @@ setState(foo, { b: undefined });
         "Pick<T, K> should preserve optional-property undefined when exactOptionalPropertyTypes is off.\nDiagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn remapped_intersection_callback_excess_property_display_matches_contextual_target() {
+    let source = r#"
+type Action<TEvent extends { type: string }> = (ev: TEvent) => void;
+
+interface MachineConfig<TEvent extends { type: string }> {
+  schema: {
+    events: TEvent;
+  };
+  on?: {
+    [K in TEvent["type"] as K extends Uppercase<string> ? K : never]?: Action<TEvent extends { type: K } ? TEvent : never>;
+  } & {
+    "*"?: Action<TEvent>;
+  };
+}
+
+declare function createMachine<TEvent extends { type: string }>(
+  config: MachineConfig<TEvent>
+): void;
+
+createMachine({
+  schema: {
+    events: {} as { type: "FOO" } | { type: "bar" },
+  },
+  on: {
+    bar: (ev) => {
+      ev;
+    },
+  },
+});
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2353 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2353)
+        .unwrap_or_else(|| panic!("expected TS2353, got: {diagnostics:#?}"));
+
+    assert!(
+        ts2353.message_text.contains(
+            r#"{ FOO?: Action<{ type: "FOO"; }> | undefined; } & { "*"?: Action<{ type: "FOO"; } | { type: "bar"; }> | undefined; }"#
+        ),
+        "TS2353 should display the narrowed mapped member and wildcard branch, got: {}",
+        ts2353.message_text
+    );
+}
