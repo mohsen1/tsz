@@ -1949,6 +1949,56 @@ const Hoc = <Tag extends Tags>(
 }
 
 #[test]
+fn jsx_library_managed_attributes_preserves_factory_named_prop_defaults() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface ElementClass { render(): Element; }
+    interface ElementAttributesProperty { props: {}; }
+    interface IntrinsicElements { div: {}; }
+
+    type Exclude<T, U> = T extends U ? never : T;
+    type Extract<T, U> = T extends U ? T : never;
+    type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+    type Partial<T> = { [P in keyof T]?: T[P] };
+    type Defaultize<Props, Defaults> =
+        Partial<Pick<Props, Extract<keyof Props, keyof Defaults>>> &
+        Pick<Props, Exclude<keyof Props, keyof Defaults>>;
+    type LibraryManagedAttributes<Component, Props> =
+        Component extends { defaultProps: infer Defaults }
+            ? Defaultize<Props, Defaults>
+            : Props;
+}
+
+interface Factory<T> {
+    create(): T;
+}
+
+interface Props {
+    value: Factory<string>;
+    other: number;
+}
+
+declare class Comp {
+    props: Props;
+    static defaultProps: { value: Factory<string> };
+    render(): JSX.Element;
+}
+
+let ok = <Comp other={1} />;
+"#;
+
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "LibraryManagedAttributes should preserve defaulted Factory<T> props, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_generic_jsx_props_conditional_component_props_with_ref_keeps_callback_context() {
     let lib_source = r#"
 declare namespace JSX {
