@@ -952,6 +952,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         if var_decl.type_annotation.is_some() {
                             return Some(var_decl.type_annotation);
                         }
+                    } else if decl_node.kind == syntax_kind_ext::PARAMETER {
+                        let param = self.ctx.arena.get_parameter(decl_node)?;
+                        if param.type_annotation.is_some() {
+                            return Some(param.type_annotation);
+                        }
+                    } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        && let Some(ext) = self.ctx.arena.get_extended(decl)
+                        && ext.parent.is_some()
+                        && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                        && parent_node.kind == syntax_kind_ext::PARAMETER
+                    {
+                        let param = self.ctx.arena.get_parameter(parent_node)?;
+                        if param.name == decl && param.type_annotation.is_some() {
+                            return Some(param.type_annotation);
+                        }
                     }
                     None
                 });
@@ -1470,6 +1485,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .type_annotation
                 .is_some()
                 .then_some(param.type_annotation)
+        } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let parent = self.ctx.arena.get_extended(decl)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::PARAMETER {
+                let param = self.ctx.arena.get_parameter(parent_node)?;
+                (param.name == decl && param.type_annotation.is_some())
+                    .then_some(param.type_annotation)
+            } else {
+                None
+            }
         } else {
             None
         }?;
