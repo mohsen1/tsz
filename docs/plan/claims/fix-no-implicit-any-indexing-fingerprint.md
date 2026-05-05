@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/no-implicit-any-indexing-fingerprint`
-- **PR**: TBD
+- **PR**: #3189
 - **Status**: claim
 - **Workstream**: 1 (Conformance / diagnostic fingerprint)
 
