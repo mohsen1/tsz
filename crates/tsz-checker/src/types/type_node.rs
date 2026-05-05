@@ -5,7 +5,6 @@
 //!
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! resolve types, then use the solver to explain any failures.
-
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
@@ -32,7 +31,6 @@ pub struct TypeNodeChecker<'a, 'ctx> {
 }
 
 pub(super) type TypeLiteralSignatureScopeUpdates = Vec<(String, Option<TypeId>)>;
-
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Create a new type node checker with a mutable context reference.
     pub const fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
@@ -352,6 +350,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             (wrapped.type_node, false)
                         };
                         let elem_type = self.check(inner_idx);
+                        if is_rest_optional
+                            && !self.is_array_or_tuple_type(elem_type)
+                            && Self::ast_kind_is_obviously_non_array(self.ctx.arena, inner_idx)
+                        {
+                            self.emit_rest_element_type_must_be_array(elem_node.pos, elem_node.end);
+                        }
                         elements.push(TupleElement {
                             type_id: elem_type,
                             name: None,
@@ -718,6 +722,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if !is_builtin && !is_local_type_param && !is_type_param && !in_scope {
                 undefined_types.push((tr.type_name, name.clone()));
             }
+        }
+
+        if _node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+            && let Some(tn) = self.ctx.arena.get(func_data.type_annotation)
+            && tn.kind == syntax_kind_ext::TYPE_PREDICATE
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.ctx.error(
+                tn.pos,
+                tn.end - tn.pos,
+                diagnostic_messages::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO.to_string(),
+                diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+            );
         }
 
         // Check parameter type annotations
@@ -1960,24 +1977,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return false;
         }
 
-        let Some(call) = arena.get_call_expr(node) else {
-            return false;
-        };
-        let Some(expr_node) = arena.get(call.expression) else {
-            return false;
-        };
-
         arena
-            .get_identifier(expr_node)
+            .get_call_expr(node)
+            .and_then(|call| arena.get(call.expression))
+            .and_then(|expr_node| arena.get_identifier(expr_node))
             .is_some_and(|ident| ident.escaped_text == "Symbol")
     }
-
-    /// Get the context reference (for read-only access).
-    pub const fn context(&self) -> &CheckerContext<'ctx> {
-        self.ctx
-    }
 }
-
 #[cfg(test)]
 #[path = "../../tests/type_node.rs"]
 mod tests;

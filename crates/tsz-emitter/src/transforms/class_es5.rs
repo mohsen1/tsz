@@ -155,9 +155,18 @@ impl<'a> ClassES5Emitter<'a> {
         self.remove_comments = remove;
     }
 
-    /// Set the initial indentation level (to match the parent context)
+    /// Set the initial indentation level (to match the parent context).
+    ///
+    /// Also propagates to the transformer's `indent_base` so the Raw IR
+    /// nodes generated for `__decorate(...)` blocks use absolute indents
+    /// anchored at the parent context, instead of always assuming the
+    /// class IIFE lives at column 0. Without this, a class emitted inside
+    /// a System.execute body or other multi-level wrapper had its
+    /// `__decorate` array body land at columns 8 / 4 regardless of the
+    /// writer's actual indent.
     pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
+        self.transformer.set_indent_base(level);
     }
 
     /// Set the source text (for `ASTRef` emission)

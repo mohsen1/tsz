@@ -29,16 +29,16 @@ fn check_no_lib(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
 }
 
 // =============================================================================
-// TS2580/TS2591: Node.js globals routed through capabilities
+// TS2591: Node.js globals routed through capabilities
 // =============================================================================
 
 #[test]
-fn test_node_global_require_without_types_emits_ts2580() {
+fn test_node_global_require_without_types_emits_ts2591() {
     let diags = check_no_lib("const x = require('fs');");
-    let ts2580: Vec<_> = diags.iter().filter(|d| d.code == 2580).collect();
+    let ts2591: Vec<_> = diags.iter().filter(|d| d.code == 2591).collect();
     assert!(
-        !ts2580.is_empty(),
-        "Expected TS2580 for 'require' (Node global), got: {diags:?}"
+        !ts2591.is_empty(),
+        "Expected TS2591 for 'require' (Node global), got: {diags:?}"
     );
 }
 

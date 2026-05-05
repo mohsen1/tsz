@@ -168,6 +168,44 @@ if (g) {}
 }
 
 #[test]
+fn compile_checked_js_yield_outside_generator_reports_ts1163() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "allowJs": true,
+            "checkJs": true,
+            "skipLibCheck": true,
+            "lib": ["es2020"]
+          },
+          "files": ["yield-outside-generator.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("yield-outside-generator.js"),
+        r#"// @ts-check
+function f() {
+  yield 1;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::A_YIELD_EXPRESSION_IS_ONLY_ALLOWED_IN_A_GENERATOR_BODY),
+        "Expected TS1163 for yield in checked JS non-generator, got: {codes:?}"
+    );
+}
+
+#[test]
 fn instanceof_rhs_validation_uses_lib_function_when_local_type_shadows_function() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -2420,6 +2458,39 @@ fn compile_with_tsconfig_emits_outputs() {
 }
 
 #[test]
+fn compile_emit_bom_prefixes_output_files() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "emitBOM": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(&base.join("main.ts"), "const x = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    let bytes = std::fs::read(base.join("dist/main.js")).expect("read output");
+    assert!(
+        bytes.starts_with(&[0xef, 0xbb, 0xbf]),
+        "Expected emitted JS to start with UTF-8 BOM, got first bytes: {:?}",
+        &bytes[..bytes.len().min(8)]
+    );
+}
+
+#[test]
 fn compile_single_source_amd_outfile_emits_bundle() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -3095,6 +3166,37 @@ fn compile_generic_call_at_yield_expression_in_generic_call2_fixture_has_no_ts23
     assert!(
         ts2345.is_empty(),
         "Expected fixture to avoid stale TS2345 diagnostics, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
+fn compile_return_type_inference_contextual_parameter_types_in_generator_fixture_has_no_errors() {
+    let Some(source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/returnTypeInferenceContextualParameterTypesInGenerator1.ts",
+    ) else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("test.ts"), &source);
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::EsNext);
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("test.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected generator contextual return fixture to have no diagnostics, got: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
         result.diagnostics,
         result.files_read,
         result.file_infos
@@ -5176,6 +5278,56 @@ fn compile_resolves_relative_imports_from_files_list() {
     assert!(result.diagnostics.is_empty());
     assert!(base.join("dist/src/index.js").is_file());
     assert!(base.join("dist/src/util.js").is_file());
+}
+
+#[test]
+fn compile_reports_unsupported_files_list_extension() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["foo.txt"]
+        }"#,
+    );
+    write_file(&base.join("foo.txt"), "not typescript");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts6054: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code
+                == diagnostic_codes::FILE_HAS_AN_UNSUPPORTED_EXTENSION_THE_ONLY_SUPPORTED_EXTENSIONS_ARE
+        })
+        .collect();
+    assert_eq!(
+        ts6054.len(),
+        1,
+        "Expected TS6054 for unsupported explicit files entry, got: {:?}",
+        result.diagnostics
+    );
+    let diagnostic = ts6054[0];
+    assert!(
+        diagnostic.message_text.contains("foo.txt")
+            && diagnostic.message_text.contains("'.ts'")
+            && diagnostic.message_text.contains("'.d.mts'"),
+        "Expected unsupported extension message with supported TS extensions, got: {diagnostic:?}"
+    );
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .any(|info| info.message_text.contains("Part of 'files' list")),
+        "Expected TS6054 to explain the files-list inclusion reason, got: {diagnostic:?}"
+    );
 }
 
 #[test]
@@ -13740,7 +13892,7 @@ fn ts1079_emitted_for_declare_import_without_ts2304_on_declare() {
 }
 
 #[test]
-fn ts2581_emitted_for_unresolved_jquery_global_without_types_or_ts2304() {
+fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
 
@@ -13753,17 +13905,17 @@ fn ts2581_emitted_for_unresolved_jquery_global_without_types_or_ts2304() {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    let ts2581_diags: Vec<_> = result
+    let ts2592_diags: Vec<_> = result
         .diagnostics
         .iter()
         .filter(|d| {
             d.code
-                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA
+                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2
         })
         .collect();
     assert!(
-        !ts2581_diags.is_empty(),
-        "Expected TS2581 for unresolved jQuery global `$`, got diagnostics: {:?}",
+        !ts2592_diags.is_empty(),
+        "Expected TS2592 for unresolved jQuery global `$`, got diagnostics: {:?}",
         result.diagnostics
     );
 
@@ -13779,7 +13931,7 @@ fn ts2581_emitted_for_unresolved_jquery_global_without_types_or_ts2304() {
 }
 
 #[test]
-fn missing_external_globals_without_types_use_install_only_diagnostics() {
+fn missing_external_globals_without_types_use_types_field_diagnostics() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
 
@@ -13808,9 +13960,9 @@ describe("suite", () => {});
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     for code in [
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
     ] {
         assert!(
             codes.contains(&code),
@@ -13819,13 +13971,13 @@ describe("suite", () => {});
         );
     }
     for code in [
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
     ] {
         assert!(
             !codes.contains(&code),
-            "Did not expect types-field diagnostic {code}, got diagnostics: {:?}",
+            "Did not expect install-only diagnostic {code}, got diagnostics: {:?}",
             result.diagnostics
         );
     }
@@ -13922,9 +14074,9 @@ Buffer.from("x");
     let ts2591 = diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2;
 
     assert_eq!(
-        codes.iter().filter(|&&code| code == ts2580).count(),
+        codes.iter().filter(|&&code| code == ts2591).count(),
         2,
-        "Expected TS2580 for process and Buffer in checked JS, got diagnostics: {:?}",
+        "Expected TS2591 for process and Buffer in checked JS, got diagnostics: {:?}",
         result.diagnostics
     );
     assert!(
@@ -13945,8 +14097,8 @@ Buffer.from("x");
         );
     }
     assert!(
-        !codes.contains(&ts2591),
-        "Did not expect TS2591 in checked JS without compilerOptions.types, got diagnostics: {:?}",
+        !codes.contains(&ts2580),
+        "Did not expect TS2580, got diagnostics: {:?}",
         result.diagnostics
     );
     assert!(
@@ -15065,6 +15217,52 @@ var n = F4.staticProp;
 }
 
 #[test]
+fn compile_js_class_static_expando_after_constructor_function_merge() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["file1.js", "file2.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("file1.js"),
+        r#"var SomeClass = function () {
+    this.otherProp = 0;
+};
+
+new SomeClass();
+"#,
+    );
+    write_file(
+        &base.join("file2.js"),
+        r#"class SomeClass { }
+SomeClass.prop = 0;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected JS class static expando after constructor-function merge to avoid TS2339, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_js_enum_cross_file_export_keeps_nested_jsdoc_namespace_properties() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -15429,6 +15627,60 @@ const foo2 = value => /** @type {string} */(/** @type {T} */({ ...value }));
         ts2322.len(),
         2,
         "Expected the two existing TS2322 diagnostics from the cast mismatch shape, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_jsdoc_template_prefix_tag_does_not_create_type_parameter() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true,
+            "types": []
+          },
+          "files": ["index.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"// @ts-check
+
+/**
+ * @templatex T
+ * @param {T} value
+ */
+function id(value) {
+  return value;
+}
+
+id("not a number").toFixed();
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        result.diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_NAME
+                && d.message_text.contains("Cannot find name 'T'")
+        }),
+        "Expected @templatex to be ignored so {{T}} reports TS2304, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN),
+        "Expected no TS2551 from treating @templatex as a real generic, got diagnostics: {:?}",
         result.diagnostics
     );
 }

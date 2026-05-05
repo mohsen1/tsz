@@ -766,6 +766,10 @@ impl<'a> DeclarationEmitter<'a> {
                             .is_some_and(|without_index| without_index == module_specifier)
                 } else {
                     self.node_modules_path_matches_import_specifier(module_path, module_specifier)
+                        || self.path_mapping_module_path_matches_import_specifier(
+                            module_path,
+                            module_specifier,
+                        )
                 };
                 matches.then_some(module_path.as_str())
             })
@@ -777,6 +781,42 @@ impl<'a> DeclarationEmitter<'a> {
                 .then_with(|| left.cmp(right))
         });
         matches
+    }
+
+    fn path_mapping_module_path_matches_import_specifier(
+        &self,
+        module_path: &str,
+        module_specifier: &str,
+    ) -> bool {
+        if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
+            return false;
+        }
+
+        let mut parts = module_specifier.split('/').collect::<Vec<_>>();
+        if parts.is_empty() {
+            return false;
+        }
+
+        let package_name = if parts[0].starts_with('@') {
+            if parts.len() < 2 {
+                return false;
+            }
+            let package = parts[1].to_string();
+            parts.drain(0..2);
+            package
+        } else {
+            parts.remove(0).to_string()
+        };
+        let subpath = parts.join("/");
+
+        let normalized = self.strip_ts_extensions(module_path).replace('\\', "/");
+        if subpath.is_empty() {
+            return normalized.ends_with(&format!("/{package_name}/src/index"))
+                || normalized.ends_with(&format!("/{package_name}/index"));
+        }
+
+        normalized.ends_with(&format!("/{package_name}/src/{subpath}"))
+            || normalized.ends_with(&format!("/{package_name}/{subpath}"))
     }
 
     pub(in crate::declaration_emitter) fn node_modules_path_matches_import_specifier(

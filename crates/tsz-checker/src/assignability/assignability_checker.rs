@@ -1651,11 +1651,30 @@ impl<'a> CheckerState<'a> {
             evaluated = distributed;
         }
 
+        if crate::query_boundaries::assignability::remapped_mapped_type_has_no_outer_type_params(
+            self.ctx.types,
+            evaluated,
+        ) {
+            let concrete = self.evaluate_concrete_remapped_mapped_type_with_resolution(evaluated);
+            if concrete != evaluated {
+                evaluated = concrete;
+            }
+        }
+
         evaluated = self.evaluate_awaited_application_for_assignability(evaluated);
 
         evaluated = self.normalize_callable_type_for_assignability(evaluated);
 
         evaluated
+    }
+
+    fn concrete_remapped_mapped_assignability_target(&mut self, target: TypeId) -> Option<TypeId> {
+        let resolved = self.evaluate_type_with_resolution(target);
+        let mapped_id = crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved)?;
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+        mapped.name_type?;
+        let concrete = self.evaluate_concrete_remapped_mapped_type_with_resolution(resolved);
+        (concrete != resolved).then_some(concrete)
     }
 
     /// Recursively evaluate Lazy property types within an Object type so that
@@ -2150,6 +2169,10 @@ impl<'a> CheckerState<'a> {
             && s_key_param.name != t_key_param.name
         {
             return false;
+        }
+
+        if let Some(concrete_target) = self.concrete_remapped_mapped_assignability_target(target) {
+            return self.is_assignable_to(source, concrete_target);
         }
 
         let source_eval = self.evaluate_type_for_assignability(source);
