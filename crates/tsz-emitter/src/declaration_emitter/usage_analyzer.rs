@@ -483,14 +483,14 @@ impl<'a> UsageAnalyzer<'a> {
         // CRITICAL: Also walk the inferred type of the function itself
         // This catches imported types via the type system even when
         // there's an explicit type annotation
-        self.walk_inferred_type(func_idx);
+        self.walk_inferred_type_or_related(&[func_idx, func.name]);
 
         // Walk return type (explicit or inferred)
         if func.type_annotation.is_some() {
             self.analyze_type_node(func.type_annotation);
         } else {
             // No explicit annotation - use inferred type from node_types
-            self.walk_inferred_type(func_idx);
+            self.walk_inferred_type_or_related(&[func_idx, func.name]);
             // Also walk return-statement type assertions in the body so
             // imports referenced only via `return {} as X;` survive elision.
             // The inferred TypeId may resolve to an ambient symbol that
@@ -498,6 +498,7 @@ impl<'a> UsageAnalyzer<'a> {
             // Matches typeReferenceRelatedFiles.
             if func.body.is_some() {
                 self.analyze_return_statement_assertions(func.body);
+                self.analyze_return_expression_public_surface(func.body);
             }
         }
     }
@@ -539,6 +540,54 @@ impl<'a> UsageAnalyzer<'a> {
         };
         if let Some(assertion) = self.arena.get_type_assertion(expr_node) {
             self.analyze_type_node(assertion.type_node);
+        }
+    }
+
+    fn analyze_return_expression_public_surface(&mut self, body_idx: NodeIndex) {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return;
+        };
+        for &stmt_idx in &block.statements.nodes {
+            self.analyze_return_expression_public_surface_in_statement(stmt_idx);
+        }
+    }
+
+    fn analyze_return_expression_public_surface_in_statement(&mut self, stmt_idx: NodeIndex) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                    return;
+                };
+                if ret.expression.is_some() {
+                    self.analyze_expression_public_surface(ret.expression);
+                }
+            }
+            k if k == syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.arena.get_block(stmt_node) {
+                    for &nested_stmt_idx in &block.statements.nodes {
+                        self.analyze_return_expression_public_surface_in_statement(nested_stmt_idx);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn analyze_expression_public_surface(&mut self, expr_idx: NodeIndex) {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+        if expr_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            self.analyze_class_declaration(expr_idx);
         }
     }
 
