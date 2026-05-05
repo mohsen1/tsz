@@ -398,6 +398,10 @@ pub struct CliArgs {
     #[arg(long = "alwaysStrict", alias = "always-strict")]
     pub always_strict: Option<bool>,
 
+    /// Suppress deprecation diagnostics for a TypeScript version.
+    #[arg(long = "ignoreDeprecations", alias = "ignore-deprecations")]
+    pub ignore_deprecations: Option<String>,
+
     /// Enable error reporting when local variables aren't read.
     #[arg(long = "noUnusedLocals", alias = "no-unused-locals")]
     pub no_unused_locals: bool,

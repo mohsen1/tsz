@@ -836,6 +836,7 @@ fn build_valued_flag_set() -> rustc_hash::FxHashSet<&'static str> {
         "--tsBuildInfoFile",
         "--generateTrace",
         "--generateCpuProfile",
+        "--ignoreDeprecations",
         "--watchFile",
         "--watchDirectory",
         "--fallbackPolling",
@@ -1193,6 +1194,7 @@ const KNOWN_TSC_OPTIONS: &[&str] = &[
     "--generateTrace",
     "--help",
     "--ignoreConfig",
+    "--ignoreDeprecations",
     "--importHelpers",
     "--importsNotUsedAsValues",
     "--incremental",
@@ -2099,6 +2101,9 @@ fn show_config_compiler_options_to_json(
     if let Some(ref v) = opts.module_detection {
         map.insert("moduleDetection".into(), Value::String(v.to_lowercase()));
     }
+    if let Some(ref v) = opts.ignore_deprecations {
+        map.insert("ignoreDeprecations".into(), Value::String(v.clone()));
+    }
 
     macro_rules! set_bool {
         ($f:ident, $k:expr) => {
@@ -2297,6 +2302,9 @@ fn show_config_apply_cli_overrides(
     }
     if let Some(ref v) = args.base_url {
         map.insert("baseUrl".into(), Value::String(v.display().to_string()));
+    }
+    if let Some(ref v) = args.ignore_deprecations {
+        map.insert("ignoreDeprecations".into(), Value::String(v.clone()));
     }
 
     macro_rules! set_if_true {

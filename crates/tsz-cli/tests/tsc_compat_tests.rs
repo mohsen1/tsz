@@ -1776,10 +1776,8 @@ fn tsc_parity_found_n_errors_same_file_pretty() {
 // Deprecated option values: should still be accepted as input
 // ---------------------------------------------------------------------------
 
-// NOTE: tsc v6 emits TS5107 deprecation warnings for deprecated values like
-// --target es5, --module amd, etc. tsz does not yet implement TS5107.
-// These tests verify that deprecated values are at least accepted (not rejected)
-// by tsz, matching tsc's behavior of still compiling them.
+// Deprecated values can emit TS5107, but they should still be accepted as
+// option values rather than rejected with TS6046.
 
 #[test]
 fn deprecated_target_es5_accepted() {
