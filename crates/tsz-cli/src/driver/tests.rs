@@ -757,6 +757,57 @@ var spread1 = <div x='' {...foo} y='' />;"#,
 }
 
 #[test]
+fn test_project_mode_reports_global_nan_equality_ts2845() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "noEmit": true
+  },
+  "include": ["*.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("test.ts"),
+        r#"declare const x: number;
+
+if (x === NaN) {}
+if (NaN === x) {}
+
+function t1(value: number, NaN: number) {
+    return value === NaN;
+}
+"#,
+    )
+    .expect("write test");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let ts2845 = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2845)
+        .count();
+    assert_eq!(
+        ts2845, 2,
+        "expected TS2845 for global NaN comparisons only, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_project_reports_template_literal_generic_constraint_ts2322() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(

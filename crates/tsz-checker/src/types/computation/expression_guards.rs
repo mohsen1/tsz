@@ -101,10 +101,41 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(node)
             && ident.escaped_text == "NaN"
         {
+            // Project-mode lib SymbolIds can collide with source SymbolIds. First
+            // prove the identifier has a visible source-file binding; only that
+            // should shadow the global NaN diagnostic.
+            let has_visible_source_nan = self
+                .ctx
+                .binder
+                .resolve_identifier_with_filter(self.ctx.arena, current_idx, &[], |sym_id| {
+                    let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                        return false;
+                    };
+                    symbol.escaped_name == "NaN"
+                        && symbol.value_declaration.is_some()
+                        && (symbol.decl_file_idx == self.ctx.current_file_idx as u32
+                            || (symbol.decl_file_idx == u32::MAX
+                                && self.ctx.binder.get_node_symbol(symbol.value_declaration)
+                                    == Some(sym_id)))
+                })
+                .is_some();
+            if has_visible_source_nan {
+                return false;
+            }
+
             if let Some(sym_id) = self.resolve_identifier_symbol(current_idx) {
-                return self.ctx.symbol_is_from_actual_lib(sym_id)
+                if self.ctx.symbol_is_from_actual_lib(sym_id)
                     || self.ctx.symbol_is_from_lib(sym_id)
-                    || self.ctx.binder.lib_symbol_ids.contains(&sym_id);
+                    || self.ctx.binder.lib_symbol_ids.contains(&sym_id)
+                {
+                    return true;
+                }
+
+                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    return true;
+                };
+                return symbol.decl_file_idx != self.ctx.current_file_idx as u32
+                    && self.ctx.binder.get_node_symbol(symbol.value_declaration) != Some(sym_id);
             }
             return true; // Unresolved NaN treated as global
         }
