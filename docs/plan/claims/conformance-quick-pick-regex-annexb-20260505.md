@@ -17,6 +17,8 @@ and invalid escapes are reported at different source positions than tsc.
 
 - `crates/tsz-parser/src/parser/state_expressions_literals_regex.rs`
 - `crates/tsz-parser/tests/parser_improvement_tests.rs`
+- `crates/tsz-checker/src/types/type_node.rs` (comment-only trim for current
+  mainline architecture guard)
 - `docs/plan/claims/conformance-quick-pick-regex-annexb-20260505.md`
 
 ## Verification
