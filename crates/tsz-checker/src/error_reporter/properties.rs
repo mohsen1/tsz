@@ -859,6 +859,9 @@ impl<'a> CheckerState<'a> {
             if self.get_class_decl_from_type(member).is_some() {
                 class_members.push(member);
             } else {
+                if member.is_intrinsic() {
+                    return None;
+                }
                 other_members.push(member);
             }
         }
