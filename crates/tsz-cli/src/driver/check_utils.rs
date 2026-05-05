@@ -1990,9 +1990,24 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
 /// Build a line-start table: `line_starts[i]` is the byte offset of the first char on line `i`.
 fn build_line_starts(text: &str) -> Vec<u32> {
     let mut starts = vec![0u32];
-    for (i, b) in text.bytes().enumerate() {
-        if b == b'\n' {
-            starts.push((i + 1) as u32);
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\r' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                    starts.push((i + 2) as u32);
+                    i += 2;
+                } else {
+                    starts.push((i + 1) as u32);
+                    i += 1;
+                }
+            }
+            b'\n' => {
+                starts.push((i + 1) as u32);
+                i += 1;
+            }
+            _ => i += 1,
         }
     }
     starts
@@ -2074,7 +2089,7 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
                 let comment_start = i as u32;
                 let line_end = bytes[i..]
                     .iter()
-                    .position(|&b| b == b'\n')
+                    .position(|&b| b == b'\n' || b == b'\r')
                     .map(|offset| i + offset)
                     .unwrap_or(len);
                 let comment_text = &text[i..line_end];
@@ -2612,6 +2627,56 @@ const value = 1;
         assert_eq!(directives.len(), 1);
         assert!(directives[0].is_expect_error);
         assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_line_starts_treat_cr_as_line_break() {
+        assert_eq!(
+            build_line_starts("// @ts-ignore\rlet x: string = 1;\r"),
+            vec![0, 14, 33],
+        );
+        assert_eq!(
+            build_line_starts("// @ts-ignore\r\nlet x: string = 1;\n"),
+            vec![0, 15, 34],
+        );
+    }
+
+    #[test]
+    fn ts_ignore_suppresses_next_line_with_cr_only_line_endings() {
+        let source = "// @ts-ignore\rlet x: string = 1;\r";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            18,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected CR-only @ts-ignore to suppress the next-line diagnostic, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn ts_expect_error_uses_next_line_with_cr_only_line_endings() {
+        let source = "// @ts-expect-error\rlet x: string = 1;\r";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            24,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected CR-only @ts-expect-error to suppress the next-line diagnostic, got: {diagnostics:?}"
+        );
     }
 
     #[test]
