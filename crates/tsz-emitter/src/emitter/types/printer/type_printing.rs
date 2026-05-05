@@ -731,7 +731,7 @@ impl<'a> TypePrinter<'a> {
             }
 
             // Type annotation
-            part.push_str(&self.print_type(elem.type_id));
+            part.push_str(&self.print_tuple_element_type(elem.type_id, elem.rest));
 
             // Optional marker for unlabeled non-rest tuples (comes after type): [T?]
             if elem.name.is_none() && elem.optional && !elem.rest {
@@ -754,6 +754,17 @@ impl<'a> TypePrinter<'a> {
         }
 
         format!("[{}]", parts.join(", "))
+    }
+
+    fn print_tuple_element_type(&self, type_id: TypeId, is_rest: bool) -> String {
+        if is_rest
+            && let Some(param_info) = visitor::type_param_info(self.interner, type_id)
+            && !visitor::is_infer_type(self.interner, type_id)
+        {
+            return self.print_type_parameter(&param_info);
+        }
+
+        self.print_type(type_id)
     }
 
     pub(crate) fn print_function_type(
