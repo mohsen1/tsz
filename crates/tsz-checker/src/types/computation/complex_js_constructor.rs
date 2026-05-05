@@ -248,7 +248,7 @@ impl<'a> CheckerState<'a> {
         let func_node_idx = self.ctx.arena.parent_of(body_idx);
         let has_jsdoc_constructor_evidence = func_node_idx
             .and_then(|func_node_idx| self.get_jsdoc_for_function(func_node_idx))
-            .is_some_and(|jsdoc| jsdoc.contains("@constructor"))
+            .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "constructor"))
             || sym_id
                 .as_ref()
                 .is_some_and(|&sym_id| self.symbol_has_js_constructor_evidence(sym_id));

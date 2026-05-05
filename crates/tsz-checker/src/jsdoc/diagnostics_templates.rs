@@ -165,11 +165,13 @@ impl<'a> CheckerState<'a> {
                     .trim();
                 content = content.trim_end_matches("*/").trim();
 
-                if content.starts_with("@typedef") {
+                if Self::jsdoc_line_starts_with_tag(content, "typedef") {
                     saw_typedef = true;
                     continue;
                 }
-                if content.starts_with("@callback") || content.starts_with("@overload") {
+                if Self::jsdoc_line_starts_with_tag(content, "callback")
+                    || Self::jsdoc_line_starts_with_tag(content, "overload")
+                {
                     template_is_invalid_here = true;
                     continue;
                 }
@@ -296,11 +298,12 @@ impl<'a> CheckerState<'a> {
             let comment_text =
                 &source_text[comment.pos as usize..(comment.end as usize).min(source_text.len())];
             let content = get_jsdoc_content(comment, &source_text);
-            let has_typedef = content.contains("@typedef") || content.contains("@callback");
+            let has_typedef = Self::jsdoc_contains_tag(&content, "typedef")
+                || Self::jsdoc_contains_tag(&content, "callback");
 
             for raw_line in content.lines() {
                 let trimmed = raw_line.trim().trim_start_matches('*').trim();
-                let Some(rest) = trimmed.strip_prefix("@template") else {
+                let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "template") else {
                     continue;
                 };
                 let rest = rest.trim();

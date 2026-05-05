@@ -249,6 +249,33 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// All offsets at which `@<tag_name>` appears in `jsdoc`, restricted to
+    /// occurrences followed by a tag boundary (end of string, whitespace,
+    /// `{`, or any other non-identifier character). The naive
+    /// `s.find("@tag")` skips this check and treats `@tagx` as `@tag`.
+    pub(crate) fn jsdoc_tag_offsets(jsdoc: &str, tag_name: &str) -> Vec<usize> {
+        let needle = format!("@{tag_name}");
+        let mut positions = Vec::new();
+        for pos_match in jsdoc.match_indices(&needle) {
+            let after = pos_match.0 + needle.len();
+            let is_boundary = match jsdoc[after..].chars().next() {
+                None => true,
+                Some(c) => !c.is_ascii_alphanumeric() && c != '_',
+            };
+            if is_boundary {
+                positions.push(pos_match.0);
+            }
+        }
+        positions
+    }
+
+    /// Returns true when `line` begins with `@<tag_name>` followed by a tag
+    /// boundary. Use instead of `line.starts_with("@tag")` when the line may
+    /// also start with longer `@tagx` identifiers.
+    pub(crate) fn jsdoc_line_starts_with_tag(line: &str, tag_name: &str) -> bool {
+        Self::strip_jsdoc_tag_prefix(line, tag_name).is_some()
+    }
+
     pub(crate) fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
         let typedef_pos = jsdoc.find("@typedef");
         let mut tag_pos = jsdoc.find("@type");
@@ -354,7 +381,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn extract_jsdoc_satisfies_expression(jsdoc: &str) -> Option<&str> {
-        let tag_pos = jsdoc.find("@satisfies")?;
+        let tag_pos = Self::jsdoc_tag_offset(jsdoc, "satisfies")?;
         let rest = &jsdoc[tag_pos + "@satisfies".len()..];
         let open = rest.find('{')?;
         let after_open = &rest[open + 1..];
@@ -634,9 +661,11 @@ impl<'a> CheckerState<'a> {
         let mut other_host_count = 0usize;
         for raw_line in jsdoc.lines() {
             let trimmed = normalize(raw_line);
-            if trimmed.starts_with("@typedef") {
+            if Self::jsdoc_line_starts_with_tag(&trimmed, "typedef") {
                 typedef_count += 1;
-            } else if trimmed.starts_with("@callback") || trimmed.starts_with("@overload") {
+            } else if Self::jsdoc_line_starts_with_tag(&trimmed, "callback")
+                || Self::jsdoc_line_starts_with_tag(&trimmed, "overload")
+            {
                 other_host_count += 1;
             }
         }
@@ -646,9 +675,9 @@ impl<'a> CheckerState<'a> {
         let mut prefix = String::new();
         for raw_line in jsdoc.lines() {
             let trimmed = normalize(raw_line);
-            if trimmed.starts_with("@typedef")
-                || trimmed.starts_with("@callback")
-                || trimmed.starts_with("@overload")
+            if Self::jsdoc_line_starts_with_tag(&trimmed, "typedef")
+                || Self::jsdoc_line_starts_with_tag(&trimmed, "callback")
+                || Self::jsdoc_line_starts_with_tag(&trimmed, "overload")
             {
                 break;
             }
@@ -724,7 +753,7 @@ impl<'a> CheckerState<'a> {
             if line.is_empty() || !line.starts_with('@') {
                 continue;
             }
-            if let Some(rest) = line.strip_prefix("@import") {
+            if let Some(rest) = Self::strip_jsdoc_tag_prefix(line, "import") {
                 for (local_name, specifier, import_name) in Self::parse_jsdoc_import_tag(rest) {
                     let import_type = if import_name == "*" || import_name == "default" {
                         format!("import(\"{specifier}\")")
@@ -752,7 +781,7 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
-            if let Some(tag_idx) = line.find("@typedef") {
+            if let Some(tag_idx) = Self::jsdoc_tag_offset(line, "typedef") {
                 let rest = line[tag_idx + "@typedef".len()..].trim();
                 if rest.starts_with("{{") && Self::parse_jsdoc_curly_type_expr(rest).is_none() {
                     if let Some(previous_name) = current_name.take() {
@@ -799,7 +828,7 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
-            if let Some(tag_idx) = line.find("@callback") {
+            if let Some(tag_idx) = Self::jsdoc_tag_offset(line, "callback") {
                 let name = line[tag_idx + "@callback".len()..].trim().to_string();
                 if !name.is_empty()
                     && name
@@ -1048,7 +1077,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn extract_anonymous_typedef_base_type(jsdoc: &str) -> Option<String> {
         for raw_line in jsdoc.lines() {
             let line = raw_line.trim_start_matches('*').trim();
-            if let Some(rest) = line.strip_prefix("@typedef") {
+            if let Some(rest) = Self::strip_jsdoc_tag_prefix(line, "typedef") {
                 let rest = rest.trim();
                 if rest.starts_with('{')
                     && let Some((expr, after)) = Self::parse_jsdoc_curly_type_expr(rest)
@@ -1135,5 +1164,163 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod jsdoc_tag_boundary_tests {
+    use crate::state::CheckerState;
+
+    // Issue #2916: longer JSDoc tag names must not match shorter tags. The
+    // tag-boundary helpers gate every JSDoc tag-detection path so identifiers
+    // such as `@satisfiesx`, `@importx`, `@overridex`, `@thisx`, `@typedefx`,
+    // `@callbackx`, and `@constructorx` are not silently treated as the
+    // shorter real tags.
+
+    #[test]
+    fn jsdoc_contains_tag_rejects_longer_identifier() {
+        for tag in [
+            "satisfies",
+            "import",
+            "override",
+            "this",
+            "typedef",
+            "callback",
+            "constructor",
+        ] {
+            let mismatched = format!("/** @{tag}x foo */");
+            assert!(
+                !CheckerState::jsdoc_contains_tag(&mismatched, tag),
+                "@{tag}x must not be treated as @{tag} (input: {mismatched:?})"
+            );
+            let real = format!("/** @{tag} foo */");
+            assert!(
+                CheckerState::jsdoc_contains_tag(&real, tag),
+                "@{tag} must still be detected (input: {real:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn jsdoc_contains_tag_treats_underscore_suffix_as_distinct_tag() {
+        assert!(!CheckerState::jsdoc_contains_tag(
+            "/** @typedef_internal {{ a }} */",
+            "typedef"
+        ));
+        assert!(CheckerState::jsdoc_contains_tag(
+            "/** @typedef\n@template T */",
+            "typedef"
+        ));
+    }
+
+    #[test]
+    fn jsdoc_tag_offset_skips_longer_match_and_finds_real_tag() {
+        let jsdoc = "/** @satisfiesx not a tag\n * @satisfies {Foo} */";
+        let pos = CheckerState::jsdoc_tag_offset(jsdoc, "satisfies")
+            .expect("real @satisfies tag must be located");
+        assert_eq!(&jsdoc[pos..pos + "@satisfies".len()], "@satisfies");
+        let after = &jsdoc[pos + "@satisfies".len()..];
+        assert!(
+            after.starts_with(' '),
+            "boundary must be reached, got rest = {after:?}"
+        );
+    }
+
+    #[test]
+    fn jsdoc_tag_offsets_only_returns_real_tag_positions() {
+        let jsdoc = "@satisfiesx skip me\n@satisfies a\n@satisfies b\n@satisfiesy nope\n";
+        let offsets = CheckerState::jsdoc_tag_offsets(jsdoc, "satisfies");
+        assert_eq!(offsets.len(), 2);
+        for off in &offsets {
+            let after = &jsdoc[off + "@satisfies".len()..];
+            let next = after.chars().next().unwrap_or(' ');
+            assert!(
+                !next.is_ascii_alphanumeric() && next != '_',
+                "expected boundary at offset {off}, found {after:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn strip_jsdoc_tag_prefix_rejects_longer_identifiers() {
+        for tag in ["import", "typedef", "template", "param"] {
+            let mismatched = format!("@{tag}x foo");
+            assert!(
+                CheckerState::strip_jsdoc_tag_prefix(&mismatched, tag).is_none(),
+                "@{tag}x must not strip as @{tag} (input: {mismatched:?})"
+            );
+            let real = format!("@{tag} foo");
+            assert_eq!(
+                CheckerState::strip_jsdoc_tag_prefix(&real, tag),
+                Some(" foo"),
+                "@{tag} must strip with the trailing rest preserved"
+            );
+            // Bare tag with no trailing characters (end of input is a boundary).
+            let bare = format!("@{tag}");
+            assert_eq!(CheckerState::strip_jsdoc_tag_prefix(&bare, tag), Some(""));
+        }
+    }
+
+    #[test]
+    fn jsdoc_line_starts_with_tag_handles_boundaries() {
+        assert!(CheckerState::jsdoc_line_starts_with_tag(
+            "@typedef {{a: number}} Foo",
+            "typedef"
+        ));
+        assert!(!CheckerState::jsdoc_line_starts_with_tag(
+            "@typedefx {{a: number}} Foo",
+            "typedef"
+        ));
+        assert!(!CheckerState::jsdoc_line_starts_with_tag(
+            "@typedef_inner",
+            "typedef"
+        ));
+        assert!(CheckerState::jsdoc_line_starts_with_tag(
+            "@typedef\trest",
+            "typedef"
+        ));
+    }
+
+    #[test]
+    fn extract_jsdoc_satisfies_expression_ignores_longer_prefix() {
+        // `@satisfiesx {Foo}` must not be parsed as `@satisfies {Foo}`.
+        let bogus = "/** @satisfiesx {Foo} */";
+        assert!(CheckerState::extract_jsdoc_satisfies_expression(bogus).is_none());
+        let real = "/** @satisfies {Foo} */";
+        assert_eq!(
+            CheckerState::extract_jsdoc_satisfies_expression(real),
+            Some("Foo")
+        );
+    }
+
+    #[test]
+    fn parse_jsdoc_typedefs_ignores_typedefx_and_importx() {
+        // `@typedefx` must not register a typedef under the name following the
+        // bogus tag.
+        let typedefs = CheckerState::parse_jsdoc_typedefs("@typedefx {{ n: number }} Foo\n");
+        assert_eq!(
+            typedefs.len(),
+            0,
+            "expected no typedefs from @typedefx, got {} entries",
+            typedefs.len()
+        );
+
+        // `@importx { Foo } from "./types"` must not create an import alias.
+        let imports = CheckerState::parse_jsdoc_typedefs("@importx { Foo } from \"./types\"\n");
+        assert_eq!(
+            imports.len(),
+            0,
+            "expected no imports from @importx, got {} entries",
+            imports.len()
+        );
+
+        // The real `@typedef` and `@import` must still be handled.
+        let typedefs = CheckerState::parse_jsdoc_typedefs("@typedef {{ n: number }} Foo\n");
+        assert_eq!(typedefs.len(), 1);
+        assert_eq!(typedefs[0].0, "Foo");
+
+        let imports = CheckerState::parse_jsdoc_typedefs("@import { Foo } from \"./types\"\n");
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].0, "Foo");
     }
 }

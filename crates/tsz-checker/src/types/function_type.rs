@@ -353,7 +353,7 @@ impl<'a> CheckerState<'a> {
         if is_arrow_function
             && self.is_js_file()
             && let Some(ref jsdoc) = func_jsdoc
-            && jsdoc.contains("@this")
+            && Self::jsdoc_contains_tag(jsdoc, "this")
             && let Some(sf) = self.source_file_data_for_node(idx)
         {
             let source_text = sf.text.to_string();
@@ -362,25 +362,19 @@ impl<'a> CheckerState<'a> {
                 self.try_jsdoc_with_ancestor_walk_and_pos(idx, &comments, &source_text)
             {
                 // jsdoc_start is the comment's pos (start of `/**`).
-                // Search from there to find `@this` in the raw source.
+                // Search from there to find `@this` in the raw source, gated
+                // on a JSDoc tag boundary so `@thisx` is not misread as `@this`.
                 let search_start = jsdoc_start as usize;
-                if let Some(this_off) = source_text[search_start..].find("@this") {
-                    // Verify this is @this tag, not a substring of another tag
+                if let Some(this_off) = Self::jsdoc_tag_offset(&source_text[search_start..], "this")
+                {
                     let at_pos = search_start + this_off;
-                    let after = &source_text[at_pos + 5..];
-                    let is_this_tag = after.starts_with(' ')
-                        || after.starts_with('{')
-                        || after.starts_with('\n')
-                        || after.starts_with('\r');
-                    if is_this_tag {
-                        // tsc points at "this" (after the "@"), not "@this"
-                        self.ctx.error(
-                                (at_pos + 1) as u32,
-                                4, // length of "this"
-                                "An arrow function cannot have a 'this' parameter.".to_string(),
-                                crate::diagnostics::diagnostic_codes::AN_ARROW_FUNCTION_CANNOT_HAVE_A_THIS_PARAMETER,
-                            );
-                    }
+                    // tsc points at "this" (after the "@"), not "@this"
+                    self.ctx.error(
+                        (at_pos + 1) as u32,
+                        4, // length of "this"
+                        "An arrow function cannot have a 'this' parameter.".to_string(),
+                        crate::diagnostics::diagnostic_codes::AN_ARROW_FUNCTION_CANNOT_HAVE_A_THIS_PARAMETER,
+                    );
                 }
             }
         }

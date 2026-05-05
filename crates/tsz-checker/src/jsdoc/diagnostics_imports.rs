@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
 
             for line in content.lines() {
                 let trimmed = line.trim_start_matches('*').trim();
-                if let Some(rest) = trimmed.strip_prefix("@import") {
+                if let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "import") {
                     let imports = Self::parse_jsdoc_import_tag(rest);
                     for (local_name, _specifier, _import_name) in imports {
                         if let Some(name_offset) =
@@ -68,7 +68,7 @@ impl<'a> CheckerState<'a> {
     /// Find the position of an import name within a JSDoc comment text.
     /// Returns the byte offset from the start of the comment.
     fn find_import_name_in_comment(comment_text: &str, name: &str) -> Option<usize> {
-        let import_idx = comment_text.find("@import")?;
+        let import_idx = Self::jsdoc_tag_offset(comment_text, "import")?;
         let after_import = import_idx + "@import".len();
         let rest = &comment_text[after_import..];
 
