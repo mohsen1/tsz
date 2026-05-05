@@ -138,7 +138,7 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
                     .unwrap_or_default();
                 (body_type, type_params)
             } else if let Some(TypeData::TypeQuery(symbol_ref)) = self.interner.lookup(base) {
-                let Some(body_type) = self.resolver.resolve_symbol_ref(symbol_ref, self.interner)
+                let Some(body_type) = self.resolver.resolve_type_query(symbol_ref, self.interner)
                 else {
                     return ApplicationResult::ResolutionFailed(type_id);
                 };
