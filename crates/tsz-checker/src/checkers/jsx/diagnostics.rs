@@ -150,7 +150,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         tag_name_idx: NodeIndex,
     ) -> Option<String> {
-        let sym_id = self.resolve_identifier_symbol(tag_name_idx)?;
+        let sym_id = self.resolve_jsx_tag_symbol_for_diagnostics(tag_name_idx)?;
         let props_name = self.get_element_attributes_property_name_with_check(None)?;
         if props_name.is_empty() {
             return None;
@@ -163,7 +163,7 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
         prop_name: &str,
     ) -> Option<String> {
-        let sym_id = self.resolve_identifier_symbol(tag_name_idx)?;
+        let sym_id = self.resolve_jsx_tag_symbol_for_diagnostics(tag_name_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         for decl_idx in symbol.all_declarations() {
             if let Some(text) =
@@ -181,7 +181,7 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
         prop_name: &str,
     ) -> Option<NodeIndex> {
-        let sym_id = self.resolve_identifier_symbol(tag_name_idx)?;
+        let sym_id = self.resolve_jsx_tag_symbol_for_diagnostics(tag_name_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         for decl_idx in symbol.all_declarations() {
             if let Some(prop_decl) =
@@ -192,6 +192,19 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn resolve_jsx_tag_symbol_for_diagnostics(
+        &mut self,
+        tag_name_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        self.resolve_identifier_symbol(tag_name_idx).or_else(|| {
+            let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
+            if tag_text == "this" || tag_text.contains('.') || tag_text.contains(':') {
+                return None;
+            }
+            self.ctx.binder.file_locals.get(tag_text.as_str())
+        })
     }
 
     fn get_jsx_component_props_display_text_for_symbol(
