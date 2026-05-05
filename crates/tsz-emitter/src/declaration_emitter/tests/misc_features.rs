@@ -1160,3 +1160,62 @@ class BitOps {
         "Expected bitwise and to return number: {output}"
     );
 }
+
+// =============================================================================
+// 23. Import-clause fallback heuristics (no usage tracking, e.g. --noCheck --noLib)
+// =============================================================================
+
+// Regression for #3337: with `--noCheck --noLib --declaration --emitDeclarationOnly`
+// tsz dropped a regular default import even though the emitted `.d.ts` referenced
+// the imported binding as a type. The fallback path must keep default imports for
+// the same reason it keeps named imports — they may resolve a type reference in
+// the declaration output.
+#[test]
+fn default_import_is_preserved_in_dts_fallback_when_used_as_type() {
+    let output = emit_dts(
+        r#"
+import Foo from "./dep";
+export let x: Foo;
+"#,
+    );
+
+    assert!(
+        output.contains(r#"import Foo from "./dep";"#),
+        "Expected default import to be preserved in fallback dts emit: {output}"
+    );
+    assert!(
+        output.contains("export declare let x: Foo;"),
+        "Expected exported let to keep its `Foo` type annotation: {output}"
+    );
+}
+
+#[test]
+fn default_import_fallback_preserves_combined_default_and_named() {
+    let output = emit_dts(
+        r#"
+import Foo, { Bar } from "./dep";
+export let x: Foo;
+export let y: Bar;
+"#,
+    );
+
+    assert!(
+        output.contains("Foo") && output.contains("Bar") && output.contains(r#""./dep""#),
+        "Expected combined default + named imports to be preserved in fallback dts emit: {output}"
+    );
+}
+
+#[test]
+fn type_only_default_import_still_preserved_in_fallback() {
+    let output = emit_dts(
+        r#"
+import type Foo from "./dep";
+export let x: Foo;
+"#,
+    );
+
+    assert!(
+        output.contains("Foo") && output.contains(r#""./dep""#),
+        "Expected type-only default import to still be preserved: {output}"
+    );
+}
