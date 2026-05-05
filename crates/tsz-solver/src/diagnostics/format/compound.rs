@@ -1577,9 +1577,16 @@ impl<'a> TypeFormatter<'a> {
             "{} extends {} ? {} : {}",
             self.format(cond.check_type),
             extends_type,
-            self.format(cond.true_type),
-            self.format(cond.false_type)
+            self.format_conditional_branch(cond.true_type),
+            self.format_conditional_branch(cond.false_type)
         )
+    }
+
+    fn format_conditional_branch(&mut self, type_id: TypeId) -> String {
+        if let Some(TypeData::Infer(info)) = self.interner.lookup(type_id) {
+            return self.atom(info.name).to_string();
+        }
+        self.format(type_id).into_owned()
     }
 
     pub(super) fn format_mapped(&mut self, mapped: &MappedType) -> String {

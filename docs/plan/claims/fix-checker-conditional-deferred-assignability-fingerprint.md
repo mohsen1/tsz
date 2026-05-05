@@ -1,9 +1,9 @@
-# [WIP] fix(checker): align deferred conditional assignability fingerprints
+# fix(checker): align deferred conditional assignability fingerprints
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-conditional-deferred-assignability-fingerprint`
 - **PR**: #2774
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -19,12 +19,32 @@ assignability.
 
 - `docs/plan/claims/fix-checker-conditional-deferred-assignability-fingerprint.md`
   (claim)
-- Compiler files TBD after root-cause analysis.
-- Owning-crate regression test TBD after root-cause analysis.
+- `crates/tsz-solver/src/evaluation/evaluate_rules/conditional.rs`
+- `crates/tsz-solver/src/relations/subtype/cache.rs`
+- `crates/tsz-solver/src/relations/subtype/rules/conditionals.rs`
+- `crates/tsz-solver/src/diagnostics/format/compound.rs`
+- `crates/tsz-checker/src/assignability/assignability_checker.rs`
+- `crates/tsz-checker/src/types/computation/call_inference.rs`
+- `crates/tsz-checker/src/types/computation/call_result.rs`
+- `crates/tsz-checker/src/assignability/assignment_checker_tests.rs`
 
 ## Verification
 
-- `./scripts/conformance/conformance.sh run --filter "conditionalTypeAssignabilityWhenDeferred" --verbose`
-- Owning-crate regression test once root-cause is isolated.
+- `cargo nextest run --package tsz-solver --lib`
+  - not run: `cargo-nextest` is not installed in this environment
 - `cargo check --package tsz-checker`
 - `cargo check --package tsz-solver`
+- `cargo test -p tsz-checker deferred_conditional_target_assignability_fingerprints --lib -- --nocapture`
+- `cargo test -p tsz-checker generic_call_with_this_indexed_conditional_parameter_reports_ts2345 --lib -- --nocapture`
+- `cargo test -p tsz-checker ts2589_tests::bounded_recursive_conditional_no_ts2589_at_definition --lib -- --nocapture`
+- `cargo test -p tsz-core checker_state_tests::test_redux_pattern_generic_function_with_conditional_return --lib -- --nocapture`
+- `cargo test --package tsz-checker --lib`
+  - `test result: ok. 3343 passed; 0 failed; 10 ignored`
+- `cargo test --package tsz-solver --lib`
+  - `test result: ok. 5626 passed; 0 failed; 9 ignored`
+- `./scripts/conformance/conformance.sh run --filter "conditionalTypeAssignabilityWhenDeferred" --verbose`
+  - `FINAL RESULTS: 1/1 passed (100.0%)`
+  - `Fingerprint-only: 0`
+- `./scripts/conformance/conformance.sh run --max 200`
+  - `FINAL RESULTS: 200/200 passed (100.0%)`
+  - `Fingerprint-only: 0`

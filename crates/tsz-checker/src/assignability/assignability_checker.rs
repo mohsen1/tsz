@@ -888,6 +888,13 @@ impl<'a> CheckerState<'a> {
         // in function return type positions. Suppress the false positive TS2322.
         let contains_error_application =
             |type_id: TypeId| Self::type_contains_error_application(self.ctx.types, type_id);
+        let evaluated_target_for_infer_suppression = self.ctx.types.evaluate_type(target);
+        let target_is_conditional_for_infer_suppression =
+            crate::query_boundaries::common::is_conditional_type(self.ctx.types, target)
+                || crate::query_boundaries::common::is_conditional_type(
+                    self.ctx.types,
+                    evaluated_target_for_infer_suppression,
+                );
 
         // Suppress TS2322 for source types that are intersections containing indexed access
         // types with unresolved type parameters (e.g., `Partial<T>[K] & ({} | null)`).
@@ -1191,7 +1198,8 @@ impl<'a> CheckerState<'a> {
             // Inference placeholders are transient solver state. Emitting TS2322/TS2345
             // while they are still present creates contextual false positives.
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
-            || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(target))
+            || (contains_free_infer_types(self.ctx.types, evaluated_target_for_infer_suppression)
+                && !target_is_conditional_for_infer_suppression)
             // Suppress TS2322 for non-callable types with type parameters that may
             // cause false positives due to complex generic constraints
             // (e.g., T extends { [P in T]: number }). Callable/generic signature

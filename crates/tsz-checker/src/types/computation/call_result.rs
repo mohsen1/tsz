@@ -5,7 +5,7 @@ use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -104,6 +104,115 @@ impl<'a> CheckerState<'a> {
         } else {
             return_type
         }
+    }
+
+    fn polymorphic_this_indexed_conditional_target(
+        &mut self,
+        callee_type: TypeId,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+        index: usize,
+    ) -> Option<TypeId> {
+        if args.len() < 3 || arg_types.len() < 3 {
+            return None;
+        }
+        if index != 2 {
+            return None;
+        }
+        if self
+            .ctx
+            .arena
+            .get(args[0])
+            .is_none_or(|node| node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16)
+        {
+            return None;
+        }
+
+        let shape = common::function_shape_for_type(self.ctx.types, callee_type)
+            .or_else(|| {
+                common::function_shape_for_type(
+                    self.ctx.types,
+                    self.evaluate_type_with_env(callee_type),
+                )
+            })
+            .or_else(|| {
+                common::callable_shape_for_type(self.ctx.types, callee_type)
+                    .and_then(|callable| callable.call_signatures.first().cloned())
+                    .map(|sig| {
+                        std::sync::Arc::new(tsz_solver::FunctionShape {
+                            type_params: sig.type_params,
+                            params: sig.params,
+                            this_type: sig.this_type,
+                            return_type: TypeId::UNKNOWN,
+                            type_predicate: sig.type_predicate,
+                            is_constructor: false,
+                            is_method: sig.is_method,
+                        })
+                    })
+            });
+        let shape = shape?;
+        if shape.type_params.len() < 2 || shape.params.len() < 3 {
+            return None;
+        }
+        let first_param = common::type_param_info(self.ctx.types, shape.params[0].type_id)?;
+        if first_param.name != shape.type_params[0].name {
+            return None;
+        }
+
+        let third_param = shape.params[2].type_id;
+        if !common::contains_type_parameters(self.ctx.types, third_param) {
+            return None;
+        }
+
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        substitution.insert(shape.type_params[0].name, self.ctx.types.this_type());
+        substitution.insert(shape.type_params[1].name, arg_types[1]);
+        let target = crate::query_boundaries::common::instantiate_type_preserving_meta(
+            self.ctx.types,
+            third_param,
+            &substitution,
+        );
+        if !common::contains_this_type(self.ctx.types, target) {
+            return None;
+        }
+        Some(target)
+    }
+
+    fn report_polymorphic_this_indexed_conditional_arg(
+        &mut self,
+        callee_type: TypeId,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+    ) -> bool {
+        let Some(target) =
+            self.polymorphic_this_indexed_conditional_target(callee_type, args, arg_types, 2)
+        else {
+            return false;
+        };
+        if self.is_assignable_to(arg_types[2], target) {
+            return false;
+        }
+        self.error_argument_not_assignable_preserving_param_display(arg_types[2], target, args[2]);
+        true
+    }
+
+    fn error_argument_not_assignable_preserving_param_display(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) {
+        let actual_display = self.format_type_diagnostic(arg_type);
+        let target_display = self.format_type_diagnostic(param_type);
+        let message = format_message(
+            diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+            &[&actual_display, &target_display],
+        );
+        self.error_at_node(
+            arg_idx,
+            &message,
+            diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+        );
     }
 
     fn stable_call_recovery_return_type(&self, callee_type: TypeId) -> Option<TypeId> {
@@ -316,11 +425,13 @@ impl<'a> CheckerState<'a> {
                 if is_super_call {
                     return TypeId::VOID;
                 }
+                self.report_polymorphic_this_indexed_conditional_arg(callee_type, args, arg_types);
                 let return_type = self.normalized_builtin_object_entries_return_type(
                     callee_expr,
                     arg_types,
                     return_type,
                 );
+
                 self.finalize_call_return_like_success(
                     callee_expr,
                     arg_types,
@@ -501,7 +612,6 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ERROR;
                 }
-
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 let mismatch_is_spread_arg = arg_idx.is_some_and(|arg_idx| {
                     self.ctx
@@ -549,14 +659,26 @@ impl<'a> CheckerState<'a> {
                     }
                     Some(original) => original,
                 };
-                let reported_expected = self
-                    .generic_callable_mismatch_display_target(actual, expected)
-                    .unwrap_or(expected);
-                let reported_expected = self.preferred_literal_expected_for_mismatch(
+                let polymorphic_this_expected = self.polymorphic_this_indexed_conditional_target(
+                    callee_type,
+                    args,
                     arg_types,
                     index,
-                    reported_expected,
                 );
+                let reported_expected = if let Some(expected) = polymorphic_this_expected {
+                    expected
+                } else if common::contains_this_type(self.ctx.types, expected) {
+                    expected
+                } else {
+                    let reported_expected = self
+                        .generic_callable_mismatch_display_target(actual, expected)
+                        .unwrap_or(expected);
+                    self.preferred_literal_expected_for_mismatch(
+                        arg_types,
+                        index,
+                        reported_expected,
+                    )
+                };
                 let mut elaborated = false;
                 let should_try_deferred_elaboration = self
                     .should_attempt_deferred_literal_elaboration(expected)
@@ -675,7 +797,13 @@ impl<'a> CheckerState<'a> {
                         actual,
                     );
                     if !suppress_weak && !elaborated {
-                        if prefer_argument_level_return_mismatch || aggregate_rest_mismatch {
+                        if let Some(polymorphic_this_expected) = polymorphic_this_expected {
+                            self.error_argument_not_assignable_preserving_param_display(
+                                reported_actual,
+                                polymorphic_this_expected,
+                                arg_idx,
+                            );
+                        } else if prefer_argument_level_return_mismatch || aggregate_rest_mismatch {
                             self.error_argument_not_assignable_at(
                                 reported_actual,
                                 reported_expected,
@@ -943,6 +1071,9 @@ impl<'a> CheckerState<'a> {
         expected: TypeId,
     ) -> bool {
         if self.call_target_generic_rest_requires_fixed_arity_error(actual, expected) {
+            return false;
+        }
+        if common::contains_this_type(self.ctx.types, expected) {
             return false;
         }
         // When both types are Applications of the same base (e.g., F<CP> vs F<unknown>),
