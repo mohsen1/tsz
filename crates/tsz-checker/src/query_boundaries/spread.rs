@@ -29,3 +29,11 @@ pub(crate) fn make_lazy(db: &dyn TypeDatabase, def_id: DefId) -> TypeId {
 pub(crate) fn make_intersection(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
     db.intersection(members)
 }
+
+/// Returns true when `type_id` (recursively) contains an `Application`
+/// whose base is `UnresolvedTypeName`. Used by the type-environment
+/// evaluator to trigger a second pass with a wider resolver that can
+/// recover the alias's `DefId` from the merged binder graph.
+pub(crate) fn contains_unresolved_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::contains_unresolved_application(types, type_id)
+}

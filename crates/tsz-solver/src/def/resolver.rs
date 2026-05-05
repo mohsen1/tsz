@@ -128,6 +128,16 @@ pub trait TypeResolver {
         None
     }
 
+    /// Resolve an `UnresolvedTypeName(atom)` text to a `DefId`, when the
+    /// resolver has access to a wider binder graph than the lowering pass
+    /// did. Used by the type evaluator to recover from
+    /// `Application(UnresolvedTypeName(name), args)` where the name now
+    /// resolves cleanly through the merged binder. Returns `None` when the
+    /// name still cannot be resolved.
+    fn resolve_unresolved_type_name(&self, _name: &str) -> Option<DefId> {
+        None
+    }
+
     /// Get the boxed interface type for a primitive intrinsic (Rule #33).
     /// For example, `IntrinsicKind::Number` -> `TypeId` of the Number interface.
     /// This enables primitives to be subtypes of their boxed interfaces.
