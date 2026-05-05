@@ -1665,7 +1665,7 @@ fn compile_inner(
         })?;
         diagnostics.extend(emit_diags);
         if should_emit {
-            write_outputs(&outputs)?
+            write_outputs(&outputs, resolved.emit_bom)?
         } else {
             // Declaration emit ran for diagnostics only (--noEmit with --declaration)
             Vec::new()
@@ -2607,6 +2607,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.source_map {
         options.source_map = true;
+    }
+    if args.emit_bom {
+        options.emit_bom = true;
     }
     if let Some(out_file) = args.out_file.as_ref() {
         options.out_file = Some(out_file.clone());
