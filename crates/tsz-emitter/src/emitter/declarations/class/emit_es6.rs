@@ -2118,9 +2118,24 @@ impl<'a> Printer<'a> {
                 self.write(";");
                 self.write_line();
             }
+            let mut next_static_block = 0usize;
             for (name_emit, init_idx, _member_pos, leading_comments, trailing_comments) in
                 &static_field_inits
             {
+                if !self.defer_class_static_blocks {
+                    while next_static_block < deferred_static_blocks.len() {
+                        let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
+                        let block_pos = self.arena.get(block_idx).map_or(u32::MAX, |node| node.pos);
+                        if block_pos >= *_member_pos {
+                            break;
+                        }
+                        self.emit_static_block_iife_expression(block_idx, comment_idx);
+                        self.write(";");
+                        self.write_line();
+                        next_static_block += 1;
+                    }
+                }
+
                 // Emit saved leading comments from the original static property declaration
                 for (comment_text, source_pos) in leading_comments {
                     self.write_comment_with_reindent(comment_text, Some(*source_pos));
@@ -2214,6 +2229,18 @@ impl<'a> Printer<'a> {
                     self.write_comment(comment_text);
                 }
                 self.write_line();
+            }
+            if !self.defer_class_static_blocks {
+                while next_static_block < deferred_static_blocks.len() {
+                    let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
+                    self.emit_static_block_iife_expression(block_idx, comment_idx);
+                    self.write(";");
+                    self.write_line();
+                    next_static_block += 1;
+                }
+                if next_static_block > 0 {
+                    deferred_static_blocks.clear();
+                }
             }
         }
 
