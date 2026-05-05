@@ -5088,3 +5088,46 @@ const n: number = "not a number";
         "@ts-nocheck after real code must not suppress TS2322; got: {diags:?}"
     );
 }
+
+#[test]
+fn array_to_enum_name_does_not_override_declared_return_type() {
+    let source = r#"
+declare function arrayToEnum<T extends string>(values: readonly T[]): Record<T, number>;
+
+const values = arrayToEnum(["A", "B"] as const);
+
+const numberValue: number = values.A;
+const literalValue: "A" = values.A;
+
+type Values = typeof values;
+type AType = Values["A"];
+
+const numberFromType: AType = 1;
+const literalFromType: AType = "A";
+"#;
+    let diags = diagnostics_for_source(source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|d| d.message_text.as_str())
+        .collect();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|msg| msg.contains("Type 'number' is not assignable to type '\"A\"'")),
+        "expected declared Record return type for value access; got: {diags:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|msg| msg.contains("Type 'string' is not assignable to type 'number'")),
+        "expected declared Record return type for typeof/indexed access; got: {diags:#?}"
+    );
+    assert!(
+        !ts2322
+            .iter()
+            .any(|msg| msg.contains("Type '1' is not assignable to type '\"A\"'")),
+        "arrayToEnum shortcut should not fabricate literal member values; got: {diags:#?}"
+    );
+}
