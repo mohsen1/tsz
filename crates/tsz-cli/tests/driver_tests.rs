@@ -4476,6 +4476,45 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
 }
 
 #[test]
+fn compile_project_destructuring_failed_reduce_reports_iterator_and_overload_errors() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "es2015",
+            "noEmit": true
+          },
+          "files": ["test.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"
+const [oops1] = [1, 2, 3].reduce((accu, el) => accu.concat(el), []);
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<_> = result.diagnostics.iter().map(|diag| diag.code).collect();
+
+    assert!(
+        codes.contains(&2488),
+        "Expected TS2488 for destructuring a failed reduce result, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
+        "Expected TS2769 for nested reduce/concat overload failure, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_with_jsx_preserve_emits_jsx_extension() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

@@ -621,6 +621,37 @@ const len: number = result.length;
 }
 
 #[test]
+fn test_reduce_empty_array_concat_failure_surfaces_through_destructuring() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+declare var tuple: [boolean, number, ...string[]];
+
+const [a, b, c, ...rest] = tuple;
+
+declare var receiver: typeof tuple;
+
+[...receiver] = tuple;
+
+const [oops1] = [1, 2, 3].reduce((accu, el) => accu.concat(el), []);
+
+const [oops2] = [1, 2, 3].reduce((acc: number[], e) => acc.concat(e), []);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        real_errors.iter().any(|(code, _)| *code == 2488),
+        "Destructuring the failed reduce result should report TS2488.\nDiagnostics: {real_errors:#?}"
+    );
+    assert!(
+        real_errors.iter().any(|(code, _)| *code == 2769),
+        "The reduce/concat overload failure should report TS2769.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
 fn test_promise_identity_across_multiple_references() {
     if !lib_files_available() {
         return;

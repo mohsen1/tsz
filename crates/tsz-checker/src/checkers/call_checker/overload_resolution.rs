@@ -2,6 +2,7 @@
 //!
 //! Split from the parent `call_checker` module — pure code motion.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
 use crate::query_boundaries::common::{ContextualTypeContext, PendingDiagnosticBuilder};
 use crate::state::CheckerState;
@@ -480,12 +481,6 @@ impl<'a> CheckerState<'a> {
                         (arg_types.clone(), return_type)
                     };
 
-                    // After the instantiated retry, the callback body has been fully
-                    // evaluated with concrete contextual types. If it produced errors
-                    // (e.g., a failing `.concat()` inside the callback), reject this
-                    // overload. The degenerate type parameter inference (e.g.,
-                    // `U = never[]` from `reduce`) masks real type errors that should
-                    // cause a fallback to a different overload or NoOverloadMatch.
                     if signatures.len() > 1
                         && did_instantiated_retry
                         && self
@@ -550,6 +545,20 @@ impl<'a> CheckerState<'a> {
                         &final_arg_types,
                         |i, arg_count| matched_sig_helper.get_parameter_type_for_call(i, arg_count),
                     );
+
+                    // Some expression-bodied callbacks emit their body diagnostics
+                    // only while later validating the selected candidate. Re-check
+                    // before accepting the first-pass match so an inner failing call
+                    // like `accu.concat(el)` cannot be hidden by `U = never[]`.
+                    if signatures.len() > 1
+                        && self.overload_candidate_has_callback_body_errors(
+                            args,
+                            &post_union_arg_diag_snap,
+                        )
+                    {
+                        self.prune_callback_body_diagnostics(args, &overload_snap.diag);
+                        continue;
+                    }
 
                     return Some(OverloadResolution {
                         arg_types: final_arg_types,
@@ -617,6 +626,8 @@ impl<'a> CheckerState<'a> {
         let mut best_type_mismatch: Option<(OverloadResolution, crate::context::NodeTypeCache)> =
             None;
         let mut mismatch_recovery_return: Option<TypeId> = None;
+        let mut callback_body_failure_return: Option<TypeId> = None;
+        let mut callback_body_overload_diagnostics = Vec::new();
         // When an overload returns TypeParameterConstraintViolation and there are
         // more overloads to try, we store it as a fallback and continue. If no
         // later overload succeeds, we use this fallback (e.g., for single-overload
@@ -661,6 +672,7 @@ impl<'a> CheckerState<'a> {
                     .map(|param_type| self.normalize_contextual_call_param_type(param_type))
                 })
                 .collect();
+            let mut active_contextual_types = candidate_param_types.clone();
             let candidate_refresh_args: Vec<bool> = args
                 .iter()
                 .enumerate()
@@ -960,6 +972,7 @@ impl<'a> CheckerState<'a> {
                         args.len(),
                     )
                 };
+                active_contextual_types.clone_from(&refreshed_contextual_types);
                 let refreshed_arg_types = self.collect_call_argument_types_with_context(
                     args,
                     |i, _arg_count| refreshed_contextual_types.get(i).copied().flatten(),
@@ -1033,11 +1046,67 @@ impl<'a> CheckerState<'a> {
                     }
                     // Reject candidates with callback body errors (e.g., inner
                     // call failures) — same rationale as the first-pass check.
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if !self.is_callback_like_argument(arg_idx) {
+                            continue;
+                        }
+                        let Some(param_type) = active_contextual_types.get(i).copied().flatten()
+                        else {
+                            continue;
+                        };
+                        self.invalidate_expression_for_contextual_retry(arg_idx);
+                        let request = TypingRequest::with_contextual_type(param_type);
+                        let _ = self.get_type_of_node_with_request(arg_idx, &request);
+                    }
                     if signatures.len() > 1
                         && self.overload_candidate_has_callback_body_errors(args, &candidate_snap)
                     {
                         all_arg_count_mismatches = false;
                         has_non_count_non_type_failure = true;
+                        let nested_no_overload_diags =
+                            self.callback_body_no_overload_diagnostics_since(args, &candidate_snap);
+                        self.extend_unique_diagnostics(
+                            &mut callback_body_overload_diagnostics,
+                            nested_no_overload_diags,
+                        );
+                        if let Some((index, span)) =
+                            self.callback_body_failure_span(args, &candidate_snap)
+                        {
+                            let recovery_return =
+                                if crate::query_boundaries::common::contains_type_parameters(
+                                    self.ctx.types,
+                                    sig.return_type,
+                                ) {
+                                    signatures
+                                        .first()
+                                        .map(|first| first.return_type)
+                                        .unwrap_or(sig.return_type)
+                                } else {
+                                    sig.return_type
+                                };
+                            callback_body_failure_return.get_or_insert(recovery_return);
+                            failures.clear();
+                            failures.push(
+                                PendingDiagnosticBuilder::argument_not_assignable(
+                                    return_type,
+                                    sig.return_type,
+                                )
+                                .with_span(span),
+                            );
+                            type_mismatch_count = type_mismatch_count.max(1);
+                            best_type_mismatch = Some((
+                                OverloadResolution {
+                                    arg_types: sig_arg_types.clone(),
+                                    result: CallResult::ArgumentTypeMismatch {
+                                        index,
+                                        expected: sig.return_type,
+                                        actual: return_type,
+                                        fallback_return: return_type,
+                                    },
+                                },
+                                std::mem::take(&mut self.ctx.node_types),
+                            ));
+                        }
                         self.ctx
                             .rollback_diagnostics_filtered(&candidate_snap, |diag| {
                                 Self::should_preserve_speculative_call_diagnostic(diag)
@@ -1270,6 +1339,11 @@ impl<'a> CheckerState<'a> {
             });
         self.ctx
             .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
+        if !callback_body_overload_diagnostics.is_empty() {
+            let mut diagnostics = std::mem::take(&mut self.ctx.diagnostics);
+            self.extend_unique_diagnostics(&mut diagnostics, callback_body_overload_diagnostics);
+            self.ctx.diagnostics = diagnostics;
+        }
 
         // Restore original state if no overload matched
         self.ctx.node_types = original_node_types;
@@ -1321,10 +1395,12 @@ impl<'a> CheckerState<'a> {
         // shape rather than `never`. For example, `[].concat(...)` on `never[]`
         // should still produce `never[]`, not `never`.
         let fallback_return = mismatch_recovery_return.unwrap_or_else(|| {
-            signatures
-                .last()
-                .map(|s| s.return_type)
-                .unwrap_or(TypeId::NEVER)
+            callback_body_failure_return.unwrap_or_else(|| {
+                signatures
+                    .last()
+                    .map(|s| s.return_type)
+                    .unwrap_or(TypeId::NEVER)
+            })
         });
         Some(OverloadResolution {
             arg_types: arg_types.clone(),

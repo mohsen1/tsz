@@ -83,9 +83,6 @@ impl<'a> CheckerState<'a> {
         snap: &crate::context::speculation::DiagnosticSnapshot,
     ) -> bool {
         let speculative = self.ctx.speculative_diagnostics_since(snap);
-        if speculative.is_empty() {
-            return false;
-        }
         for &arg_idx in args {
             let Some(_) = self.ctx.arena.get(arg_idx) else {
                 continue;
@@ -99,6 +96,16 @@ impl<'a> CheckerState<'a> {
                     diag.start >= body_start
                         && diag.start < body_end
                         && Self::CALLBACK_BODY_REJECTION_CODES.contains(&diag.code)
+                }) {
+                    return true;
+                }
+                if self.ctx.no_overload_call_nodes.iter().any(|node_id| {
+                    let idx = NodeIndex(*node_id);
+                    self.ctx.arena.get(idx).is_some_and(|node| {
+                        node.pos >= body_start
+                            && node.pos < body_end
+                            && !snap.no_overload_call_nodes.contains(node_id)
+                    })
                 }) {
                     return true;
                 }
@@ -132,6 +139,80 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .any(|(start, end)| diag.start >= *start && diag.start < *end)
         });
+    }
+
+    pub(super) fn callback_body_failure_span(
+        &self,
+        args: &[NodeIndex],
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> Option<(usize, tsz_solver::SourceSpan)> {
+        args.iter().enumerate().find_map(|(index, &arg_idx)| {
+            if !self.is_callback_like_argument(arg_idx) {
+                return None;
+            }
+            let callback_idx = self.callback_function_index(arg_idx)?;
+            let func = self
+                .ctx
+                .arena
+                .get(callback_idx)
+                .and_then(|node| self.ctx.arena.get_function(node))?;
+            let body = self.ctx.arena.get(func.body)?;
+            let body_start = body.pos;
+            let body_end = body.end;
+            let has_failed_diagnostic = self
+                .ctx
+                .speculative_diagnostics_since(snap)
+                .iter()
+                .any(|diag| diag.start >= body_start && diag.start < body_end);
+            let has_failed_no_overload_marker =
+                self.ctx.no_overload_call_nodes.iter().any(|node_id| {
+                    let idx = NodeIndex(*node_id);
+                    self.ctx.arena.get(idx).is_some_and(|node| {
+                        node.pos >= body_start
+                            && node.pos < body_end
+                            && !snap.no_overload_call_nodes.contains(node_id)
+                    })
+                });
+            if !has_failed_diagnostic && !has_failed_no_overload_marker {
+                return None;
+            }
+            Some((
+                index,
+                tsz_solver::SourceSpan::new(
+                    self.ctx.file_name.clone(),
+                    body.pos,
+                    body.end.saturating_sub(body.pos),
+                ),
+            ))
+        })
+    }
+
+    pub(super) fn callback_body_no_overload_diagnostics_since(
+        &self,
+        args: &[NodeIndex],
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        let callback_spans: Vec<(u32, u32)> = args
+            .iter()
+            .copied()
+            .filter(|&arg_idx| self.is_callback_like_argument(arg_idx))
+            .flat_map(|arg_idx| self.callback_body_spans(arg_idx))
+            .collect();
+        if callback_spans.is_empty() {
+            return Vec::new();
+        }
+
+        self.ctx
+            .speculative_diagnostics_since(snap)
+            .iter()
+            .filter(|diag| {
+                diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
+                    && callback_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end)
+            })
+            .cloned()
+            .collect()
     }
 
     fn raw_block_body_callback_mismatch(
