@@ -483,6 +483,29 @@ declare global {
 }
 
 #[test]
+fn test_returned_local_uses_source_function_return_annotation_with_type_args() {
+    let output = emit_dts_with_binding(
+        r#"
+export interface Box<T> {
+    current: T;
+}
+export function box<T>(current: T): Box<T> {
+    return { current };
+}
+export const useBox = () => {
+    const value = box<typeof import("pkg")>(null);
+    return value;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const useBox: () => Box<typeof import(\"pkg\")>;"),
+        "Expected local call return annotation to preserve explicit type arguments: {output}"
+    );
+}
+
+#[test]
 fn test_trailing_top_level_jsdoc_after_export_is_preserved() {
     let output = emit_dts(
         r#"
