@@ -1032,7 +1032,9 @@ impl<'a> CheckerState<'a> {
                 // The earlier blanket suppression hid the diagnostic for type-
                 // predicate / typeof narrowing chains that exhaust a union to
                 // never (e.g. `instanceofWithStructurallyIdenticalTypes`).
-                if !property_name.starts_with('#') {
+                let suppress_declared_intersection_access = self
+                    .declared_intersection_receiver_has_property(access.expression, property_name);
+                if !property_name.starts_with('#') && !suppress_declared_intersection_access {
                     self.error_property_not_exist_at(
                         property_name,
                         TypeId::NEVER,
