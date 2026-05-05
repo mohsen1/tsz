@@ -651,6 +651,37 @@ Object.defineProperty(module.exports, "setonlyAccessor", {
 }
 
 #[test]
+fn test_checked_js_local_object_define_property_reports_ts2339() {
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "index.js",
+        r#"
+// @ts-check
+
+function f() {
+  const Object = {};
+  Object.defineProperty({}, "x", { value: 1 });
+}
+
+f;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2339 && message.contains("defineProperty") }),
+        "Expected TS2339 for local Object.defineProperty, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_exports_property_assignment_contextually_types_object_literal_methods() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[(

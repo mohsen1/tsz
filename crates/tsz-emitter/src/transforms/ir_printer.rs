@@ -57,6 +57,8 @@ pub struct IRPrinter<'a> {
     transforms: Option<TransformContext>,
     /// Avoid duplicate trailing comments when a sequence explicitly carries one.
     suppress_function_trailing_extraction: bool,
+    /// Tracks when the last emitted IR node wrote a trailing line comment.
+    last_emit_ended_with_line_comment: bool,
     /// Name of the current ES5 class IIFE constructor, used to force constructor
     /// empty-body formatting without affecting nested function declarations.
     current_class_iife_name: Option<String>,
@@ -171,25 +173,35 @@ impl<'a> IRPrinter<'a> {
         if start >= end {
             return None;
         }
-        let mut trailing = None;
-        for (offset, &byte) in bytes[start..end].iter().enumerate() {
-            if byte == b'}' {
-                let comments =
-                    crate::emitter::get_trailing_comment_ranges(source_text, start + offset + 1);
-                if !comments.is_empty() {
-                    trailing = Some(
-                        comments
-                            .iter()
-                            .map(|comment| {
-                                source_text[comment.pos as usize..comment.end as usize].to_string()
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    );
+        let open_brace = bytes[start..end].iter().position(|&byte| byte == b'{')?;
+        let mut depth = 1usize;
+        let mut close_brace = None;
+        for offset in open_brace + 1..end - start {
+            match bytes[start + offset] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_brace = Some(start + offset);
+                        break;
+                    }
                 }
+                _ => {}
             }
         }
-        trailing
+        let close_brace = close_brace?;
+        let comments = crate::emitter::get_trailing_comment_ranges(source_text, close_brace + 1);
+        if comments.is_empty() {
+            return None;
+        }
+
+        Some(
+            comments
+                .iter()
+                .map(|comment| source_text[comment.pos as usize..comment.end as usize].to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
     }
 
     fn should_indent_sequence_child(node: &IRNode) -> bool {
@@ -235,6 +247,7 @@ impl<'a> IRPrinter<'a> {
             source_text: None,
             transforms: None,
             suppress_function_trailing_extraction: false,
+            last_emit_ended_with_line_comment: false,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
@@ -257,6 +270,7 @@ impl<'a> IRPrinter<'a> {
             source_text: None,
             transforms: None,
             suppress_function_trailing_extraction: false,
+            last_emit_ended_with_line_comment: false,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
@@ -279,6 +293,7 @@ impl<'a> IRPrinter<'a> {
             source_text: Some(source_text),
             transforms: None,
             suppress_function_trailing_extraction: false,
+            last_emit_ended_with_line_comment: false,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
@@ -676,6 +691,16 @@ impl<'a> IRPrinter<'a> {
                     );
                     if is_assign {
                         self.emit_node(right);
+                        if !self.remove_comments
+                            && let IRNode::FunctionExpr { .. } = right.as_ref()
+                            && let Some(comment) =
+                                self.extract_trailing_comment_from_function(right)
+                        {
+                            self.write(" ");
+                            self.write(&comment);
+                            self.last_emit_ended_with_line_comment =
+                                comment.trim_start().starts_with("//");
+                        }
                     } else {
                         self.emit_sent_aware(right);
                     }
@@ -766,10 +791,16 @@ impl<'a> IRPrinter<'a> {
                 self.indent_level += 1;
                 for (i, expr) in exprs.iter().enumerate() {
                     if i > 0 {
+                        if self.last_emit_ended_with_line_comment {
+                            self.write_line();
+                            self.write_indent();
+                        }
+                        self.last_emit_ended_with_line_comment = false;
                         self.write(",");
                         self.write_line();
                         self.write_indent();
                     }
+                    self.last_emit_ended_with_line_comment = false;
                     self.emit_node(expr);
                 }
                 self.indent_level -= 1;

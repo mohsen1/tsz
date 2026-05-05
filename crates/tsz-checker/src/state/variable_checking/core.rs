@@ -613,15 +613,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2397: Declaration name conflicts with built-in global identifier.
-        // tsc emits TS2397 when a variable is declared with the name `undefined` or `globalThis`.
-        // `globalThis` only conflicts in script files (non-modules), since module-scoped
+        // tsc emits TS2397 when a variable is declared with the name `undefined` or `globalThis`
+        // in a script file. Both names only conflict in non-module files because module-scoped
         // declarations don't pollute the global scope.
         if let Some(ref name) = var_name {
-            let should_emit = if name == "globalThis" {
-                !self.ctx.binder.is_external_module()
-            } else {
-                name == "undefined"
-            };
+            let should_emit = (name == "globalThis" || name == "undefined")
+                && !self.ctx.binder.is_external_module();
             if should_emit {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 let message = format_message(
@@ -822,8 +819,29 @@ impl<'a> CheckerState<'a> {
                             var_decl.initializer,
                             evaluated_type,
                         );
+                    let initializer_is_object_literal = checker
+                        .ctx
+                        .arena
+                        .get(var_decl.initializer)
+                        .is_some_and(|init_node| {
+                            init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        });
+                    let raw_declared_has_this_type_marker = initializer_is_object_literal && {
+                        let ctx_helper =
+                            tsz_solver::ContextualTypeContext::with_expected_and_options(
+                                checker.ctx.types,
+                                declared_type,
+                                checker.ctx.compiler_options.no_implicit_any,
+                            );
+                        let env = checker.ctx.type_env.borrow();
+                        ctx_helper
+                            .get_this_type_from_marker_with_resolver(&*env)
+                            .is_some()
+                    };
                     let request = if let Some(jsdoc_callable_context) = jsdoc_callable_context {
                         TypingRequest::with_contextual_type(jsdoc_callable_context)
+                    } else if raw_declared_has_this_type_marker {
+                        TypingRequest::with_contextual_type(declared_type)
                     } else if evaluated_type != TypeId::ANY
                         && !jsdoc_blocks_callable_context
                         && !suppress_initializer_context
@@ -889,8 +907,9 @@ impl<'a> CheckerState<'a> {
                                 // error (the object type and property name don't depend on
                                 // contextual typing). Preserve it so namespace/module
                                 // property-access errors survive the pre-contextual reset.
-                                || diag.code
-                                    == crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                                || (!raw_declared_has_this_type_marker
+                                    && diag.code
+                                        == crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
                                 // TS2304: "Cannot find name" is a name-resolution
                                 // failure tied to the source identifier; it must
                                 // survive the pre-contextual reset so e.g.

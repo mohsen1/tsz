@@ -774,7 +774,11 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|found_sym_id| {
                     // Check if this symbol is different from the file_locals symbol.
                     // If it's different, it was found in a more local scope (namespace, etc.)
-                    self.ctx.binder.file_locals.get(name) != Some(found_sym_id)
+                    let found_in_file_locals =
+                        self.ctx.binder.file_locals.get(name) == Some(found_sym_id);
+                    !found_in_file_locals
+                        || (self.ctx.binder.is_external_module()
+                            && !self.ctx.symbol_is_from_lib(found_sym_id))
                 })
         } else {
             false
@@ -1564,7 +1568,15 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(node)
         {
             if is_compiler_managed_type(ident.escaped_text.as_str()) {
-                return None;
+                let shadows_compiler_managed_type = matches!(ident.escaped_text.as_str(), "Array")
+                    && matches!(
+                        self.resolve_identifier_symbol_in_type_position(idx),
+                        TypeSymbolResolution::Type(sym_id)
+                            if !self.ctx.symbol_is_from_actual_lib(sym_id)
+                    );
+                if !shadows_compiler_managed_type {
+                    return None;
+                }
             }
             if node.kind == SyntaxKind::Identifier as u16
                 && let TypeSymbolResolution::Type(sym_id) =

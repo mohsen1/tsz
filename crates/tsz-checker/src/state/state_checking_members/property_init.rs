@@ -284,9 +284,18 @@ impl<'a> CheckerState<'a> {
 
         // Collect both `this.X` and `ClassName.X` accesses from all statements
         let class_name = class_info.name.clone();
-        let stmt_indices: Vec<NodeIndex> = block.statements.nodes.clone();
+        let statement_count = block.statements.nodes.len();
         let mut accesses = Vec::new();
-        for &stmt_idx in &stmt_indices {
+        for statement_index in 0..statement_count {
+            let Some(node) = self.ctx.arena.get(block_idx) else {
+                return;
+            };
+            let Some(block) = self.ctx.arena.get_block(node) else {
+                return;
+            };
+            let Some(&stmt_idx) = block.statements.nodes.get(statement_index) else {
+                return;
+            };
             self.collect_static_block_accesses_recursive(stmt_idx, &class_name, &mut accesses);
         }
 

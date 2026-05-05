@@ -118,6 +118,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn is_unshadowed_global_object_identifier(&self, idx: NodeIndex) -> bool {
+        let Some(base_ident) = self.ctx.arena.get_identifier_at(idx) else {
+            return false;
+        };
+        if base_ident.escaped_text != "Object" {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) else {
+            return true;
+        };
+        if self.known_global_value_has_local_shadow(idx, "Object") {
+            return false;
+        }
+        self.ctx.symbol_is_from_actual_lib(sym_id) || self.ctx.symbol_is_from_lib(sym_id)
+    }
+
     fn should_suppress_excess_property_for_target(&mut self, target: TypeId) -> bool {
         [target, self.evaluate_type_for_assignability(target)]
             .into_iter()
@@ -265,6 +281,27 @@ impl<'a> CheckerState<'a> {
         Self::collapse_pick_literal_union_display(&inferred_display).unwrap_or(inferred_display)
     }
 
+    fn is_plain_type_alias_display(display: &str) -> bool {
+        let mut chars = display.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first.is_ascii_alphabetic() || first == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    fn annotation_type_resolves_to_union(&mut self, type_node: NodeIndex) -> bool {
+        let type_id = self.get_type_from_type_node(type_node);
+        [
+            type_id,
+            self.resolve_ref_type(type_id),
+            self.evaluate_type_with_env(type_id),
+            self.resolve_type_for_property_access(type_id),
+        ]
+        .into_iter()
+        .any(|candidate| query::union_members(self.ctx.types, candidate).is_some())
+    }
+
     fn excess_property_site_is_nested_in_nested_array_literal(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         loop {
@@ -288,27 +325,6 @@ impl<'a> CheckerState<'a> {
             }
             current = parent_idx;
         }
-    }
-
-    fn is_plain_type_alias_display(display: &str) -> bool {
-        let mut chars = display.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first.is_ascii_alphabetic() || first == '_')
-            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-    }
-
-    fn annotation_type_resolves_to_union(&mut self, type_node: NodeIndex) -> bool {
-        let type_id = self.get_type_from_type_node(type_node);
-        [
-            type_id,
-            self.resolve_ref_type(type_id),
-            self.evaluate_type_with_env(type_id),
-            self.resolve_type_for_property_access(type_id),
-        ]
-        .into_iter()
-        .any(|candidate| query::union_members(self.ctx.types, candidate).is_some())
     }
 
     /// If `display` looks like a generic application of the form `Name<...>`
@@ -650,6 +666,22 @@ impl<'a> CheckerState<'a> {
         Some(symbol.escaped_name.to_string())
     }
 
+    fn annotation_uses_module_local_array_type(&self, annotation: &str) -> bool {
+        let trimmed = annotation.trim_start();
+        if !trimmed.starts_with("Array<") || !self.ctx.binder.is_external_module() {
+            return false;
+        }
+
+        self.ctx
+            .binder
+            .file_locals
+            .get("Array")
+            .is_some_and(|sym_id| {
+                !self.ctx.symbol_is_from_actual_lib(sym_id)
+                    && self.symbol_has_declared_type_meaning(sym_id)
+            })
+    }
+
     fn property_receiver_display_for_node(&mut self, type_id: TypeId, idx: NodeIndex) -> String {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
@@ -717,6 +749,9 @@ impl<'a> CheckerState<'a> {
             // Skip annotations that contain inline object literal types
             // (`Required<{ a?: 1; x: 1 }>`) — those need the proper type
             // formatter to add `| undefined` for optional properties.
+            if self.annotation_uses_module_local_array_type(&annotation) {
+                return annotation.trim().to_string();
+            }
             return self.format_annotation_like_type(&annotation);
         }
         // When the receiver is a type alias whose body resolves to an Enum
@@ -1181,11 +1216,7 @@ impl<'a> CheckerState<'a> {
             && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
             && access.name_or_argument == idx
-            && self
-                .ctx
-                .arena
-                .get_identifier_at(access.expression)
-                .is_some_and(|base_ident| base_ident.escaped_text == "Object")
+            && self.is_unshadowed_global_object_identifier(access.expression)
         {
             return;
         }

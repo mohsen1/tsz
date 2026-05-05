@@ -2568,6 +2568,38 @@ const result = parse(42);
 }
 
 #[test]
+fn test_private_overloaded_method_initializer_reuses_matching_signature_return_type() {
+    let output = emit_dts_with_binding(
+        r#"
+function noArgs(): string { return null as any; }
+function oneArg(input: string): string { return null as any; }
+
+export class Wrapper {
+    private proxy<T, U>(fn: (options: T) => U): (options: T) => U;
+    private proxy<T, U>(fn: (options?: T) => U, noArgs: true): (options?: T) => U;
+    private proxy<T, U>(fn: (options: T) => U) {
+        return null as any;
+    }
+
+    public Proxies = {
+        Failure: this.proxy(noArgs, true),
+        Success: this.proxy(oneArg),
+    };
+}
+"#,
+    );
+
+    assert!(
+        output.contains("Failure: (options?: unknown) => string;"),
+        "Expected optional proxy overload to infer a callable return type: {output}"
+    );
+    assert!(
+        output.contains("Success: (options: string) => string;"),
+        "Expected one-argument proxy overload to infer a callable return type: {output}"
+    );
+}
+
+#[test]
 fn test_object_literal_computed_accessor_pair_emits_writable_symbol_property() {
     let output = emit_dts_with_binding(
         r#"

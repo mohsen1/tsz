@@ -778,6 +778,38 @@ impl<'a> ContextualTypeContext<'a> {
 
         let expected = self.expected?;
 
+        // Union members may be bare aliases such as
+        // `(A & ThisType<X>) | (B & ThisType<Y>)`; expand each member before
+        // giving up so object-literal contextual typing can see the marker.
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(list_id);
+            let this_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&member| {
+                    let ctx = ContextualTypeContext::with_expected_and_options(
+                        self.interner,
+                        member,
+                        self.no_implicit_any,
+                    );
+                    ctx.get_this_type_from_marker_with_resolver(resolver)
+                })
+                .collect();
+            if !this_types.is_empty() {
+                return collect_single_or_union(self.interner, this_types);
+            }
+        }
+
+        // Check if the expected type is a bare Lazy alias whose body contains
+        // a ThisType marker.
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(expected)
+            && let Some(body) = resolver.resolve_lazy(def_id, self.interner)
+        {
+            let ctx = ContextualTypeContext::with_expected(self.interner, body);
+            if let Some(result) = ctx.get_this_type_from_marker() {
+                return Some(result);
+            }
+        }
+
         // Check if the expected type is an Application whose base is a Lazy (type alias).
         // If so, expand the alias body and retry.
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {

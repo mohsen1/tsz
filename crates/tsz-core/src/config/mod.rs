@@ -170,6 +170,8 @@ pub struct CompilerOptions {
     pub composite: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub declaration: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub emit_declaration_only: Option<bool>,
     #[serde(default)]
     pub declaration_dir: Option<String>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
@@ -405,6 +407,7 @@ pub struct ResolvedCompilerOptions {
     pub declaration_dir: Option<PathBuf>,
     pub composite: bool,
     pub emit_declarations: bool,
+    pub emit_declaration_only: bool,
     pub source_map: bool,
     pub declaration_map: bool,
     pub ts_build_info_file: Option<PathBuf>,
@@ -864,6 +867,10 @@ pub fn resolve_compiler_options(
     if let Some(declaration) = options.declaration {
         resolved.emit_declarations = declaration;
         resolved.checker.emit_declarations = declaration;
+    }
+
+    if let Some(emit_declaration_only) = options.emit_declaration_only {
+        resolved.emit_declaration_only = emit_declaration_only;
     }
 
     if let Some(source_map) = options.source_map {

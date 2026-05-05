@@ -2094,6 +2094,81 @@ const myHoc = <ComposedComponentProps extends any>(
 }
 
 #[test]
+fn jsx_generic_spread_wrapper_number_prop_does_not_use_alias_fallback() {
+    let react_types = r#"
+declare namespace React {
+  class Component<P = {}, S = any> {
+    props: P;
+  }
+
+  interface ComponentClass<P = {}> {
+    new (props: P): Component<P>;
+  }
+
+  interface Attributes {
+    key?: any;
+  }
+
+  interface ClassAttributes<T> {
+    ref?: any;
+  }
+}
+
+declare module "react" {
+  export = React;
+}
+
+declare namespace JSX {
+  interface Element {}
+  interface ElementClass {
+    props: any;
+  }
+  interface ElementAttributesProperty {
+    props: {};
+  }
+  interface IntrinsicAttributes extends React.Attributes {}
+  interface IntrinsicClassAttributes<T> extends React.ClassAttributes<T> {}
+}
+"#;
+    let source = r#"
+import * as React from "react";
+
+function render<ComposedComponentProps extends object>() {
+  type WrapperComponentProps = ComposedComponentProps & { myProp: number };
+  const WrapperComponent = null as any as React.ComponentClass<WrapperComponentProps>;
+
+  const props: ComposedComponentProps = null as any;
+
+  <WrapperComponent {...props} myProp={123} />;
+}
+
+render;
+"#;
+    let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
+        react_types,
+        source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            strict_function_types: true,
+            strict_bind_call_apply: true,
+            strict_property_initialization: true,
+            no_implicit_this: true,
+            always_strict: true,
+            ..CheckerOptions::default()
+        },
+        true,
+    );
+
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "number-valued WrapperComponentProps.myProp should accept a numeric JSX attr, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
     let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
         return;

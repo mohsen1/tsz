@@ -40,6 +40,10 @@ pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
             continue;
         }
 
+        if is_initial_shebang(line_num, trimmed) {
+            continue;
+        }
+
         // Triple-slash directives are only valid before any executable statement.
         // A non-empty line that is not a comment ends the directive prologue.
         if !trimmed.is_empty() && !trimmed.starts_with("//") {
@@ -100,6 +104,11 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
             continue;
         }
 
+        if is_initial_shebang(byte_offset, trimmed) {
+            byte_offset += line.len() + 1;
+            continue;
+        }
+
         // Triple-slash directives are only valid before any executable statement.
         if !trimmed.is_empty() && !trimmed.starts_with("//") {
             past_prologue = true;
@@ -147,6 +156,10 @@ pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
             if !trimmed.contains("*/") {
                 in_block_comment = true;
             }
+            continue;
+        }
+
+        if is_initial_shebang(line_num, trimmed) {
             continue;
         }
 
@@ -207,6 +220,11 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
             continue;
         }
 
+        if is_initial_shebang(byte_offset, trimmed) {
+            byte_offset += line.len() + 1;
+            continue;
+        }
+
         // Triple-slash directives are only valid before any executable statement.
         if !trimmed.is_empty() && !trimmed.starts_with("//") {
             past_prologue = true;
@@ -234,6 +252,10 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
     }
 
     malformed
+}
+
+fn is_initial_shebang(position: usize, trimmed: &str) -> bool {
+    position == 0 && trimmed.starts_with("#!")
 }
 
 /// Extract the value of a named attribute from a reference directive line.

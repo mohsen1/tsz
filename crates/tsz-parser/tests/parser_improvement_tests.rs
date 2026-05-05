@@ -35,6 +35,66 @@ interface I {
 }
 
 #[test]
+fn parameter_array_binding_reserved_words_match_tsc_recovery_fingerprints() {
+    let source = "function a4([while, for, public]){ }\nfunction a5(...while) { }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let first_comma = source.find(", for").expect("comma after while") as u32;
+    let for_pos = source.find("for,").expect("for token") as u32;
+    let second_comma = source.find(", public").expect("comma after for") as u32;
+    let close_bracket = source.find("])").expect("array close bracket") as u32;
+    let close_paren = close_bracket + 1;
+    let rest_close_paren =
+        source.find("while) {").expect("rest while") as u32 + "while".len() as u32;
+
+    for (code, start, message) in [
+        (diagnostic_codes::EXPECTED, first_comma, "'(' expected."),
+        (
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            for_pos,
+            "Expression expected.",
+        ),
+        (diagnostic_codes::EXPECTED, second_comma, "'(' expected."),
+        (diagnostic_codes::EXPECTED, close_bracket, "';' expected."),
+        (
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            close_paren,
+            "Declaration or statement expected.",
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            rest_close_paren,
+            "'(' expected.",
+        ),
+    ] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == code && diag.start == start && diag.message == message),
+            "Expected diagnostic {code} at {start} with {message:?}; got {diagnostics:?}",
+        );
+    }
+
+    assert!(
+        diagnostics.iter().all(|diag| {
+            !(diag.code == diagnostic_codes::EXPECTED
+                && diag.start == first_comma
+                && diag.message == "';' expected.")
+        }),
+        "First comma should use tsc's '(' recovery, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics.iter().all(|diag| {
+            !(diag.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && diag.start == for_pos)
+        }),
+        "TS1128 should be anchored after the recovered binding pattern, got {diagnostics:?}",
+    );
+}
+
+#[test]
 fn test_arrow_function_with_line_break_no_false_positive() {
     // Arrow function where => is missing but there's a line break
     // Should be more permissive to avoid false positives

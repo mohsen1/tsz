@@ -742,6 +742,35 @@ const value: Cover | Cover[] = { couleur: "non" };
 }
 
 #[test]
+fn recursive_array_union_excess_property_uses_outer_alias_display() {
+    let source = r#"
+type Style = StyleBase | StyleArray;
+interface StyleArray extends Array<Style> { }
+interface StyleBase { foo: string; }
+
+const blah: Style = [
+    [[{
+        foo: "asdf",
+        jj: 1
+    }]]
+];
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'Style'"),
+        "Expected TS2353 to mention the recursive alias Style, got: {}",
+        ts2353.1
+    );
+    assert!(
+        !ts2353.1.contains("'StyleBase'"),
+        "Expected TS2353 not to collapse to StyleBase, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
 fn overlapping_discriminant_optionals_report_later_excess_property() {
     let source = r#"
 interface Common {

@@ -740,6 +740,13 @@ impl<'a> LoweringPass<'a> {
                 continue;
             }
 
+            if self.has_class_member_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword as u16)
+                || self
+                    .has_class_member_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
+            {
+                continue;
+            }
+
             // Skip static accessor fields. Static accessor syntax is currently emitted
             // as instance-compatible descriptor assignments and does not require private-field helpers.
             if self.has_class_member_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16) {

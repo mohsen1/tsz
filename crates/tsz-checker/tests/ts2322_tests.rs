@@ -4494,6 +4494,15 @@ newTextChannel2.phoneNumber = '613-555-1234';
         ),
         "Expected TS2322 to stay on the outer object literal. Got: {diagnostics:?}"
     );
+    let message = &ts2322[0].1;
+    assert!(
+        message.contains("Type '{ type: T; localChannelId: string; }'"),
+        "Expected shorthand property display to widen localChannelId. Got: {message}"
+    );
+    assert!(
+        !message.contains(r#"localChannelId: "blahblahblah""#),
+        "Did not expect shorthand property display to preserve const literal. Got: {message}"
+    );
     assert!(
         ts2322
             .iter()

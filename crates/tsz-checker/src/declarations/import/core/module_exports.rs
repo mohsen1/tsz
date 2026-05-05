@@ -114,14 +114,8 @@ impl<'a> CheckerState<'a> {
         let mut export_default_indices: Vec<NodeIndex> = Vec::new();
         let mut has_other_exports = false;
 
-        // Check if we're in a declaration file (implicitly ambient)
-        let is_declaration_file = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .is_some_and(|sf| sf.is_declaration_file)
-            || self.ctx.file_name.contains(".d.");
+        // Check if the current source file is a declaration file (implicitly ambient).
+        let is_declaration_file = self.ctx.is_declaration_file();
 
         for &stmt_idx in statements {
             let Some(node) = self.ctx.arena.get(stmt_idx) else {

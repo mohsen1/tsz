@@ -1,6 +1,7 @@
 //! Excess property diagnostic display helpers.
 
 use crate::state::CheckerState;
+use tsz_common::Atom;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -136,12 +137,14 @@ impl<'a> CheckerState<'a> {
         for prop in &mut normalized.properties {
             let read = self.normalize_excess_display_type(prop.type_id);
             let write = self.normalize_excess_display_type(prop.write_type);
-            let read = if prop.readonly {
+            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+            let preserve_literal_property = prop_name.as_ref() == "type";
+            let read = if prop.readonly || preserve_literal_property {
                 read
             } else {
                 crate::query_boundaries::common::widen_literal_type(self.ctx.types, read)
             };
-            let write = if prop.readonly {
+            let write = if prop.readonly || preserve_literal_property {
                 write
             } else {
                 crate::query_boundaries::common::widen_literal_type(self.ctx.types, write)
@@ -381,5 +384,52 @@ impl<'a> CheckerState<'a> {
         } else {
             ty
         }
+    }
+
+    pub(in crate::error_reporter::core) fn narrow_excess_function_param_by_property_key(
+        &self,
+        prop_name: Atom,
+        ty: TypeId,
+    ) -> Option<TypeId> {
+        let key_type = self.ctx.types.literal_string_atom(prop_name);
+        if let Some(app) = crate::query_boundaries::common::type_application(self.ctx.types, ty) {
+            let mut changed = false;
+            let args = app
+                .args
+                .iter()
+                .map(|&arg| {
+                    if let Some(narrowed) =
+                        self.narrow_excess_function_param_by_property_key(prop_name, arg)
+                    {
+                        changed = true;
+                        narrowed
+                    } else {
+                        arg
+                    }
+                })
+                .collect::<Vec<_>>();
+            return changed.then(|| self.ctx.types.factory().application(app.base, args));
+        }
+
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
+        let type_atom = self.ctx.types.intern_string("type");
+        let narrowed = members
+            .iter()
+            .copied()
+            .filter(|member| {
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *member)
+                    .is_some_and(|shape| {
+                        shape.properties.iter().any(|prop| {
+                            prop.name == type_atom
+                                && crate::query_boundaries::common::evaluate_type(
+                                    self.ctx.types,
+                                    prop.type_id,
+                                ) == key_type
+                        })
+                    })
+            })
+            .collect::<Vec<_>>();
+        (!narrowed.is_empty() && narrowed.len() < members.len())
+            .then(|| tsz_solver::utils::union_or_single(self.ctx.types, narrowed))
     }
 }

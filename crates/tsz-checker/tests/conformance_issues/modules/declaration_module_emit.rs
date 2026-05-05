@@ -2159,6 +2159,42 @@ class Box implements Array<number> {}
     );
 }
 
+#[test]
+fn test_module_local_array_type_alias_shadows_global_array_reference() {
+    let source = r#"
+export {};
+
+type Array<T> = {
+    custom: T;
+};
+
+declare const value: Array<number>;
+
+value.custom.toFixed();
+value.length;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert!(
+        ts2339
+            .iter()
+            .any(|(_, message)| message.contains("length")
+                && message.contains("type 'Array<number>'")),
+        "Expected local Array<number> to reject only value.length. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .all(|(_, message)| !message.contains("custom")),
+        "Expected value.custom to resolve through the local Array alias. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// Regression test: when an object literal property uses `this` as the value
 /// and the `this` type is not assignable to the expected property type, the
 /// elaboration should emit TS2322 ("Type X is not assignable to type Y"),

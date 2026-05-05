@@ -407,8 +407,7 @@ impl<'a> CheckerState<'a> {
             let is_known_global = self.is_well_known_lib_type_name(name);
 
             if has_type_args {
-                let is_builtin_array =
-                    name == "Array" || name == "ReadonlyArray" || name == "ConcatArray";
+                let is_array_like_name = matches!(name, "Array" | "ReadonlyArray" | "ConcatArray");
                 let type_param = self.lookup_type_parameter(name);
                 if type_param.is_some() {
                     self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
@@ -460,6 +459,9 @@ impl<'a> CheckerState<'a> {
                     }
                     TypeSymbolResolution::NotFound => None,
                 };
+                let is_builtin_array = is_array_like_name
+                    && type_param.is_none()
+                    && sym_id.is_none_or(|sym_id| self.ctx.symbol_is_from_actual_lib(sym_id));
                 if let Some(sym_id) = sym_id
                     && self.symbol_is_namespace_only(sym_id)
                 {
