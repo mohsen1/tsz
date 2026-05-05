@@ -244,6 +244,40 @@ const p = {};
     );
 }
 
+#[test]
+fn jsdoc_mapped_type_accepts_tab_before_in_keyword() {
+    let diags = check_js(
+        r#"
+// @ts-check
+
+/**
+ * @typedef {{ value: string }} Source
+ */
+
+/** @type {{[K	in keyof Source]: Source[K]}} */
+const item = { value: 123 };
+"#,
+    );
+    let codes = diags.iter().map(|d| d.code).collect::<Vec<_>>();
+
+    assert!(
+        !codes.contains(&2353),
+        "Expected tab-separated mapped type header to parse without TS2353, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        codes.contains(&2322),
+        "Expected parsed mapped type to report value mismatch TS2322, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
 // =============================================================================
 // ?Type nullable prefix and !Type non-nullable prefix
 // =============================================================================
