@@ -1163,6 +1163,63 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            if symbol.has_any_flags(symbol_flags::ALIAS) {
+                let mut visited = AliasCycleTracker::new();
+                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                    && target_sym_id != sym_id
+                {
+                    let target_flags = self
+                        .get_cross_file_symbol(target_sym_id)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    if target_flags
+                        & (symbol_flags::CLASS
+                            | symbol_flags::INTERFACE
+                            | symbol_flags::TYPE_ALIAS
+                            | symbol_flags::ENUM
+                            | symbol_flags::TYPE_PARAMETER)
+                        != 0
+                    {
+                        if target_flags & symbol_flags::CLASS != 0
+                            && self
+                                .ctx
+                                .resolve_symbol_file_index(target_sym_id)
+                                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                            && let Some(result) =
+                                self.delegate_cross_arena_class_instance_type(target_sym_id)
+                        {
+                            return result;
+                        }
+                        return self.type_reference_symbol_type_with_params(target_sym_id);
+                    }
+                } else if let Some(target_sym_id) = self.resolve_import_alias_cross_file(sym_id) {
+                    let target_flags = self
+                        .get_cross_file_symbol(target_sym_id)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    if target_flags
+                        & (symbol_flags::CLASS
+                            | symbol_flags::INTERFACE
+                            | symbol_flags::TYPE_ALIAS
+                            | symbol_flags::ENUM
+                            | symbol_flags::TYPE_PARAMETER)
+                        != 0
+                    {
+                        if target_flags & symbol_flags::CLASS != 0
+                            && self
+                                .ctx
+                                .resolve_symbol_file_index(target_sym_id)
+                                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                            && let Some(result) =
+                                self.delegate_cross_arena_class_instance_type(target_sym_id)
+                        {
+                            return result;
+                        }
+                        return self.type_reference_symbol_type_with_params(target_sym_id);
+                    }
+                }
+            }
+
             // For classes, use class_instance_type_with_params_from_symbol which
             // returns both the instance type AND the type params used to build it
             let prefer_interface_type_position = symbol.has_any_flags(symbol_flags::CLASS)
