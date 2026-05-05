@@ -1707,6 +1707,9 @@ impl<'a> CheckerState<'a> {
                     .find(expr)
                     .map(|offset| comment.pos + offset as u32)
                     .unwrap_or(comment.pos);
+                if self.report_jsdoc_backtick_import_type_error(expr, type_expr_start) {
+                    continue;
+                }
                 self.report_jsdoc_param_generic_instantiation_errors(expr, type_expr_start);
 
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
@@ -1913,6 +1916,23 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn report_jsdoc_backtick_import_type_error(
+        &mut self,
+        type_expr: &str,
+        type_expr_start: u32,
+    ) -> bool {
+        let Some(offset) = Self::jsdoc_backtick_import_argument_offset(type_expr) else {
+            return false;
+        };
+        self.error_at_position(
+            type_expr_start + offset as u32,
+            1,
+            crate::diagnostics::diagnostic_messages::STRING_LITERAL_EXPECTED,
+            crate::diagnostics::diagnostic_codes::STRING_LITERAL_EXPECTED,
+        );
+        true
     }
 
     /// Emit TS2304 "Cannot find name 'X'" or TS2552 "Did you mean 'Y'?" for an
