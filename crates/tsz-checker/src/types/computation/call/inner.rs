@@ -718,7 +718,11 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .copied()
                     .any(|arg| self.suppress_generic_return_context_for_arg(arg))
-                    || self.suppress_generic_return_context_for_direct_arg_overlap(&shape, args);
+                    || self.suppress_generic_return_context_for_direct_arg_overlap(
+                        &shape,
+                        args,
+                        contextual_type,
+                    );
                 let generic_inference_contextual_type = if suppress_generic_return_context {
                     None
                 } else {
@@ -1799,12 +1803,29 @@ impl<'a> CheckerState<'a> {
                             Some(self.normalize_contextual_call_param_type(param_type))
                         })
                         .collect();
+                    let single_pass_return_context_substitution =
+                        if contextual_type.is_some_and(|ctx| {
+                            !common::contains_type_parameters(self.ctx.types, ctx)
+                                && !common::contains_infer_types(self.ctx.types, ctx)
+                                && !common::contains_type_by_id(
+                                    self.ctx.types,
+                                    ctx,
+                                    TypeId::UNKNOWN,
+                                )
+                        }) {
+                            self.compute_return_context_substitution_from_shape(
+                                &shape,
+                                contextual_type,
+                            )
+                        } else {
+                            crate::query_boundaries::common::TypeSubstitution::new()
+                        };
                     let needs_refresh = args.iter().enumerate().any(|(i, &arg)| {
                         self.argument_needs_refresh_for_contextual_call(
                             arg,
                             base_contextual_param_types.get(i).copied().flatten(),
                         )
-                    });
+                    }) || !single_pass_return_context_substitution.is_empty();
                     let initial_arg_snap = needs_refresh.then(|| self.ctx.snapshot_diagnostics());
                     let initial_ts2454_snap = initial_arg_snap
                         .as_ref()
@@ -1881,11 +1902,7 @@ impl<'a> CheckerState<'a> {
                                 .flatten()
                             })
                             .collect();
-                        let return_context_substitution = self
-                            .compute_return_context_substitution_from_shape(
-                                &shape,
-                                contextual_type,
-                            );
+                        let return_context_substitution = single_pass_return_context_substitution;
                         if !return_context_substitution.is_empty() {
                             if let Some(snap) = &initial_arg_snap {
                                 let initial_arg_end = self.ctx.snapshot_diagnostics();
@@ -2493,9 +2510,6 @@ impl<'a> CheckerState<'a> {
             && let CallResult::Success(return_type) = result
             && let Some(ctx_type) =
                 contextual_type.filter(|&ct| ct != TypeId::ANY && ct != TypeId::UNKNOWN)
-            && (common::contains_type_parameters(self.ctx.types, return_type)
-                || common::contains_infer_types(self.ctx.types, return_type)
-                || common::contains_type_by_id(self.ctx.types, return_type, TypeId::UNKNOWN))
             && let Some(shape) = call_checker::get_contextual_signature_for_arity(
                 self.ctx.types,
                 callee_type_for_call,
@@ -2523,13 +2537,72 @@ impl<'a> CheckerState<'a> {
             }
 
             if !return_context_substitution.is_empty() {
-                let instantiated_return = crate::query_boundaries::common::instantiate_type(
-                    self.ctx.types,
-                    return_type,
-                    &return_context_substitution,
-                );
-                if instantiated_return != return_type {
-                    result = CallResult::Success(instantiated_return);
+                let has_callback_like_arg = args
+                    .iter()
+                    .copied()
+                    .any(|arg| self.is_callback_like_argument(arg));
+                let contextual_return_is_concrete =
+                    !common::contains_type_parameters(self.ctx.types, ctx_type)
+                        && !common::contains_infer_types(self.ctx.types, ctx_type)
+                        && !common::contains_type_by_id(self.ctx.types, ctx_type, TypeId::UNKNOWN);
+                if !has_callback_like_arg && contextual_return_is_concrete {
+                    let instantiated_shape_return =
+                        crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            shape.return_type,
+                            &return_context_substitution,
+                        );
+                    let contextual_params_fit_args = args.iter().enumerate().all(|(i, _)| {
+                        let Some(param) = shape.params.get(i).or_else(|| {
+                            let last = shape.params.last()?;
+                            last.rest.then_some(last)
+                        }) else {
+                            return true;
+                        };
+                        let instantiated_param = crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            param.type_id,
+                            &return_context_substitution,
+                        );
+                        let expected = if param.rest {
+                            self.rest_argument_element_type_with_env(instantiated_param)
+                        } else {
+                            instantiated_param
+                        };
+                        let actual = generic_inference_arg_types
+                            .get(i)
+                            .copied()
+                            .or_else(|| arg_types.get(i).copied())
+                            .unwrap_or(TypeId::UNKNOWN);
+                        if matches!(actual, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                            return false;
+                        }
+                        self.is_assignable_to_with_env(actual, expected)
+                    });
+                    if contextual_params_fit_args
+                        && self.is_assignable_to_with_env(instantiated_shape_return, ctx_type)
+                    {
+                        result = CallResult::Success(instantiated_shape_return);
+                    }
+                }
+                if let CallResult::Success(current_return) = result
+                    && current_return == return_type
+                    && (common::contains_type_parameters(self.ctx.types, return_type)
+                        || common::contains_infer_types(self.ctx.types, return_type)
+                        || common::contains_type_by_id(
+                            self.ctx.types,
+                            return_type,
+                            TypeId::UNKNOWN,
+                        ))
+                {
+                    let instantiated_return = crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        return_type,
+                        &return_context_substitution,
+                    );
+                    if instantiated_return != return_type {
+                        result = CallResult::Success(instantiated_return);
+                    }
                 }
             }
         }
