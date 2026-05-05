@@ -3594,6 +3594,35 @@ const p: MyPromise<string> = f().then(n => String(n));
 }
 
 #[test]
+fn local_promise_alias_is_not_valid_async_return_type() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type Promise<T> = { value: T };
+
+async function f(): Promise<string> {
+    return "ok";
+}
+
+const value = f();
+const bad: Promise<string> = value;
+
+export {};
+"#,
+    );
+    assert!(
+        has_error(&diagnostics, 1064),
+        "local Promise alias should not satisfy async return type identity.\nDiagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "async body should be checked against the local Promise alias payload.\nDiagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_import_type_partial_record_utility() {
     // Partial<T> and Record<K,V> are type aliases in the lib that get lowered
     // as Lazy(DefId). Application expansion must correctly substitute type

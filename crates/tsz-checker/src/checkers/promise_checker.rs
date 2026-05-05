@@ -2,6 +2,7 @@
 
 use crate::query_boundaries::checkers::promise as query;
 use crate::state::CheckerState;
+use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{Symbol, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
@@ -79,6 +80,39 @@ impl<'a> CheckerState<'a> {
         name == "Promise"
     }
 
+    fn is_global_promise_symbol(&self, sym_id: SymbolId, symbol: &Symbol) -> bool {
+        Self::is_exactly_promise_name(symbol.escaped_name.as_str())
+            && self.symbol_has_standard_lib_origin(sym_id)
+    }
+
+    pub(crate) fn symbol_has_standard_lib_origin(&self, sym_id: SymbolId) -> bool {
+        if self.ctx.symbol_is_from_actual_lib(sym_id)
+            || self.ctx.symbol_is_from_lib(sym_id)
+            || self.ctx.binder.lib_symbol_ids.contains(&sym_id)
+        {
+            return true;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .is_some_and(|arenas| {
+                    arenas.iter().any(|arena| {
+                        self.ctx
+                            .lib_contexts
+                            .iter()
+                            .take(self.ctx.actual_lib_file_count)
+                            .any(|lib_ctx| std::sync::Arc::ptr_eq(&lib_ctx.arena, arena))
+                    })
+                })
+        })
+    }
+
     /// Strict check: is this type exactly the global `Promise<T>` type?
     ///
     /// Unlike `is_promise_type` (which broadly matches Promise-like names), this only
@@ -92,7 +126,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                         {
-                            if Self::is_exactly_promise_name(symbol.escaped_name.as_str()) {
+                            if self.is_global_promise_symbol(sym_id, symbol) {
                                 return true;
                             }
                             // If the base is a type alias, resolve through it to check
@@ -108,7 +142,7 @@ impl<'a> CheckerState<'a> {
                     query::PromiseTypeKind::TypeQuery(sym_ref) => {
                         let sym_id = SymbolId(sym_ref.0);
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                            return self.is_global_promise_symbol(sym_id, symbol);
                         }
                         false
                     }
@@ -122,14 +156,14 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
-                    return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                    return self.is_global_promise_symbol(sym_id, symbol);
                 }
                 false
             }
             query::PromiseTypeKind::TypeQuery(sym_ref) => {
                 let sym_id = SymbolId(sym_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                    return self.is_global_promise_symbol(sym_id, symbol);
                 }
                 false
             }
@@ -1110,7 +1144,15 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 let name = ident.escaped_text.as_str();
-                if Self::is_exactly_promise_name(name) {
+                if Self::is_exactly_promise_name(name)
+                    && matches!(
+                        self.resolve_identifier_symbol_in_type_position_without_tracking(
+                            type_ref.type_name
+                        ),
+                        TypeSymbolResolution::Type(body_sym_id)
+                            if self.symbol_has_standard_lib_origin(body_sym_id)
+                    )
+                {
                     return true;
                 }
                 // The alias body might reference another alias — resolve recursively
@@ -1153,7 +1195,14 @@ impl<'a> CheckerState<'a> {
         {
             // Only match simple identifier "Promise" — not qualified names
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                return ident.escaped_text.as_str() == "Promise";
+                return ident.escaped_text.as_str() == "Promise"
+                    && matches!(
+                        self.resolve_identifier_symbol_in_type_position_without_tracking(
+                            type_ref.type_name
+                        ),
+                        TypeSymbolResolution::Type(sym_id)
+                            if self.symbol_has_standard_lib_origin(sym_id)
+                    );
             }
         }
 

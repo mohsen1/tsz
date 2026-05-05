@@ -95,6 +95,29 @@ let f: { a: (n: number) => number } = { a: function(n) { return n; } };
 }
 
 #[test]
+fn local_promise_constructor_does_not_contextually_type_executor_params() {
+    let source = r#"
+class Promise {
+    constructor(executor: Function) {
+        executor();
+    }
+}
+
+new Promise((resolve, reject) => {
+    resolve;
+    reject;
+});
+"#;
+    let diags = diagnostics_for(source);
+    let ts7006: Vec<_> = diags.iter().filter(|(code, _)| *code == 7006).collect();
+    assert!(
+        ts7006.iter().any(|(_, msg)| msg.contains("'resolve'"))
+            && ts7006.iter().any(|(_, msg)| msg.contains("'reject'")),
+        "expected TS7006 for local Promise executor params; got: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2590_and_ts7006_anchor_to_nested_callback_param_when_context_too_complex() {
     let source = r#"
 interface Obj<T> {
