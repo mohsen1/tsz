@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `conformance/quick-pick-20260505-next12`
 - **PR**: #2947 (follow-up to #2911)
-- **Status**: claimed
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
@@ -29,6 +29,8 @@ constructor guard branches.
   passed.
 - `cargo nextest run -p tsz-checker --test conformance_issues test_union_restricted_indexed_access_prefers_ts2339_over_constraint_failure`
   passed.
+- Repo pre-commit hook passed while creating the implementation commit
+  (`15019 passed, 54 skipped` in affected-crate nextest).
 - `CARGO_BUILD_JOBS=4 ./scripts/conformance/conformance.sh run --filter "typeGuardConstructorClassAndNumber" --verbose`
   passed 1/1.
 - Full conformance:
