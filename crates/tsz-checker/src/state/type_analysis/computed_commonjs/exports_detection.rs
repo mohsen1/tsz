@@ -757,32 +757,26 @@ impl<'a> CheckerState<'a> {
         };
 
         if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                // Direct `exports` identifier (not user-declared)
-                if ident.escaped_text == "exports"
-                    && self
-                        .resolve_identifier_symbol_without_tracking(idx)
-                        .is_none()
+            // Direct `exports` identifier (not user-declared)
+            if self.is_unshadowed_commonjs_exports_identifier(idx) {
+                return true;
+            }
+
+            // Check if the identifier is a variable alias for exports/module.exports
+            if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0
+            {
+                let decl_idx = symbol.value_declaration;
+                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                    && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                    && var_decl.initializer.is_some()
+                    && Self::is_exports_or_module_exports_or_chain_in_arena(
+                        self.ctx.arena,
+                        var_decl.initializer,
+                    )
                 {
                     return true;
-                }
-
-                // Check if the identifier is a variable alias for exports/module.exports
-                if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0
-                {
-                    let decl_idx = symbol.value_declaration;
-                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                        && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
-                        && var_decl.initializer.is_some()
-                        && Self::is_exports_or_module_exports_or_chain_in_arena(
-                            self.ctx.arena,
-                            var_decl.initializer,
-                        )
-                    {
-                        return true;
-                    }
                 }
             }
             return false;
@@ -795,18 +789,7 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return false;
         };
-        let module_is_unshadowed = !self
-            .resolve_identifier_symbol_without_tracking(access.expression)
-            .is_some_and(|sym_id| {
-                self.ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|symbol| symbol.decl_file_idx == self.ctx.current_file_idx as u32)
-            });
-        self.ctx
-            .arena
-            .get_identifier_at(access.expression)
-            .is_some_and(|ident| ident.escaped_text == "module" && module_is_unshadowed)
+        self.is_unshadowed_commonjs_module_identifier(access.expression)
             && self
                 .ctx
                 .arena

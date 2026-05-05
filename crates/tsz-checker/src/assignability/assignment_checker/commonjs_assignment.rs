@@ -135,23 +135,14 @@ impl<'a> CheckerState<'a> {
 
         // Check for `exports` identifier (unbound)
         if target_node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.ctx.arena.get_identifier(target_node)
-                && ident.escaped_text == "exports"
-            {
-                return true;
-            }
-            return false;
+            return self.is_unshadowed_commonjs_exports_identifier(target_idx);
         }
 
         // Check for `module.exports` property access
         if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.ctx.arena.get_access_expr(target_node)
         {
-            let is_module = self
-                .ctx
-                .arena
-                .get_identifier_at(access.expression)
-                .is_some_and(|ident| ident.escaped_text == "module");
+            let is_module = self.is_unshadowed_commonjs_module_identifier(access.expression);
             let is_exports = self
                 .ctx
                 .arena
@@ -449,11 +440,7 @@ impl<'a> CheckerState<'a> {
 
         // Direct `exports` identifier
         if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .is_some_and(|ident| ident.escaped_text == "exports");
+            return self.is_unshadowed_commonjs_exports_identifier(idx);
         }
 
         // Property access: check for `module.exports` or recurse
@@ -461,11 +448,7 @@ impl<'a> CheckerState<'a> {
             && let Some(access) = self.ctx.arena.get_access_expr(node)
         {
             // Check for `module.exports`
-            let is_module = self
-                .ctx
-                .arena
-                .get_identifier_at(access.expression)
-                .is_some_and(|ident| ident.escaped_text == "module");
+            let is_module = self.is_unshadowed_commonjs_module_identifier(access.expression);
             let is_exports = self
                 .ctx
                 .arena

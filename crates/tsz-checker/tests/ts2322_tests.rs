@@ -11,7 +11,7 @@ use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::diagnostic_codes;
 use tsz_checker::state::CheckerState;
-use tsz_common::common::ScriptTarget;
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -2153,6 +2153,52 @@ fn test_ts2322_check_cjs_false_does_not_enforce_annotation_type() {
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected no TS2322 for .cjs when checkJs is disabled, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_local_exports_and_module_bindings_are_not_commonjs_roots() {
+    let diagnostics = compile_with_options(
+        r#"
+// @ts-check
+const exports = { n: 1 };
+exports.n = "x";
+exports.n.toFixed();
+
+const module = { exports: { n: 1 } };
+module.exports.n = "x";
+module.exports.n.toFixed();
+"#,
+        "local-cjs-names.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Local exports/module bindings should stay ordinary checked-JS assignments, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322.iter().all(
+            |(_, message)| message.contains("Type 'string' is not assignable to type 'number'")
+        ),
+        "Expected string-to-number TS2322 diagnostics for both local CJS-name writes, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message.contains("toFixed")),
+        "Invalid writes should not retarget the local numeric properties to string, got: {diagnostics:#?}"
     );
 }
 

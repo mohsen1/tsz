@@ -13,6 +13,55 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn symbol_has_nonambient_current_file_declaration(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+            symbol.declarations.iter().any(|&decl_idx| {
+                self.ctx.arena.get(decl_idx).is_some()
+                    && !self.ctx.arena.is_in_ambient_context(decl_idx)
+            })
+        })
+    }
+
+    pub(crate) fn identifier_has_nonambient_current_file_binding(
+        &self,
+        ident_idx: NodeIndex,
+        expected_name: &str,
+    ) -> bool {
+        let Some(ident) = self.ctx.arena.get_identifier_at(ident_idx) else {
+            return false;
+        };
+        if ident.escaped_text != expected_name {
+            return false;
+        }
+
+        self.ctx
+            .binder
+            .node_symbols
+            .get(&ident_idx.0)
+            .copied()
+            .or_else(|| self.resolve_identifier_symbol_without_tracking(ident_idx))
+            .is_some_and(|sym_id| self.symbol_has_nonambient_current_file_declaration(sym_id))
+    }
+
+    pub(crate) fn is_unshadowed_commonjs_exports_identifier(&self, ident_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get_identifier_at(ident_idx)
+            .is_some_and(|ident| ident.escaped_text == "exports")
+            && !self.identifier_has_nonambient_current_file_binding(ident_idx, "exports")
+    }
+
+    pub(crate) fn is_unshadowed_commonjs_module_identifier(&self, ident_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get_identifier_at(ident_idx)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && !self.identifier_has_nonambient_current_file_binding(ident_idx, "module")
+    }
+
     /// Choose the type to display in a TS2339 "property does not exist on type X"
     /// message after a `PropertyNotFound` lookup.
     ///
@@ -218,14 +267,7 @@ impl<'a> CheckerState<'a> {
         &self,
         idx: NodeIndex,
     ) -> bool {
-        !self
-            .resolve_identifier_symbol_without_tracking(idx)
-            .is_some_and(|sym_id| {
-                self.ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|symbol| symbol.decl_file_idx == self.ctx.current_file_idx as u32)
-            })
+        self.is_unshadowed_commonjs_module_identifier(idx)
     }
 
     pub(crate) fn current_file_commonjs_exports_target_is_unshadowed(
@@ -237,18 +279,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .is_some_and(|ident| ident.escaped_text == "exports")
-                && !self
-                    .resolve_identifier_symbol_without_tracking(idx)
-                    .is_some_and(|sym_id| {
-                        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                            symbol.decl_file_idx == self.ctx.current_file_idx as u32
-                        })
-                    });
+            return self.is_unshadowed_commonjs_exports_identifier(idx);
         }
 
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -258,11 +289,7 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return false;
         };
-        self.ctx
-            .arena
-            .get_identifier_at(access.expression)
-            .is_some_and(|ident| ident.escaped_text == "module")
-            && self.current_file_commonjs_module_identifier_is_unshadowed(access.expression)
+        self.is_unshadowed_commonjs_module_identifier(access.expression)
             && self
                 .ctx
                 .arena
