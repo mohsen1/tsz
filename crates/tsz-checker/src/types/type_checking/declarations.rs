@@ -646,6 +646,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if query::is_constructor_function_type(self.ctx.types, type_id) {
+            return true;
+        }
+
         // First check if it directly has construct signatures
         if query::has_construct_signatures(self.ctx.types, type_id) {
             return true;

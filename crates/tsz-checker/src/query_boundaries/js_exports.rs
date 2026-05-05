@@ -619,6 +619,10 @@ impl<'a> CheckerState<'a> {
     fn compute_js_export_surface(&mut self, target_file_idx: usize) -> JsExportSurface {
         let mut surface = JsExportSurface::empty();
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
+        let target_is_external_module = self
+            .ctx
+            .get_binder_for_file(target_file_idx)
+            .is_some_and(tsz_binder::BinderState::is_external_module);
 
         let last_direct_export =
             self.last_direct_module_export_assignment_for_file(target_file_idx);
@@ -667,7 +671,7 @@ impl<'a> CheckerState<'a> {
 
         surface.has_commonjs_exports = surface.direct_export_type.is_some()
             || !surface.named_exports.is_empty()
-            || !surface.prototype_members.is_empty()
+            || (!target_is_external_module && !surface.prototype_members.is_empty())
             || has_define_property_call;
 
         surface

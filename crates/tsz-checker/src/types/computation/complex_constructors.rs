@@ -769,6 +769,13 @@ impl<'a> CheckerState<'a> {
             && let Some(grandparent_idx) = self.ctx.arena.get_extended(parent_idx).map(|e| e.parent)
             && let Some(grandparent) = self.ctx.arena.get(grandparent_idx)
         {
+            parent_idx = grandparent_idx;
+            parent_node = grandparent;
+        }
+        if parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(grandparent_idx) = self.ctx.arena.get_extended(parent_idx).map(|e| e.parent)
+            && let Some(grandparent) = self.ctx.arena.get(grandparent_idx)
+        {
             parent_node = grandparent;
         }
 
