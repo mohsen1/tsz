@@ -863,6 +863,12 @@ pub fn collect_export_names_categorized(
     let mut func_exports: Vec<(String, String)> = Vec::new(); // (exported_name, local_name)
     let mut other_exports = Vec::new();
     let mut default_func_exports: Vec<String> = Vec::new();
+    // Counter for synthetic names used by anonymous `export default function`
+    // declarations. tsc emits `default_1`, `default_2`, ... in source order
+    // when more than one anonymous default function appears (an error case
+    // surfaced by `exportDefaultInterfaceAndTwoFunctions`); a single shared
+    // `"default_1"` would collide and produce identical helper names.
+    let mut anonymous_default_counter: u32 = 0;
     let all = collect_export_names_with_options(arena, statements, preserve_const_enums);
 
     // First pass: collect all function declaration names in the file (including
@@ -957,7 +963,10 @@ pub fn collect_export_names_categorized(
                 .filter(|name| {
                     !name.is_empty() && name != "function" && is_valid_identifier_name(name)
                 })
-                .unwrap_or_else(|| "default_1".to_string());
+                .unwrap_or_else(|| {
+                    anonymous_default_counter += 1;
+                    format!("default_{anonymous_default_counter}")
+                });
             default_func_exports.push(name);
         }
         // Named export specifiers: export { f } where f is a function declaration

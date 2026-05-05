@@ -347,6 +347,13 @@ pub struct Printer<'a> {
     /// When set, class/function emitters use this instead of leaving the name blank.
     pub(crate) anonymous_default_export_name: Option<String>,
 
+    /// Counter incremented for each anonymous `export default` declaration
+    /// emitted in CommonJS mode. Multiple anonymous defaults can appear when
+    /// the source is in error recovery (`exportDefaultInterfaceAndTwoFunctions`);
+    /// they need distinct synthetic names (`default_1`, `default_2`, ...) so
+    /// `exports.default = default_N;` and the declaration name match per-pair.
+    pub(crate) next_anonymous_default_index: u32,
+
     /// Counter used for disposable resource environment names (`env_1`, `env_2`, ...).
     pub(crate) next_disposable_env_id: u32,
 
@@ -834,6 +841,7 @@ impl<'a> Printer<'a> {
             current_namespace_name: None,
             parent_namespace_name: None,
             anonymous_default_export_name: None,
+            next_anonymous_default_index: 0,
             next_disposable_env_id: 1,
             block_using_env: None,
             in_top_level_using_scope: false,

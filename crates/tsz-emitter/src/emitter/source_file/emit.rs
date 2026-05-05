@@ -1023,33 +1023,80 @@ impl<'a> Printer<'a> {
             {
                 // Build a merged list of (source_position, export_name, local_name)
                 let mut all_func_exports: Vec<(u32, String, String)> = Vec::new();
+                // Walk anonymous-default functions in source order so the Nth
+                // synthesized name (`default_1`, `default_2`, ...) matches the
+                // Nth occurrence. Without this, the position lookup below
+                // would short-circuit on the first match and assign every
+                // anonymous default the same position (or fall back to 0),
+                // sorting them backwards in the hoisted preamble — see
+                // `exportDefaultInterfaceAndTwoFunctions`.
+                let mut anonymous_default_positions: Vec<u32> = Vec::new();
+                for &idx in &source.statements.nodes {
+                    let Some(node) = self.arena.get(idx) else {
+                        continue;
+                    };
+                    if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                        continue;
+                    }
+                    let Some(export) = self.arena.get_export_decl(node) else {
+                        continue;
+                    };
+                    if !export.is_default_export {
+                        continue;
+                    }
+                    let Some(clause) = self.arena.get(export.export_clause) else {
+                        continue;
+                    };
+                    if clause.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                        continue;
+                    }
+                    let Some(func) = self.arena.get_function(clause) else {
+                        continue;
+                    };
+                    let fn_name = self.get_identifier_text_idx(func.name);
+                    if fn_name.is_empty() || fn_name == "function" {
+                        anonymous_default_positions.push(node.pos);
+                    }
+                }
+                let mut anonymous_default_cursor = 0_usize;
                 for name in &default_func_exports {
-                    // Find source position of the default function export
-                    let pos = source
-                        .statements
-                        .nodes
-                        .iter()
-                        .find_map(|&idx| {
-                            let node = self.arena.get(idx)?;
-                            if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                                let export = self.arena.get_export_decl(node)?;
-                                if export.is_default_export {
-                                    let clause = self.arena.get(export.export_clause)?;
-                                    if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                                        let func = self.arena.get_function(clause)?;
-                                        let fn_name = self.get_identifier_text_idx(func.name);
-                                        if &fn_name == name
-                                            || (name == "default_1"
-                                                && (fn_name.is_empty() || fn_name == "function"))
-                                        {
-                                            return Some(node.pos);
+                    // Anonymous synthesized names are `default_1`, `default_2`, ...
+                    // — their source positions come from the source-order walk
+                    // above. Real-name defaults still resolve via the normal
+                    // by-name lookup.
+                    let is_anonymous_synthetic = name.starts_with("default_")
+                        && name[8..].chars().all(|c| c.is_ascii_digit());
+                    let pos = if is_anonymous_synthetic {
+                        let p = anonymous_default_positions
+                            .get(anonymous_default_cursor)
+                            .copied()
+                            .unwrap_or(0);
+                        anonymous_default_cursor += 1;
+                        p
+                    } else {
+                        source
+                            .statements
+                            .nodes
+                            .iter()
+                            .find_map(|&idx| {
+                                let node = self.arena.get(idx)?;
+                                if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                                    let export = self.arena.get_export_decl(node)?;
+                                    if export.is_default_export {
+                                        let clause = self.arena.get(export.export_clause)?;
+                                        if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                                            let func = self.arena.get_function(clause)?;
+                                            let fn_name = self.get_identifier_text_idx(func.name);
+                                            if &fn_name == name {
+                                                return Some(node.pos);
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            None
-                        })
-                        .unwrap_or(0);
+                                None
+                            })
+                            .unwrap_or(0)
+                    };
                     all_func_exports.push((pos, "default".to_string(), name.clone()));
                 }
                 for (exported_name, local_name) in &func_exports {
