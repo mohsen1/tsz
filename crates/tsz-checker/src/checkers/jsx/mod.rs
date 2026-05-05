@@ -19,4 +19,6 @@ pub(crate) mod runtime;
 mod spread;
 
 #[cfg(test)]
+mod ref_callback_tests;
+#[cfg(test)]
 mod tests;

@@ -8,30 +8,6 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Format a single property fragment "name: type" used inside the synthesized
-    /// JSX-attributes source-type display. Mirrors tsc's per-property display:
-    /// shorthand attrs render as `name: true`, others use the formatted value type.
-    fn format_jsx_synthesized_prop_fragment(&mut self, name: &str, type_id: TypeId) -> String {
-        let display_name = {
-            let mut chars = name.chars();
-            let is_ident = chars.next().is_some_and(|first| {
-                (first == '_' || first == '$' || first.is_ascii_alphabetic())
-                    && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-            });
-            if is_ident {
-                name.to_string()
-            } else {
-                format!("\"{name}\"")
-            }
-        };
-        let type_str = if type_id == TypeId::BOOLEAN_TRUE {
-            "true".to_string()
-        } else {
-            self.format_type(type_id)
-        };
-        format!("{display_name}: {type_str}")
-    }
-
     /// Walks the attributes once and produces a formatted object-type string with
     /// explicit (non-spread) attrs first (in source order), then spread-derived
     /// props that aren't shadowed by an explicit attr (in spread source order).
@@ -650,22 +626,41 @@ impl<'a> CheckerState<'a> {
                     } else if let Some(expected_type) = expected_special_type {
                         let expected_context_type =
                             self.normalize_jsx_required_props_target(expected_type);
-                        let contextual_expected_type =
-                            if self.ctx.arena.get(value_node_idx).is_some_and(|node| {
-                                node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                            }) {
-                                self.refine_jsx_callable_contextual_type(expected_context_type)
-                            } else {
-                                expected_context_type
-                            };
-                        self.compute_type_of_node_with_request(
+                        let is_function_value =
+                            self.ctx.arena.get(value_node_idx).is_some_and(|node| {
+                                matches!(
+                                    node.kind,
+                                    syntax_kind_ext::ARROW_FUNCTION
+                                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                                )
+                            });
+                        let contextual_expected_type = if is_function_value {
+                            self.ctx
+                                .implicit_any_contextual_closures
+                                .insert(value_node_idx);
+                            self.ctx
+                                .implicit_any_checked_closures
+                                .insert(value_node_idx);
+                            self.invalidate_function_like_for_contextual_retry(value_node_idx);
+                            self.refine_jsx_callable_contextual_type(expected_context_type)
+                        } else {
+                            expected_context_type
+                        };
+                        let attr_value_type = self.compute_type_of_node_with_request(
                             value_node_idx,
                             &request
                                 .read()
                                 .normal_origin()
                                 .contextual(contextual_expected_type),
-                        )
+                        );
+                        if is_function_value {
+                            self.check_jsx_special_attribute_function_body(
+                                value_node_idx,
+                                contextual_expected_type,
+                                request,
+                            );
+                        }
+                        attr_value_type
                     } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
                         let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
                             self.ctx
