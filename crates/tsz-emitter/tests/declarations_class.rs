@@ -818,3 +818,38 @@ fn test_named_class_expr_self_reference_uses_alias() {
         "named class expression must rewrite self-reference `N` to alias `_a` for static private field access.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn class_name_references_in_lowered_static_elements_use_class_value_alias() {
+    let source = r"class Foo {
+    static { console.log(this, Foo) }
+    static x = () => { console.log(this, Foo) }
+    static y = function() { console.log(this, Foo) }
+    #x() { console.log(Foo); }
+    x() { this.#x(); }
+}
+";
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
+
+    let private_init = output
+        .find("_a = Foo, _Foo_instances = new WeakSet(), _Foo_x = function _Foo_x() { console.log(_a); };")
+        .expect("private method initializers should use the class-value alias");
+    let static_block = output
+        .find("console.log(_a, _a);")
+        .expect("static block should use the class-value alias");
+    let static_arrow = output
+        .find("Foo.x = () => { console.log(_a, _a); };")
+        .expect("static arrow initializer should use the class-value alias");
+    let static_function = output
+        .find("Foo.y = function () { console.log(this, _a); };")
+        .expect(
+            "static function initializer should preserve its own this and alias the class name",
+        );
+
+    assert!(
+        private_init < static_block
+            && static_block < static_arrow
+            && static_arrow < static_function,
+        "private initializers should run before lowered static elements, and all lowered class-name references should use the captured class value.\nOutput:\n{output}"
+    );
+}

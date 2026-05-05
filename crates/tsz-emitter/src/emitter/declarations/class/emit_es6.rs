@@ -331,12 +331,92 @@ impl<'a> Printer<'a> {
             None
         };
 
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (tsz_common::ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let target_needs_static_block_lowering =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+
+        let static_initializer_alias_source_nodes: Vec<NodeIndex> =
+            if target_needs_static_block_lowering {
+                class
+                    .members
+                    .nodes
+                    .iter()
+                    .filter_map(|&member_idx| {
+                        let member_node = self.arena.get(member_idx)?;
+                        if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                            return Some(member_idx);
+                        }
+                        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                            return None;
+                        }
+                        let prop = self.arena.get_property_decl(member_node)?;
+                        if !self.arena.is_static(&prop.modifiers)
+                            || self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                            || self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                            || prop.initializer.is_none()
+                        {
+                            return None;
+                        }
+                        Some(prop.initializer)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let static_initializer_needs_this_alias = !static_initializer_alias_source_nodes.is_empty()
+            && static_initializer_alias_source_nodes
+                .iter()
+                .any(|init_idx| {
+                    contains_this_reference(self.arena, *init_idx)
+                        || contains_async_arrow_function(self.arena, *init_idx)
+                });
+        let static_initializer_needs_class_alias = !class_name.is_empty()
+            && static_initializer_alias_source_nodes
+                .iter()
+                .any(|idx| self.node_text_contains_identifier(*idx, &class_name));
+        let private_member_def_needs_class_alias = !class_name.is_empty()
+            && (private_methods.iter().any(|method| {
+                method
+                    .body
+                    .is_some_and(|body| self.node_text_contains_identifier(body, &class_name))
+            }) || private_accessors.iter().any(|accessor| {
+                accessor
+                    .getter_body
+                    .is_some_and(|body| self.node_text_contains_identifier(body, &class_name))
+                    || accessor
+                        .setter_body
+                        .is_some_and(|body| self.node_text_contains_identifier(body, &class_name))
+            }));
+
         // Determine if we need a class alias for static private fields
         let has_static_privates = private_fields.iter().any(|f| f.is_static)
             || private_methods.iter().any(|m| m.is_static)
             || private_accessors.iter().any(|a| a.is_static);
-        let private_class_alias = if has_static_privates {
+        let class_value_alias = if has_static_privates
+            || static_initializer_needs_this_alias
+            || static_initializer_needs_class_alias
+            || private_member_def_needs_class_alias
+        {
             Some(self.make_unique_name())
+        } else {
+            None
+        };
+        let private_class_alias = if has_static_privates {
+            class_value_alias.clone()
+        } else {
+            None
+        };
+        let static_initializer_class_alias = if static_initializer_needs_this_alias
+            || static_initializer_needs_class_alias
+            || private_member_def_needs_class_alias
+        {
+            class_value_alias.clone()
         } else {
             None
         };
@@ -380,8 +460,8 @@ impl<'a> Printer<'a> {
                 var_names.push(ws_name.clone());
             }
 
-            // Class alias for static members
-            if let Some(ref alias) = private_class_alias {
+            // Class alias for static elements and extracted private member bodies.
+            if let Some(ref alias) = class_value_alias {
                 var_names.push(alias.clone());
             }
 
@@ -552,12 +632,15 @@ impl<'a> Printer<'a> {
                 .map(|f| (f.weakmap_name.clone(), f.initializer))
                 .collect();
 
-            // Store class alias for static privates: emit `_a = ClassName;` after class body
-            if let Some(ref alias) = private_class_alias
+            // Store class alias for static elements/private bodies:
+            // emit `_a = ClassName;` after the class body, before extracted members.
+            if let Some(ref alias) = class_value_alias
                 && !class_name.is_empty()
             {
                 self.pending_private_class_alias = Some((alias.clone(), class_name.clone()));
-                self.private_static_class_alias = Some((class_name.clone(), alias.clone()));
+                if has_static_privates {
+                    self.private_static_class_alias = Some((class_name.clone(), alias.clone()));
+                }
             }
 
             // Prepare private field constructor inits (WeakMap.set calls)
@@ -632,11 +715,6 @@ impl<'a> Printer<'a> {
         // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`.
         // Allocate the class-expression temp before any computed-name temps so the
         // generated `_a`, `_b`, `_c` ordering matches tsc.
-        let target_needs_field_lowering = (self.ctx.options.target as u32)
-            < (tsz_common::ScriptTarget::ES2022 as u32)
-            || !self.ctx.options.use_define_for_class_fields;
-        let target_needs_static_block_lowering =
-            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
         // Positive-form predicate reads more clearly than clippy's inverted De Morgan form.
         #[allow(clippy::nonminimal_bool)]
         let has_static_field_comma_expr = target_needs_field_lowering
@@ -868,51 +946,27 @@ impl<'a> Printer<'a> {
         let externalized_static_initializer_uses_undefined_receiver =
             !is_class_expression && needs_static_block_lowering && has_legacy_class_decorators;
 
-        let static_initializer_nodes: Vec<NodeIndex> =
-            if is_class_expression || !needs_static_block_lowering {
-                Vec::new()
-            } else {
-                class
-                    .members
-                    .nodes
-                    .iter()
-                    .filter_map(|&member_idx| {
-                        let member_node = self.arena.get(member_idx)?;
-                        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                            return None;
-                        }
-                        let prop = self.arena.get_property_decl(member_node)?;
-                        if !self.arena.is_static(&prop.modifiers)
-                            || self
-                                .arena
-                                .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                            || self
-                                .arena
-                                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                            || prop.initializer.is_none()
-                        {
-                            return None;
-                        }
-                        Some(prop.initializer)
-                    })
-                    .collect()
-            };
-
-        let static_initializer_needs_this_alias = !static_initializer_nodes.is_empty()
-            && static_initializer_nodes.iter().any(|init_idx| {
-                contains_this_reference(self.arena, *init_idx)
-                    || contains_async_arrow_function(self.arena, *init_idx)
-            });
         let static_initializer_needs_super_alias = has_extends
             && !extends_null
-            && !static_initializer_nodes.is_empty()
-            && static_initializer_nodes
+            && !static_initializer_alias_source_nodes.is_empty()
+            && static_initializer_alias_source_nodes
                 .iter()
                 .any(|init_idx| contains_super_reference(self.arena, *init_idx));
+        if !has_any_private_lowering
+            && let Some(alias) = static_initializer_class_alias.as_ref()
+            && !self
+                .hoisted_assignment_temps
+                .iter()
+                .any(|name| name == alias)
+        {
+            self.hoisted_assignment_temps.push(alias.clone());
+        }
         let static_this_alias = if static_initializer_needs_this_alias
             && !externalized_static_initializer_uses_undefined_receiver
         {
-            Some(self.make_unique_name_hoisted())
+            static_initializer_class_alias
+                .clone()
+                .or_else(|| Some(self.make_unique_name_hoisted()))
         } else {
             None
         };
@@ -2114,6 +2168,124 @@ impl<'a> Printer<'a> {
         // Emit static field initializers after class body
         // For class expressions: use comma expression `(_a = class C {}, _a.field = value, _a)`
         // For class declarations: use separate statements `ClassName.field = value;`
+        let emit_private_inits_before_static_elements = !needs_private_comma_expr
+            && has_any_private_lowering
+            && static_initializer_class_alias.is_some()
+            && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
+        if emit_private_inits_before_static_elements {
+            let static_private_inits = std::mem::take(&mut self.pending_static_private_inits);
+            let private_class_alias_pair = self.pending_private_class_alias.take();
+            let instances_ws = self.pending_instances_weakset_add.take();
+            let method_defs = std::mem::take(&mut self.pending_private_method_defs);
+            let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
+            let weakmap_inits = self.pending_weakmap_inits.clone();
+            let has_pre_static_private_inits = private_class_alias_pair.is_some()
+                || !weakmap_inits.is_empty()
+                || instances_ws.is_some()
+                || !method_defs.is_empty()
+                || !accessor_defs.is_empty()
+                || !static_private_inits.is_empty();
+
+            if has_pre_static_private_inits {
+                self.write_line();
+                let mut first = true;
+                if let Some((ref alias, ref cls_name)) = private_class_alias_pair {
+                    self.write(alias);
+                    self.write(" = ");
+                    self.write(cls_name);
+                    first = false;
+                }
+                for init in &weakmap_inits {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(init);
+                    first = false;
+                }
+                if let Some(ref ws_name) = instances_ws {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(ws_name);
+                    self.write(" = new WeakSet()");
+                    first = false;
+                }
+                for (var_name, body_idx, params) in &method_defs {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(var_name);
+                    self.write(" = function ");
+                    self.write(var_name);
+                    self.write("(");
+                    for (i, &param_idx) in params.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        if let Some(param_node) = self.arena.get(param_idx)
+                            && let Some(param_data) = self.arena.get_parameter(param_node)
+                        {
+                            self.emit(param_data.name);
+                        }
+                    }
+                    self.write(") ");
+                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                    if private_member_def_needs_class_alias
+                        && let Some(alias) = class_value_alias.as_ref()
+                        && !class_name.is_empty()
+                    {
+                        self.scoped_class_expression_self_alias = Some((
+                            Arc::<str>::from(class_name.as_str()),
+                            Arc::<str>::from(alias.as_str()),
+                        ));
+                    }
+                    self.emit_single_line_block(*body_idx);
+                    self.scoped_class_expression_self_alias = prev_self_alias;
+                    first = false;
+                }
+                for def in &accessor_defs {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(&def.var_name);
+                    self.write(" = function ");
+                    self.write(&def.var_name);
+                    self.write("(");
+                    if let Some(param_idx) = def.param
+                        && let Some(param_node) = self.arena.get(param_idx)
+                        && let Some(param_data) = self.arena.get_parameter(param_node)
+                    {
+                        self.emit(param_data.name);
+                    }
+                    self.write(") ");
+                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                    if private_member_def_needs_class_alias
+                        && let Some(alias) = class_value_alias.as_ref()
+                        && !class_name.is_empty()
+                    {
+                        self.scoped_class_expression_self_alias = Some((
+                            Arc::<str>::from(class_name.as_str()),
+                            Arc::<str>::from(alias.as_str()),
+                        ));
+                    }
+                    self.emit_single_line_block(def.body);
+                    self.scoped_class_expression_self_alias = prev_self_alias;
+                    first = false;
+                }
+                self.write(";");
+                for (var_name, init_idx) in &static_private_inits {
+                    self.write_line();
+                    self.write(var_name);
+                    self.write(" = { value: ");
+                    if init_idx.is_some() {
+                        self.emit_expression(*init_idx);
+                    } else {
+                        self.write("void 0");
+                    }
+                    self.write(" };");
+                }
+            }
+        }
         if !static_field_inits.is_empty()
             && let Some(temp) = class_expr_static_temp.as_ref()
         {
@@ -2269,9 +2441,11 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
         } else if !static_field_inits.is_empty() && !class_name.is_empty() {
             self.write_line();
-            // If static field initializers reference `this`, emit `_a = ClassName;`
-            // so that `this` can be replaced with the temp alias.
-            if let Some(ref alias) = static_this_alias {
+            // If lowered static elements need a stable class value, emit
+            // `_a = ClassName;` so `this` and class-name references can use it.
+            if !emit_private_inits_before_static_elements
+                && let Some(ref alias) = static_initializer_class_alias
+            {
                 self.write(alias);
                 self.write(" = ");
                 self.write(&class_name);
@@ -2295,7 +2469,15 @@ impl<'a> Printer<'a> {
                             static_initializer_this_binding.map(std::sync::Arc::from);
                         self.scoped_static_super_base_alias =
                             static_initializer_super_base.map(std::sync::Arc::from);
+                        let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                        if let Some(alias) = static_initializer_class_alias.as_ref() {
+                            self.scoped_class_expression_self_alias = Some((
+                                Arc::<str>::from(class_name.as_str()),
+                                Arc::<str>::from(alias.as_str()),
+                            ));
+                        }
                         self.emit_static_block_iife_expression(block_idx, comment_idx);
+                        self.scoped_class_expression_self_alias = prev_self_alias;
                         self.scoped_static_this_alias = prev_this_alias;
                         self.scoped_static_super_base_alias = prev_super_alias;
                         self.write(";");
@@ -2338,7 +2520,8 @@ impl<'a> Printer<'a> {
                         externalized_static_initializer_uses_undefined_receiver,
                     );
                     let after = self.writer.len();
-                    if let Some(alias) = static_initializer_self_alias
+                    if let Some(alias) =
+                        static_initializer_self_alias.or(static_initializer_class_alias.as_deref())
                         && !class_name.is_empty()
                         && class_name != alias
                     {
@@ -2376,7 +2559,8 @@ impl<'a> Printer<'a> {
                         externalized_static_initializer_uses_undefined_receiver,
                     );
                     let after = self.writer.len();
-                    if let Some(alias) = static_initializer_self_alias
+                    if let Some(alias) =
+                        static_initializer_self_alias.or(static_initializer_class_alias.as_deref())
                         && !class_name.is_empty()
                         && class_name != alias
                     {
@@ -2407,7 +2591,15 @@ impl<'a> Printer<'a> {
                         static_initializer_this_binding.map(std::sync::Arc::from);
                     self.scoped_static_super_base_alias =
                         static_initializer_super_base.map(std::sync::Arc::from);
+                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                    if let Some(alias) = static_initializer_class_alias.as_ref() {
+                        self.scoped_class_expression_self_alias = Some((
+                            Arc::<str>::from(class_name.as_str()),
+                            Arc::<str>::from(alias.as_str()),
+                        ));
+                    }
                     self.emit_static_block_iife_expression(block_idx, comment_idx);
+                    self.scoped_class_expression_self_alias = prev_self_alias;
                     self.scoped_static_this_alias = prev_this_alias;
                     self.scoped_static_super_base_alias = prev_super_alias;
                     self.write(";");
@@ -2547,7 +2739,18 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write(") ");
+                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                if private_member_def_needs_class_alias
+                    && let Some(alias) = class_value_alias.as_ref()
+                    && !class_name.is_empty()
+                {
+                    self.scoped_class_expression_self_alias = Some((
+                        Arc::<str>::from(class_name.as_str()),
+                        Arc::<str>::from(alias.as_str()),
+                    ));
+                }
                 self.emit_single_line_block(*body_idx);
+                self.scoped_class_expression_self_alias = prev_self_alias;
                 self.decrease_indent();
             }
 
@@ -2567,7 +2770,18 @@ impl<'a> Printer<'a> {
                     self.emit(param_data.name);
                 }
                 self.write(") ");
+                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                if private_member_def_needs_class_alias
+                    && let Some(alias) = class_value_alias.as_ref()
+                    && !class_name.is_empty()
+                {
+                    self.scoped_class_expression_self_alias = Some((
+                        Arc::<str>::from(class_name.as_str()),
+                        Arc::<str>::from(alias.as_str()),
+                    ));
+                }
                 self.emit_single_line_block(def.body);
+                self.scoped_class_expression_self_alias = prev_self_alias;
                 self.decrease_indent();
             }
 
@@ -2654,7 +2868,18 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write(") ");
+                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                if private_member_def_needs_class_alias
+                    && let Some(alias) = class_value_alias.as_ref()
+                    && !class_name.is_empty()
+                {
+                    self.scoped_class_expression_self_alias = Some((
+                        Arc::<str>::from(class_name.as_str()),
+                        Arc::<str>::from(alias.as_str()),
+                    ));
+                }
                 self.emit_single_line_block(*body_idx);
+                self.scoped_class_expression_self_alias = prev_self_alias;
                 first = false;
             }
 
@@ -2678,7 +2903,18 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write(") ");
+                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                if private_member_def_needs_class_alias
+                    && let Some(alias) = class_value_alias.as_ref()
+                    && !class_name.is_empty()
+                {
+                    self.scoped_class_expression_self_alias = Some((
+                        Arc::<str>::from(class_name.as_str()),
+                        Arc::<str>::from(alias.as_str()),
+                    ));
+                }
                 self.emit_single_line_block(def.body);
+                self.scoped_class_expression_self_alias = prev_self_alias;
                 first = false;
             }
 
@@ -2741,11 +2977,21 @@ impl<'a> Printer<'a> {
             self.deferred_class_static_blocks
                 .extend(deferred_static_blocks);
         } else {
+            let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+            if let Some(alias) = static_initializer_class_alias.as_ref()
+                && !class_name.is_empty()
+            {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(alias.as_str()),
+                ));
+            }
             self.emit_static_block_iifes_with_context(
                 deferred_static_blocks,
                 static_initializer_this_binding,
                 static_initializer_super_base,
             );
+            self.scoped_class_expression_self_alias = prev_self_alias;
         }
 
         // Restore private field state (for nested classes)
@@ -2800,6 +3046,21 @@ impl<'a> Printer<'a> {
             .rposition(|&byte| byte == b':')
             .map_or(0, |idx| idx + 1);
         segment[search_from..].contains(&b'=')
+    }
+
+    fn node_text_contains_identifier(&self, idx: NodeIndex, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let (Some(text), Some(node)) = (self.source_text, self.arena.get(idx)) else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        if start >= end {
+            return false;
+        }
+        super::text_contains_identifier(&text[start..end], name)
     }
 
     fn recovered_class_body_statements(&self, node: &Node) -> Vec<String> {
