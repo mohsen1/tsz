@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/jsx-excess-props-assignability`
-- **PR**: TBD
+- **PR**: #2745
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
