@@ -153,6 +153,37 @@ fn count_code(diagnostics: &[Diagnostic], code: u32) -> usize {
     diagnostics.iter().filter(|d| d.code == code).count()
 }
 
+#[test]
+fn branded_primitive_application_source_displays_structural_intersection_in_ts2739() {
+    let source = r#"
+        interface ViewStyle {
+            view: number
+            styleMedia: string
+        }
+        type Brand<T> = number & { __brand: T }
+        declare function create<T extends { [s: string]: ViewStyle }>(styles: T): { [P in keyof T]: Brand<T[P]> };
+        const wrapped = create({ first: { view: 0, styleMedia: "???" } });
+        const vs: ViewStyle = wrapped.first;
+    "#;
+    let diags = check_with_lib(source);
+    let ts2739 = diags
+        .iter()
+        .find(|diag| diag.code == 2739)
+        .unwrap_or_else(|| panic!("expected TS2739 for branded number source, got {diags:?}"));
+    assert!(
+        ts2739
+            .message_text
+            .contains("Type 'Number & { __brand: { view: number; styleMedia: string; }; }'"),
+        "TS2739 should display the evaluated branded primitive intersection, got: {}",
+        ts2739.message_text
+    );
+    assert!(
+        !ts2739.message_text.contains("Brand<"),
+        "TS2739 should not preserve the generic Brand alias for branded primitive sources, got: {}",
+        ts2739.message_text
+    );
+}
+
 /// `{ __typename?: 'TypeTwo' } & { a: boolean }` is NOT assignable to
 /// `{ __typename?: 'TypeOne' } & { a: boolean }` — the literal property
 /// types differ. Exercises the all-object intersection path (no primitive

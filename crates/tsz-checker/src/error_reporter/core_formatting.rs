@@ -59,6 +59,38 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn application_backed_primitive_intersection_display(
+        &mut self,
+        type_id: TypeId,
+        evaluated: TypeId,
+    ) -> Option<String> {
+        let is_primitive_intersection = |state: &Self, candidate: TypeId| {
+            crate::query_boundaries::common::is_intersection_type(state.ctx.types, candidate)
+                && state.intersection_has_primitive_member(candidate)
+        };
+
+        if is_primitive_intersection(self, type_id)
+            && self
+                .ctx
+                .types
+                .get_display_alias(type_id)
+                .is_some_and(|alias| {
+                    crate::query_boundaries::common::is_generic_application(self.ctx.types, alias)
+                })
+        {
+            return Some(self.format_intersection_expanding_application_alias(type_id));
+        }
+
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
+            && evaluated != type_id
+            && is_primitive_intersection(self, evaluated)
+        {
+            return Some(self.format_intersection_expanding_application_alias(evaluated));
+        }
+
+        None
+    }
+
     pub(crate) fn truncate_property_receiver_display(display: String) -> String {
         const MAX_PROPERTY_RECEIVER_DISPLAY_CHARS: usize = 320;
         let should_truncate = display.starts_with("Omit<") || display.starts_with("merge<");
@@ -368,6 +400,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let evaluated = self.evaluate_type_for_assignability(ty);
+        if let Some(display) = self.application_backed_primitive_intersection_display(ty, evaluated)
+        {
+            return display;
+        }
         let use_eval = self.should_use_evaluated_assignability_display(ty, evaluated);
         if use_eval {
             return self.format_type_for_assignability_message(evaluated);
@@ -419,25 +455,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Application-backed primitive Intersection: when an Application (e.g.
-        // `Brand<T>`) evaluates to an Intersection that contains at least one
-        // primitive member (number/string/boolean), tsc always shows the structural
-        // intersection form with capitalized primitives and widened member types.
-        // e.g. `Brand<{ view: 0; }>` → `Number & { __brand: { view: number; }; }`
-        //
-        // Intersections of only non-primitive types (e.g. `ClassAlias & FnAlias`)
-        // should still show the Application alias name.
-        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, display_ty)
-            && self
-                .ctx
-                .types
-                .get_display_alias(display_ty)
-                .is_some_and(|alias| {
-                    crate::query_boundaries::common::is_generic_application(self.ctx.types, alias)
-                })
-            && self.intersection_has_primitive_member(display_ty)
+        if let Some(display) =
+            self.application_backed_primitive_intersection_display(display_ty, display_ty)
         {
-            return self.format_intersection_expanding_application_alias(display_ty);
+            return display;
         }
 
         if is_generic_callable(self, display_ty)
