@@ -1313,3 +1313,44 @@ fn test_constructor_with_infer_in_extends_renders_as_arrow_with_infer() {
          name `C`, not `infer C`: {printed}"
     );
 }
+
+#[test]
+fn test_inexact_optional_mapped_intersection_simplifies_for_inferred_emit() {
+    let actual = r#"(x: {} & {
+    [K in "foo" | "bar" | "baz" as undefined extends {
+    foo?: string;
+    bar: number;
+    baz: undefined;
+}[keyof unknown] ? keyof unknown : never]+?: undefined extends {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown] ? {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown] | undefined : {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown];
+} & {
+    [K in "foo" | "bar" | "baz" as undefined extends {
+    foo?: string;
+    bar: number;
+    baz: undefined;
+}[keyof unknown] ? never : keyof unknown]: {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown];
+}) => null"#;
+
+    let simplified = DeclarationEmitter::simplify_inexact_optional_mapped_intersection_text(actual)
+        .expect("expected inexact optional mapped intersection to simplify");
+
+    assert_eq!(
+        simplified,
+        "(x: {\n    foo?: string | undefined;\n    baz?: undefined;\n} & {\n    bar: number;\n}) => null"
+    );
+}
