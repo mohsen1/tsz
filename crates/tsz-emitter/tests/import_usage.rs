@@ -15,7 +15,8 @@
 //! boundaries where the emitter's value-usage decision changes.
 
 use super::{
-    contains_identifier_occurrence, strip_type_declaration_lines, strip_type_only_content,
+    contains_identifier_occurrence, strip_qualified_accesses_for_names,
+    strip_type_declaration_lines, strip_type_only_content,
 };
 
 // ----------------------------------------------------------------------
@@ -76,6 +77,26 @@ fn contains_identifier_occurrence_at_string_boundaries() {
     assert!(contains_identifier_occurrence("bar foo", "foo"));
     // Identifier alone.
     assert!(contains_identifier_occurrence("foo", "foo"));
+}
+
+#[test]
+fn strip_qualified_accesses_for_names_removes_member_reads() {
+    let names = rustc_hash::FxHashSet::from_iter(["Enum".to_string(), "Alias".to_string()]);
+    let stripped = strip_qualified_accesses_for_names(
+        "Enum.Foo; Alias[\"Bar\"]; Other.Baz; EnumValue;",
+        &names,
+    );
+    assert!(!contains_identifier_occurrence(&stripped, "Enum"));
+    assert!(!contains_identifier_occurrence(&stripped, "Alias"));
+    assert!(contains_identifier_occurrence(&stripped, "Other"));
+    assert!(contains_identifier_occurrence(&stripped, "EnumValue"));
+}
+
+#[test]
+fn strip_qualified_accesses_for_names_keeps_plain_value_reads() {
+    let names = rustc_hash::FxHashSet::from_iter(["Enum".to_string()]);
+    let stripped = strip_qualified_accesses_for_names("Enum.Foo; use(Enum);", &names);
+    assert!(contains_identifier_occurrence(&stripped, "Enum"));
 }
 
 // ----------------------------------------------------------------------

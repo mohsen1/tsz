@@ -17,6 +17,16 @@ impl<'a> Printer<'a> {
         let mut evaluator = EnumEvaluator::new(self.arena);
         self.collect_const_enums_recursive(&mut evaluator, statements, 0, u32::MAX, "");
         self.collect_const_enum_import_aliases(statements);
+        for (name, values) in &self.ctx.options.external_const_enum_values {
+            self.const_enum_values
+                .entry(name.clone())
+                .or_default()
+                .push(crate::emitter::core::ScopedConstEnum {
+                    scope_start: 0,
+                    scope_end: u32::MAX,
+                    values: values.clone(),
+                });
+        }
     }
 
     /// Recursively scan a statement list for const enum declarations,
