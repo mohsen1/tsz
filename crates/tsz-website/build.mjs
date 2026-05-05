@@ -259,8 +259,8 @@ function generateBenchmarkCharts(data) {
       continue;
     }
 
-    const tszWidth = Math.max(2, (r.tsz_ms / maxMs) * barMaxWidth);
-    const tsgoWidth = Math.max(2, (r.tsgo_ms / maxMs) * barMaxWidth);
+    const tszWidth = (r.tsz_ms / maxMs) * barMaxWidth;
+    const tsgoWidth = (r.tsgo_ms / maxMs) * barMaxWidth;
     const winnerLabel = r.winner === "tsz"
       ? `tsz ${r.factor?.toFixed(1)}x faster`
       : r.winner === "tsgo"
