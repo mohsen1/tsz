@@ -735,7 +735,7 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(tag_idx) = line.find("@typedef") {
                 let rest = line[tag_idx + "@typedef".len()..].trim();
-                if rest.starts_with("{{") && !rest.contains("}}") {
+                if rest.starts_with("{{") && Self::parse_jsdoc_curly_type_expr(rest).is_none() {
                     if let Some(previous_name) = current_name.take() {
                         typedefs.push((previous_name, current_info));
                         current_info = JsdocTypedefInfo {

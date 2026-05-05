@@ -1281,12 +1281,16 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ANY;
                 }
+                let direct_nullish_initializer = checker
+                    .literal_type_from_initializer(var_decl.initializer)
+                    .is_some_and(|ty| ty == TypeId::UNDEFINED || ty == TypeId::NULL);
                 // Under noImplicitAny, mutable unannotated bindings initialized with
                 // `undefined`/`null` should behave like evolving-any variables so later
                 // assignments don't produce TS2322 (TypeScript reports implicit-any diagnostics).
                 if checker.ctx.no_implicit_any()
                     && !checker.is_const_variable_declaration(decl_idx)
                     && var_decl.type_annotation.is_none()
+                    && direct_nullish_initializer
                     && (init_type == TypeId::UNDEFINED || init_type == TypeId::NULL)
                 {
                     return TypeId::ANY;

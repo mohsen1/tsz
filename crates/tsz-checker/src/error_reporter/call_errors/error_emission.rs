@@ -473,6 +473,11 @@ impl<'a> CheckerState<'a> {
         // each overload rejects a different excess property on the same
         // literal. For non-object-literal arguments (e.g., `fn(true)` vs
         // `(x:string)|(x:number)`), tsc still anchors at the argument.
+        let is_tagged_template_call = self
+            .ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION);
         let shared_argument_is_object_literal = shared_argument_anchor.is_some_and(|anchor_idx| {
             self.ctx
                 .arena
@@ -523,6 +528,7 @@ impl<'a> CheckerState<'a> {
         let anchor_argument_from_all_failures = all_failures_are_argument_mismatches
             && shared_argument_anchor.is_some()
             && (!shared_argument_is_object_literal
+                || is_tagged_template_call
                 || identical_argument_failures
                 || shared_excess_property_name);
         let raw_argument_anchor =
@@ -621,8 +627,21 @@ impl<'a> CheckerState<'a> {
                 || anchor_argument_from_mixed_failures
                 || anchor_argument_from_all_failures
                 || anchor_argument_from_first_argument_mismatch);
+        let tagged_generic_overload_anchor = if is_tagged_template_call
+            && self.tagged_template_callee_has_generic_call_signature(idx)
+        {
+            self.tagged_template_generic_overload_anchor(idx)
+        } else {
+            None
+        };
 
-        let anchor_kind = if literal_anchor.is_some() {
+        let anchor_kind = if let Some(anchor_idx) = tagged_generic_overload_anchor {
+            if anchor_idx == idx {
+                DiagnosticAnchorKind::OverloadPrimary
+            } else {
+                DiagnosticAnchorKind::Exact
+            }
+        } else if literal_anchor.is_some() {
             DiagnosticAnchorKind::Exact
         } else if anchor_first_argument {
             shared_argument_anchor
@@ -632,7 +651,9 @@ impl<'a> CheckerState<'a> {
         } else {
             DiagnosticAnchorKind::OverloadPrimary
         };
-        let anchor_idx = if let Some(anchor_idx) = literal_anchor {
+        let anchor_idx = if let Some(anchor_idx) = tagged_generic_overload_anchor {
+            anchor_idx
+        } else if let Some(anchor_idx) = literal_anchor {
             anchor_idx
         } else if anchor_first_argument {
             let raw_anchor = raw_argument_anchor.unwrap_or(idx);
@@ -684,6 +705,39 @@ impl<'a> CheckerState<'a> {
                 RelatedInformationPolicy::OVERLOAD_FAILURES,
             ),
         );
+    }
+
+    fn tagged_template_callee_has_generic_call_signature(&mut self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(tagged) = self.ctx.arena.get_tagged_template(node).cloned() else {
+            return false;
+        };
+        let tag_type = self.get_type_of_node(tagged.tag);
+        let tag_type = self.resolve_ref_type(tag_type);
+        let tag_type = self.resolve_lazy_type(tag_type);
+        crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, tag_type)
+            .is_some_and(|shape| {
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| !sig.type_params.is_empty())
+            })
+    }
+
+    fn tagged_template_generic_overload_anchor(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let args = self.logical_call_argument_nodes(idx)?;
+        let first_substitution = args.get(1).copied()?;
+        let first_node = self.ctx.arena.get(first_substitution)?;
+        if first_node.kind == tsz_scanner::SyntaxKind::NullKeyword as u16
+            || first_node.kind == tsz_scanner::SyntaxKind::TrueKeyword as u16
+            || first_node.kind == tsz_scanner::SyntaxKind::FalseKeyword as u16
+        {
+            Some(first_substitution)
+        } else {
+            Some(idx)
+        }
     }
 
     /// Report TS2693: type parameter used as value
