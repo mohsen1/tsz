@@ -5,7 +5,6 @@
 //!
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! resolve types, then use the solver to explain any failures.
-
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
@@ -32,7 +31,6 @@ pub struct TypeNodeChecker<'a, 'ctx> {
 }
 
 pub(super) type TypeLiteralSignatureScopeUpdates = Vec<(String, Option<TypeId>)>;
-
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Create a new type node checker with a mutable context reference.
     pub const fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
