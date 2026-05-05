@@ -1836,6 +1836,12 @@ impl<'a> FlowAnalyzer<'a> {
                 match ant_types.len() {
                     0 => result_type,
                     1 => ant_types[0],
+                    _ if initial_type == TypeId::ANY
+                        && !control_flow_typed_any_symbol
+                        && ant_types.contains(&TypeId::ANY) =>
+                    {
+                        TypeId::ANY
+                    }
                     _ => self.interner.union_preserve_members(ant_types),
                 }
             } else {
