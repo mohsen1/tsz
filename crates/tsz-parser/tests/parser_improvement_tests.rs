@@ -2188,6 +2188,30 @@ type T = Foo<?string>;
 }
 
 #[test]
+fn test_type_argument_with_jsdoc_prefix_type_simplifies_ts17020_suggestion() {
+    let source = r#"
+type T = Foo<?undefined>;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostic = parser
+        .get_diagnostics()
+        .iter()
+        .find(|d| d.code == 17020)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS17020 for `Foo<?undefined>`, got {:?}",
+                parser.get_diagnostics()
+            )
+        });
+    assert_eq!(
+        diagnostic.message,
+        "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'null | undefined'?"
+    );
+}
+
+#[test]
 fn test_expression_type_argument_with_empty_jsdoc_wildcard_emits_ts8020_only() {
     let source = r#"
 const WhatFoo = foo<?>;
@@ -3279,6 +3303,40 @@ fn test_prefix_question_emits_ts17020() {
         ts1110_count, 0,
         "Should not emit TS1110 for nullable type, got diagnostics: {diagnostics:?}"
     );
+}
+
+#[test]
+fn test_prefix_question_simplifies_ts17020_suggestions() {
+    for (input, expected) in [
+        ("unknown", "unknown"),
+        ("never", "never"),
+        ("void", "void"),
+        ("undefined", "null | undefined"),
+        ("null", "null | undefined"),
+        ("number", "number | null | undefined"),
+    ] {
+        let source = format!("let x: ?{input};");
+        let mut parser = ParserState::new(format!("{input}.ts"), source);
+        let _root = parser.parse_source_file();
+
+        let diagnostic = parser
+            .get_diagnostics()
+            .iter()
+            .find(|d| d.code == 17020)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected TS17020 for ?{input}, got {:?}",
+                    parser.get_diagnostics()
+                )
+            });
+        assert_eq!(
+            diagnostic.message,
+            format!(
+                "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{expected}'?"
+            ),
+            "wrong TS17020 suggestion for ?{input}"
+        );
+    }
 }
 
 #[test]
