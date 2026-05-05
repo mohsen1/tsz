@@ -188,15 +188,8 @@ pub(super) fn collect_runtime_exported_var_names_in_stmt(
                         for &decl_idx in &decl_list.declarations.nodes {
                             if let Some(decl_node) = arena.get(decl_idx)
                                 && let Some(decl) = arena.get_variable_declaration(decl_node)
-                                && let Some(name_node) = arena.get(decl.name)
                             {
-                                let Some(name) = arena
-                                    .get_identifier(name_node)
-                                    .map(|id| id.escaped_text.clone())
-                                else {
-                                    continue;
-                                };
-                                names.insert(name);
+                                collect_binding_names(arena, decl.name, names);
                             }
                         }
                     }
@@ -217,6 +210,35 @@ pub(super) fn collect_runtime_exported_var_names_in_stmt(
             }
         }
         _ => {}
+    }
+}
+
+fn collect_binding_names(
+    arena: &NodeArena,
+    name_idx: NodeIndex,
+    names: &mut std::collections::HashSet<String>,
+) {
+    let Some(node) = arena.get(name_idx) else {
+        return;
+    };
+
+    if let Some(ident) = arena.get_identifier(node) {
+        names.insert(ident.escaped_text.clone());
+        return;
+    }
+
+    if is_binding_pattern_kind(node.kind)
+        && let Some(pattern) = arena.get_binding_pattern(node)
+    {
+        for &elem_idx in &pattern.elements.nodes {
+            let Some(elem_node) = arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            collect_binding_names(arena, elem.name, names);
+        }
     }
 }
 
@@ -276,6 +298,7 @@ pub(super) fn convert_exported_variable_declarations(
     let mut result = Vec::new();
     let mut assignment_targets: Vec<(String, IRNode)> = Vec::new();
     let mut hoisted_temps: Vec<String> = Vec::new();
+    let mut temp_counter = 0;
 
     for &decl_list_idx in &declarations.nodes {
         if let Some(decl_list_node) = arena.get(decl_list_idx)
@@ -284,9 +307,39 @@ pub(super) fn convert_exported_variable_declarations(
             for &decl_idx in &decl_list.declarations.nodes {
                 if let Some(decl_node) = arena.get(decl_idx)
                     && let Some(decl) = arena.get_variable_declaration(decl_node)
-                    && let Some(name) = get_identifier_text(arena, decl.name)
                     && decl.initializer.is_some()
                 {
+                    if let Some(name_node) = arena.get(decl.name)
+                        && is_binding_pattern_kind(name_node.kind)
+                    {
+                        let temp =
+                            crate::transforms::emit_utils::next_temp_var_name(&mut temp_counter);
+                        let converter = AstToIr::new(arena);
+                        let value = converter.convert_expression(decl.initializer);
+                        hoisted_temps.extend(converter.take_hoisted_temps());
+                        hoisted_temps.push(temp.clone());
+
+                        let mut assignments = Vec::new();
+                        assignments.push(IRNode::assign(IRNode::id(temp.clone()), value));
+                        emit_namespace_binding_pattern_assignments(
+                            arena,
+                            ns_name,
+                            &temp,
+                            decl.name,
+                            &mut assignments,
+                            &mut temp_counter,
+                            &mut hoisted_temps,
+                        );
+
+                        let parts: Vec<String> =
+                            assignments.iter().map(IRPrinter::emit_to_string).collect();
+                        result.push(IRNode::Raw(format!("{};", parts.join(", ")).into()));
+                        continue;
+                    }
+
+                    let Some(name) = get_identifier_text(arena, decl.name) else {
+                        continue;
+                    };
                     let converter = AstToIr::new(arena);
                     let value = converter.convert_expression(decl.initializer);
                     hoisted_temps.extend(converter.take_hoisted_temps());
@@ -320,6 +373,162 @@ pub(super) fn convert_exported_variable_declarations(
     result.push(IRNode::Raw(format!("{};", parts.join(", ")).into()));
 
     (result, hoisted_temps)
+}
+
+const fn is_binding_pattern_kind(kind: u16) -> bool {
+    kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        || kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+}
+
+fn emit_namespace_binding_pattern_assignments(
+    arena: &NodeArena,
+    ns_name: &str,
+    source: &str,
+    pattern_idx: NodeIndex,
+    result: &mut Vec<IRNode>,
+    temp_counter: &mut u32,
+    hoisted_temps: &mut Vec<String>,
+) {
+    let Some(pattern_node) = arena.get(pattern_idx) else {
+        return;
+    };
+    let Some(pattern) = arena.get_binding_pattern(pattern_node) else {
+        return;
+    };
+
+    match pattern_node.kind {
+        k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+            for (index, &element_idx) in pattern.elements.nodes.iter().enumerate() {
+                let Some(element_node) = arena.get(element_idx) else {
+                    continue;
+                };
+                if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                    continue;
+                }
+                let Some(element) = arena.get_binding_element(element_node) else {
+                    continue;
+                };
+
+                if element.dot_dot_dot_token {
+                    if let Some(name) = get_identifier_text(arena, element.name) {
+                        let value = IRNode::call(
+                            IRNode::prop(IRNode::id(source.to_string()), "slice"),
+                            vec![IRNode::number(index.to_string())],
+                        );
+                        result.push(namespace_assignment(ns_name, &name, value));
+                    }
+                    continue;
+                }
+
+                let access = IRNode::elem(
+                    IRNode::id(source.to_string()),
+                    IRNode::number(index.to_string()),
+                );
+                emit_namespace_binding_element_assignment(
+                    arena,
+                    ns_name,
+                    access,
+                    element,
+                    result,
+                    temp_counter,
+                    hoisted_temps,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+            for &element_idx in &pattern.elements.nodes {
+                let Some(element_node) = arena.get(element_idx) else {
+                    continue;
+                };
+                let Some(element) = arena.get_binding_element(element_node) else {
+                    continue;
+                };
+                if element.dot_dot_dot_token {
+                    continue;
+                }
+
+                let prop_name_idx = if element.property_name.is_some() {
+                    element.property_name
+                } else {
+                    element.name
+                };
+                let Some(prop_name) = binding_property_name_text(arena, prop_name_idx) else {
+                    continue;
+                };
+                let access = IRNode::prop(IRNode::id(source.to_string()), prop_name);
+                emit_namespace_binding_element_assignment(
+                    arena,
+                    ns_name,
+                    access,
+                    element,
+                    result,
+                    temp_counter,
+                    hoisted_temps,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn emit_namespace_binding_element_assignment(
+    arena: &NodeArena,
+    ns_name: &str,
+    access: IRNode,
+    element: &tsz_parser::parser::node::BindingElementData,
+    result: &mut Vec<IRNode>,
+    temp_counter: &mut u32,
+    hoisted_temps: &mut Vec<String>,
+) {
+    if let Some(name_node) = arena.get(element.name)
+        && is_binding_pattern_kind(name_node.kind)
+    {
+        let nested_temp = crate::transforms::emit_utils::next_temp_var_name(temp_counter);
+        hoisted_temps.push(nested_temp.clone());
+        result.push(IRNode::assign(IRNode::id(nested_temp.clone()), access));
+        emit_namespace_binding_pattern_assignments(
+            arena,
+            ns_name,
+            &nested_temp,
+            element.name,
+            result,
+            temp_counter,
+            hoisted_temps,
+        );
+        return;
+    }
+
+    let Some(name) = get_identifier_text(arena, element.name) else {
+        return;
+    };
+    let value = if element.initializer.is_none() {
+        access
+    } else {
+        let converter = AstToIr::new(arena);
+        let default_value = converter.convert_expression(element.initializer);
+        hoisted_temps.extend(converter.take_hoisted_temps());
+        IRNode::ConditionalExpr {
+            condition: Box::new(IRNode::binary(access.clone(), "!==", IRNode::Undefined)),
+            when_true: Box::new(access),
+            when_false: Box::new(default_value),
+        }
+    };
+    result.push(namespace_assignment(ns_name, &name, value));
+}
+
+fn namespace_assignment(ns_name: &str, name: &str, value: IRNode) -> IRNode {
+    IRNode::assign(
+        IRNode::prop(IRNode::id(ns_name.to_string()), name.to_string()),
+        value,
+    )
+}
+
+fn binding_property_name_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    let node = arena.get(idx)?;
+    if let Some(ident) = arena.get_identifier(node) {
+        return Some(ident.escaped_text.clone());
+    }
+    arena.get_literal(node).map(|lit| lit.text.clone())
 }
 
 /// Convert variable declarations to proper IR (`VarDecl` nodes)

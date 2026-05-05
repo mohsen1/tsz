@@ -5,28 +5,8 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-/// Lowering plan for a single declarator inside `export var ... = init;`
-/// at namespace scope.
-enum NamespaceExportChunk {
-    /// `M.foo = init`
-    Simple { target: String, init: NodeIndex },
-    /// `_a = init, M.x = _a.x, M.y = _a.y` — destructuring lowering.
-    Destruct(DestructSegment),
-}
-
-struct DestructSegment {
-    /// Temp name (`_a`) introduced for the initializer.
-    temp: String,
-    /// Initializer expression assigned to the temp first.
-    init: NodeIndex,
-    /// Each entry produces `M.<target> = _a<access>`.
-    bindings: Vec<(String, DestructAccess)>,
-}
-
-enum DestructAccess {
-    Index(usize),
-    Key(String),
-}
+#[path = "namespace_export_destructuring.rs"]
+mod namespace_export_destructuring;
 
 /// Rewrite enum IIFE IR from `E || (E = {})` to `E = NS.E || (NS.E = {})`
 /// for exported enums in namespaces.
@@ -1107,6 +1087,8 @@ impl<'a> Printer<'a> {
             }
             self.namespace_exported_names = local_exports;
             self.namespace_parent_exported_names = parent_exports;
+            let (destructuring_export_temps, destructuring_export_temp_names) =
+                self.reserve_namespace_destructuring_export_temps(module);
 
             // Skip comments on the same line as the opening `{` of the module block.
             // When the namespace is transformed to an IIFE, tsc drops trailing
@@ -1142,6 +1124,18 @@ impl<'a> Printer<'a> {
                         break;
                     }
                 }
+            }
+
+            if !destructuring_export_temp_names.is_empty() {
+                self.write("var ");
+                for (i, temp) in destructuring_export_temp_names.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.write(temp);
+                }
+                self.write(";");
+                self.write_line();
             }
 
             for (stmt_i, &stmt_idx) in stmts.nodes.iter().enumerate() {
@@ -1220,6 +1214,7 @@ impl<'a> Printer<'a> {
                                 &ns_name,
                                 stmt_node,
                                 upper_bound,
+                                &destructuring_export_temps,
                             );
                         } else if inner_kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                             // export import X = Y; → ns.X = Y;
@@ -1424,6 +1419,7 @@ impl<'a> Printer<'a> {
         ns_name: &str,
         outer_stmt: &Node,
         comment_upper_bound: u32,
+        destructuring_export_temps: &rustc_hash::FxHashMap<NodeIndex, String>,
     ) {
         let Some(var_node) = self.arena.get(var_stmt_idx) else {
             return;
@@ -1432,12 +1428,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Each declarator becomes either a simple `M.name = init` chunk or a
-        // destructuring chunk: `_a = init, M.x = _a.x, M.y = _a.y`.
-        // We collect them in source order, then emit them as a single comma
-        // expression. Each destructuring chunk also requires a `var _a;`
-        // declaration to be emitted before the comma expression.
-        let mut chunks: Vec<NamespaceExportChunk> = Vec::new();
+        let mut wrote_any = false;
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -1459,245 +1450,38 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                let Some(name_node) = self.arena.get(decl.name) else {
-                    continue;
-                };
-
-                // Simple identifier: `export var foo = init` → `M.foo = init`.
-                if name_node.kind == SyntaxKind::Identifier as u16 {
-                    let mut names = Vec::new();
-                    self.collect_binding_names(decl.name, &mut names);
-                    for name in names {
-                        chunks.push(NamespaceExportChunk::Simple {
-                            target: name,
-                            init: decl.initializer,
-                        });
-                    }
-                    continue;
-                }
-
-                // Destructuring pattern: lower into temp + indexed/keyed access.
-                // Falls back to the simple path if the pattern contains nested
-                // patterns or rest elements that we don't yet handle here.
-                if let Some(seg) =
-                    self.try_build_destruct_segment(name_node.kind, decl.name, decl.initializer)
-                {
-                    chunks.push(NamespaceExportChunk::Destruct(seg));
+                if let Some(temp) = destructuring_export_temps.get(&decl_idx) {
+                    self.write_namespace_export_separator(&mut wrote_any);
+                    self.write(temp);
+                    self.write(" = ");
+                    self.emit_expression(decl.initializer);
+                    self.emit_namespace_binding_pattern_assignments(
+                        ns_name,
+                        temp,
+                        decl.name,
+                        &mut wrote_any,
+                    );
                 } else {
                     let mut names = Vec::new();
                     self.collect_binding_names(decl.name, &mut names);
                     for name in names {
-                        chunks.push(NamespaceExportChunk::Simple {
-                            target: name,
-                            init: decl.initializer,
-                        });
-                    }
-                }
-            }
-        }
-
-        if chunks.is_empty() {
-            return;
-        }
-
-        // Emit `var _a;` declarations on their own lines first (one per
-        // destructuring chunk).
-        for chunk in &chunks {
-            if let NamespaceExportChunk::Destruct(seg) = chunk {
-                self.write("var ");
-                self.write(&seg.temp);
-                self.write(";");
-                self.write_line();
-            }
-        }
-
-        // Build the comma chain in declarator order.
-        let mut first = true;
-        for chunk in &chunks {
-            match chunk {
-                NamespaceExportChunk::Simple { target, init } => {
-                    if first {
-                        first = false;
-                    } else {
-                        self.write(", ");
-                    }
-                    self.write(ns_name);
-                    self.write(".");
-                    self.write(target);
-                    self.write(" = ");
-                    self.emit_expression(*init);
-                }
-                NamespaceExportChunk::Destruct(seg) => {
-                    if first {
-                        first = false;
-                    } else {
-                        self.write(", ");
-                    }
-                    self.write(&seg.temp);
-                    self.write(" = ");
-                    self.emit_expression(seg.init);
-                    for (target, access) in &seg.bindings {
-                        self.write(", ");
+                        self.write_namespace_export_separator(&mut wrote_any);
                         self.write(ns_name);
                         self.write(".");
-                        self.write(target);
+                        self.write(&name);
                         self.write(" = ");
-                        self.write(&seg.temp);
-                        match access {
-                            DestructAccess::Index(i) => {
-                                self.write("[");
-                                self.write(&i.to_string());
-                                self.write("]");
-                            }
-                            DestructAccess::Key(k) => {
-                                self.write(".");
-                                self.write(k);
-                            }
-                        }
+                        self.emit_expression(decl.initializer);
                     }
                 }
             }
         }
 
-        self.write(";");
-        let token_end = self.find_token_end_before_trivia(outer_stmt.pos, comment_upper_bound);
-        self.emit_trailing_comments_before(token_end, comment_upper_bound);
-        self.write_line();
-    }
-
-    /// Build a destructuring lowering plan for a top-level binding pattern.
-    /// Returns `None` if the pattern contains rest elements, defaults, or
-    /// nested patterns we don't currently lower at namespace scope.
-    fn try_build_destruct_segment(
-        &mut self,
-        kind: u16,
-        name_idx: NodeIndex,
-        init: NodeIndex,
-    ) -> Option<DestructSegment> {
-        let name_node = self.arena.get(name_idx)?;
-        let pattern = self.arena.get_binding_pattern(name_node)?;
-        let is_array = kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
-        let is_object = kind == syntax_kind_ext::OBJECT_BINDING_PATTERN;
-        if !is_array && !is_object {
-            return None;
+        if wrote_any {
+            self.write(";");
+            let token_end = self.find_token_end_before_trivia(outer_stmt.pos, comment_upper_bound);
+            self.emit_trailing_comments_before(token_end, comment_upper_bound);
+            self.write_line();
         }
-        let mut bindings: Vec<(String, DestructAccess)> = Vec::new();
-        for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
-            let elem_node = self.arena.get(elem_idx)?;
-            if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                continue;
-            }
-            let elem = self.arena.get_binding_element(elem_node)?;
-            // Bail on rest/defaults/nested — keep lowering local to the simple
-            // shapes tsc emits inline.
-            if elem.dot_dot_dot_token || !elem.initializer.is_none() {
-                return None;
-            }
-            let inner_name_node = self.arena.get(elem.name)?;
-            if inner_name_node.kind != SyntaxKind::Identifier as u16 {
-                return None;
-            }
-            let target = self.get_identifier_text_idx(elem.name);
-            if is_array {
-                bindings.push((target, DestructAccess::Index(i)));
-            } else {
-                let source_key = if elem.property_name.is_none() {
-                    self.get_identifier_text_idx(elem.name)
-                } else {
-                    self.get_identifier_text_idx(elem.property_name)
-                };
-                bindings.push((target, DestructAccess::Key(source_key)));
-            }
-        }
-        if bindings.is_empty() {
-            return None;
-        }
-        let temp = self.make_unique_name();
-        Some(DestructSegment {
-            temp,
-            init,
-            bindings,
-        })
-    }
-
-    /// Returns true when a variable statement node has no initializers in any of its
-    /// declarators (e.g., `export var b: number;`).  Used to suppress orphaned leading
-    /// comments for exported variable declarations that produce no runtime code.
-    fn namespace_variable_has_no_initializers(&self, var_stmt_idx: NodeIndex) -> bool {
-        let Some(var_node) = self.arena.get(var_stmt_idx) else {
-            return false;
-        };
-        let Some(var_stmt) = self.arena.get_variable(var_node) else {
-            return false;
-        };
-        for &decl_list_idx in &var_stmt.declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    continue;
-                };
-                if decl.initializer.is_some() {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    /// Get export names from a declaration clause (function, class, variable, enum)
-    fn get_export_names_from_clause(&self, clause_idx: NodeIndex) -> Vec<String> {
-        let Some(node) = self.arena.get(clause_idx) else {
-            return Vec::new();
-        };
-        match node.kind {
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                if let Some(var_stmt) = self.arena.get_variable(node) {
-                    return self.collect_variable_names(&var_stmt.declarations);
-                }
-            }
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = self.arena.get_function(node)
-                    && let Some(name_node) = self.arena.get(func.name)
-                    && let Some(ident) = self.arena.get_identifier(name_node)
-                {
-                    return vec![ident.escaped_text.clone()];
-                }
-            }
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class) = self.arena.get_class(node)
-                    && let Some(name_node) = self.arena.get(class.name)
-                    && let Some(ident) = self.arena.get_identifier(name_node)
-                {
-                    return vec![ident.escaped_text.clone()];
-                }
-            }
-            k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_decl) = self.arena.get_enum(node)
-                    && let Some(name_node) = self.arena.get(enum_decl.name)
-                    && let Some(ident) = self.arena.get_identifier(name_node)
-                {
-                    return vec![ident.escaped_text.clone()];
-                }
-            }
-            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                if let Some(import_decl) = self.arena.get_import_decl(node) {
-                    let name = self.get_identifier_text_idx(import_decl.import_clause);
-                    if !name.is_empty() {
-                        return vec![name];
-                    }
-                }
-            }
-            _ => {}
-        }
-        Vec::new()
     }
 }
 
@@ -1734,6 +1518,51 @@ mod tests {
         assert!(
             output.contains("class C {"),
             "Class C should be emitted inside namespace M2.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
+        let source = "namespace M {\n    export var [a, b] = [1, 2];\n}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var _a;\n    _a = [1, 2], M.a = _a[0], M.b = _a[1];"),
+            "Exported namespace destructuring should use one temp.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("M.a = [1, 2]"),
+            "Exported namespace destructuring should not repeat the initializer.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn namespace_exported_destructuring_temp_hoists_before_class() {
+        let source =
+            "namespace m {\n    export class c {}\n    export var [x, y] = [10, new c()];\n}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        let temp_pos = output.find("var _a;").expect("expected temp hoist");
+        let class_pos = output.find("class c").expect("expected class emit");
+        assert!(
+            temp_pos < class_pos,
+            "Namespace destructuring temp should hoist before class declarations.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a = [10, new c()], m.x = _a[0], m.y = _a[1];"),
+            "Exported namespace destructuring should use the hoisted temp.\nOutput:\n{output}"
         );
     }
 
