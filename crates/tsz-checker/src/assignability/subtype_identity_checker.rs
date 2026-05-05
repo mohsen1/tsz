@@ -482,7 +482,20 @@ impl<'a> CheckerState<'a> {
         let prev_elem = self.mutable_array_element_for_redeclaration(prev_type)?;
         let current_elem = self.mutable_array_element_for_redeclaration(current_type)?;
 
-        Some(self.are_var_decl_types_compatible(prev_elem, current_elem))
+        self.ensure_relation_input_ready(prev_elem);
+        self.ensure_relation_input_ready(current_elem);
+
+        let flags = self.ctx.pack_relation_flags();
+        let env = self.ctx.type_env.borrow();
+        Some(is_redeclaration_identical_with_resolver(
+            self.ctx.types,
+            &*env,
+            prev_elem,
+            current_elem,
+            flags,
+            &self.ctx.inheritance_graph,
+            self.ctx.sound_mode(),
+        ))
     }
 
     fn mutable_array_element_for_redeclaration(&self, type_id: TypeId) -> Option<TypeId> {
