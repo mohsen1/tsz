@@ -471,11 +471,10 @@ pub enum ModuleResolutionKind {
 impl ModuleResolutionKind {
     /// Parse a TypeScript compiler option `moduleResolution` value.
     ///
-    /// This accepts comma-separated directive values, taking the first entry to
-    /// match multi-target conformance directives.
+    /// This accepts tsc spelling variants.
     #[must_use]
     pub fn from_ts_str(value: &str) -> Option<Self> {
-        let normalized = normalize_option(value.split(',').next().unwrap_or(value).trim());
+        let normalized = normalize_option(value.trim());
         match normalized.as_str() {
             "classic" => Some(Self::Classic),
             "node" | "node10" => Some(Self::Node),
@@ -3386,18 +3385,28 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
 }
 
 fn parse_script_target(value: &str) -> Result<ScriptTarget> {
+    reject_comma_separated_option(value, "target")?;
     ScriptTarget::from_ts_str(value)
         .ok_or_else(|| anyhow!("unsupported compilerOptions.target '{value}'"))
 }
 
 fn parse_module_kind(value: &str) -> Result<ModuleKind> {
+    reject_comma_separated_option(value, "module")?;
     ModuleKind::from_ts_str(value)
         .ok_or_else(|| anyhow!("unsupported compilerOptions.module '{value}'"))
 }
 
 fn parse_module_resolution(value: &str) -> Result<ModuleResolutionKind> {
+    reject_comma_separated_option(value, "moduleResolution")?;
     ModuleResolutionKind::from_ts_str(value)
         .ok_or_else(|| anyhow!("unsupported compilerOptions.moduleResolution '{value}'"))
+}
+
+fn reject_comma_separated_option(value: &str, option_name: &str) -> Result<()> {
+    if value.contains(',') {
+        bail!("unsupported compilerOptions.{option_name} '{value}'");
+    }
+    Ok(())
 }
 
 fn parse_jsx_emit(value: &str) -> Result<JsxEmit> {
@@ -4411,7 +4420,7 @@ fn validate_option_value(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if let Some(serde_json::Value::String(value)) = compiler_opts.get(key) {
-        let normalized = normalize_option(value.split(',').next().unwrap_or(value).trim());
+        let normalized = normalize_option(value.trim());
         if !normalized.is_empty() && !valid_values.contains(&normalized.as_str()) {
             let start = find_value_offset_in_source(source, key);
             let value_len = value.len() as u32 + 2; // include quotes
@@ -4662,15 +4671,48 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_module_resolution_list_value() {
+    fn test_parse_module_resolution_rejects_comma_separated_value() {
         let json =
             r#"{"compilerOptions":{"moduleResolution":"node16,nodenext","module":"commonjs"}} "#;
         let config: TsConfig = serde_json::from_str(json).unwrap();
-        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
-        assert_eq!(
-            resolved.module_resolution,
-            Some(ModuleResolutionKind::Node16)
+        let err = resolve_compiler_options(config.compiler_options.as_ref())
+            .expect_err("comma-separated moduleResolution should be rejected");
+        assert!(
+            err.to_string().contains("compilerOptions.moduleResolution"),
+            "{err}"
         );
+    }
+
+    #[test]
+    fn test_ts6046_emitted_for_comma_separated_enum_options() {
+        for (option, value, flag) in [
+            ("target", "es2020,esnext", "--target"),
+            ("module", "commonjs,esnext", "--module"),
+            ("moduleResolution", "node,bundler", "--moduleResolution"),
+        ] {
+            let source = format!(r#"{{"compilerOptions":{{"{option}":"{value}"}}}}"#);
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let diagnostic = parsed
+                .diagnostics
+                .iter()
+                .find(|diag| diag.code == diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected TS6046 for compilerOptions.{option}, got: {:?}",
+                        parsed.diagnostics
+                    )
+                });
+
+            assert!(
+                diagnostic.message_text.contains(flag),
+                "Unexpected TS6046 message for compilerOptions.{option}: {}",
+                diagnostic.message_text
+            );
+            assert_eq!(
+                diagnostic.start,
+                source.find(&format!(r#""{value}""#)).unwrap() as u32
+            );
+        }
     }
 
     #[test]
@@ -6287,21 +6329,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_script_target_handles_comma_separated_values() {
-        // Multi-target test directives like `@target: ES5, ES2015` produce
-        // comma-separated values in tsconfig. We should take the first value.
-        assert_eq!(
-            parse_script_target("ES5, ES2015").unwrap(),
-            ScriptTarget::ES5
-        );
-        assert_eq!(
-            parse_script_target("es2015, es2017").unwrap(),
-            ScriptTarget::ES2015
-        );
-        assert_eq!(
-            parse_script_target("esnext, es2022").unwrap(),
-            ScriptTarget::ESNext
-        );
+    fn parse_script_target_rejects_comma_separated_values() {
+        assert!(parse_script_target("ES5, ES2015").is_err());
+        assert!(parse_script_target("es2015, es2017").is_err());
+        assert!(parse_script_target("esnext, es2022").is_err());
         // Single value should still work
         assert_eq!(parse_script_target("ES5").unwrap(), ScriptTarget::ES5);
         assert_eq!(parse_script_target("es2020").unwrap(), ScriptTarget::ES2020);
