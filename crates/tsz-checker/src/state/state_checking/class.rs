@@ -932,6 +932,16 @@ impl<'a> CheckerState<'a> {
             .map(|(name, _, _)| name.clone())
             .collect();
 
+        // Class expressions are strict-mode class definitions too. Their
+        // names and base expressions participate in the same recovered
+        // reserved-word and constructor diagnostics as class declarations.
+        self.check_class_name_strict_mode_reserved(class.name);
+        self.check_heritage_clauses_for_unresolved_names(
+            &class.heritage_clauses,
+            true,
+            &class_type_param_names,
+        );
+
         // Check heritage clauses for primitive type keywords (TS2863/TS2864).
         // Uses the lightweight check to avoid triggering constructor accessibility (TS2675)
         // side effects that the full check_heritage_clauses_for_unresolved_names would cause

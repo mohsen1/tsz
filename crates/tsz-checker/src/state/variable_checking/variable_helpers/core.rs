@@ -182,13 +182,40 @@ impl<'a> CheckerState<'a> {
                 // appears before the block-scoped declaration, and TS2451 ("Cannot
                 // redeclare block-scoped variable") when the block-scoped declaration
                 // comes first.
+                let found_scope_is_function_body_block = scope_kind
+                    == tsz_binder::ContainerKind::Block
+                    && self
+                        .ctx
+                        .binder
+                        .scopes
+                        .get(found_scope_id.0 as usize)
+                        .and_then(|s| {
+                            self.ctx
+                                .arena
+                                .get_extended(s.container_node)
+                                .map(|ext| ext.parent)
+                        })
+                        .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+                        .is_some_and(|parent_node| {
+                            use tsz_parser::parser::syntax_kind_ext;
+                            matches!(
+                                parent_node.kind,
+                                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                                    || k == syntax_kind_ext::METHOD_DECLARATION
+                                    || k == syntax_kind_ext::CONSTRUCTOR
+                                    || k == syntax_kind_ext::GET_ACCESSOR
+                                    || k == syntax_kind_ext::SET_ACCESSOR
+                                    || k == syntax_kind_ext::ARROW_FUNCTION
+                            )
+                        });
 
                 // When the var declaration is in the SAME syntactic scope as the
                 // block-scoped declaration (e.g., `let x; var x;` at the same level),
                 // check_duplicate_identifiers() already handles the conflict with TS2300.
                 // Only emit here when the var is in a NESTED scope that hoists up
                 // (e.g., `let x; { var x; }`).
-                if start_scope_id == found_scope_id {
+                if start_scope_id == found_scope_id && !found_scope_is_function_body_block {
                     continue;
                 }
 
