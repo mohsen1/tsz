@@ -98,6 +98,11 @@ pub struct NamespaceES5Transformer<'a> {
     prior_exported_vars: std::collections::HashSet<String>,
     /// Whether legacy decorators are enabled (experimentalDecorators)
     legacy_decorators: bool,
+    /// Whether `__metadata` calls should be emitted in `__decorate` arrays.
+    /// Mirrors `--emitDecoratorMetadata`. Forwarded to nested
+    /// `ES5ClassTransformer` so metadata is emitted for classes that live
+    /// inside a namespace IIFE.
+    emit_decorator_metadata: bool,
     /// Hoisted temp variable names collected from expression conversions
     /// (e.g., from computed property lowering inside object literals)
     hoisted_temps: RefCell<Vec<String>>,
@@ -114,6 +119,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
             legacy_decorators: false,
+            emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
             default_exported_func_names: std::collections::HashSet::new(),
         }
@@ -128,6 +134,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
             legacy_decorators: false,
+            emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
             default_exported_func_names: std::collections::HashSet::new(),
         }
@@ -136,6 +143,12 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Set whether legacy decorators are enabled
     pub const fn set_legacy_decorators(&mut self, enabled: bool) {
         self.legacy_decorators = enabled;
+    }
+
+    /// Set whether `__metadata` calls should be emitted in `__decorate`
+    /// arrays for classes inside this namespace.
+    pub const fn set_emit_decorator_metadata(&mut self, enabled: bool) {
+        self.emit_decorator_metadata = enabled;
     }
 
     /// Set source text for comment extraction
@@ -1164,6 +1177,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
         // Classes in namespace are nested one level deeper than top-level
         class_transformer.set_indent_base(1);
+        // Forward `--emitDecoratorMetadata` so namespace-scoped decorated
+        // classes still emit `__metadata("design:type", T)` etc.
+        class_transformer.set_emit_decorator_metadata(self.emit_decorator_metadata);
 
         // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
         if self.legacy_decorators {

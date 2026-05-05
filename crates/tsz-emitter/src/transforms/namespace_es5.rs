@@ -149,6 +149,12 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.transformer.set_legacy_decorators(enabled);
     }
 
+    /// Set whether `__metadata` calls should be emitted in `__decorate`
+    /// arrays for classes nested in this namespace.
+    pub const fn set_emit_decorator_metadata(&mut self, enabled: bool) {
+        self.transformer.set_emit_decorator_metadata(enabled);
+    }
+
     /// Set exported variable names from prior blocks of the same namespace.
     pub fn set_prior_exported_vars(&mut self, vars: std::collections::HashSet<String>) {
         self.transformer.set_prior_exported_vars(vars);
