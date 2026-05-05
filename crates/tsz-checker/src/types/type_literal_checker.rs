@@ -1006,6 +1006,8 @@ impl<'a> CheckerState<'a> {
                 // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
                 let has_param_grammar_error =
                     param_data.dot_dot_dot_token || param_data.question_token;
+                let mut is_valid_index_type = false;
+                let mut is_valid_via_ast = false;
                 if !has_param_grammar_error && param_data.type_annotation.is_some() {
                     // Check the AST node kind first: type parameters and literal types
                     // trigger TS1337 regardless of what their constraint resolves to
@@ -1027,7 +1029,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
                         );
                     } else {
-                        let is_valid_index_type = key_type == TypeId::STRING
+                        is_valid_index_type = key_type == TypeId::STRING
                             || key_type == TypeId::NUMBER
                             || key_type == TypeId::SYMBOL
                             || is_template_literal_type(self.ctx.types, key_type);
@@ -1035,7 +1037,7 @@ impl<'a> CheckerState<'a> {
                         // intersections (`string | number`, `string & Tag`)
                         // resolve to composite TypeIds that don't match the
                         // primitive checks above.
-                        let is_valid_via_ast = !is_valid_index_type
+                        is_valid_via_ast = !is_valid_index_type
                             && crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
                                 self.ctx.arena,
                                 self.ctx.binder,
@@ -1110,10 +1112,12 @@ impl<'a> CheckerState<'a> {
                     readonly,
                     param_name,
                 };
-                if key_type == TypeId::NUMBER {
-                    number_index = Some(info);
-                } else {
-                    string_index = Some(info);
+                if is_valid_index_type || is_valid_via_ast {
+                    if key_type == TypeId::NUMBER {
+                        number_index = Some(info);
+                    } else {
+                        string_index = Some(info);
+                    }
                 }
                 continue;
             }

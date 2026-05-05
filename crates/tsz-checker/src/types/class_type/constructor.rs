@@ -1079,10 +1079,12 @@ impl<'a> CheckerState<'a> {
                         param_name,
                     };
 
-                    if key_type == TypeId::NUMBER {
-                        static_number_index = Some(idx_sig);
-                    } else {
-                        static_string_index = Some(idx_sig);
+                    if is_valid_index_type {
+                        if key_type == TypeId::NUMBER {
+                            static_number_index = Some(idx_sig);
+                        } else {
+                            static_string_index = Some(idx_sig);
+                        }
                     }
                 }
                 _ => {}

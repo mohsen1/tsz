@@ -1405,7 +1405,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
-            let source_prop_type = if !is_function_value
+            let source_prop_type = if is_computed_property
+                && !is_function_value
+                && let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx)
+            {
+                literal_type
+            } else if !is_function_value
                 && cached_prop_type != TypeId::ERROR
                 && cached_prop_type != TypeId::ANY
                 && target_prop_type != TypeId::ERROR

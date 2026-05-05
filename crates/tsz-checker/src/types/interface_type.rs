@@ -480,10 +480,12 @@ impl<'a> CheckerState<'a> {
                     readonly,
                     param_name,
                 };
-                if key_type == TypeId::NUMBER {
-                    Self::merge_index_signature(&mut number_index, info);
-                } else {
-                    Self::merge_index_signature(&mut string_index, info);
+                if is_valid_index_type || is_valid_via_alias {
+                    if key_type == TypeId::NUMBER {
+                        Self::merge_index_signature(&mut number_index, info);
+                    } else {
+                        Self::merge_index_signature(&mut string_index, info);
+                    }
                 }
             }
         }

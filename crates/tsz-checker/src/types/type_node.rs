@@ -1139,6 +1139,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
                 let has_param_grammar_error =
                     param_data.dot_dot_dot_token || param_data.question_token;
+                let mut is_valid_index_type = false;
+                let mut is_valid_via_ast = false;
                 if !has_param_grammar_error && param_data.type_annotation.is_some() {
                     // Check AST node kind to detect type parameters and literals (TS1337)
                     // before the resolved-type check. Type params like `T extends string`
@@ -1155,7 +1157,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             );
                         }
                     } else {
-                        let is_valid_index_type = key_type == TypeId::STRING
+                        is_valid_index_type = key_type == TypeId::STRING
                             || key_type == TypeId::NUMBER
                             || key_type == TypeId::SYMBOL
                             || crate::query_boundaries::common::is_template_literal_type(
@@ -1166,7 +1168,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         // intersections (`string | number`, `string & Tag`)
                         // resolve to composite TypeIds that don't match the
                         // primitive checks above.
-                        let is_valid_via_ast = !is_valid_index_type
+                        is_valid_via_ast = !is_valid_index_type
                             && crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
                                 self.ctx.arena,
                                 self.ctx.binder,
@@ -1248,10 +1250,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     readonly,
                     param_name,
                 };
-                if key_type == TypeId::NUMBER {
-                    number_index = Some(info);
-                } else {
-                    string_index = Some(info);
+                if is_valid_index_type || is_valid_via_ast {
+                    if key_type == TypeId::NUMBER {
+                        number_index = Some(info);
+                    } else {
+                        string_index = Some(info);
+                    }
                 }
                 continue;
             }
