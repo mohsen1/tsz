@@ -429,6 +429,12 @@ impl<'a> TypePrinter<'a> {
         if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
             && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
         {
+            if !needs_typeof
+                && self.type_param_scope_contains_name(&name)
+                && self.global_class_symbol_can_use_global_this(sym_id)
+            {
+                return Some(format!("globalThis.{name}"));
+            }
             return Some(if needs_typeof {
                 format!("typeof {name}")
             } else {
@@ -511,6 +517,19 @@ impl<'a> TypePrinter<'a> {
         }
         self.resolve_symbol_module_path(sym_id)
             .map(|module_path| format!("typeof import(\"{module_path}\")"))
+    }
+
+    fn global_class_symbol_can_use_global_this(&self, sym_id: SymbolId) -> bool {
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return false;
+        };
+        symbol.parent == SymbolId::NONE
+            && symbol.has_any_flags(symbol_flags::CLASS)
+            && self.resolve_symbol_module_path(sym_id).is_none()
+            && Self::is_valid_identifier(&symbol.escaped_name)
     }
 
     /// Convert a `TypeId` to TypeScript syntax string.
@@ -764,6 +783,11 @@ impl<'a> TypePrinter<'a> {
             && self.can_reference_symbol_by_name(sym_id)
             && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
         {
+            if self.type_param_scope_contains_name(&name)
+                && self.global_class_symbol_can_use_global_this(sym_id)
+            {
+                return format!("globalThis.{name}");
+            }
             return name;
         }
 

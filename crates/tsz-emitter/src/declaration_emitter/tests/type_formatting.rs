@@ -29,6 +29,31 @@ fn test_function_type_in_declaration() {
 }
 
 #[test]
+fn test_global_class_name_shadowed_by_type_param_uses_global_this() {
+    let source = "class A {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, _root);
+
+    let class_sym = binder.file_locals.get("A").expect("missing class symbol");
+    let interner = TypeInterner::new();
+    let def_id = DefId(9103);
+    let type_id = interner.lazy(def_id);
+    let mut type_cache = TypeCacheView::default();
+    type_cache.def_to_symbol.insert(def_id, class_sym);
+    let a_param = interner.intern_string("A");
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner)
+        .with_symbols(&binder.symbols)
+        .with_type_cache(&type_cache)
+        .with_outer_type_params(vec![a_param])
+        .print_type(type_id);
+
+    assert_eq!(printed, "globalThis.A");
+}
+
+#[test]
 fn test_function_variable_type_preserves_inline_parameter_comments() {
     let output = emit_dts(
         r#"
