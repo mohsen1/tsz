@@ -344,6 +344,12 @@ impl<'a> CheckerState<'a> {
                                                         inst_constraint,
                                                     )
                                                 || self
+                                                    .infer_result_satisfies_array_like_constraint(
+                                                        cond_extends,
+                                                        cond_true,
+                                                        inst_constraint,
+                                                    )
+                                                || self
                                                     .infer_result_satisfies_via_application_arg_constraints(
                                                         type_arg,
                                                         inst_constraint,
@@ -746,7 +752,7 @@ impl<'a> CheckerState<'a> {
                                         type_arg_evaluated,
                                     )
                                 });
-                            if let Some((cond_check, _cond_extends, cond_true, cond_false)) =
+                            if let Some((cond_check, cond_extends, cond_true, cond_false)) =
                                 query::full_conditional_type_components(db, type_arg).or_else(
                                     || {
                                         query::full_conditional_type_components(
@@ -787,6 +793,11 @@ impl<'a> CheckerState<'a> {
                                     || self.infer_result_satisfies_via_check_constraint(
                                         type_arg,
                                         cond_check,
+                                        inst_constraint,
+                                    )
+                                    || self.infer_result_satisfies_array_like_constraint(
+                                        cond_extends,
+                                        cond_true,
                                         inst_constraint,
                                     )
                                     || self.infer_result_satisfies_via_application_arg_constraints(
@@ -1728,30 +1739,6 @@ impl<'a> CheckerState<'a> {
             || self.indexed_access_resolves_to_callable(template)
     }
 
-    fn satisfies_array_like_constraint(&mut self, source: TypeId, target: TypeId) -> bool {
-        let source = self.evaluate_type_for_assignability(source);
-        let target = self.evaluate_type_for_assignability(target);
-        let target_elem = crate::query_boundaries::checkers::call::array_element_type_for_type(
-            self.ctx.types,
-            target,
-        )
-        .unwrap_or_else(|| self.get_element_access_type(target, TypeId::NUMBER, Some(0)));
-        if target_elem == TypeId::ERROR {
-            return false;
-        }
-
-        if !self.is_array_like_type(source) && !self.has_structural_array_surface(source, target) {
-            return false;
-        }
-
-        if target_elem == TypeId::ANY {
-            return true;
-        }
-
-        let source_elem = self.get_element_access_type(source, TypeId::NUMBER, Some(0));
-        source_elem != TypeId::ERROR && self.is_assignable_to(source_elem, target_elem)
-    }
-
     /// Check if a type argument coinductively satisfies a recursive constraint
     /// via its heritage chain.
     ///
@@ -1876,33 +1863,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
-    }
-
-    fn has_structural_array_surface(&self, source: TypeId, target: TypeId) -> bool {
-        let db = self.ctx.types.as_type_database();
-
-        let Some(shape) = query::get_object_shape(db, source) else {
-            return false;
-        };
-        if shape.number_index.is_none() {
-            return false;
-        }
-
-        for name in ["length", "concat", "slice"] {
-            if !query::has_property_by_name(db, source, name) {
-                return false;
-            }
-        }
-
-        if !matches!(
-            query::classify_array_like(db, target),
-            query::ArrayLikeKind::Readonly(_)
-        ) && !query::has_property_by_name(db, source, "push")
-        {
-            return false;
-        }
-
-        true
     }
 
     /// Check if a symbol's declaration has type parameters, even if they couldn't be
