@@ -1602,3 +1602,74 @@ fn namespace_iife_param_renamed_when_inner_same_name_is_concrete() {
         "Concrete same-name inner declaration must rename IIFE param.\nOutput:\n{output}"
     );
 }
+
+/// Regression: `export var [a, b] = init;` inside a namespace must lower
+/// to a temp + indexed comma assignments — `var _a; _a = init, M.a =
+/// _a[0], M.b = _a[1];`. The pre-fix emit was `M.a = init, M.b = init`
+/// which evaluates the initializer twice and assigns the whole array
+/// to each member.
+#[test]
+fn namespace_exported_array_destructuring_lowers_to_temp_and_indices() {
+    let source = "namespace M {\n    export var [a, b] = [1, 2];\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a;"),
+        "Destructuring lowering must declare a temp `_a`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = [1, 2], M.a = _a[0], M.b = _a[1];"),
+        "Array destructuring lowering must assign init once, then index.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("M.a = [1, 2], M.b = [1, 2];"),
+        "Pre-fix shape (initializer evaluated per binding) must not appear.\nOutput:\n{output}"
+    );
+}
+
+/// Object-pattern counterpart: keys are accessed by name, not index.
+#[test]
+fn namespace_exported_object_destructuring_lowers_to_temp_and_keys() {
+    let source = "function f() { return { a4: 1, b4: 2, c4: 3 }; }\nnamespace m {\n    export var { a4, b4, c4 } = f();\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a;"),
+        "Destructuring lowering must declare a temp `_a`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = f(), m.a4 = _a.a4, m.b4 = _a.b4, m.c4 = _a.c4;"),
+        "Object destructuring lowering must assign init once, then access by key.\nOutput:\n{output}"
+    );
+}
+
+/// Object-pattern with rename: `{ x: a }` → key `x`, target `M.a`.
+#[test]
+fn namespace_exported_object_destructuring_rename_uses_property_name() {
+    let source =
+        "function f() { return { x: 1 }; }\nnamespace m {\n    export var { x: a } = f();\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("_a = f(), m.a = _a.x;"),
+        "Renamed object binding must read source key but assign to renamed target.\nOutput:\n{output}"
+    );
+}
