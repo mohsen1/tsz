@@ -618,6 +618,54 @@ const person: Person = { ...partial, age: 30 };
 }
 
 #[test]
+fn test_object_spread_from_any_preserves_any_type() {
+    let source = r#"
+interface Target {
+    x: number;
+    y: string;
+}
+declare const source: any;
+const value: Target = { x: 1, ...source };
+const inferred = { x: 1, ...source };
+const x: string = inferred.x;
+const y: number = inferred.y;
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| matches!(d.code, 2322 | 2339 | 2741))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Object spread from any should preserve any-ness, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_spread_from_this_any_options_has_no_false_missing_or_overwrite() {
+    let source = r#"
+interface Target {
+    x: number;
+    y: string;
+}
+function build(this: any): Target {
+    return { x: 1, ...this.options.foo };
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| matches!(d.code, 2741 | 2783))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Object spread from this:any options should not emit TS2741/TS2783, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_nested_array_spread() {
     let source = r"
 const arr1 = [1, 2];

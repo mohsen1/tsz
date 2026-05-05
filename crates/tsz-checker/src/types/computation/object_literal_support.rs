@@ -281,10 +281,15 @@ impl<'a> CheckerState<'a> {
         mut string_index_types: Vec<TypeId>,
         number_index_types: Vec<TypeId>,
         has_spread: bool,
+        has_any_spread: bool,
         has_union_spread: bool,
         union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>>,
         generic_spread_types: Vec<TypeId>,
     ) -> TypeId {
+        if has_any_spread {
+            return TypeId::ANY;
+        }
+
         let object_type = if has_union_spread && !union_spread_branches.is_empty() {
             let mut post_spread_props: Vec<PropertyInfo> = properties.into_values().collect();
             post_spread_props.sort_by_key(|p| p.declaration_order);
