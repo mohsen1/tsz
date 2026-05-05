@@ -8,8 +8,8 @@ use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{
-    LiteralValue, MappedModifier, ObjectShape, PropertyInfo, TupleElement, TypeData, TypeId,
-    TypeListId, Visibility,
+    IntrinsicKind, LiteralValue, MappedModifier, ObjectShape, PropertyInfo, TupleElement, TypeData,
+    TypeId, TypeListId, Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
@@ -26,9 +26,23 @@ fn prop_source_has_nullish_union(interner: &dyn QueryDatabase, ty: TypeId) -> bo
         return false;
     };
     let members = interner.type_list(members_id);
-    members
-        .iter()
-        .any(|m| matches!(*m, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID))
+    let mut has_nullish = false;
+    let mut has_object_like = false;
+
+    for &member in members.iter() {
+        if matches!(member, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID) {
+            has_nullish = true;
+            continue;
+        }
+        if matches!(
+            interner.lookup(member),
+            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_) | TypeData::Lazy(_))
+        ) {
+            has_object_like = true;
+        }
+    }
+
+    has_nullish && has_object_like
 }
 
 fn template_includes_string_primitive(interner: &dyn QueryDatabase, template: TypeId) -> bool {
@@ -49,6 +63,44 @@ fn is_number_literal(interner: &dyn QueryDatabase, ty: TypeId) -> bool {
         interner.lookup(ty),
         Some(TypeData::Literal(LiteralValue::Number(_)))
     )
+}
+
+fn apparent_intrinsic_kind_for_reverse_mapped(
+    interner: &dyn QueryDatabase,
+    ty: TypeId,
+) -> Option<IntrinsicKind> {
+    if let Some(kind) = crate::intrinsic_kind(interner, ty) {
+        return match kind {
+            IntrinsicKind::String
+            | IntrinsicKind::Number
+            | IntrinsicKind::Boolean
+            | IntrinsicKind::Bigint
+            | IntrinsicKind::Symbol => Some(kind),
+            _ => None,
+        };
+    }
+
+    match interner.lookup(ty) {
+        Some(TypeData::Literal(LiteralValue::String(_)) | TypeData::TemplateLiteral(_)) => {
+            Some(IntrinsicKind::String)
+        }
+        Some(TypeData::Literal(LiteralValue::Number(_))) => Some(IntrinsicKind::Number),
+        Some(TypeData::Literal(LiteralValue::BigInt(_))) => Some(IntrinsicKind::Bigint),
+        Some(TypeData::Literal(LiteralValue::Boolean(_))) => Some(IntrinsicKind::Boolean),
+        Some(TypeData::Union(members_id)) => {
+            let mut inferred_kind = None;
+            for &member in interner.type_list(members_id).iter() {
+                let member_kind = apparent_intrinsic_kind_for_reverse_mapped(interner, member)?;
+                match inferred_kind {
+                    Some(kind) if kind != member_kind => return None,
+                    Some(_) => {}
+                    None => inferred_kind = Some(member_kind),
+                }
+            }
+            inferred_kind
+        }
+        _ => None,
+    }
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -455,6 +507,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         true
     }
 
+    fn reverse_mapped_source_object_shape(
+        &mut self,
+        source_value: TypeId,
+    ) -> Option<(ObjectShape, bool)> {
+        if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+            self.interner.lookup(source_value)
+        {
+            return Some((self.interner.object_shape(shape_id).as_ref().clone(), false));
+        }
+
+        let kind = apparent_intrinsic_kind_for_reverse_mapped(self.interner, source_value)?;
+        if let Some(boxed) = crate::caches::db::TypeDatabase::get_boxed_type(self.interner, kind) {
+            let boxed = self.checker.evaluate_type(boxed);
+            if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+                self.interner.lookup(boxed)
+            {
+                let mut shape = self.interner.object_shape(shape_id).as_ref().clone();
+                if kind == IntrinsicKind::String {
+                    shape.number_index = None;
+                }
+                return Some((shape, true));
+            }
+        }
+
+        let mut shape = crate::objects::apparent::apparent_primitive_shape(
+            self.interner,
+            kind,
+            crate::evaluation::evaluate_rules::apparent::make_apparent_method_type,
+        );
+        if kind == IntrinsicKind::String {
+            shape.number_index = None;
+        }
+        Some((shape, true))
+    }
+
     /// Reverse-infer a single property value through a mapped type template.
     ///
     /// Given `source_value` (e.g., `Box<number>`) and `template` (e.g., `Box<T["a"]>`),
@@ -801,9 +888,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // keyof X → X becomes the new placeholder for recursive reversal
             if let Some(TypeData::KeyOf(inner_placeholder)) =
                 self.interner.lookup(mapped.constraint)
-                && let Some(
-                    TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
-                ) = self.interner.lookup(source_value)
+                && let Some((source_obj, source_is_apparent_primitive)) =
+                    self.reverse_mapped_source_object_shape(source_value)
             {
                 // Detect recursive mapped type patterns (e.g., `Deep<T> = { [K in keyof T]: Deep<T[K]> }`
                 // against a self-referential source like `interface A { a: A }`).
@@ -832,7 +918,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return Some(source_value);
                 }
 
-                let source_obj = self.interner.object_shape(source_shape_id);
                 let source_props = source_obj.properties.clone();
                 let source_string_idx = source_obj.string_index;
                 let source_number_idx = source_obj.number_index;
@@ -860,6 +945,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             any_reversed = true;
                             v
                         }
+                        None if source_is_apparent_primitive
+                            && matches!(
+                                self.interner.lookup(prop.type_id),
+                                Some(TypeData::Function(_) | TypeData::Callable(_))
+                            ) =>
+                        {
+                            any_reversed = true;
+                            // tsc displays these nested primitive callable leaves
+                            // as elided `...` inside reverse-mapped primitive
+                            // objects rather than exposing full call signatures.
+                            let ellipsis = self.interner.intern_string("...");
+                            crate::caches::db::TypeDatabase::unresolved_type_name(
+                                self.interner,
+                                ellipsis,
+                            )
+                        }
                         None => TypeId::UNKNOWN,
                     };
 
@@ -885,9 +986,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         is_class_prototype: false,
                         visibility: Visibility::Public,
                         parent_id: None,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        single_quoted_name: false,
+                        declaration_order: prop.declaration_order,
+                        is_string_named: prop.is_string_named,
+                        single_quoted_name: prop.single_quoted_name,
                     });
                 }
 

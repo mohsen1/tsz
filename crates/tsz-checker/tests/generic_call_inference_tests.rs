@@ -1802,3 +1802,46 @@ const ok = out.responseXML.url; // must NOT raise TS18046
         "Outer Deep<...> assignability must still reject the `null` constituent. Got: {diags:#?}"
     );
 }
+
+#[test]
+fn recursive_homomorphic_mapped_materializes_primitive_apparent_members() {
+    // `mappedTypeRecursiveInference.ts` includes `XMLHttpRequest` primitive
+    // properties such as `readyState: number` and `responseText: string`.
+    // Reverse inference through `Deep<T>` must infer apparent primitive member
+    // objects for those properties rather than collapsing them to `unknown`.
+    // Nullable callback properties should still be uninformative (`unknown`),
+    // unlike nullable object properties where we keep the existing `any`
+    // approximation so chained property accesses do not raise TS18046.
+    let source = r#"
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+interface DocLike { url: string }
+interface XLike {
+    onreadystatechange: (() => void) | null;
+    readonly readyState: number;
+    readonly responseText: string;
+    responseXML: DocLike | null;
+}
+declare let xhr: XLike;
+const out = foo(xhr);
+const ok = out.responseXML.url;
+const readyShape: { toString: unknown } = out.readyState;
+const textShape: { toString: unknown } = out.responseText;
+const callbackNumber: number = out.onreadystatechange;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 18046),
+        "Nullable object property should remain usable after recursive reverse inference. Got: {diags:#?}"
+    );
+    let ts2322_messages: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert!(
+        ts2322_messages.len() == 1
+            && ts2322_messages[0].contains("Type 'unknown' is not assignable to type 'number'"),
+        "Only the nullable callback assignment should fail, proving it stayed `unknown` rather than `any`. Got: {diags:#?}"
+    );
+}

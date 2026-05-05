@@ -39,11 +39,21 @@ impl<'a> TypeFormatter<'a> {
             return format!("{{ {}; }}", parts.join("; "));
         }
 
+        let is_string_apparent_member_list = parts
+            .first()
+            .is_some_and(|part| part.starts_with("toString:"))
+            && parts
+                .iter()
+                .any(|part| part.starts_with("[Symbol.iterator]"));
         // Keep at most this many leading members before the omitted-count marker.
-        const MAX_HEAD_PARTS: usize = 17;
+        let max_head_parts = if is_string_apparent_member_list {
+            1
+        } else {
+            17
+        };
         // Soft budget for head text. Long member signatures (for example,
         // `toLocaleString` overloads) reduce the number of retained heads.
-        const MAX_HEAD_CHARS: usize = 300;
+        const MAX_HEAD_CHARS: usize = 380;
 
         let total = parts.len();
         let tail_index = parts
@@ -61,7 +71,7 @@ impl<'a> TypeFormatter<'a> {
         let mut used_chars = 0usize;
 
         for (idx, part) in parts.iter().enumerate().take(tail_index) {
-            if head_count >= MAX_HEAD_PARTS {
+            if head_count >= max_head_parts {
                 break;
             }
             let part_cost = if head_count == 0 {
