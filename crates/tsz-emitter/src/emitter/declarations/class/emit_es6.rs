@@ -35,6 +35,7 @@ impl<'a> Printer<'a> {
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
+        let class_name_is_real = class.name.is_some();
         let class_name = if class.name.is_none() {
             assignment_prefix
                 .as_ref()
@@ -1313,6 +1314,7 @@ impl<'a> Printer<'a> {
         let prev_scoped_class_expression_self_alias =
             self.scoped_class_expression_self_alias.take();
         if let Some(temp) = class_expr_temp.as_ref()
+            && class_name_is_real
             && !class_name.is_empty()
             && class_name != *temp
         {
