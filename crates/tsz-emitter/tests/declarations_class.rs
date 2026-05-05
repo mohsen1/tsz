@@ -885,3 +885,26 @@ fn static_private_accessor_class_body_references_use_alias() {
         "post-class alias initialization should still reference the real class name.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn lowered_instance_field_jsdoc_is_not_duplicated_on_initializer() {
+    let source = r"class C {
+    /**
+     * Handles text.
+     */
+    visit = (node) => node;
+}
+";
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "/**\n             * Handles text.\n             */\n        this.visit = (node) => node;"
+        ),
+        "JSDoc from a lowered instance field should stay on the constructor assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.visit = /**"),
+        "JSDoc should not be emitted again as part of the field initializer.\nOutput:\n{output}"
+    );
+}
