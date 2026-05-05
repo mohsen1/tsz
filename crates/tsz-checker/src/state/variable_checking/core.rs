@@ -13,31 +13,37 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn initializer_supports_binding_pattern_context(
+        &self,
+        pattern_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+    ) -> bool {
+        let contextual_init = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer_idx);
+
+        self.ctx
+            .arena
+            .get(contextual_init)
+            .is_some_and(|init_node| match self.ctx.arena.kind_at(pattern_idx) {
+                Some(kind) if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                    init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                }
+                Some(kind) if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                    init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                }
+                _ => false,
+            })
+    }
+
     fn declaration_pattern_initializer_request(
         &mut self,
         pattern_idx: NodeIndex,
         initializer_idx: NodeIndex,
         typing_request: &TypingRequest,
     ) -> TypingRequest {
-        let contextual_init = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(initializer_idx);
-        let supports_pattern_context =
-            self.ctx
-                .arena
-                .get(contextual_init)
-                .is_some_and(|init_node| match self.ctx.arena.kind_at(pattern_idx) {
-                    Some(kind) if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
-                        init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                    }
-                    Some(kind) if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
-                        init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                    }
-                    _ => false,
-                });
-
-        if !supports_pattern_context {
+        if !self.initializer_supports_binding_pattern_context(pattern_idx, initializer_idx) {
             return TypingRequest::NONE;
         }
 
@@ -93,6 +99,11 @@ impl<'a> CheckerState<'a> {
         decl_idx: NodeIndex,
         name_idx: NodeIndex,
     ) -> Option<TypeId> {
+        let name_is_binding_pattern = self.ctx.arena.kind_at(name_idx).is_some_and(|kind| {
+            kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+        });
+
         self.ctx
             .binder
             .get_node_symbol(decl_idx)
@@ -102,6 +113,16 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .get_node_symbol(name_idx)
                     .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            })
+            .or_else(|| {
+                name_is_binding_pattern
+                    .then(|| self.ctx.node_types.get(&decl_idx.0).copied())
+                    .flatten()
+            })
+            .or_else(|| {
+                name_is_binding_pattern
+                    .then(|| self.ctx.node_types.get(&name_idx.0).copied())
+                    .flatten()
             })
             .filter(|&type_id| type_id != TypeId::ERROR)
     }
@@ -1294,8 +1315,31 @@ impl<'a> CheckerState<'a> {
                         var_decl.initializer,
                     )
                 };
+                let preserve_initializer_overload_diagnostics = checker
+                    .ctx
+                    .arena
+                    .kind_at(var_decl.name)
+                    .is_some_and(|kind| kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                    && !checker.initializer_supports_binding_pattern_context(
+                        var_decl.name,
+                        var_decl.initializer,
+                    );
+                if preserve_initializer_overload_diagnostics {
+                    checker.invalidate_expression_for_contextual_retry(var_decl.initializer);
+                }
+                let prev_preserve_overloads = checker
+                    .ctx
+                    .preserve_destructuring_initializer_overload_diagnostics;
+                checker
+                    .ctx
+                    .preserve_destructuring_initializer_overload_diagnostics =
+                    prev_preserve_overloads || preserve_initializer_overload_diagnostics;
                 let mut init_type =
                     checker.get_type_of_node_with_request(var_decl.initializer, &request);
+                checker
+                    .ctx
+                    .preserve_destructuring_initializer_overload_diagnostics =
+                    prev_preserve_overloads;
                 // TypeScript treats unannotated empty-array declaration initializers
                 // (`let/var/const x = []`) as evolving-any arrays for subsequent writes.
                 // Keep expression-level `[]` behavior unchanged by only applying this to
@@ -2571,12 +2615,32 @@ impl<'a> CheckerState<'a> {
                 // element checks see the same request-aware initializer result.
                 inferred
             } else if var_decl.initializer.is_some() {
+                let preserve_initializer_overload_diagnostics = name_node.kind
+                    == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    && !self.initializer_supports_binding_pattern_context(
+                        var_decl.name,
+                        var_decl.initializer,
+                    );
+                if preserve_initializer_overload_diagnostics {
+                    self.invalidate_expression_for_contextual_retry(var_decl.initializer);
+                }
                 let initializer_request = self.declaration_pattern_initializer_request(
                     var_decl.name,
                     var_decl.initializer,
                     typing_request,
                 );
-                self.get_type_of_node_with_request(var_decl.initializer, &initializer_request)
+                let prev_preserve_overloads = self
+                    .ctx
+                    .preserve_destructuring_initializer_overload_diagnostics;
+                self.ctx
+                    .preserve_destructuring_initializer_overload_diagnostics =
+                    prev_preserve_overloads || preserve_initializer_overload_diagnostics;
+                let initializer_type =
+                    self.get_type_of_node_with_request(var_decl.initializer, &initializer_request);
+                self.ctx
+                    .preserve_destructuring_initializer_overload_diagnostics =
+                    prev_preserve_overloads;
+                initializer_type
             } else if is_catch_variable {
                 flow_boundary::resolve_catch_variable_type(
                     self.ctx.use_unknown_in_catch_variables(),

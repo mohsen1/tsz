@@ -659,6 +659,9 @@ impl<'a> CheckerState<'a> {
                     .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
                     .collect();
                 let mut seen_diag_keys = existing_diag_keys;
+                let preserve_destructuring_initializer_overload_diagnostics = self
+                    .ctx
+                    .preserve_destructuring_initializer_overload_diagnostics;
                 self.ctx.rollback_diagnostics_filtered(&arg_snap, |diag| {
                     if Self::should_preserve_speculative_call_diagnostic(diag) {
                         return true;
@@ -700,6 +703,9 @@ impl<'a> CheckerState<'a> {
                             .any(|(start, end)| diag.start >= *start && diag.start < *end);
                     let is_array_literal_arg =
                         arg_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
+                    let preserve_destructuring_initializer_overload =
+                        preserve_destructuring_initializer_overload_diagnostics
+                            && (is_direct_function_arg || is_array_literal_arg);
                     let is_provisional_callback_body_overload =
                         (is_direct_function_arg || is_array_literal_arg)
                             && diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
@@ -710,9 +716,9 @@ impl<'a> CheckerState<'a> {
                             || (!is_direct_function_arg
                                 && (raw_context_requires_generic_epc_skip
                                     || callable_context_requires_generic_epc_skip)));
-                    let keep = if is_provisional_callback_body_overload
-                        || is_provisional_callback_body_property_error
-                    {
+                    let keep = if is_provisional_callback_body_overload {
+                        preserve_destructuring_initializer_overload
+                    } else if is_provisional_callback_body_property_error {
                         false
                     } else if !is_provisional_assignability && !is_provisional_implicit_any {
                         true

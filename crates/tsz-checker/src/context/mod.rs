@@ -873,6 +873,11 @@ pub struct CheckerContext<'a> {
     /// Used to suppress TS1117 (duplicate property) checks in object patterns.
     pub in_destructuring_target: bool,
 
+    /// Whether a non-literal array destructuring initializer is being recomputed
+    /// for iterability diagnostics. In that path, nested overload failures affect
+    /// the initializer type and should survive contextual argument rollback.
+    pub preserve_destructuring_initializer_overload_diagnostics: bool,
+
     /// Whether to skip flow narrowing when computing types.
     /// Used in assignment target type resolution to get declared types instead of narrowed types.
     /// When checking `foo[x] = 1` after `if (foo[x] === undefined)`, we need the declared type
