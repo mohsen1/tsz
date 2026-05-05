@@ -1987,27 +1987,44 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
 }
 
 // --- TS directive suppression ---
+/// Length in bytes of a line break starting at `bytes[i]`, or `0` if there is
+/// no line break at that position. Recognizes `\n`, `\r`, `\r\n`, and the
+/// UTF-8 encodings of U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH
+/// SEPARATOR), matching `tsz-scanner::is_line_break` and tsc's own line
+/// break recognition.
+fn line_break_len_at(bytes: &[u8], i: usize) -> usize {
+    match bytes.get(i) {
+        Some(&b'\n') => 1,
+        Some(&b'\r') => {
+            if bytes.get(i + 1) == Some(&b'\n') {
+                2
+            } else {
+                1
+            }
+        }
+        Some(&0xE2)
+            if bytes.get(i + 1) == Some(&0x80)
+                && matches!(bytes.get(i + 2), Some(&0xA8) | Some(&0xA9)) =>
+        {
+            3
+        }
+        _ => 0,
+    }
+}
+
 /// Build a line-start table: `line_starts[i]` is the byte offset of the first char on line `i`.
 fn build_line_starts(text: &str) -> Vec<u32> {
     let mut starts = vec![0u32];
     let bytes = text.as_bytes();
+    let len = bytes.len();
     let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\r' => {
-                if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-                    starts.push((i + 2) as u32);
-                    i += 2;
-                } else {
-                    starts.push((i + 1) as u32);
-                    i += 1;
-                }
-            }
-            b'\n' => {
-                starts.push((i + 1) as u32);
-                i += 1;
-            }
-            _ => i += 1,
+    while i < len {
+        let lb = line_break_len_at(bytes, i);
+        if lb > 0 {
+            starts.push((i + lb) as u32);
+            i += lb;
+        } else {
+            i += 1;
         }
     }
     starts
@@ -2085,13 +2102,14 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
     while i < len {
         if bytes[i] == b'/' && i + 1 < len {
             if bytes[i + 1] == b'/' {
-                // Single-line comment
+                // Single-line comment — terminates at the next line break
+                // (\n, \r, \r\n, U+2028, U+2029), matching tsc's scanner.
                 let comment_start = i as u32;
-                let line_end = bytes[i..]
-                    .iter()
-                    .position(|&b| b == b'\n' || b == b'\r')
-                    .map(|offset| i + offset)
-                    .unwrap_or(len);
+                let mut scan = i;
+                while scan < len && line_break_len_at(bytes, scan) == 0 {
+                    scan += 1;
+                }
+                let line_end = scan;
                 let comment_text = &text[i..line_end];
                 let comment_length = (line_end - i) as u32;
 
@@ -2684,6 +2702,68 @@ const value = 1;
         assert_eq!(directives.len(), 1);
         assert!(!directives[0].is_expect_error);
         assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn build_line_starts_handles_cr_and_crlf() {
+        // \n only
+        assert_eq!(build_line_starts("a\nb\nc"), vec![0, 2, 4]);
+        // \r only (classic Mac line endings)
+        assert_eq!(build_line_starts("a\rb\rc"), vec![0, 2, 4]);
+        // \r\n (Windows): one line break, not two
+        assert_eq!(build_line_starts("a\r\nb\r\nc"), vec![0, 3, 6]);
+        // Mixed
+        assert_eq!(build_line_starts("a\nb\rc\r\nd"), vec![0, 2, 4, 7]);
+        // U+2028 LINE SEPARATOR
+        assert_eq!(build_line_starts("a\u{2028}b"), vec![0, 4]);
+        // U+2029 PARAGRAPH SEPARATOR
+        assert_eq!(build_line_starts("a\u{2029}b"), vec![0, 4]);
+    }
+
+    #[test]
+    fn ts_directive_scan_handles_cr_only_line_endings() {
+        // CR-only file: directive on line 0 must suppress line 1, and the
+        // single-line comment must not swallow the rest of the file.
+        let directives = find_ts_directives("// @ts-ignore\rlet x: string = 1;\r");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+        // Comment span must stop at the CR, not run to end-of-file.
+        assert_eq!(directives[0].comment_length, "// @ts-ignore".len() as u32);
+    }
+
+    #[test]
+    fn ts_directive_scan_handles_crlf_line_endings() {
+        let directives = find_ts_directives("// @ts-expect-error\r\nconst x: string = 1;\r\n");
+        assert_eq!(directives.len(), 1);
+        assert!(directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+        // The CR must be excluded from the comment span (matches the
+        // existing behaviour of the LF-only path).
+        assert_eq!(
+            directives[0].comment_length,
+            "// @ts-expect-error".len() as u32
+        );
+    }
+
+    #[test]
+    fn ts_directive_suppresses_diagnostic_with_cr_line_endings() {
+        let source = "// @ts-ignore\rlet x: string = 1;\r";
+        // The bad assignment is on line 1 (0-based) at the byte offset of
+        // the literal `1` after the CR.
+        let bad_offset = source.find('1').unwrap() as u32;
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            bad_offset,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+        assert!(
+            diagnostics.is_empty(),
+            "@ts-ignore must suppress the next-line diagnostic with CR-only endings: {diagnostics:?}"
+        );
     }
 
     #[test]
