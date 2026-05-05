@@ -602,6 +602,10 @@ impl<'a> DeclarationEmitter<'a> {
         let package_name = trailing_parts[..package_len].join("/");
         let package_relative_parts = trailing_parts[package_len..].to_vec();
         let relative_path = package_relative_parts.join("/");
+        if self.package_json_decl_entry_matches(&package_root, &relative_path) {
+            return Some((root_key, package_name));
+        }
+
         let runtime_relative_path = self.declaration_runtime_relative_path(&relative_path)?;
 
         let subpath = self
@@ -674,6 +678,10 @@ impl<'a> DeclarationEmitter<'a> {
             .ok()?
             .to_string_lossy()
             .replace('\\', "/");
+        if self.package_json_decl_entry_matches(package_root, &relative) {
+            return Some(package_name.to_string());
+        }
+
         let runtime_relative_path = self.declaration_runtime_relative_path(&relative)?;
         let subpath = self
             .reverse_export_specifier_for_runtime_path(package_root, &runtime_relative_path)
@@ -692,6 +700,37 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(format!("{package_name}/{subpath}"))
         }
+    }
+
+    fn package_json_decl_entry_matches(
+        &self,
+        package_root: &std::path::Path,
+        relative_path: &str,
+    ) -> bool {
+        let package_json_path = package_root.join("package.json");
+        let Ok(package_json_text) = std::fs::read_to_string(package_json_path) else {
+            return false;
+        };
+        let Ok(package_json) = serde_json::from_str::<serde_json::Value>(&package_json_text) else {
+            return false;
+        };
+        let Some(entry) = package_json
+            .get("types")
+            .or_else(|| package_json.get("typings"))
+            .and_then(|value| value.as_str())
+        else {
+            return false;
+        };
+
+        Self::normalize_package_relative_path(entry)
+            == Self::normalize_package_relative_path(relative_path)
+    }
+
+    fn normalize_package_relative_path(path: &str) -> String {
+        path.replace('\\', "/")
+            .trim_start_matches("./")
+            .trim_start_matches('/')
+            .to_string()
     }
 
     pub(in crate::declaration_emitter) fn declaration_runtime_relative_path(
