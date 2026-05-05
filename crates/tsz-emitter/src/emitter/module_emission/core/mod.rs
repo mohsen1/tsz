@@ -1,3 +1,5 @@
+mod export_default_parens;
+
 use super::super::{ModuleKind, Printer, ScriptTarget};
 use crate::context::transform::IdentifierId;
 use crate::transforms::emit_utils;
@@ -980,40 +982,6 @@ impl<'a> Printer<'a> {
             }
             self.write_semicolon();
         }
-    }
-
-    /// True when `export default <expr>` has source `(<class|fn> as T)` or
-    /// equivalent: the parens only existed to delimit the type cast, but
-    /// stripping them after type erasure would change the export semantics
-    /// from "default-export an expression" to "default-export a declaration".
-    /// Detects ParenthesizedExpression(AsExpression|TypeAssertion|SatisfiesExpression(ClassExpression|FunctionExpression)).
-    fn export_default_paren_protects_class_or_function(&self, expr_idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(expr_idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            return false;
-        }
-        let Some(paren) = self.arena.get_parenthesized(node) else {
-            return false;
-        };
-        let Some(inner) = self.arena.get(paren.expression) else {
-            return false;
-        };
-        if inner.kind != syntax_kind_ext::AS_EXPRESSION
-            && inner.kind != syntax_kind_ext::SATISFIES_EXPRESSION
-            && inner.kind != syntax_kind_ext::TYPE_ASSERTION
-        {
-            return false;
-        }
-        let Some(assertion) = self.arena.get_type_assertion(inner) else {
-            return false;
-        };
-        let Some(operand) = self.arena.get(assertion.expression) else {
-            return false;
-        };
-        operand.kind == syntax_kind_ext::CLASS_EXPRESSION
-            || operand.kind == syntax_kind_ext::FUNCTION_EXPRESSION
     }
 
     /// Collect variable names from a `VARIABLE_STATEMENT` node
