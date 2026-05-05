@@ -3,7 +3,7 @@
 use crate::caches::db::QueryDatabase;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
-use crate::types::{IntrinsicKind, LiteralValue, PropertyInfo, TypeData, TypeId};
+use crate::types::{IntrinsicKind, LiteralValue, MappedType, PropertyInfo, TypeData, TypeId};
 use crate::visitor::{
     TypeVisitor, intrinsic_kind, is_empty_object_type_through_type_constraints, is_error_type,
     lazy_def_id,
@@ -1288,6 +1288,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             let s_eval = self.subtype.evaluate_type(s_mapped.constraint);
             let t_eval = self.subtype.evaluate_type(t_mapped.constraint);
             s_eval == t_eval
+                || (self.mapped_name_types_compatible(&s_mapped, &t_mapped)
+                    && self
+                        .subtype
+                        .is_subtype_of(t_mapped.constraint, s_mapped.constraint))
         };
 
         if !constraints_match {
@@ -1325,6 +1329,29 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Compare templates using the subtype checker
         self.configure_subtype(self.strict_function_types);
         Some(self.subtype.is_subtype_of(source_template, target_template))
+    }
+
+    fn mapped_name_types_compatible(
+        &mut self,
+        source_mapped: &MappedType,
+        target_mapped: &MappedType,
+    ) -> bool {
+        let (Some(source_name), Some(target_name)) =
+            (source_mapped.name_type, target_mapped.name_type)
+        else {
+            return source_mapped.name_type == target_mapped.name_type;
+        };
+
+        let source_param = self.interner.type_param(source_mapped.type_param);
+        let target_param = self.interner.type_param(target_mapped.type_param);
+        let equiv_start = self.subtype.type_param_equivalences.len();
+        self.subtype
+            .type_param_equivalences
+            .push((source_param, target_param));
+        let compatible = self.subtype.is_subtype_of(source_name, target_name)
+            && self.subtype.is_subtype_of(target_name, source_name);
+        self.subtype.type_param_equivalences.truncate(equiv_start);
+        compatible
     }
 
     /// Check fast-path assignability conditions.

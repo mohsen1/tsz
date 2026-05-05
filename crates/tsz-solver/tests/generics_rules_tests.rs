@@ -199,6 +199,91 @@ fn test_try_expand_application_self_reference_returns_none() {
     assert!(checker.try_expand_application(app_id).is_none());
 }
 
+#[test]
+fn test_remapped_mapped_type_wider_source_keys_assign_to_narrower_target_keys() {
+    let interner = TypeInterner::new();
+
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_info);
+    let u_info = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(t_type),
+        default: None,
+        is_const: false,
+    };
+    let u_type = interner.type_param(u_info);
+
+    let a_info = TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let a_type = interner.type_param(a_info);
+    let b_info = TypeParamInfo {
+        name: interner.intern_string("B"),
+        constraint: Some(a_type),
+        default: None,
+        is_const: false,
+    };
+    let b_type = interner.type_param(b_info);
+
+    let q_info = TypeParamInfo {
+        name: interner.intern_string("Q"),
+        constraint: Some(a_type),
+        default: None,
+        is_const: false,
+    };
+    let q_type = interner.type_param(q_info);
+    let source_name = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("p_")),
+        TemplateSpan::Type(q_type),
+    ]);
+    let source = interner.mapped(MappedType {
+        type_param: q_info,
+        constraint: a_type,
+        name_type: Some(source_name),
+        template: u_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let p_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(b_type),
+        default: None,
+        is_const: false,
+    };
+    let p_type = interner.type_param(p_info);
+    let target_name = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("p_")),
+        TemplateSpan::Type(p_type),
+    ]);
+    let target = interner.mapped(MappedType {
+        type_param: p_info,
+        constraint: b_type,
+        name_type: Some(target_name),
+        template: t_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(source, target),
+        "wider source key set with narrower value type should satisfy target keys"
+    );
+    assert!(
+        !checker.is_subtype_of(target, source),
+        "narrower source key set must not satisfy wider target keys"
+    );
+}
+
 #[derive(Debug)]
 struct MockVarianceResolver<'a> {
     env: &'a TypeEnvironment,

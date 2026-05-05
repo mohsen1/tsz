@@ -183,6 +183,7 @@ impl<'a> CheckerState<'a> {
         // Resolve the alias body type directly so the solver can compute variance.
         // This must be done while type parameters are still in scope.
         let body_type = {
+            let _ = self.ctx.types.take_union_too_complex();
             let body_type = self.get_type_from_type_node(alias.type_node);
             self.check_variance_annotations_with_body(
                 node_idx,
@@ -191,6 +192,23 @@ impl<'a> CheckerState<'a> {
             );
             body_type
         };
+        let body_construction_too_complex = self.ctx.types.take_union_too_complex();
+        let _ = self.evaluate_type_with_env_uncached(body_type);
+        let body_evaluation_too_complex = self.ctx.types.take_union_too_complex();
+        if body_construction_too_complex || body_evaluation_too_complex {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let anchor = if body_evaluation_too_complex {
+                self.too_complex_union_member_anchor(alias.type_node)
+                    .unwrap_or(alias.type_node)
+            } else {
+                alias.type_node
+            };
+            self.error_at_node(
+                anchor,
+                diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+            );
+        }
 
         // TS2589: detect excessively deep type instantiation at definition time.
         // tsc emits TS2589 for type aliases whose body contains conditional types
@@ -324,6 +342,32 @@ impl<'a> CheckerState<'a> {
         // via the `type_query_override` callback during `ensure_type_alias_resolved`.
         self.precompute_type_query_flow_types(alias.type_node);
         self.pop_type_parameters(updates);
+    }
+
+    fn too_complex_union_member_anchor(&mut self, type_node: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(type_node)?;
+        if node.kind != syntax_kind_ext::UNION_TYPE {
+            return None;
+        }
+        let members: Vec<NodeIndex> = self
+            .ctx
+            .arena
+            .get_composite_type(node)?
+            .types
+            .nodes
+            .to_vec();
+
+        for member in members {
+            let _ = self.ctx.types.take_union_too_complex();
+            let member_type = self.get_type_from_type_node(member);
+            let construction_too_complex = self.ctx.types.take_union_too_complex();
+            let _ = self.evaluate_type_with_env_uncached(member_type);
+            if construction_too_complex || self.ctx.types.take_union_too_complex() {
+                return Some(member);
+            }
+        }
+
+        None
     }
 
     fn check_variance_annotations_supported_for_type_alias(

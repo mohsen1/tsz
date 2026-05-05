@@ -1026,14 +1026,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_mapped_id: MappedTypeId,
         target_mapped_id: MappedTypeId,
     ) -> SubtypeResult {
-        // Try the flattened chain approach first: flatten nested homomorphic mapped
-        // types to get the ultimate source type and combined modifiers.
-        // This handles Partial<Readonly<T>> vs Readonly<Partial<T>> vs Partial<T> etc.
         if let (Some(s_flat), Some(t_flat)) = (
             flatten_mapped_chain(self.interner, source_mapped_id),
             flatten_mapped_chain(self.interner, target_mapped_id),
         ) {
-            // Check if both have the same underlying source type
             let sources_match = if s_flat.source == t_flat.source {
                 true
             } else {
@@ -1041,11 +1037,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
 
             if sources_match {
-                // Modifier compatibility:
-                // - Source has optional (?) but target doesn't: REJECT
-                //   (source may have missing properties that target requires)
-                // - Readonly differences: always OK
-                //   (readonly is a read-side restriction, not relevant for assignability)
                 if s_flat.has_optional && !t_flat.has_optional {
                     return SubtypeResult::False;
                 }
@@ -1053,27 +1044,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Fallback: single-level mapped type comparison
         let source_mapped = self.interner.get_mapped(source_mapped_id);
         let target_mapped = self.interner.get_mapped(target_mapped_id);
 
-        // Both must have the same constraint for this optimization to apply.
-        // First try identity comparison, then evaluate to normalize.
-        // This handles e.g. keyof(Application(Readonly, [T])) == keyof(T)
-        // because evaluate_keyof simplifies keyof(MappedType) → keyof(source).
         let constraints_match = if source_mapped.constraint == target_mapped.constraint {
             true
         } else {
             let s_eval = self.evaluate_type(source_mapped.constraint);
             let t_eval = self.evaluate_type(target_mapped.constraint);
             s_eval == t_eval
+                || (self.mapped_name_types_compatible(&source_mapped, &target_mapped)
+                    && self
+                        .check_subtype(target_mapped.constraint, source_mapped.constraint)
+                        .is_true())
         };
 
         if !constraints_match {
             return SubtypeResult::False;
         }
 
-        // Check template types.
         let source_template = source_mapped.template;
         let mut target_template = target_mapped.template;
 
@@ -1092,7 +1081,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Handle nested mapped types in templates.
         if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
             mapped_type_id(self.interner, source_template),
             mapped_type_id(self.interner, target_template),
@@ -1105,8 +1093,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             );
         }
 
-        // Compare templates directly
         self.check_subtype(source_template, target_template)
+    }
+
+    fn mapped_name_types_compatible(
+        &mut self,
+        source_mapped: &MappedType,
+        target_mapped: &MappedType,
+    ) -> bool {
+        let (Some(source_name), Some(target_name)) =
+            (source_mapped.name_type, target_mapped.name_type)
+        else {
+            return source_mapped.name_type == target_mapped.name_type;
+        };
+
+        let source_param = self.interner.type_param(source_mapped.type_param);
+        let target_param = self.interner.type_param(target_mapped.type_param);
+        let equiv_start = self.type_param_equivalences.len();
+        self.type_param_equivalences
+            .push((source_param, target_param));
+        let compatible = self.check_subtype(source_name, target_name).is_true()
+            && self.check_subtype(target_name, source_name).is_true();
+        self.type_param_equivalences.truncate(equiv_start);
+        compatible
     }
 
     /// Check Mapped expansion to target (one-sided Mapped case).
