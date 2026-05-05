@@ -94,6 +94,15 @@ impl<'a> CheckerState<'a> {
         let in_arith_compound = self.in_arithmetic_compound_assignment_context(anchor_idx);
 
         if !in_arith_compound
+            && self.array_literal_element_source_widening_required_for_display(
+                anchor_idx, source, target,
+            )
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
+
+        if !in_arith_compound
             && self.is_literal_sensitive_assignment_target(target)
             && let Some(display) = self.literal_expression_display(anchor_idx)
             && literal_display_appropriate_for_undefined_null_target(
@@ -1039,6 +1048,49 @@ impl<'a> CheckerState<'a> {
         }
         let primitive_kind = source;
         !target_accepts_literal_primitive_kind(self.ctx.types, target, primitive_kind)
+    }
+
+    pub(in crate::error_reporter) fn array_elaboration_widening_required_for_display(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common;
+
+        let source_primitive = if let Some(value) = common::literal_value(self.ctx.types, source) {
+            value.primitive_type_id()
+        } else if matches!(
+            source,
+            TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT | TypeId::BOOLEAN
+        ) {
+            source
+        } else {
+            return false;
+        };
+        let target = common::evaluate_type(self.ctx.types, target);
+        if target == TypeId::UNDEFINED || target == TypeId::NULL {
+            return source_primitive != TypeId::BOOLEAN;
+        }
+
+        !target_accepts_literal_primitive_kind(self.ctx.types, target, source_primitive)
+    }
+
+    pub(in crate::error_reporter) fn array_literal_element_source_widening_required_for_display(
+        &self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if !self.array_elaboration_widening_required_for_display(source, target) {
+            return false;
+        }
+
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
+        self.ctx
+            .arena
+            .parent_of(expr_idx)
+            .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+            .is_some_and(|parent| parent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
     }
 }
 

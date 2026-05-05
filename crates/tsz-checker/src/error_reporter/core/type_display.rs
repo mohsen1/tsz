@@ -1933,7 +1933,6 @@ impl<'a> CheckerState<'a> {
             if guard > 256 {
                 break;
             }
-
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
@@ -1954,7 +1953,6 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
-
             current = ext.parent;
         }
 

@@ -111,11 +111,21 @@ impl<'a> CheckerState<'a> {
                 if is_spread {
                     return false;
                 }
-                self.error_type_not_assignable_at_with_anchor(
-                    source_element,
-                    target_element,
-                    elem_idx,
-                );
+                if self
+                    .array_elaboration_widening_required_for_display(source_element, target_element)
+                {
+                    self.error_type_not_assignable_at_with_widened_source_display(
+                        source_element,
+                        target_element,
+                        elem_idx,
+                    );
+                } else {
+                    self.error_type_not_assignable_at_with_anchor(
+                        source_element,
+                        target_element,
+                        elem_idx,
+                    );
+                }
                 true
             }
             // Tuple arity mismatch (`SubtypeFailureReason::TupleElementMismatch`)
@@ -142,11 +152,22 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if !self.is_assignable_to(elem_type, target_element) {
-                        self.error_type_not_assignable_at_with_anchor(
+                        if self.array_elaboration_widening_required_for_display(
                             elem_type,
                             target_element,
-                            elem_idx,
-                        );
+                        ) {
+                            self.error_type_not_assignable_at_with_widened_source_display(
+                                elem_type,
+                                target_element,
+                                elem_idx,
+                            );
+                        } else {
+                            self.error_type_not_assignable_at_with_anchor(
+                                elem_type,
+                                target_element,
+                                elem_idx,
+                            );
+                        }
                         return true;
                     }
                 }
