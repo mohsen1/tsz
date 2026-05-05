@@ -202,7 +202,8 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_idx: NodeIndex,
     ) {
-        let actual_display = self.format_type_diagnostic(arg_type);
+        let display_arg_type = common::widen_literal_type(self.ctx.types, arg_type);
+        let actual_display = self.format_type_diagnostic(display_arg_type);
         let target_display = self.format_type_diagnostic(param_type);
         let message = format_message(
             diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
@@ -304,6 +305,9 @@ impl<'a> CheckerState<'a> {
         mismatch_index: usize,
         expected: TypeId,
     ) -> TypeId {
+        if common::contains_type_parameters(self.ctx.types, expected) {
+            return expected;
+        }
         if common::literal_value(self.ctx.types, expected).is_some() {
             return expected;
         }
@@ -667,6 +671,8 @@ impl<'a> CheckerState<'a> {
                     arg_types,
                     index,
                 );
+                let preserve_type_parameter_expected_display =
+                    common::contains_type_parameters(self.ctx.types, expected);
                 let reported_expected = if let Some(expected) = polymorphic_this_expected {
                     expected
                 } else if common::contains_this_type(self.ctx.types, expected) {
@@ -807,6 +813,12 @@ impl<'a> CheckerState<'a> {
                             );
                         } else if prefer_argument_level_return_mismatch || aggregate_rest_mismatch {
                             self.error_argument_not_assignable_at(
+                                reported_actual,
+                                reported_expected,
+                                arg_idx,
+                            );
+                        } else if preserve_type_parameter_expected_display {
+                            self.error_argument_not_assignable_preserving_param_display(
                                 reported_actual,
                                 reported_expected,
                                 arg_idx,
@@ -1244,11 +1256,18 @@ impl<'a> CheckerState<'a> {
 
         let db = self.ctx.types;
 
-        // Extract the base DefId from an Application type (e.g., A<T> -> DefId_A)
+        // Extract the base DefId from a class Application type (e.g., A<T> -> DefId_A).
+        // Type aliases such as Partial<T> remain transparent enough for deferred
+        // assignability; only nominal class bases make the rejection permanent.
         let base_def = |ty: TypeId| -> Option<tsz_solver::DefId> {
             let app_id = application_id(db, ty)?;
             let app = db.type_application(app_id);
-            lazy_def_id(db, app.base)
+            let def_id = lazy_def_id(db, app.base)?;
+            matches!(
+                tsz_solver::TypeResolver::get_def_kind(&self.ctx, def_id),
+                Some(tsz_solver::def::DefKind::Class)
+            )
+            .then_some(def_id)
         };
 
         let actual_def = base_def(actual);
