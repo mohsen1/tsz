@@ -791,11 +791,17 @@ impl<'a> Printer<'a> {
             self.write(".");
             self.emit_property_name_without_import_substitution(access.name_or_argument);
         } else {
+            let before = self.writer.len();
+            self.emit(access.expression);
+            let after = self.writer.len();
+            let full = self.writer.get_output().to_string();
+            let base_expr = full[before..after].trim_start().to_string();
+            self.writer.truncate(before);
             let base_temp = self.make_unique_name_hoisted();
             self.write("(");
             self.write(&base_temp);
             self.write(" = ");
-            self.emit(access.expression);
+            self.write(&base_expr);
             self.write(")");
             self.write(" === null || ");
             self.write(&base_temp);
@@ -828,11 +834,17 @@ impl<'a> Printer<'a> {
             self.emit(access.name_or_argument);
             self.write("]");
         } else {
+            let before = self.writer.len();
+            self.emit(access.expression);
+            let after = self.writer.len();
+            let full = self.writer.get_output().to_string();
+            let base_expr = full[before..after].trim_start().to_string();
+            self.writer.truncate(before);
             let base_temp = self.make_unique_name_hoisted();
             self.write("(");
             self.write(&base_temp);
             self.write(" = ");
-            self.emit(access.expression);
+            self.write(&base_expr);
             self.write(")");
             self.write(" === null || ");
             self.write(&base_temp);
