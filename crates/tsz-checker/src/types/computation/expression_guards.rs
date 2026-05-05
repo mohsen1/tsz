@@ -140,7 +140,7 @@ impl<'a> CheckerState<'a> {
                 break;
             };
             if let Some(sym_id) = scope.table.get("NaN") {
-                return self.ctx.symbol_is_from_lib(sym_id);
+                return self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id);
             }
             if current_scope_id == scope.parent {
                 break;
@@ -151,7 +151,7 @@ impl<'a> CheckerState<'a> {
         if self.ctx.binder.scopes.is_empty()
             && let Some(sym_id) = self.ctx.binder.file_locals.get("NaN")
         {
-            return self.ctx.symbol_is_from_lib(sym_id);
+            return self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id);
         }
 
         true

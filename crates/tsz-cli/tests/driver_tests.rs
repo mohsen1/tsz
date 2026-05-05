@@ -3382,6 +3382,47 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
+fn parallel_checker_reports_global_nan_equality_after_cloning_libs() {
+    let files = vec![(
+        "main.ts".to_string(),
+        r#"declare const x: number;
+if (x === NaN) {}
+
+function shadowed(value: number, NaN: number) {
+    if (value === NaN) {}
+}
+"#
+        .to_string(),
+    )];
+
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
+    let options = CheckerOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        ..CheckerOptions::default()
+    };
+    let result = tsz::parallel::check_files_parallel(&program, &options, &lib_files);
+
+    let diagnostics: Vec<_> = result
+        .file_results
+        .into_iter()
+        .flat_map(|file| file.diagnostics)
+        .collect();
+    let ts2845_count = diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN)
+        .count();
+
+    assert_eq!(
+        ts2845_count, 1,
+        "Expected only the global NaN comparison to report TS2845, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn direct_checker_with_original_binder_stays_clean_when_all_binders_are_installed() {
     let source = r#"type Types = {
     first: { a1: true };
