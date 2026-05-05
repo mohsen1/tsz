@@ -155,8 +155,19 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if let Some(typeof_operand) = self.get_typeof_operand(self.skip_parenthesized(switch_expr))
-            && self.is_matching_reference(typeof_operand, target)
+            && (self.is_matching_reference(typeof_operand, target)
+                || self.is_optional_chain_containing_target(typeof_operand, target))
         {
+            if self.is_optional_chain_containing_target(typeof_operand, target) {
+                if self.literal_string_from_node(case_expr) == Some("undefined") {
+                    return type_id;
+                }
+                return flow_boundary::narrow_optional_chain(
+                    self.interner.as_type_database(),
+                    type_id,
+                );
+            }
+
             let mut narrowed = type_id;
             let mut saw_current = false;
 
@@ -368,8 +379,13 @@ impl<'a> FlowAnalyzer<'a> {
         // For `switch (typeof x)`, the default clause excludes runtime `typeof`
         // domains, not the string literal case expression types themselves.
         if let Some(typeof_operand) = self.get_typeof_operand(self.skip_parenthesized(switch_expr))
-            && self.is_matching_reference(typeof_operand, target)
+            && (self.is_matching_reference(typeof_operand, target)
+                || self.is_optional_chain_containing_target(typeof_operand, target))
         {
+            if self.is_optional_chain_containing_target(typeof_operand, target) {
+                return type_id;
+            }
+
             let mut narrowed = type_id;
             let mut applied = false;
 
@@ -460,7 +476,10 @@ impl<'a> FlowAnalyzer<'a> {
                 if target_is_switch_expr {
                     // Use batched narrowing for O(N) instead of O(N²)
                     return narrowing.narrow_excluding_types(type_id, &excluded_types);
-                } else if let Some((path, _, _)) = discriminant_info {
+                } else if let Some((path, is_optional, _)) = discriminant_info {
+                    if is_optional && excluded_types.contains(&TypeId::UNDEFINED) {
+                        return type_id;
+                    }
                     // Use batched discriminant narrowing
                     return narrowing.narrow_by_excluding_discriminant_values(
                         type_id,
@@ -666,22 +685,27 @@ impl<'a> FlowAnalyzer<'a> {
                     // CRITICAL: Use Solver-First architecture for direct binary guards
                     // when the guard target can actually match our reference.
                     if maybe_direct_guard_target
-                        && let Some((guard, guard_target, _is_optional)) =
+                        && let Some((guard, guard_target, is_optional)) =
                             self.extract_type_guard(condition_idx)
                     {
+                        let effective_sense = if bin.operator_token
+                            == SyntaxKind::ExclamationEqualsEqualsToken as u16
+                            || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16
+                        {
+                            !is_true_branch
+                        } else {
+                            is_true_branch
+                        };
+                        let short_circuit_can_satisfy_guard = is_optional
+                            && effective_sense
+                            && self.optional_chain_guard_can_be_satisfied_by_short_circuit(&guard);
                         // Check if the guard applies to our target reference
-                        if self.is_matching_reference(guard_target, target) {
+                        if self.is_matching_reference(guard_target, target)
+                            && !short_circuit_can_satisfy_guard
+                        {
                             // CRITICAL: Invert sense for inequality operators (!== and !=)
                             // This applies to ALL guards, not just typeof
                             // For `x !== "string"` or `x.kind !== "circle"`, the true branch should EXCLUDE
-                            let effective_sense = if bin.operator_token
-                                == SyntaxKind::ExclamationEqualsEqualsToken as u16
-                                || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16
-                            {
-                                !is_true_branch
-                            } else {
-                                is_true_branch
-                            };
                             // Delegate to Solver for the calculation (Solver responsibility: RESULT)
                             let result = narrowing.narrow_type(
                                 type_id,
@@ -691,12 +715,8 @@ impl<'a> FlowAnalyzer<'a> {
                             return result;
                         }
 
-                        // Optional chain intermediate narrowing for binary expressions:
-                        // `animal?.breed?.size != null` narrows target `animal.breed` to non-nullish
-                        // `typeof person?.name === 'string'` narrows target `person` to non-nullish
-                        //
-                        // Don't return early — fall through to narrow_by_binary_expr which may
-                        // apply additional narrowing (e.g., discriminant narrowing for `o?.x === 1`).
+                        // Optional-chain intermediate narrowing for binary expressions.
+                        // Fall through to binary narrowing for additional discriminant effects.
                         if self.contains_optional_chain(guard_target)
                             && self.is_optional_chain_prefix(guard_target, target)
                         {
@@ -712,7 +732,10 @@ impl<'a> FlowAnalyzer<'a> {
                                 TypeGuard::NullishEquality => !effective_sense,
                                 _ => effective_sense,
                             };
-                            if chain_completed {
+                            let short_circuit_can_satisfy_guard = effective_sense
+                                && self
+                                    .optional_chain_guard_can_be_satisfied_by_short_circuit(&guard);
+                            if chain_completed && !short_circuit_can_satisfy_guard {
                                 let narrowed = flow_boundary::narrow_optional_chain(
                                     self.interner.as_type_database(),
                                     type_id,
@@ -1010,11 +1033,11 @@ impl<'a> FlowAnalyzer<'a> {
         access.question_dot_token || node.is_optional_chain()
     }
 
-    /// Check if `expr` is an optional chain (or typeof of one) that contains `target`
-    /// as an intermediate prefix. Used to let binary expression narrowing know that
-    /// guard extraction is worth attempting even though `target` doesn't directly match
-    /// either side of the comparison.
-    fn is_optional_chain_containing_target(&self, expr: NodeIndex, target: NodeIndex) -> bool {
+    pub(crate) fn is_optional_chain_containing_target(
+        &self,
+        expr: NodeIndex,
+        target: NodeIndex,
+    ) -> bool {
         let expr = self.arena.skip_parenthesized_and_assertions(expr);
         let Some(node) = self.arena.get(expr) else {
             return false;
@@ -1067,6 +1090,19 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    const fn optional_chain_guard_can_be_satisfied_by_short_circuit(&self, guard: &TypeGuard) -> bool {
+        matches!(
+            guard,
+            TypeGuard::NullishEquality
+                | TypeGuard::LiteralEquality(TypeId::UNDEFINED)
+                | TypeGuard::Typeof(TypeofKind::Undefined)
+                | TypeGuard::Discriminant {
+                    value_type: TypeId::UNDEFINED,
+                    ..
+                }
+        )
+    }
+
     fn optional_chain_comparison_proves_non_nullish(
         &self,
         bin: &BinaryExprData,
@@ -1074,15 +1110,27 @@ impl<'a> FlowAnalyzer<'a> {
         is_strict: bool,
         effective_truth: bool,
     ) -> bool {
-        if !effective_truth {
-            return false;
-        }
         let Some(node_types) = self.node_types else {
             return false;
         };
 
         for (chain_side, other_side) in [(bin.left, bin.right), (bin.right, bin.left)] {
             if !self.is_optional_chain_containing_target(chain_side, target) {
+                continue;
+            }
+            if self.typeof_optional_chain_short_circuit_matches_literal(chain_side, other_side) {
+                if !effective_truth {
+                    return true;
+                }
+                continue;
+            }
+            if self.value_optional_chain_short_circuit_matches_literal(other_side, is_strict) {
+                if !effective_truth {
+                    return true;
+                }
+                continue;
+            }
+            if !effective_truth {
                 continue;
             }
             let Some(&other_type) = node_types.get(&other_side.0) else {
@@ -1094,6 +1142,31 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         false
+    }
+
+    fn typeof_optional_chain_short_circuit_matches_literal(
+        &self,
+        chain_side: NodeIndex,
+        other_side: NodeIndex,
+    ) -> bool {
+        let Some(typeof_operand) = self.get_typeof_operand(self.skip_parenthesized(chain_side))
+        else {
+            return false;
+        };
+        self.contains_optional_chain(typeof_operand)
+            && self.literal_string_from_node(other_side) == Some("undefined")
+    }
+
+    fn value_optional_chain_short_circuit_matches_literal(
+        &self,
+        other_side: NodeIndex,
+        is_strict: bool,
+    ) -> bool {
+        match self.literal_type_from_node(other_side) {
+            Some(TypeId::UNDEFINED) => true,
+            Some(TypeId::NULL) => !is_strict,
+            _ => false,
+        }
     }
 
     fn comparison_allows_optional_chain_short_circuit(

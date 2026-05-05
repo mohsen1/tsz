@@ -686,6 +686,7 @@ impl<'a> FlowAnalyzer<'a> {
                 .is_some_and(|(path, _)| !path.is_empty())
             // switch (typeof x) narrows x through typeof comparison
             || self.is_typeof_target(switch_expr, reference)
+            || self.is_optional_chain_containing_target(switch_expr, reference)
             // switch (alias) where alias is a const alias for reference.prop
             // (e.g. `const kind = obj.kind; switch(kind)`) or a destructuring alias
             // (e.g. `const { kind } = obj; switch(kind)`) — the aliased discriminant

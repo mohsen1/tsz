@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-control-flow-optional-chain-fingerprints`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #3054
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
@@ -16,12 +16,16 @@ for optional-chain control-flow errors.
 
 ## Files Touched
 
-- TBD
+- `crates/tsz-binder/src/binding/declaration.rs`
+- `crates/tsz-checker/src/context/core.rs`
+- `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+- `crates/tsz-checker/src/flow/control_flow/core.rs`
+- `crates/tsz-checker/tests/conformance_issues/types/optional_chain.rs`
 
 ## Verification
 
-- `cargo fmt --all --check`
-- `cargo check --package tsz-checker --package tsz-solver`
-- Targeted checker regression test
-- `./scripts/conformance/conformance.sh run --filter "controlFlowOptionalChain" --verbose`
-- `./scripts/conformance/conformance.sh run --max 200`
+- `cargo fmt --all --check` (pass)
+- `cargo check --package tsz-checker --package tsz-solver` (pass)
+- `cargo nextest run -p tsz-checker --test conformance_issues optional_chain_undefined_comparisons optional_chain_switch optional_chain_truthiness_false_paths_keep_prefix_optional --no-fail-fast` (pass)
+- `./scripts/conformance/conformance.sh run --filter "controlFlowOptionalChain"` (3/3 pass)
+- `./scripts/conformance/conformance.sh run --max 200` (200/200 pass)

@@ -2036,31 +2036,6 @@ impl BinderState {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 if let Some(access) = arena.get_access_expr(node) {
                     self.bind_expression(arena, access.expression);
-                    if access.question_dot_token && !self.continues_optional_chain(arena, idx) {
-                        let after_base = self.current_flow;
-                        let true_flow = self.create_flow_condition(
-                            flow_flags::TRUE_CONDITION,
-                            after_base,
-                            access.expression,
-                        );
-                        let false_flow = self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            after_base,
-                            access.expression,
-                        );
-                        let merge = self.create_branch_label();
-                        self.add_antecedent(merge, true_flow);
-                        self.add_antecedent(merge, false_flow);
-                        self.current_flow = merge;
-                    } else if access.question_dot_token {
-                        let after_base = self.current_flow;
-                        let true_flow = self.create_flow_condition(
-                            flow_flags::TRUE_CONDITION,
-                            after_base,
-                            access.expression,
-                        );
-                        self.current_flow = true_flow;
-                    }
                 }
                 return;
             }
