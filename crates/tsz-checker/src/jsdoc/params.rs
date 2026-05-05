@@ -1212,6 +1212,13 @@ impl<'a> CheckerState<'a> {
         } else {
             effective_type_expr
         };
+        if let Some(comment_start) = jsdoc_comment_start {
+            self.validate_jsdoc_param_namespace_member_errors(
+                &effective_type_expr,
+                comment_start,
+                type_expr_offset,
+            );
+        }
 
         // Empty generic type parameter list inside the braces, e.g.
         // `@param {<} x`. tsc reports TS1098 at the `<` and TS1139 at the
@@ -1376,6 +1383,124 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_param_is_rest(jsdoc: &str, param_name: &str) -> bool {
         Self::extract_jsdoc_param_type_expr_with_span(jsdoc, param_name)
             .is_some_and(|(expr, _)| expr.starts_with("..."))
+    }
+
+    pub(crate) fn validate_jsdoc_param_namespace_member_errors(
+        &mut self,
+        type_expr: &str,
+        comment_start: u32,
+        type_expr_offset: usize,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let bytes = type_expr.as_bytes();
+        let mut cursor = 0usize;
+        while cursor < bytes.len() {
+            if !Self::is_jsdoc_identifier_start(bytes[cursor]) {
+                cursor += 1;
+                continue;
+            }
+            let root_start = cursor;
+            cursor += 1;
+            while cursor < bytes.len() && Self::is_jsdoc_identifier_part(bytes[cursor]) {
+                cursor += 1;
+            }
+            let root_end = cursor;
+            if bytes.get(cursor) != Some(&b'.')
+                || !bytes
+                    .get(cursor + 1)
+                    .is_some_and(|b| Self::is_jsdoc_identifier_start(*b))
+            {
+                continue;
+            }
+            let member_start = cursor + 1;
+            cursor = member_start + 1;
+            while cursor < bytes.len() && Self::is_jsdoc_identifier_part(bytes[cursor]) {
+                cursor += 1;
+            }
+            let member_end = cursor;
+            let root = &type_expr[root_start..root_end];
+            let member = &type_expr[member_start..member_end];
+
+            if !self.is_jsdoc_namespace_root(root) {
+                continue;
+            }
+            if self
+                .resolve_namespace_member_from_all_binders(root, member)
+                .is_some()
+                || self.ctx.binder.file_locals.get(root).is_some_and(|sym_id| {
+                    self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol
+                            .exports
+                            .as_ref()
+                            .is_some_and(|exports| exports.get(member).is_some())
+                            || symbol
+                                .members
+                                .as_ref()
+                                .is_some_and(|members| members.get(member).is_some())
+                    })
+                })
+            {
+                continue;
+            }
+
+            let message = format_message(
+                diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                &[root, member],
+            );
+            let start = self
+                .ctx
+                .arena
+                .source_files
+                .first()
+                .and_then(|source_file| {
+                    let source_text = source_file.text.as_ref();
+                    source_text
+                        .find(&format!("@param {{{type_expr}}}"))
+                        .map(|offset| offset + "@param {".len() + member_start)
+                })
+                .map(|offset| offset as u32)
+                .unwrap_or(comment_start + type_expr_offset as u32 + member_start as u32);
+            let length = member.len() as u32;
+            let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER
+                    && diagnostic.start == start
+                    && diagnostic.length == length
+                    && diagnostic.message_text == message
+            });
+            if !already_reported {
+                self.error_at_position(
+                    start,
+                    length,
+                    &message,
+                    diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                );
+            }
+            return;
+        }
+    }
+
+    fn is_jsdoc_namespace_root(&self, root: &str) -> bool {
+        use tsz_binder::symbol_flags;
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(root)
+            && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::MODULE)
+            })
+        {
+            return true;
+        }
+        self.resolve_identifier_symbol_from_all_binders(root, |_, symbol| {
+            symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::MODULE)
+        })
+        .is_some()
+    }
+
+    const fn is_jsdoc_identifier_start(byte: u8) -> bool {
+        byte == b'_' || byte == b'$' || byte.is_ascii_alphabetic()
+    }
+
+    const fn is_jsdoc_identifier_part(byte: u8) -> bool {
+        Self::is_jsdoc_identifier_start(byte) || byte.is_ascii_digit()
     }
 
     fn required_generic_count_for_jsdoc_type_name(
