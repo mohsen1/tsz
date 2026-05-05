@@ -1274,8 +1274,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // vs `{ [k: number]: string }` fails on `string | undefined <: string`).
             // For STRING index signatures, tsc strips the implicit `| undefined`
             // so `{ b?: number }` is assignable to `{ [k: string]: number }`.
+            //
+            // But when the property type is itself `undefined` (e.g.
+            // `k1?: undefined`), stripping yields `never`, which is
+            // vacuously assignable to anything and silences a real
+            // mismatch. Use the original property type in that case so
+            // the check still fires (tsc emits TS2322 for
+            // `{ k1?: undefined }` against `{ [key: string]: string }`).
             let string_prop_type = if prop.optional {
-                crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
+                let stripped =
+                    crate::narrowing::utils::remove_undefined(self.interner, prop.type_id);
+                if stripped == TypeId::NEVER {
+                    prop.type_id
+                } else {
+                    stripped
+                }
             } else {
                 prop.type_id
             };
