@@ -40,3 +40,11 @@ targeted conformance test.
     dist-fast -p tsz-cli -p tsz-conformance` reached `tsz-lsp`, then failed in
     Cargo fingerprint/output handling; `.target` was again gone immediately
     after the failure.
+  - Retried with an external target dir, building only required binaries:
+    `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo build --profile dist-fast
+    --target-dir /tmp/tsz-3245-target -p tsz-cli --bin tsz --bin tsz-server
+    -p tsz-conformance --bin tsz-conformance`; the build was first terminated
+    without diagnostics, then failed late in `tsz-cli` after its object output
+    disappeared.
+  - Retried a lower-footprint dev build to `/tmp/tsz-3245-dev-target`; it was
+    also externally terminated before reaching the project crates.
