@@ -4863,6 +4863,70 @@ let err =
 }
 
 #[test]
+fn jsx_react_multiple_render_prop_children_contextual_type_uses_declared_callback() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    type ReactText = string | number;
+    interface ReactElement<P> {{ props: P; }}
+    type ReactChild = ReactElement<any> | ReactText;
+    interface ReactNodeArray {{
+        [n: number]: ReactChild | ReactNodeArray | boolean;
+    }}
+    type ReactFragment = {{}} | ReactNodeArray;
+    type ReactNode = ReactChild | ReactFragment | boolean;
+    class Component<P, S> {{
+        props: P & {{ children?: ReactNode }};
+    }}
+}}
+
+interface User {{
+    name: string;
+}}
+interface Prop {{
+    children: (user: User) => JSX.Element;
+}}
+class FetchUser extends React.Component<Prop, any> {{}}
+let err =
+    <FetchUser>
+        {{ user => <div /> }}
+        {{ user => <div /> }}
+    </FetchUser>;
+"#
+    );
+    let diags = jsx_diagnostics_with_pos(&source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|(code, _, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type '(user: User) => Element'")
+                && message.contains("ReactChild")
+        })
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "React multiple render-prop children should be contextually typed by the declared callback while reporting against ReactNode, got: {diags:?}"
+    );
+
+    let first_brace = source.find("{ user =>").expect("test source has child");
+    let first_user = source.find("user =>").expect("test source has arrow");
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, start, _)| *start as usize == first_user),
+        "TS2322 should anchor at the arrow expression, not the JSX expression wrapper. brace={first_brace}, user={first_user}, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|(_, start, _)| *start as usize != first_brace),
+        "TS2322 should not anchor at the opening JSX expression brace, got: {ts2322:?}"
+    );
+}
+
+#[test]
 fn jsx_array_children_text_child_emits_ts2745_not_ts2747() {
     let source = format!(
         r#"
