@@ -23,6 +23,7 @@ mod name_resolution;
 mod operator_errors;
 mod primitive_intersection_display;
 mod properties;
+mod property_receiver_formatting;
 mod render_failure;
 mod suggestions;
 mod type_display_policy;
