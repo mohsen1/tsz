@@ -151,6 +151,82 @@ fn needs_strict_generic_target_callable_recheck(
         && has_own_signature_type_params(checker, target)
 }
 
+fn generic_construct_requires_optional_target_param_recheck(
+    checker: &CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let source = unwrap_single_property_value_type(checker, source);
+    let target = unwrap_single_property_value_type(checker, target);
+    let Some(source_signatures) =
+        crate::query_boundaries::common::construct_signatures_for_type(checker.ctx.types, source)
+    else {
+        return false;
+    };
+    let Some(target_signatures) =
+        crate::query_boundaries::common::construct_signatures_for_type(checker.ctx.types, target)
+    else {
+        return false;
+    };
+
+    source_signatures.iter().any(|source_sig| {
+        target_signatures.iter().any(|target_sig| {
+            construct_signature_required_param_against_optional_target(
+                checker, source_sig, target_sig,
+            )
+        })
+    })
+}
+
+fn construct_signature_required_param_against_optional_target(
+    checker: &CheckerState<'_>,
+    source_sig: &tsz_solver::types::CallSignature,
+    target_sig: &tsz_solver::types::CallSignature,
+) -> bool {
+    if source_sig.type_params.is_empty()
+        || source_sig.type_params.len() != target_sig.type_params.len()
+        || source_sig.params.len() != target_sig.params.len()
+    {
+        return false;
+    }
+
+    source_sig
+        .params
+        .iter()
+        .zip(target_sig.params.iter())
+        .any(|(source_param, target_param)| {
+            if source_param.optional || !target_param.optional {
+                return false;
+            }
+
+            source_sig
+                .type_params
+                .iter()
+                .zip(target_sig.type_params.iter())
+                .any(|(source_tp, target_tp)| {
+                    let source_tp_type = checker.ctx.types.type_param(*source_tp);
+                    let target_tp_type = checker.ctx.types.type_param(*target_tp);
+                    crate::query_boundaries::common::contains_type_by_id(
+                        checker.ctx.types,
+                        source_param.type_id,
+                        source_tp_type,
+                    ) && crate::query_boundaries::common::contains_type_by_id(
+                        checker.ctx.types,
+                        target_param.type_id,
+                        target_tp_type,
+                    ) && crate::query_boundaries::common::contains_type_by_id(
+                        checker.ctx.types,
+                        source_sig.return_type,
+                        source_tp_type,
+                    ) && crate::query_boundaries::common::contains_type_by_id(
+                        checker.ctx.types,
+                        target_sig.return_type,
+                        target_tp_type,
+                    )
+                })
+        })
+}
+
 fn source_this_parameter_is_acceptable_for_target_without_this(
     checker: &mut CheckerState<'_>,
     source: TypeId,
@@ -584,6 +660,13 @@ pub(crate) fn should_report_property_type_mismatch(
     let outcome = checker.execute_relation_request(&request);
 
     if outcome.related {
+        if generic_construct_requires_optional_target_param_recheck(
+            checker,
+            relation_source,
+            relation_target,
+        ) {
+            return true;
+        }
         if needs_strict_generic_target_callable_recheck(checker, relation_source, relation_target) {
             let strict_source = unwrap_single_property_value_type(checker, relation_source);
             let strict_target = unwrap_single_property_value_type(checker, relation_target);
