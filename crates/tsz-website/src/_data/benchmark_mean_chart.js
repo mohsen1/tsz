@@ -20,18 +20,21 @@ function sanitizeLegacyBenchmarkResults(data) {
 
 function loadBenchmarks() {
   const artifactsDir = path.join(ROOT, "artifacts");
-  const ciLatest = path.join(artifactsDir, "bench-vs-tsgo-gcs-latest.json");
+  const ciLatest = [
+    "bench-vs-tsgo-github-latest.json",
+    "bench-vs-tsgo-gcs-latest.json",
+  ].map((file) => path.join(artifactsDir, file));
   const artifactFiles = (() => {
     try {
       const localArtifacts = fs.readdirSync(artifactsDir)
         .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-        .filter((file) => file !== "bench-vs-tsgo-gcs-latest.json")
+        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json"].includes(file))
         .sort()
         .reverse()
         .map((file) => path.join(artifactsDir, file));
-      return [ciLatest, ...localArtifacts];
+      return [...ciLatest, ...localArtifacts];
     } catch {
-      return [ciLatest];
+      return ciLatest;
     }
   })();
 
