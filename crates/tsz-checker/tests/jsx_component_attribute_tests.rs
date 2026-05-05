@@ -2066,7 +2066,12 @@ const myHoc = <ComposedComponentProps extends any>(
     <WrapperComponent {...props} myProp={1000000} />;
 };
 "#;
-    let diags = cross_file_jsx_diagnostics_with_mode(&react_types, source, JsxMode::React);
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        &react_types,
+        source,
+        JsxMode::React,
+        true,
+    );
 
     assert!(
         diags.iter().any(|(code, message)| {

@@ -734,7 +734,7 @@ impl<'a> CheckerState<'a> {
                         Some(component_metadata_type),
                         Some(component_type),
                         raw_has_type_params,
-                        display_target.clone(),
+                        display_target,
                         preferred_props_display.as_deref(),
                         request,
                         children_ctx,
