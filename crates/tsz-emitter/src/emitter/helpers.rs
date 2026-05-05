@@ -25,7 +25,7 @@ impl<'a> Printer<'a> {
         }
 
         let mut start = end;
-        while start > 0 && matches!(bytes[start - 1], b'a'..=b'z' | b'A'..=b'Z') {
+        while start > 0 && bytes[start - 1].is_ascii_alphabetic() {
             start -= 1;
         }
 
