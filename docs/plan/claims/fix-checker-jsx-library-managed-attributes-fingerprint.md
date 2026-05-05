@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-jsx-library-managed-attributes-fingerprint`
-- **PR**: TBD
+- **PR**: #3132
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
