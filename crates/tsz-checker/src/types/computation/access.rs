@@ -1,9 +1,3 @@
-//! Element access and optional chain detection.
-//!
-//! Super keyword computation lives in `access_super`.
-//! Await expression computation lives in `access_await`.
-//! Index type helpers live in `access_helpers`.
-
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -15,10 +9,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-/// Checks if a node is an optional chain expression (`?.`).
-///
-/// Handles property access (`o?.b`), element access (`o?.[0]`), and
-/// call expressions (`o?.b()` / `o.b?.()`).
 pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
         return false;
@@ -35,10 +25,6 @@ pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
             }
         }
         k if k == syntax_kind_ext::CALL_EXPRESSION => {
-            // Check if this call is part of an optional chain.
-            // A call can be optional in two ways:
-            // 1. The callee itself is optional: `o?.b()` -> callee `o?.b` has question_dot_token
-            // 2. The call has an optional token: `o.b?.()` -> call node has OPTIONAL_CHAIN flag
             if node.is_optional_chain() {
                 return true;
             }
@@ -52,9 +38,6 @@ pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
     }
 }
 
-/// Get the root (leftmost) expression of an optional chain.
-/// For `A?.b()`, traverses through the call and property access to return `A`.
-/// This is used by TS1209 to extract just the target name for the suggestion message.
 pub(crate) fn optional_chain_root(arena: &NodeArena, idx: NodeIndex) -> NodeIndex {
     let Some(node) = arena.get(idx) else {
         return idx;
