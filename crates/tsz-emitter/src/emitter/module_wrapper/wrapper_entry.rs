@@ -166,7 +166,9 @@ impl<'a> Printer<'a> {
         source_idx: NodeIndex,
     ) {
         let restore_decorate_helper = self.hoist_decorate_helper_before_wrapper();
-        let amd_name = self.extract_amd_module_name();
+        let amd_name = self
+            .extract_amd_module_name()
+            .or_else(|| self.ctx.options.bundled_module_name.clone());
         let amd_deps = self.extract_amd_dependencies();
         let Some(source) = self.arena.get_source_file(source_node) else {
             return;
@@ -406,7 +408,13 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.write("System.register([");
+        self.write("System.register(");
+        if let Some(name) = self.ctx.options.bundled_module_name.clone() {
+            self.write("\"");
+            self.write(&name);
+            self.write("\", ");
+        }
+        self.write("[");
         for (i, dep) in dependencies.iter().enumerate() {
             if i > 0 {
                 self.write(", ");

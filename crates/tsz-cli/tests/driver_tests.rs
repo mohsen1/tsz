@@ -2181,6 +2181,48 @@ fn compile_with_tsconfig_emits_outputs() {
 }
 
 #[test]
+fn compile_single_source_amd_outfile_emits_bundle() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "amd",
+            "outFile": "dist/bundle.js",
+            "strict": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(&base.join("main.ts"), "export const value = 1;");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(result.diagnostics.is_empty());
+    assert!(
+        base.join("dist/bundle.js").is_file(),
+        "expected outFile bundle, emitted: {:?}",
+        result.emitted_files
+    );
+    assert!(
+        !base.join("main.js").exists(),
+        "single-source outFile should not emit per-file main.js"
+    );
+    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    assert!(
+        bundle.contains("define(\"main\", [\"require\", \"exports\"], function"),
+        "expected named AMD outFile wrapper, got:\n{bundle}"
+    );
+}
+
+#[test]
 fn compile_with_source_map_emits_map_outputs() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
