@@ -104,12 +104,27 @@ impl<'a> Printer<'a> {
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
         );
-        names
+        let appears_in_value_haystack = names
             .iter()
-            .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name))
-            || (self.ctx.target_es5
-                && self
-                    .async_return_type_uses_imported_promise_constructor_after_node(node, &names))
+            .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name));
+        if appears_in_value_haystack {
+            return true;
+        }
+        // Under `--emitDecoratorMetadata`, type annotations on decorated
+        // class members become *value* references at runtime via
+        // `__metadata("design:type", X)`. The standard type-only strip would
+        // elide those names; check separately whether any decorated-member
+        // type annotation in the unstripped haystack references one of our
+        // imported names.
+        if self.ctx.options.emit_decorator_metadata
+            && names.iter().any(|name| {
+                crate::import_usage::name_appears_in_decorator_metadata_type(haystack, name)
+            })
+        {
+            return true;
+        }
+        self.ctx.target_es5
+            && self.async_return_type_uses_imported_promise_constructor_after_node(node, &names)
     }
 
     fn async_return_type_uses_imported_promise_constructor_after_node(
@@ -249,7 +264,18 @@ impl<'a> Printer<'a> {
                 if local_name.is_empty() {
                     return true;
                 }
-                crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name)
+                if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name)
+                {
+                    return true;
+                }
+                // Under `--emitDecoratorMetadata`, decorated-member type
+                // annotations are *value* references; preserve specs whose
+                // name appears in such an annotation.
+                self.ctx.options.emit_decorator_metadata
+                    && crate::import_usage::name_appears_in_decorator_metadata_type(
+                        haystack,
+                        &local_name,
+                    )
             })
             .collect()
     }

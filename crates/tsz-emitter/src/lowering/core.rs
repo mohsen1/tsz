@@ -493,12 +493,24 @@ impl<'a> LoweringPass<'a> {
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
         );
-        names
+        if names
             .iter()
             .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name))
-            || (self.ctx.target_es5
-                && self
-                    .async_return_type_uses_imported_promise_constructor_after_node(node, &names))
+        {
+            return true;
+        }
+        // Under `--emitDecoratorMetadata`, type annotations on decorated class
+        // members become *value* references via `__metadata("design:type", X)`.
+        // Don't elide imports whose binding appears in such an annotation.
+        if self.ctx.options.emit_decorator_metadata
+            && names.iter().any(|name| {
+                crate::import_usage::name_appears_in_decorator_metadata_type(haystack, name)
+            })
+        {
+            return true;
+        }
+        self.ctx.target_es5
+            && self.async_return_type_uses_imported_promise_constructor_after_node(node, &names)
     }
 
     fn async_return_type_uses_imported_promise_constructor_after_node(

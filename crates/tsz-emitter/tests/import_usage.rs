@@ -15,8 +15,8 @@
 //! boundaries where the emitter's value-usage decision changes.
 
 use super::{
-    contains_identifier_occurrence, strip_qualified_accesses_for_names,
-    strip_type_declaration_lines, strip_type_only_content,
+    contains_identifier_occurrence, name_appears_in_decorator_metadata_type,
+    strip_qualified_accesses_for_names, strip_type_declaration_lines, strip_type_only_content,
 };
 
 // ----------------------------------------------------------------------
@@ -360,4 +360,54 @@ fn strip_type_declaration_lines_drops_export_declare_block() {
     let stripped = strip_type_declaration_lines(src);
     assert!(!contains_identifier_occurrence(&stripped, "Foo"));
     assert!(contains_identifier_occurrence(&stripped, "z"));
+}
+
+// ----------------------------------------------------------------------
+// name_appears_in_decorator_metadata_type
+// ----------------------------------------------------------------------
+
+#[test]
+fn metadata_type_finds_decorated_property_annotation() {
+    let src = r"
+class Test {
+    @whatever
+    declare prop: Observable<string>;
+}
+";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
+    // A name that doesn't appear in any annotation should not match.
+    assert!(!name_appears_in_decorator_metadata_type(src, "Unrelated"));
+}
+
+#[test]
+fn metadata_type_skips_undecorated_property() {
+    // No decorator, so the type-only annotation must NOT be reported as a
+    // value usage. This is the exact case the standard type-strip already
+    // catches; the helper must agree.
+    let src = "class Test { prop: Observable<string>; }\n";
+    assert!(!name_appears_in_decorator_metadata_type(src, "Observable"));
+}
+
+#[test]
+fn metadata_type_walks_chained_decorators() {
+    // Two decorators on the same member; the helper must walk past both.
+    let src = "class T { @a @b prop: Observable<string>; }\n";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
+}
+
+#[test]
+fn metadata_type_walks_decorator_with_args() {
+    // `@dec(arg)` — paren args must be skipped.
+    let src = "class T { @inject('token') prop: Observable<string>; }\n";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
+}
+
+#[test]
+fn metadata_type_handles_method_param_annotations() {
+    // For methods, parameter annotations are also `design:paramtypes`
+    // metadata. The current helper only matches the first `:` after a
+    // decorator (the return type or first param) — covering the common
+    // property-decorator case.
+    let src = "class T { @dec method(p: Observable<string>): void {} }\n";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
 }
