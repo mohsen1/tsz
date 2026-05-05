@@ -320,19 +320,24 @@ g("", 3, a => a);
 fn contextual_signature_instantiation_rejects_conflicting_generic_params() {
     let source = r#"
 declare function foo<T>(cb: (x: number, y: string) => T): T;
+declare function bar<T, U, V>(x: T, y: U, cb: (x: T, y: U) => V): V;
 declare function g<T>(x: T, y: T): T;
 
 var b: number | string;
 var b = foo(g);
+var b = bar(1, "one", g);
+var b = bar("one", 1, g);
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2345_count = diags.iter().filter(|(code, _)| *code == 2345).count();
+    let ts2403_count = diags.iter().filter(|(code, _)| *code == 2403).count();
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
-        "Expected TS2345 when one generic source parameter gets incompatible contextual candidates. Diagnostics: {diags:#?}"
+        ts2345_count >= 3,
+        "Expected TS2345 for each incompatible contextual generic callback. Diagnostics: {diags:#?}"
     );
     assert!(
-        diags.iter().any(|(code, _)| *code == 2403),
-        "Expected downstream TS2403 from the failed call's unknown return. Diagnostics: {diags:#?}"
+        ts2403_count >= 3,
+        "Expected downstream TS2403 from each failed call's unknown return. Diagnostics: {diags:#?}"
     );
 }
 

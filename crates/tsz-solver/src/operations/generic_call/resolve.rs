@@ -1271,6 +1271,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     continue;
                 }
 
+                let conflict_target = if fixed_subst.is_empty() {
+                    target_type
+                } else {
+                    instantiate_type(self.interner, target_type, &fixed_subst)
+                };
+                if let Some(expected) = self
+                    .conflicting_contextual_signature_instantiation_type(arg_type, conflict_target)
+                {
+                    return CallResult::ArgumentTypeMismatch {
+                        index: i,
+                        expected,
+                        actual: arg_type,
+                        fallback_return: TypeId::ERROR,
+                    };
+                }
+
                 // Only process contextually sensitive arguments in Round 2
                 if !self.is_contextually_sensitive(arg_type) {
                     continue;
@@ -2292,6 +2308,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 })
                 .collect()
         };
+        if !final_subst.is_empty() {
+            for (i, &arg_type) in arg_types.iter().enumerate() {
+                let Some(raw_param_type) =
+                    self.param_type_for_arg_index(&func.params, i, arg_types.len())
+                else {
+                    continue;
+                };
+                let final_param_type =
+                    instantiate_type(self.interner, raw_param_type, &final_subst);
+                if let Some(expected) = self
+                    .conflicting_contextual_signature_instantiation_type(arg_type, final_param_type)
+                {
+                    return CallResult::ArgumentTypeMismatch {
+                        index: i,
+                        expected,
+                        actual: arg_type,
+                        fallback_return: TypeId::ERROR,
+                    };
+                }
+            }
+        }
         let final_args: Vec<TypeId> = arg_types
             .iter()
             .enumerate()
@@ -2323,6 +2360,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 else {
                     return normalized;
                 };
+                if self.has_conflicting_contextual_signature_instantiation(normalized, param_type) {
+                    return normalized;
+                }
                 self.instantiate_generic_function_argument_against_target(normalized, param_type)
             })
             .collect();
