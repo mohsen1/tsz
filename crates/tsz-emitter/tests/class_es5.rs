@@ -79,6 +79,32 @@ fn test_class_with_extends() {
 }
 
 #[test]
+fn test_arrow_body_computed_object_temp_is_function_scoped() {
+    let output = emit_class(
+        r#"class C extends Base {
+            constructor() {
+                super();
+                () => {
+                    var obj = {
+                        // computed key comment
+                        [(super(), "prop")]() { }
+                    };
+                };
+            }
+        }"#,
+    );
+
+    assert!(
+        output.contains("function () {\n            var _a;"),
+        "Computed object temp should be scoped to the lowered arrow body: {output}"
+    );
+    assert!(
+        !output.contains("function C() {\n        var _a;"),
+        "Computed object temp should not be hoisted to the constructor: {output}"
+    );
+}
+
+#[test]
 fn test_class_with_method() {
     let output = emit_class(
         r#"class Greeter {
