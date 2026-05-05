@@ -705,6 +705,8 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Self::elide_type_reference_names(&printed, &elided_alias_names)
         };
+        let printed =
+            Self::simplify_inexact_optional_mapped_intersection_text(&printed).unwrap_or(printed);
         if Self::contains_portable_mapped_object_text(&printed)
             && let Some(expanded) =
                 self.expand_portable_intersection_type_text(self.arena, &printed)
@@ -930,6 +932,230 @@ impl<'a> DeclarationEmitter<'a> {
             out.push_str("/*elided*/ any");
         }
         out
+    }
+
+    pub(in crate::declaration_emitter) fn simplify_inexact_optional_mapped_intersection_text(
+        type_text: &str,
+    ) -> Option<String> {
+        let start = type_text.find("{} & {")?;
+        let first_start = start + "{} & ".len();
+        let first_end = Self::balanced_brace_end(type_text, first_start)?;
+        let mut next = Self::skip_ascii_whitespace(type_text, first_end)?;
+        if !type_text.get(next..)?.starts_with('&') {
+            return None;
+        }
+        next += 1;
+        next = Self::skip_ascii_whitespace(type_text, next)?;
+        if !type_text.get(next..)?.starts_with('{') {
+            return None;
+        }
+        let second_end = Self::balanced_brace_end(type_text, next)?;
+        let candidate = type_text.get(start..second_end)?;
+        if !candidate.contains("as undefined extends")
+            || !candidate.contains("[keyof unknown]")
+            || !candidate.contains("? keyof unknown : never")
+            || !candidate.contains("? never : keyof unknown")
+        {
+            return None;
+        }
+
+        let source_object = Self::inexact_optional_source_object_text(candidate)?;
+        let simplified = Self::inexact_optional_object_intersection_text(&source_object)?;
+        let mut output =
+            String::with_capacity(type_text.len() - candidate.len() + simplified.len());
+        output.push_str(type_text.get(..start)?);
+        output.push_str(&simplified);
+        output.push_str(type_text.get(second_end..)?);
+        Some(output)
+    }
+
+    fn inexact_optional_source_object_text(candidate: &str) -> Option<String> {
+        let marker = "undefined extends";
+        let marker_start = candidate.find(marker)? + marker.len();
+        let object_start = Self::skip_ascii_whitespace(candidate, marker_start)?;
+        if !candidate.get(object_start..)?.starts_with('{') {
+            return None;
+        }
+        let object_end = Self::balanced_brace_end(candidate, object_start)?;
+        candidate.get(object_start..object_end).map(str::to_string)
+    }
+
+    fn inexact_optional_object_intersection_text(source_object: &str) -> Option<String> {
+        let inner = source_object.trim().strip_prefix('{')?.strip_suffix('}')?;
+        let members = Self::split_object_members(inner);
+        if members.is_empty() {
+            return None;
+        }
+
+        let mut optional_members = Vec::new();
+        let mut required_members = Vec::new();
+        for member in members {
+            let (name, explicit_optional, type_text) = Self::parse_object_property_member(&member)?;
+            let type_includes_undefined = Self::type_text_contains_undefined(type_text);
+            if explicit_optional || type_includes_undefined {
+                let optional_name = name.strip_suffix('?').unwrap_or(name).trim();
+                let optional_type = if type_includes_undefined {
+                    type_text.to_string()
+                } else {
+                    format!("{type_text} | undefined")
+                };
+                optional_members.push(format!("    {optional_name}?: {optional_type};"));
+            } else {
+                required_members.push(format!("    {name}: {type_text};"));
+            }
+        }
+
+        if optional_members.is_empty() || required_members.is_empty() {
+            return None;
+        }
+
+        Some(format!(
+            "{{\n{}\n}} & {{\n{}\n}}",
+            optional_members.join("\n"),
+            required_members.join("\n")
+        ))
+    }
+
+    fn split_object_members(inner: &str) -> Vec<String> {
+        let mut members = Vec::new();
+        let mut start = 0usize;
+        for idx in Self::top_level_byte_indices(inner, b';') {
+            let member = inner.get(start..idx).map(str::trim).unwrap_or_default();
+            if !member.is_empty() {
+                members.push(member.to_string());
+            }
+            start = idx + 1;
+        }
+        let tail = inner.get(start..).map(str::trim).unwrap_or_default();
+        if !tail.is_empty() {
+            members.push(tail.to_string());
+        }
+        members
+    }
+
+    fn parse_object_property_member(member: &str) -> Option<(&str, bool, &str)> {
+        let colon = Self::top_level_byte_indices(member, b':')
+            .into_iter()
+            .next()?;
+        let name = member.get(..colon)?.trim();
+        let type_text = member.get(colon + 1..)?.trim();
+        let explicit_optional = name.ends_with('?');
+        Some((name, explicit_optional, type_text))
+    }
+
+    fn type_text_contains_undefined(type_text: &str) -> bool {
+        let bytes = type_text.as_bytes();
+        let needle = b"undefined";
+        let mut i = 0usize;
+        while i + needle.len() <= bytes.len() {
+            if &bytes[i..i + needle.len()] == needle {
+                let before_ok = i == 0 || !Self::is_ident_char(bytes[i - 1]);
+                let after = i + needle.len();
+                let after_ok = after == bytes.len() || !Self::is_ident_char(bytes[after]);
+                if before_ok && after_ok {
+                    return true;
+                }
+                i += needle.len();
+            } else {
+                i += 1;
+            }
+        }
+        false
+    }
+
+    fn skip_ascii_whitespace(text: &str, start: usize) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut i = start;
+        while i < bytes.len() && (bytes[i] as char).is_ascii_whitespace() {
+            i += 1;
+        }
+        Some(i)
+    }
+
+    fn top_level_byte_indices(text: &str, target: u8) -> Vec<usize> {
+        let bytes = text.as_bytes();
+        let mut indices = Vec::new();
+        let mut brace_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut paren_depth = 0usize;
+        let mut angle_depth = 0usize;
+        let mut quote: Option<u8> = None;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if let Some(q) = quote {
+                if b == b'\\' {
+                    i = (i + 2).min(bytes.len());
+                    continue;
+                }
+                if b == q {
+                    quote = None;
+                }
+                i += 1;
+                continue;
+            }
+
+            match b {
+                b'\'' | b'"' | b'`' => quote = Some(b),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'<' => angle_depth += 1,
+                b'>' => angle_depth = angle_depth.saturating_sub(1),
+                _ if b == target
+                    && brace_depth == 0
+                    && bracket_depth == 0
+                    && paren_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    indices.push(i);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        indices
+    }
+
+    fn balanced_brace_end(text: &str, start: usize) -> Option<usize> {
+        let bytes = text.as_bytes();
+        if bytes.get(start).copied() != Some(b'{') {
+            return None;
+        }
+        let mut depth = 0usize;
+        let mut quote: Option<u8> = None;
+        let mut i = start;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if let Some(q) = quote {
+                if b == b'\\' {
+                    i = (i + 2).min(bytes.len());
+                    continue;
+                }
+                if b == q {
+                    quote = None;
+                }
+                i += 1;
+                continue;
+            }
+
+            match b {
+                b'\'' | b'"' | b'`' => quote = Some(b),
+                b'{' => depth += 1,
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
     }
 
     fn type_reference_type_argument_end(type_text: &str, start: usize) -> Option<usize> {
