@@ -571,6 +571,13 @@ fn jsdoc_template_ignores_brace_form_for_binding() {
 }
 
 #[test]
+fn jsdoc_template_constraint_keeps_comma_names() {
+    let jsdoc = "* @template {{ a: number, b: string }} T,U A Comment";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(names_only(&params), vec!["T", "U"]);
+}
+
+#[test]
 fn jsdoc_template_const_modifier() {
     let jsdoc = "* @template const T";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
