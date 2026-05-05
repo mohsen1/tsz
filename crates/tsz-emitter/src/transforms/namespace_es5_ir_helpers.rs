@@ -189,9 +189,6 @@ pub(super) fn collect_runtime_exported_var_names_in_stmt(
                             if let Some(decl_node) = arena.get(decl_idx)
                                 && let Some(decl) = arena.get_variable_declaration(decl_node)
                             {
-                                if decl.initializer.is_none() {
-                                    continue;
-                                }
                                 collect_binding_names(arena, decl.name, names);
                             }
                         }
