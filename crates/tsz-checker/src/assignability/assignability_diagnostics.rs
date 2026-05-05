@@ -659,6 +659,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if assignable {
+            if self.emit_polymorphic_this_call_assignment_error(source_idx, target, diag_idx) {
+                return false;
+            }
             return true;
         }
 
