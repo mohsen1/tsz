@@ -535,6 +535,22 @@ impl<'a> CheckerState<'a> {
             return fallback_type;
         };
 
+        if ann_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(ann_node)
+            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+            && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
+            && matches!(name_ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
+            && let Some(args) = &type_ref.type_arguments
+            && let Some(&first_arg) = args.nodes.first()
+        {
+            let elem_type = self.get_type_from_type_node(first_arg);
+            let array_type = self.ctx.types.array(elem_type);
+            if name_ident.escaped_text.as_str() == "ReadonlyArray" {
+                return self.ctx.types.readonly_type(array_type);
+            }
+            return array_type;
+        }
+
         if ann_node.kind != syntax_kind_ext::TYPE_QUERY {
             return fallback_type;
         }

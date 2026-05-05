@@ -338,6 +338,9 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(prev_type);
         self.ensure_relation_input_ready(current_type);
 
+        let prev_type = self.array_application_to_array_for_redeclaration(prev_type);
+        let current_type = self.array_application_to_array_for_redeclaration(current_type);
+
         // Nominal identity check: when both types come from different named type
         // references (Application with different bases, or Lazy with different DefIds),
         // tsc's isTypeIdenticalTo rejects them even if structurally equivalent.
@@ -450,6 +453,21 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn array_application_to_array_for_redeclaration(&self, type_id: TypeId) -> TypeId {
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        if args.len() == 1
+            && tsz_solver::TypeDatabase::get_array_base_type(self.ctx.types)
+                .is_some_and(|array_base| base == array_base)
+        {
+            return self.ctx.types.array(args[0]);
+        }
+        type_id
     }
 
     /// Widen literal return types within function signatures for TS2403 comparison.

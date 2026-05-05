@@ -552,6 +552,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return res;
         }
 
+        // `Array<T>` and `T[]` are redeclaration-identical when their element
+        // types are identical. Do this before normalization, since normalization
+        // expands lib-backed `Application(Array, [T])` into an object shape.
+        if let (Some(a_elem), Some(b_elem)) = (
+            self.array_element_for_redeclaration(a),
+            self.array_element_for_redeclaration(b),
+        ) {
+            return self.are_types_identical_for_redeclaration(a_elem, b_elem);
+        }
+
         // 5. Normalize Application/Mapped/Lazy types before structural comparison.
         // Required<{a?: string}> must evaluate to {a: string} before bidirectional
         // subtype checking, just as is_assignable_impl() does via normalize_assignability_operands.
@@ -663,6 +673,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             // Fast identity failed — fall through to bidirectional subtype
         }
 
+        // Also handle cases where normalization itself exposes direct array types.
+        if let (Some(a_elem), Some(b_elem)) = (
+            self.array_element_for_redeclaration(a),
+            self.array_element_for_redeclaration(b),
+        ) {
+            return self.are_types_identical_for_redeclaration(a_elem, b_elem);
+        }
+
         // For both union and non-union types, delegate to bidirectional subtyping.
         // This handles intersection distribution, typeof resolution, and other
         // structural equivalences that TypeId-level identity misses.
@@ -732,6 +750,28 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             "are_types_identical_for_redeclaration: result"
         );
         fwd && bwd
+    }
+
+    fn array_element_for_redeclaration(&self, type_id: TypeId) -> Option<TypeId> {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Array(elem)) => Some(elem),
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                if app.args.len() == 1
+                    && self
+                        .subtype
+                        .resolver
+                        .get_array_base_type()
+                        .or_else(|| self.interner.get_array_base_type())
+                        .is_some_and(|array_base| app.base == array_base)
+                {
+                    Some(app.args[0])
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     fn overloaded_callable_signatures_match_in_order(&mut self, a: TypeId, b: TypeId) -> bool {

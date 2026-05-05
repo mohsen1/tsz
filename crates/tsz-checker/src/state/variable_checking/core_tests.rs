@@ -749,6 +749,26 @@ console.log("test");
             "No TS2403 for module-scoped declare var vs lib global: {ts2403:?}"
         );
     }
+
+    #[test]
+    fn array_shorthand_and_array_type_reference_no_ts2403() {
+        let source = r#"
+var xs: Array<{ name: string }>;
+var xs = [{ name: "x" }];
+var flags: Array<boolean>;
+var flags = [true, false];
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "Array<T> and T[] redeclarations should be TS2403-identical: {ts2403:?}"
+        );
+    }
 }
 
 #[cfg(test)]
