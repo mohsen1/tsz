@@ -66,11 +66,21 @@ impl<'a> CheckerState<'a> {
             {
                 return self.current_file_commonjs_namespace_type();
             }
-            // JS files implicitly have CommonJS globals (require, exports, module, etc.)
-            // tsc never emits TS2580 for JS files — they're treated as CommonJS by default
             if self.is_js_file() {
-                if name == "exports" {
-                    if self.current_source_file_has_esm_syntax() {
+                match name {
+                    "exports" => {
+                        if self.current_source_file_has_esm_syntax() {
+                            self.error_at_node_msg(
+                                idx,
+                                crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                                &[name],
+                            );
+                            return TypeId::ERROR;
+                        }
+                        return self.current_file_commonjs_namespace_type();
+                    }
+                    "module" | "require" => return TypeId::ANY,
+                    "__dirname" | "__filename" => {
                         self.error_at_node_msg(
                             idx,
                             crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
@@ -78,11 +88,9 @@ impl<'a> CheckerState<'a> {
                         );
                         return TypeId::ERROR;
                     }
-                    return self.current_file_commonjs_namespace_type();
+                    _ => {}
                 }
-                return TypeId::ANY;
             }
-            // Otherwise, emit TS2591 suggesting @types/node installation
             self.error_cannot_find_name_install_node_types(name, idx);
             return TypeId::ERROR;
         }

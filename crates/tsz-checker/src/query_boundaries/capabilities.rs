@@ -7,7 +7,7 @@
 //!
 //! Diagnostic families routed through this boundary:
 //! - TS2318: Cannot find global type (missing lib types)
-//! - TS2591: Cannot find name (Node.js globals)
+//! - TS2580/TS2591: Cannot find name (Node.js globals)
 //! - TS2583: Cannot find name (ES2015+ lib suggestion)
 //! - TS2584: Cannot find name (DOM lib suggestion)
 //! - TS2823: Import attributes require specific module option
@@ -55,11 +55,11 @@ pub enum MissingGlobalKind {
     Es2015PlusType,
     /// DOM/ScriptHost global → TS2584
     DomGlobal,
-    /// Node.js global → TS2591
+    /// Node.js global → TS2580/TS2591
     NodeGlobal,
-    /// jQuery global → TS2592
+    /// jQuery global → TS2581/TS2592
     JQueryGlobal,
-    /// Test runner global → TS2593
+    /// Test runner global → TS2582/TS2593
     TestRunnerGlobal,
     /// Bun global → TS2868
     BunGlobal,
@@ -98,6 +98,7 @@ pub struct EnvironmentCapabilities {
     pub experimental_decorators: bool,
     pub ignore_deprecations: bool,
     pub verbatim_module_syntax: bool,
+    pub types_explicitly_set: bool,
 
     // --- Deprecation state (set by driver after config parsing) ---
     /// Whether TS5107/TS5101 deprecation diagnostics were produced during config parsing.
@@ -157,6 +158,7 @@ impl EnvironmentCapabilities {
             experimental_decorators: options.experimental_decorators,
             ignore_deprecations: options.ignore_deprecations,
             verbatim_module_syntax: options.verbatim_module_syntax,
+            types_explicitly_set: options.types_explicitly_set,
             has_deprecation_diagnostics: false, // set by driver after config parsing
         }
     }
@@ -256,9 +258,9 @@ impl EnvironmentCapabilities {
 // =============================================================================
 
 /// Check if a name is a known Node.js global or built-in module name
-/// that requires @types/node (TS2591).
+/// that requires @types/node (TS2580/TS2591).
 ///
-/// tsc emits TS2591 for both:
+/// tsc emits the Node missing-global family for:
 /// 1. Node.js runtime globals: `require`, `process`, `Buffer`, etc.
 /// 2. Node.js built-in module names used as identifiers (e.g. from
 ///    `import fs = require("fs")`): `fs`, `url`, `events`, etc.
@@ -474,12 +476,12 @@ pub(crate) fn is_known_dom_global(name: &str) -> bool {
     )
 }
 
-/// Check if a name is a known jQuery global that requires @types/jquery (TS2592).
+/// Check if a name is a known jQuery global that requires @types/jquery (TS2581/TS2592).
 pub(crate) fn is_known_jquery_global(name: &str) -> bool {
     matches!(name, "$" | "jQuery")
 }
 
-/// Check if a name is a known test runner global that requires @types/jest or @types/mocha (TS2593).
+/// Check if a name is a known test runner global that requires @types/jest or @types/mocha (TS2582/TS2593).
 pub(crate) fn is_known_test_runner_global(name: &str) -> bool {
     matches!(name, "describe" | "suite" | "it" | "test")
 }

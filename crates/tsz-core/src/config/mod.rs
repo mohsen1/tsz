@@ -734,6 +734,7 @@ pub fn resolve_compiler_options(
             })
             .collect();
         resolved.types = Some(list);
+        resolved.checker.types_explicitly_set = true;
     }
 
     if let Some(type_roots) = options.type_roots.as_ref() {

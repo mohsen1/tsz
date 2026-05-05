@@ -31,6 +31,9 @@ pub struct CheckerOptions {
     /// This corresponds to the --noTypesAndSymbols compiler flag.
     /// Prevents loading default lib.d.ts files which provide types like Array, Object, etc.
     pub no_types_and_symbols: bool,
+    /// Whether compilerOptions.types was explicitly set.
+    /// This distinguishes TS2580/2581/2582 from TS2591/2592/2593 for missing external globals.
+    pub types_explicitly_set: bool,
     /// Target ECMAScript version (ES3, ES5, ES2015, ES2016, etc.)
     /// Controls which built-in types are available (e.g., Promise requires ES2015)
     /// Defaults to ES3 for maximum compatibility
@@ -203,6 +206,7 @@ impl Default for CheckerOptions {
             exact_optional_property_types: false,
             no_lib: false,
             no_types_and_symbols: false,
+            types_explicitly_set: false,
             target: ScriptTarget::default(),
             module: ModuleKind::default(),
             es_module_interop: false,
