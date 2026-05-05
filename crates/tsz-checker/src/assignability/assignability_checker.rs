@@ -993,6 +993,10 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     candidate,
                 ) || crate::query_boundaries::common::is_conditional_type(self.ctx.types, candidate)
+                    || crate::query_boundaries::common::is_string_intrinsic_type(
+                        self.ctx.types,
+                        candidate,
+                    )
                     || crate::query_boundaries::common::is_mapped_type(self.ctx.types, candidate)
                     || crate::query_boundaries::common::intersection_members(
                         self.ctx.types,
