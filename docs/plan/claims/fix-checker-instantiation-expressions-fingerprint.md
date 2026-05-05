@@ -1,9 +1,9 @@
-# [WIP] fix(checker): align instantiation expression fingerprints
+# fix(checker): align instantiation expression fingerprints
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-instantiation-expressions-fingerprint`
 - **PR**: #2814
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -18,13 +18,19 @@ mismatch around instantiation expression diagnostics.
 
 - `docs/plan/claims/fix-checker-instantiation-expressions-fingerprint.md`
   (claim)
-- Compiler files TBD after root-cause analysis.
-- Owning-crate regression test TBD after root-cause analysis.
+- `crates/tsz-checker/src/dispatch.rs`
+- `crates/tsz-checker/src/state/type_resolution/constructors.rs`
+- `crates/tsz-checker/src/types/type_node_advanced.rs`
+- `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs`
+- `crates/tsz-checker/src/checkers/generic_checker/constraint_validation.rs`
+- `crates/tsz-checker/src/error_reporter/generics.rs`
+- `crates/tsz-checker/src/state/type_environment/formatting.rs`
+- `crates/tsz-checker/src/tests/dispatch_tests.rs`
 
 ## Verification
 
 - `cargo check --package tsz-checker`
-- `cargo check --package tsz-solver`
-- Owning-crate regression test once root-cause is isolated.
+- `cargo test -p tsz-checker dispatch_tests -- --nocapture`
 - `./scripts/conformance/conformance.sh run --filter "instantiationExpressions" --verbose`
 - `./scripts/conformance/conformance.sh run --max 200`
+- `scripts/githooks/pre-commit`

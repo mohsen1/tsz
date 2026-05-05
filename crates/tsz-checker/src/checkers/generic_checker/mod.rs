@@ -1153,4 +1153,5 @@ mod tests {
 mod constraint_validation;
 mod failed_typeof_instantiation;
 mod infer_conditional_constraints;
+mod instantiation_expression_constraints;
 mod mapped_constraint_helpers;

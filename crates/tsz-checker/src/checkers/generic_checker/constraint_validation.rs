@@ -14,7 +14,7 @@ impl<'a> CheckerState<'a> {
     /// Reports TS2344 when a type argument doesn't satisfy its constraint.
     ///
     /// Shared implementation used by call expressions, new expressions, and type references.
-    pub(super) fn validate_type_args_against_params(
+    pub(crate) fn validate_type_args_against_params(
         &mut self,
         type_params: &[tsz_solver::TypeParamInfo],
         type_args_list: &tsz_parser::parser::NodeList,
@@ -122,6 +122,29 @@ impl<'a> CheckerState<'a> {
                             arg_idx,
                         );
                     }
+                    continue;
+                }
+                if self.is_successful_typeof_instantiation_arg(type_arg)
+                    && self.constraint_is_callable_or_constructable(constraint)
+                {
+                    continue;
+                }
+                let constraint_resolved_for_display = self.resolve_lazy_type(constraint);
+                if self.format_type_diagnostic(type_arg).starts_with("typeof ")
+                    && self
+                        .format_type_diagnostic(constraint_resolved_for_display)
+                        .contains("new ")
+                {
+                    continue;
+                }
+                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                        node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY
+                    })
+                    && self
+                        .format_type_diagnostic(constraint_resolved_for_display)
+                        .contains("new ")
+                {
                     continue;
                 }
 
