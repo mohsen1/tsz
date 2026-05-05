@@ -186,13 +186,86 @@ impl<'a> TypePrinter<'a> {
     }
 
     pub(crate) fn widen_synthesized_method_return_type(&self, type_id: TypeId) -> TypeId {
-        match visitor::literal_value(self.interner, type_id) {
-            Some(tsz_solver::types::LiteralValue::String(_)) => TypeId::STRING,
-            Some(tsz_solver::types::LiteralValue::Number(_)) => TypeId::NUMBER,
-            Some(tsz_solver::types::LiteralValue::Boolean(_)) => TypeId::BOOLEAN,
-            Some(tsz_solver::types::LiteralValue::BigInt(_)) => TypeId::BIGINT,
-            None => type_id,
+        self.widen_synthesized_method_return_type_depth(type_id, 0)
+    }
+
+    fn widen_synthesized_method_return_type_depth(&self, type_id: TypeId, depth: usize) -> TypeId {
+        if depth > 16 {
+            return type_id;
         }
+        match visitor::literal_value(self.interner, type_id) {
+            Some(tsz_solver::types::LiteralValue::String(_)) => return TypeId::STRING,
+            Some(tsz_solver::types::LiteralValue::Number(_)) => return TypeId::NUMBER,
+            Some(tsz_solver::types::LiteralValue::Boolean(_)) => return TypeId::BOOLEAN,
+            Some(tsz_solver::types::LiteralValue::BigInt(_)) => return TypeId::BIGINT,
+            None => {}
+        }
+
+        if let Some(list_id) = visitor::union_list_id(self.interner, type_id) {
+            let members = self.interner.type_list(list_id);
+            let widened: Vec<_> = members
+                .iter()
+                .map(|&member| self.widen_synthesized_method_return_type_depth(member, depth + 1))
+                .collect();
+            return self.interner.union(widened);
+        }
+
+        if let Some(func_id) = visitor::function_shape_id(self.interner, type_id) {
+            let mut shape = (*self.interner.function_shape(func_id)).clone();
+            shape.return_type =
+                self.widen_synthesized_method_return_type_depth(shape.return_type, depth + 1);
+            return self.interner.function(shape);
+        }
+
+        if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+        {
+            let mut shape = (*self.interner.object_shape(shape_id)).clone();
+            for prop in &mut shape.properties {
+                prop.type_id =
+                    self.widen_synthesized_method_return_type_depth(prop.type_id, depth + 1);
+                prop.write_type =
+                    self.widen_synthesized_method_return_type_depth(prop.write_type, depth + 1);
+            }
+            if let Some(index) = &mut shape.string_index {
+                index.value_type =
+                    self.widen_synthesized_method_return_type_depth(index.value_type, depth + 1);
+            }
+            if let Some(index) = &mut shape.number_index {
+                index.value_type =
+                    self.widen_synthesized_method_return_type_depth(index.value_type, depth + 1);
+            }
+            return self.interner.object_with_index(shape);
+        }
+
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let mut shape = (*self.interner.callable_shape(callable_id)).clone();
+            for sig in &mut shape.call_signatures {
+                sig.return_type =
+                    self.widen_synthesized_method_return_type_depth(sig.return_type, depth + 1);
+            }
+            for sig in &mut shape.construct_signatures {
+                sig.return_type =
+                    self.widen_synthesized_method_return_type_depth(sig.return_type, depth + 1);
+            }
+            for prop in &mut shape.properties {
+                prop.type_id =
+                    self.widen_synthesized_method_return_type_depth(prop.type_id, depth + 1);
+                prop.write_type =
+                    self.widen_synthesized_method_return_type_depth(prop.write_type, depth + 1);
+            }
+            if let Some(index) = &mut shape.string_index {
+                index.value_type =
+                    self.widen_synthesized_method_return_type_depth(index.value_type, depth + 1);
+            }
+            if let Some(index) = &mut shape.number_index {
+                index.value_type =
+                    self.widen_synthesized_method_return_type_depth(index.value_type, depth + 1);
+            }
+            return self.interner.callable(shape);
+        }
+
+        type_id
     }
 
     /// Check if a name is a valid JavaScript/TypeScript identifier
@@ -928,11 +1001,12 @@ impl<'a> TypePrinter<'a> {
                 .param_name
                 .map(|a| self.resolve_atom(a))
                 .unwrap_or_else(|| "x".to_string());
+            let widened = self.widen_synthesized_method_return_type(idx.value_type);
             parts.push(format!(
                 "{}[{}: number]: {}",
                 readonly,
                 param,
-                self.print_type(idx.value_type)
+                self.print_type(widened)
             ));
         }
         if let Some(ref idx) = callable.string_index {
@@ -941,11 +1015,12 @@ impl<'a> TypePrinter<'a> {
                 .param_name
                 .map(|a| self.resolve_atom(a))
                 .unwrap_or_else(|| "x".to_string());
+            let widened = self.widen_synthesized_method_return_type(idx.value_type);
             parts.push(format!(
                 "{}[{}: string]: {}",
                 readonly,
                 param,
-                self.print_type(idx.value_type)
+                self.print_type(widened)
             ));
         }
 
