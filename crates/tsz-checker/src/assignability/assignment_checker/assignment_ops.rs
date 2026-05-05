@@ -84,6 +84,23 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|sym_id| self.assignment_target_is_control_flow_typed_any_symbol(sym_id))
     }
 
+    fn is_evolving_array_element_assignment_target(&mut self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        if access.question_dot_token {
+            return false;
+        }
+        let receiver_ref = self.receiver_reference_for_evolving_array_mutation(access.expression);
+        self.reference_is_reachable_evolving_array_mutation_target(receiver_ref)
+    }
+
     // =========================================================================
     // Assignment Expression Checking
     // =========================================================================
@@ -864,6 +881,7 @@ impl<'a> CheckerState<'a> {
 
         if !has_explicit_jsdoc_left_type
             && (self.is_control_flow_typed_any_assignment_target(left_idx)
+                || self.is_evolving_array_element_assignment_target(left_idx)
                 || self.is_checked_js_implicit_any_member_assignment_target(left_idx))
         {
             return right_type;

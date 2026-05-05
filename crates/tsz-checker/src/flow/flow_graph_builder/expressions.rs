@@ -395,6 +395,11 @@ impl<'a> FlowGraphBuilder<'a> {
 
                     // Check for array mutation and create appropriate flow node
                     if self.is_array_mutation_call(expr_idx) {
+                        if let Some(callee_node) = self.arena.get(call.expression)
+                            && let Some(access) = self.arena.get_access_expr(callee_node)
+                        {
+                            self.record_node_flow(access.expression);
+                        }
                         let flow = self.create_flow_array_mutation(expr_idx);
                         self.current_flow = flow;
                     }

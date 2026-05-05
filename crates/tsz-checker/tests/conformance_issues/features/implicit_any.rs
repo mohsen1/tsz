@@ -962,6 +962,59 @@ function f() {
 }
 
 #[test]
+fn test_evolving_array_push_snapshots_and_branch_merges_match_tsc() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare function cond(): boolean;
+
+function f6() {
+    let x;
+    if (cond()) {
+        x = [];
+        x.push(5);
+        x.push("hello");
+    }
+    else {
+        x = [true];
+    }
+    x.push(99);
+}
+
+function f7() {
+    let x = [];
+    x.push(5);
+    let y = x;
+    x.push("hello");
+    y.push("hello");
+}
+        "#,
+        opts,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains("Argument of type '99'")
+                && message.contains("parameter of type 'never'")
+        }),
+        "Expected TS2345 for pushing 99 into the merged boolean[] | (string | number)[] array.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains("Argument of type 'string'")
+                && message.contains("parameter of type 'number'")
+        }),
+        "Expected TS2345 for pushing string into the number[] snapshot.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts7034_evolving_array_skips_length_and_push_sites() {
     let opts = CheckerOptions {
         no_implicit_any: true,
