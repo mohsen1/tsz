@@ -168,6 +168,44 @@ if (g) {}
 }
 
 #[test]
+fn compile_checked_js_yield_outside_generator_reports_ts1163() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "allowJs": true,
+            "checkJs": true,
+            "skipLibCheck": true,
+            "lib": ["es2020"]
+          },
+          "files": ["yield-outside-generator.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("yield-outside-generator.js"),
+        r#"// @ts-check
+function f() {
+  yield 1;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::A_YIELD_EXPRESSION_IS_ONLY_ALLOWED_IN_A_GENERATOR_BODY),
+        "Expected TS1163 for yield in checked JS non-generator, got: {codes:?}"
+    );
+}
+
+#[test]
 fn instanceof_rhs_validation_uses_lib_function_when_local_type_shadows_function() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
