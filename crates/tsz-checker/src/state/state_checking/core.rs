@@ -116,6 +116,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         decl_idx: NodeIndex,
         init_idx: NodeIndex,
+        is_const: bool,
     ) -> bool {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_parser::parser::syntax_kind_ext;
@@ -195,7 +196,13 @@ impl<'a> CheckerState<'a> {
             if self.is_isolated_decl_simple_computed_name(name_idx) {
                 continue;
             }
-            self.report_isolated_decl_computed_name_dependency(name_idx);
+            if is_const {
+                if !self.is_isolated_decl_const_computed_name_requiring_diagnostic(name_idx) {
+                    continue;
+                }
+            } else {
+                self.report_isolated_decl_computed_name_dependency(name_idx);
+            }
 
             self.error_at_node(
                 name_idx,
@@ -263,6 +270,42 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    #[allow(dead_code)]
+    fn is_isolated_decl_const_computed_name_requiring_diagnostic(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        if let Some(sym_id) = self.resolve_identifier_symbol(access.expression)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
+        {
+            return false;
+        }
+
+        true
     }
 
     #[allow(dead_code)]
