@@ -54,6 +54,48 @@ fn test_global_class_name_shadowed_by_type_param_uses_global_this() {
 }
 
 #[test]
+fn test_default_export_type_text_retains_local_type_alias_dependency() {
+    let source = r#"
+type Experiment<Name> = {
+    name: Name;
+};
+declare const createExperiment: <Name extends string>(
+    options: Experiment<Name>
+) => Experiment<Name>;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_used_symbols(FxHashMap::default());
+
+    emitter.retain_local_type_names_for_public_api(r#"Experiment<"foo">"#);
+
+    let experiment_sym = binder
+        .file_locals
+        .get("Experiment")
+        .expect("missing Experiment symbol");
+    let create_sym = binder
+        .file_locals
+        .get("createExperiment")
+        .expect("missing createExperiment symbol");
+    let used = emitter.used_symbols.as_ref().expect("missing used symbols");
+    assert!(
+        used.contains_key(&experiment_sym),
+        "Expected type text to retain local type alias dependency"
+    );
+    assert!(
+        !used.contains_key(&create_sym),
+        "Did not expect type text retention to keep local value helpers"
+    );
+}
+
+#[test]
 fn test_static_super_method_call_preserves_return_type() {
     let output = emit_dts_with_binding(
         r#"
