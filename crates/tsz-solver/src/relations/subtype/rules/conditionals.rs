@@ -523,6 +523,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // `T extends T ? T : never` is exactly `T`, even for `T = never`
+        // where distributivity also produces `never`. This target-position
+        // identity shows up through Extract<T, T>-style aliases.
+        if source == target.check_type
+            && target.extends_type == target.check_type
+            && target.true_type == target.check_type
+            && target.false_type == TypeId::NEVER
+        {
+            return SubtypeResult::True;
+        }
+
         let target_contains_unbound_infer =
             crate::type_queries::contains_infer_types_db(self.interner, target.extends_type)
                 || crate::type_queries::contains_infer_types_db(self.interner, target.true_type)

@@ -605,6 +605,34 @@ fn test_extract_pattern_assignable_to_extends_type() {
 }
 
 #[test]
+fn test_type_parameter_assignable_to_identity_extract_target() {
+    // Extract<T, T> = T extends T ? T : never is equivalent to T, including
+    // the distributive T=never case where both sides reduce to never.
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let identity_extract = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: t_param,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(t_param, identity_extract),
+        "T should be assignable to the identity conditional Extract<T, T>"
+    );
+}
+
+#[test]
 fn test_extract_pattern_assignable_to_broader_type() {
     // Extract<T, string> = T extends string ? T : never
     // Constraint = T & string
