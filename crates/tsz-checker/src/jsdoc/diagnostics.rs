@@ -1135,6 +1135,10 @@ impl<'a> CheckerState<'a> {
                 if self
                     .resolve_jsdoc_implicit_any_builtin_type(simple_expr)
                     .is_some()
+                    || crate::types_domain::queries::lib_resolution::keyword_name_to_type_id(
+                        simple_expr,
+                    )
+                    .is_some()
                     || self.source_file_declares_jsdoc_template(simple_expr)
                     || Self::parse_jsdoc_typedefs(&source_text)
                         .iter()

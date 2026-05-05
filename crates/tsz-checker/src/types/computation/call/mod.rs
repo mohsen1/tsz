@@ -253,7 +253,8 @@ impl<'a> CheckerState<'a> {
             return true;
         };
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
-            return var_decl.type_annotation.is_some();
+            return var_decl.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_annotation(decl_idx);
         }
         if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
             return param.type_annotation.is_some();
@@ -268,12 +269,35 @@ impl<'a> CheckerState<'a> {
             return accessor.type_annotation.is_some();
         }
         if let Some(func) = self.ctx.arena.get_function(decl_node) {
-            return func.type_annotation.is_some();
+            return func.type_annotation.is_some()
+                || self.declaration_has_jsdoc_assertion_return(decl_idx);
         }
         if let Some(sig) = self.ctx.arena.get_signature(decl_node) {
             return sig.type_annotation.is_some();
         }
         true
+    }
+
+    fn declaration_has_jsdoc_type_annotation(&self, decl_idx: NodeIndex) -> bool {
+        let Some(source_file) = self.source_file_data_for_node(decl_idx) else {
+            return false;
+        };
+        if source_file.comments.is_empty() {
+            return false;
+        }
+        let source_text = source_file.text.to_string();
+        let comments = source_file.comments.clone();
+        self.try_jsdoc_with_ancestor_walk(decl_idx, &comments, &source_text)
+            .as_deref()
+            .and_then(Self::extract_jsdoc_type_expression)
+            .is_some()
+    }
+
+    fn declaration_has_jsdoc_assertion_return(&self, decl_idx: NodeIndex) -> bool {
+        self.find_jsdoc_for_function(decl_idx)
+            .as_deref()
+            .and_then(Self::jsdoc_returns_type_predicate)
+            .is_some_and(|(asserts, _, _)| asserts)
     }
 
     fn first_unannotated_callback_param_name_in_call(&self, idx: NodeIndex) -> Option<NodeIndex> {
