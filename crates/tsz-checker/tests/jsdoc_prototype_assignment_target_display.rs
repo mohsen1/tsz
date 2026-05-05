@@ -14,6 +14,13 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn diagnostics_for_js(source: &str) -> Vec<(u32, String)> {
+    diagnostics_for_js_with_no_implicit_any(source, false)
+}
+
+fn diagnostics_for_js_with_no_implicit_any(
+    source: &str,
+    no_implicit_any: bool,
+) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -27,7 +34,7 @@ fn diagnostics_for_js(source: &str) -> Vec<(u32, String)> {
         strict: true,
         no_implicit_this: true,
         strict_null_checks: true,
-        no_implicit_any: false,
+        no_implicit_any,
         ..CheckerOptions::default()
     };
     let mut checker = CheckerState::new(
@@ -116,6 +123,59 @@ mm.addon
                     == "Property 'addon' does not exist on type '{ set: () => void; get(): void; }'."
         }),
         "prototype assignment target should display the prior object-literal prototype shape; got: {diags:?}"
+    );
+}
+
+#[test]
+fn checked_js_chained_assignment_jsdoc_flows_to_all_targets() {
+    let diags = diagnostics_for_js_with_no_implicit_any(
+        r#"
+function A () {
+    this.x = 1
+    /** @type {1} */
+    this.first = this.second = 1
+}
+/** @param {number} n */
+A.prototype.y = A.prototype.z = function f(n) {
+    return n + this.x
+}
+/** @param {number} m */
+A.s = A.t = function g(m) {
+    return m + this.x
+}
+var a = new A()
+a.y('no')
+a.z('not really')
+A.s('still no')
+A.t('not here either')
+a.first = 10
+"#,
+        true,
+    );
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'x' does not exist on type 'typeof A'."
+        }),
+        "static chained assignment should type `this` as typeof A; got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'z' does not exist on type 'A'."
+        }),
+        "prototype chained assignment should declare both prototype targets; got: {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .filter(|(code, message)| {
+                *code == 2345
+                    && message
+                        == "Argument of type 'string' is not assignable to parameter of type 'number'."
+            })
+            .count()
+            >= 2,
+        "prototype chained callable targets should preserve the JSDoc parameter type; got: {diags:?}"
     );
 }
 

@@ -361,6 +361,40 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(owner);
             }
+            if let Some(owner) = self
+                .find_enclosing_non_arrow_function(receiver)
+                .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
+                .and_then(|lhs_idx| {
+                    let lhs_node = self.ctx.arena.get(lhs_idx)?;
+                    if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let access = self.ctx.arena.get_access_expr(lhs_node)?;
+                    let receiver_node = self.ctx.arena.get(access.expression)?;
+                    if receiver_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || receiver_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let sym_id =
+                        self.resolve_identifier_symbol(access.expression)
+                            .or_else(|| {
+                                self.expression_text(access.expression)
+                                    .and_then(|text| self.ctx.binder.file_locals.get(text.as_str()))
+                            })?;
+                    let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                    self.ctx
+                        .arena
+                        .get(symbol.value_declaration)
+                        .is_some_and(|decl| decl.is_function_like())
+                        .then(|| self.expression_text(access.expression))
+                        .flatten()
+                })
+            {
+                return Some(format!("typeof {owner}"));
+            }
             // Fallback: a top-level (or nested) JS function with expando
             // assignments uses the function's own name as the apparent type
             // for `this`. tsc displays `Property 'X' does not exist on type
