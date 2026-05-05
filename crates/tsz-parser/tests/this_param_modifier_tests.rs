@@ -26,6 +26,10 @@ fn count_error_code(parser: &ParserState, code: u32) -> usize {
         .count()
 }
 
+fn diagnostic_codes(parser: &ParserState) -> Vec<u32> {
+    parser.get_diagnostics().iter().map(|d| d.code).collect()
+}
+
 /// `async this:` should emit TS1433, not TS1090. tsc collapses the modifier
 /// error into the `this`-parameter error.
 #[test]
@@ -123,5 +127,87 @@ fn static_this_in_function_type_still_emits_ts1090() {
         !has_error_code(&parser, 1433),
         "Function type parameter parsing should not synthesize TS1433. diagnostics={:?}",
         parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn rest_this_parameter_reports_reserved_word() {
+    let source = "function f(...this: C): number { return 0; }";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    assert_eq!(diagnostic_codes(&parser), vec![1359], "{diagnostics:?}");
+
+    let this_pos = source.find("this").expect("this token") as u32;
+    assert_eq!(diagnostics[0].start, this_pos, "{diagnostics:?}");
+}
+
+#[test]
+fn optional_this_parameter_reports_missing_comma() {
+    let source = "function f(this?: C): number { return 0; }";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    assert_eq!(diagnostic_codes(&parser), vec![1005], "{diagnostics:?}");
+
+    let question_pos = source.find('?').expect("question token") as u32;
+    assert_eq!(diagnostics[0].start, question_pos, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].message, "',' expected.");
+}
+
+#[test]
+fn this_parameter_initializer_new_call_matches_tsc_recovery() {
+    let source = "function f(this: C = new C()): number { return 0; }";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<(u32, u32, &str)> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.as_str()))
+        .collect();
+
+    let expected = vec![
+        (1005, source.find('=').unwrap() as u32, "',' expected."),
+        (
+            1359,
+            source.find("new").unwrap() as u32,
+            "Identifier expected. 'new' is a reserved word that cannot be used here.",
+        ),
+        (
+            1005,
+            source.find("C()").unwrap() as u32 + 1,
+            "',' expected.",
+        ),
+        (
+            1109,
+            source.find("()").unwrap() as u32 + 1,
+            "Expression expected.",
+        ),
+        (
+            1005,
+            source.find("): number").unwrap() as u32,
+            "';' expected.",
+        ),
+        (
+            1128,
+            source.find(": number").unwrap() as u32,
+            "Declaration or statement expected.",
+        ),
+        (
+            1434,
+            source.find("number").unwrap() as u32,
+            "Unexpected keyword or identifier.",
+        ),
+    ];
+
+    assert_eq!(actual, expected, "{diagnostics:?}");
+}
+
+#[test]
+fn this_parameter_initializer_identifier_only_reports_missing_comma() {
+    let source = "function f(this: C = value): number { return 0; }";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    assert_eq!(diagnostic_codes(&parser), vec![1005], "{diagnostics:?}");
+    assert_eq!(
+        diagnostics[0].start,
+        source.find('=').expect("equals token") as u32
     );
 }

@@ -482,6 +482,86 @@ impl ParserState {
         }
     }
 
+    fn report_this_parameter_initializer_recovery(&mut self) {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        let saved_state = self.scanner.save_state();
+        let saved_token = self.current_token;
+
+        self.next_token();
+        if self.is_token(SyntaxKind::NewKeyword) {
+            let new_start = self.token_pos();
+            self.parse_error_at(
+                new_start,
+                self.token_end().saturating_sub(new_start),
+                "Identifier expected. 'new' is a reserved word that cannot be used here.",
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+            );
+            self.next_token();
+
+            if self.is_identifier_or_keyword() {
+                self.next_token();
+            }
+
+            if self.is_token(SyntaxKind::OpenParenToken) {
+                let open_start = self.token_pos();
+                self.parse_error_at(
+                    open_start,
+                    self.token_end().saturating_sub(open_start),
+                    "',' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+                self.next_token();
+            }
+
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                let close_start = self.token_pos();
+                self.parse_error_at(
+                    close_start,
+                    self.token_end().saturating_sub(close_start),
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+                self.next_token();
+            }
+
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                let close_start = self.token_pos();
+                self.parse_error_at(
+                    close_start,
+                    self.token_end().saturating_sub(close_start),
+                    "';' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+                self.next_token();
+            }
+
+            if self.is_token(SyntaxKind::ColonToken) {
+                let colon_start = self.token_pos();
+                self.parse_error_at(
+                    colon_start,
+                    self.token_end().saturating_sub(colon_start),
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+                self.next_token();
+            }
+
+            if self.is_identifier_or_keyword() {
+                let type_start = self.token_pos();
+                self.parse_error_at(
+                    type_start,
+                    self.token_end().saturating_sub(type_start),
+                    "Unexpected keyword or identifier.",
+                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                );
+            }
+        }
+
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+    }
+
     /// Parse a single parameter
     pub(crate) fn parse_parameter(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -556,7 +636,10 @@ impl ParserState {
 
         let parameter_name_is_reserved_word =
             self.is_reserved_word() && !self.is_token(SyntaxKind::DefaultKeyword);
-        let is_this_parameter = self.is_token(SyntaxKind::ThisKeyword);
+        let is_invalid_rest_this_parameter =
+            dot_dot_dot_token && self.is_token(SyntaxKind::ThisKeyword);
+        let is_this_parameter =
+            self.is_token(SyntaxKind::ThisKeyword) && !is_invalid_rest_this_parameter;
         // Literal reserved words (`null`, `true`, `false`) cannot form parameter
         // names at all. tsc still parses the type annotation but anchors a
         // TS1138 `Parameter declaration expected.` diagnostic at the following
@@ -580,6 +663,21 @@ impl ParserState {
             let pattern = self.parse_array_binding_pattern();
             self.context_flags = saved_flags;
             pattern
+        } else if is_invalid_rest_this_parameter {
+            let reserved_start = self.token_pos();
+            let reserved_end = self.token_end();
+            self.error_reserved_word_identifier();
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                reserved_start,
+                reserved_end,
+                IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
         } else if self.is_token(SyntaxKind::ThisKeyword) {
             let start_pos = self.token_pos();
             let end_pos = self.token_end();
@@ -675,32 +773,42 @@ impl ParserState {
         // Parse optional question mark
         let question_pos = self.token_pos();
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
+        if is_this_parameter && question_token {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(question_pos, 1, "',' expected.", diagnostic_codes::EXPECTED);
+        }
 
-        let type_annotation =
-            if parameter_name_is_literal_reserved_word && self.is_token(SyntaxKind::ColonToken) {
-                // Emit TS1138 at the colon to match tsc's reserved-literal recovery,
-                // then still consume `: <type>` so we don't cascade into TS1005.
-                use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.parse_error_at_current_token(
-                    diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
-                    diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
-                );
-                self.next_token();
-                self.parse_type()
-            } else if parameter_name_is_reserved_word && !is_this_parameter {
-                NodeIndex::NONE
-            } else if self.parse_optional(SyntaxKind::ColonToken) {
-                // Parameter type annotations do NOT allow type predicates (matching tsc).
-                // In tsc, parseParameterType() calls parseType(), not parseTypeOrTypePredicate().
-                // Type predicates are only valid in return type positions.
-                // `this is T` is still parsed as a type predicate here because
-                // parse_type() always allows `this is T` (tsc: parseThisTypeOrThisTypePredicate).
-                self.parse_type()
-            } else {
-                NodeIndex::NONE
-            };
+        let type_annotation = if parameter_name_is_literal_reserved_word
+            && self.is_token(SyntaxKind::ColonToken)
+        {
+            // Emit TS1138 at the colon to match tsc's reserved-literal recovery,
+            // then still consume `: <type>` so we don't cascade into TS1005.
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at_current_token(
+                diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
+                diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            );
+            self.next_token();
+            self.parse_type()
+        } else if is_invalid_rest_this_parameter && self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_type()
+        } else if parameter_name_is_reserved_word && !is_this_parameter {
+            NodeIndex::NONE
+        } else if self.parse_optional(SyntaxKind::ColonToken) {
+            // Parameter type annotations do NOT allow type predicates (matching tsc).
+            // In tsc, parseParameterType() calls parseType(), not parseTypeOrTypePredicate().
+            // Type predicates are only valid in return type positions.
+            // `this is T` is still parsed as a type predicate here because
+            // parse_type() always allows `this is T` (tsc: parseThisTypeOrThisTypePredicate).
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
 
-        let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+        let initializer = if is_this_parameter && self.is_token(SyntaxKind::EqualsToken) {
+            self.report_this_parameter_initializer_recovery();
+            NodeIndex::NONE
+        } else if self.parse_optional(SyntaxKind::EqualsToken) {
             // NOTE: TS1015 (Parameter cannot have question mark and initializer)
             // is a grammar check emitted by the checker, not the parser.
             // See CheckerState::check_parameter_ordering.
