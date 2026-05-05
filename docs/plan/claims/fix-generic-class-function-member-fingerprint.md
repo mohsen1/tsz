@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/generic-class-function-member-fingerprint`
-- **PR**: TBD
+- **PR**: #3128
 - **Status**: claim
 - **Workstream**: conformance / contextual signature instantiation
 
