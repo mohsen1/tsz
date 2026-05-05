@@ -2205,3 +2205,38 @@ fn namespace_es5_iife_preserves_line_comment_between_classes() {
         "Single-line comment between sibling classes in a namespace IIFE must survive ES5 lowering.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn namespace_marker_strings_do_not_trigger_missing_arrow_fixture_recovery() {
+    let source = r#"namespace missingCurliesWithArrow {
+  const a = "namespace withStatement";
+  const b = "namespace withoutStatement";
+  const c = "=> var k = 10;";
+  const d = "=> };";
+
+  export const actual = 1;
+}
+
+console.log(missingCurliesWithArrow.actual);
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..PrintOptions::es6()
+        },
+    );
+
+    assert!(
+        output.contains("missingCurliesWithArrow.actual = 1;"),
+        "Valid namespace body should be emitted instead of fixture recovery output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const a = \"namespace withStatement\";"),
+        "String marker declarations should remain in the namespace body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var a = () => { var k = 10; };") && !output.contains("var a = () => ;"),
+        "Hardcoded missingCurliesWithArrow fixture output must not be emitted.\nOutput:\n{output}"
+    );
+}
