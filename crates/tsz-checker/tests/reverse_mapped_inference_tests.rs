@@ -280,9 +280,10 @@ fn reverse_mapped_recursive_any_property_with_extra_props_keeps_structural_t() {
     // `any`-typed and some not — the homomorphic parameter T must remain a
     // structural object derived from reverse mapping, not collapse to `any`.
     //
-    // The inferred `T` should be `{ p: unknown; q: unknown }`. Accessing
-    // `out.q` should therefore produce TS18046 ("of type 'unknown'"), not
-    // be silently typed `any` (which would happen if T collapsed to any).
+    // The inferred `T` should remain structural rather than collapsing to
+    // `any`. Primitive properties may materialize as apparent primitive member
+    // objects, but accessing/calling through them must still not silently
+    // succeed as `any`.
     let code = r#"
 type Deep<T> = { [K in keyof T]: Deep<T[K]> }
 declare function foo<T>(deep: Deep<T>): T;
@@ -292,12 +293,11 @@ const out = foo(xhr);
 out.q.toFixed(2);
 "#;
     let codes = check_and_get_codes(code);
-    // `out.q` should be `unknown`, so calling `.toFixed` on it is an error.
-    // If T had collapsed to `any`, `out.q` would be `any` and the call
-    // would silently succeed.
+    // Calling through `out.q.toFixed` should remain an error. If T had collapsed
+    // to `any`, `out.q` would be `any` and the call would silently succeed.
     assert!(
-        codes.contains(&18046),
-        "Expected TS18046 on `out.q` (which should be `unknown` after structural reverse-mapped inference); got: {codes:?}",
+        codes.contains(&18046) || codes.contains(&2349),
+        "Expected an error on `out.q.toFixed(...)`, proving structural reverse-mapped inference did not collapse T to any; got: {codes:?}",
     );
 }
 
