@@ -3063,6 +3063,74 @@ export const Baa = {
 }
 
 #[test]
+fn test_local_interface_computed_names_do_not_leak_public_dependencies() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const localStringKey = "local";
+const localNumberKey = 1;
+const publicSymbolKey = Symbol();
+
+interface LocalStringNamed {
+    [localStringKey]: number;
+}
+
+interface LocalNumberNamed {
+    [localNumberKey]: string;
+}
+
+export interface PublicNamed {
+    [publicSymbolKey]: number;
+}
+"#,
+    );
+
+    assert!(
+        !output.contains("localStringKey"),
+        "Did not expect local-only interface computed name dependencies to emit: {output}"
+    );
+    assert!(
+        !output.contains("localNumberKey"),
+        "Did not expect local-only interface computed name dependencies to emit: {output}"
+    );
+    assert!(
+        output.contains("declare const publicSymbolKey"),
+        "Expected exported interface computed name dependency to emit: {output}"
+    );
+    assert!(
+        output.contains("[publicSymbolKey]: number;"),
+        "Expected exported interface computed member to emit: {output}"
+    );
+}
+
+#[test]
+fn test_referenced_local_interface_computed_names_keep_dependencies() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const localSymbolKey = Symbol();
+
+interface LocalNamed {
+    [localSymbolKey]: number;
+}
+
+export interface PublicNamed extends LocalNamed {}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const localSymbolKey"),
+        "Expected local interface computed name dependency to emit when interface is public: {output}"
+    );
+    assert!(
+        output.contains("interface LocalNamed"),
+        "Expected referenced local interface to emit: {output}"
+    );
+    assert!(
+        output.contains("[localSymbolKey]: number;"),
+        "Expected referenced local interface computed member to emit: {output}"
+    );
+}
+
+#[test]
 fn test_enum_member_initializers_respect_const_assertion_widening() {
     let output = emit_dts_with_binding(
         r#"
