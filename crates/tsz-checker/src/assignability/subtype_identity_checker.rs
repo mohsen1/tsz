@@ -486,7 +486,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn mutable_array_element_for_redeclaration(&self, type_id: TypeId) -> Option<TypeId> {
-        tsz_solver::type_queries::mutable_array_element_for_redeclaration(
+        crate::query_boundaries::assignability::mutable_array_element_for_redeclaration(
             self.ctx.types,
             self.ctx.definition_store.as_ref(),
             type_id,
