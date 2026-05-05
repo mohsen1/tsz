@@ -1,8 +1,3 @@
-//! Assignability diagnostic reporting and excess property checking.
-//!
-//! Contains the "report" side of assignability: methods that call the core
-//! `is_assignable_to` entrypoints and emit diagnostics when types are incompatible.
-
 use crate::query_boundaries::assignability::{
     AssignabilityQueryInputs, ExcessPropertiesKind, check_assignable_gate_with_overrides,
     classify_for_excess_properties, get_keyof_type, get_string_literal_value, is_keyof_type,
@@ -13,10 +8,6 @@ use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-
-// =============================================================================
-// Weak Union, Excess Property, and Diagnostic Reporting Methods
-// =============================================================================
 
 impl<'a> CheckerState<'a> {
     fn excess_property_target_score(&self, type_id: TypeId) -> (u8, usize) {
