@@ -408,14 +408,7 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         props_type: TypeId,
     ) -> Option<TypeId> {
-        let jsx_sym_id = self.get_jsx_namespace_type()?;
-        let lib_binders = self.get_lib_binders();
-        let symbol = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
-        let exports = symbol.exports.as_ref()?;
-        let lma_sym_id = exports.get("LibraryManagedAttributes")?;
+        let lma_sym_id = self.get_jsx_namespace_export_symbol_id("LibraryManagedAttributes")?;
         let lma_ref = self.resolve_symbol_as_lazy_type(lma_sym_id);
         Some(
             self.ctx
