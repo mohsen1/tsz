@@ -231,3 +231,64 @@ class Person extends Base {
         "Base-class generic this-index assignment should not emit TS2322: {diagnostics:?}"
     );
 }
+
+/// Regression: assigning a polymorphic-this call result to a base class variable
+/// must not emit TS2322. `derived.clone()` returns `Derived` (the polymorphic
+/// this), which IS assignable to `Base`. tsc accepts this without error.
+/// See: <https://github.com/mohsen1/tsz/issues/3135>
+#[test]
+fn test_polymorphic_this_subtype_assignment_no_false_ts2322() {
+    let source = r#"
+class Base {
+    clone(): this {
+        return this;
+    }
+}
+
+class Derived extends Base {
+    derivedOnly = 1;
+}
+
+const derived = new Derived();
+const base: Base = derived.clone();
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Polymorphic-this call result assigned to base type must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+/// Variant: multiple levels of inheritance must not emit TS2322 for
+/// polymorphic-this assignments to any ancestor type.
+#[test]
+fn test_polymorphic_this_multi_level_subtype_assignment_no_false_ts2322() {
+    let source = r#"
+class A {
+    clone(): this { return this; }
+}
+class B extends A { bProp = 1; }
+class C extends B { cProp = 2; }
+
+const c = new C();
+const b: B = c.clone();
+const a: A = c.clone();
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Multi-level polymorphic-this subtype assignment must not emit TS2322: {diagnostics:?}"
+    );
+}

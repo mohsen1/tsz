@@ -89,6 +89,9 @@ impl<'a> CheckerState<'a> {
         {
             return Some(default_prop.type_id);
         }
-        Some(receiver_type)
+        // A plain subtype receiver (no intersection, no default export property) means
+        // the polymorphic-this call returns a valid subtype of the target. This is
+        // ordinary subtype assignability and must not produce TS2322.
+        None
     }
 }

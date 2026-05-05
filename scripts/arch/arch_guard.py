@@ -394,6 +394,7 @@ LINE_LIMIT_CHECKS = [
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
             "crates/tsz-checker/src/assignability/assignability_checker.rs",
+            "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
             "crates/tsz-checker/src/checkers/jsx/props/resolution.rs",
             "crates/tsz-checker/src/classes/class_checker.rs",
             "crates/tsz-checker/src/declarations/import/declaration.rs",
