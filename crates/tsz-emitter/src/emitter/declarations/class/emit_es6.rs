@@ -772,7 +772,7 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
-        let class_expr_set_function_name = class_expr_static_temp.as_ref().and_then(|_| {
+        let class_expr_set_function_name = class_expr_temp.as_ref().and_then(|_| {
             if class.name.is_none() {
                 self.resolve_class_expr_binding_name(_idx)
             } else {
@@ -2721,6 +2721,13 @@ impl<'a> Printer<'a> {
         if needs_private_comma_expr && has_post_class_inits {
             // Emit comma-separated inits inline in the expression.
             // The `(_a = ` prefix was already emitted before the `class` keyword.
+
+            if !needs_static_comma_expr
+                && let Some(temp) = class_expr_temp.as_ref()
+                && let Some(name) = class_expr_set_function_name.as_ref()
+            {
+                self.emit_class_expr_set_function_name_comma_item(temp, name);
+            }
 
             // WeakMap inits: _X_field = new WeakMap()
             let weakmap_inits = self.pending_weakmap_inits.clone();
