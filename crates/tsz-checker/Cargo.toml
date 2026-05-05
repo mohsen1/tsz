@@ -733,5 +733,9 @@ path = "tests/unused_jsdoc_pattern_comment_scoped_tests.rs"
 name = "unused_catch_binding_tests"
 path = "tests/unused_catch_binding_tests.rs"
 
+[[test]]
+name = "template_literal_bigint_placeholder_tests"
+path = "tests/template_literal_bigint_placeholder_tests.rs"
+
 [lints]
 workspace = true
