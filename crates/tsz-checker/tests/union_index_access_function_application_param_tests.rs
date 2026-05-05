@@ -183,6 +183,88 @@ export {};
 }
 
 #[test]
+fn signature_combining_rest_parameters_4_preserves_intersection_display_order() {
+    let source = r#"
+type Record<K extends keyof any, T> = { [P in K]: T };
+type Parameters<T extends (...args: any) => any> =
+  T extends (...args: infer P) => any ? P : never;
+type ReturnType<T extends (...args: any) => any> =
+  T extends (...args: any) => infer R ? R : any;
+
+declare class Node<Options = any> {
+  type: string;
+  name: string;
+  parent: Node | null;
+  child: Node | null;
+  options: Options;
+}
+
+interface NodeConfig<Options = any> {
+  extendMarkSchema?:
+    | ((this: { name: string; options: Options; }, extension: Node) => Record<string, any>)
+    | null;
+}
+
+declare class Mark<Options = any> {
+  options: Options;
+  config: MarkConfig;
+}
+
+interface MarkConfig<Options = any> {
+  extendMarkSchema?:
+    | ((this: { name: string; options: Options; }, extension: Mark) => Record<string, any>)
+    | null;
+}
+
+type AnyConfig = NodeConfig | MarkConfig;
+type AnyExtension = Node | Mark;
+
+declare const e: AnyExtension;
+
+type RemoveThis<T> = T extends (...args: any) => any
+  ? (...args: Parameters<T>) => ReturnType<T>
+  : T;
+
+declare function getExtensionField<T = any>(
+  extension: AnyExtension,
+  field: string,
+): RemoveThis<T>;
+
+const extendMarkSchema = getExtensionField<AnyConfig["extendMarkSchema"]>(e, "extendMarkSchema");
+
+declare const extension: Mark<any>;
+
+if (extendMarkSchema) {
+  extendMarkSchema(extension);
+}
+
+export {};
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345)
+        .collect();
+    assert_eq!(ts2345.len(), 1, "expected one TS2345, got {diagnostics:?}");
+    assert!(
+        ts2345[0].message_text.contains(
+            "Argument of type 'Mark<any>' is not assignable to parameter of type 'Node<any> & Mark<any>'."
+        ),
+        "signatureCombiningRestParameters4 must preserve tsc's parameter-intersection order, got {:?}",
+        ts2345[0].message_text
+    );
+}
+
+#[test]
 fn alternate_iteration_var_name_does_not_change_invariant() {
     // Ensure the fix is structural, not tied to `T`/`P`/etc. Re-running with
     // a different conditional iteration parameter name must still produce the
