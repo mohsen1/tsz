@@ -2406,6 +2406,10 @@ fn compile_single_source_amd_outfile_emits_bundle() {
     );
     let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
     assert!(
+        bundle.starts_with("\"use strict\";\n"),
+        "expected AMD outFile bundle to start with a strict-mode prologue, got:\n{bundle}"
+    );
+    assert!(
         bundle.contains("define(\"main\", [\"require\", \"exports\"], function"),
         "expected named AMD outFile wrapper, got:\n{bundle}"
     );
