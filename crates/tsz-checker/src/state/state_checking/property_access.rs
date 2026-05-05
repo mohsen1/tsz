@@ -43,13 +43,13 @@ impl<'a> CheckerState<'a> {
         if remapped_name == TypeId::NEVER {
             return Some(false);
         }
-        if let Some(name) = tsz_solver::visitor::literal_string(self.ctx.types, remapped_name) {
+        if let Some(name) = query::literal_string(self.ctx.types, remapped_name) {
             return Some(name == prop_atom);
         }
         if let Some(members) = query::union_members(self.ctx.types, remapped_name) {
             let mut saw_match = false;
             for member in members {
-                let name = tsz_solver::visitor::literal_string(self.ctx.types, member)?;
+                let name = query::literal_string(self.ctx.types, member)?;
                 saw_match |= name == prop_atom;
             }
             return Some(saw_match);

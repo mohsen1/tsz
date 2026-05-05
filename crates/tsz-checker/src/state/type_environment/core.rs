@@ -757,16 +757,15 @@ impl<'a> CheckerState<'a> {
 
         let concrete_remapped_fallback =
             ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.get());
-        if !concrete_remapped_fallback {
-            if let Some(&cached) = self
+        if !concrete_remapped_fallback
+            && let Some(&cached) = self
                 .ctx
                 .narrowing_cache
                 .resolve_cache
                 .borrow()
                 .get(&type_id)
-            {
-                return cached;
-            }
+        {
+            return cached;
         }
 
         // Memoize mapped-type expansion for monomorphic inputs.
@@ -976,10 +975,7 @@ impl<'a> CheckerState<'a> {
                     }
                     names
                 } else {
-                    let names = tsz_solver::type_queries::extract_string_literal_keys(
-                        self.ctx.types,
-                        remapped_name,
-                    );
+                    let names = query::extract_string_literal_keys(self.ctx.types, remapped_name);
                     if names.is_empty() {
                         return type_id;
                     }
