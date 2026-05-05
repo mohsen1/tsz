@@ -1198,7 +1198,8 @@ impl<'a> CheckerState<'a> {
 
         self.report_missing_lib_type_name(name, type_name_idx);
 
-        if self.is_promise_like_name(name)
+        if !self.ctx.compiler_options.no_lib
+            && self.is_promise_like_name(name)
             && let Some(args) = &type_ref.type_arguments
         {
             let type_args: Vec<TypeId> = args
