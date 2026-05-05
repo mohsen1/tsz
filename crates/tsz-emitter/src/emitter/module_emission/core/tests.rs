@@ -547,6 +547,39 @@ export default function () {
     );
 }
 
+#[test]
+fn anonymous_default_function_ignores_default_1_in_string_literal() {
+    let source = r#"
+const label = "default_1";
+
+export default function () {
+  return label;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.default = default_1;"),
+        "string literal text should not reserve the anonymous default binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function default_1()"),
+        "anonymous default function should keep the first synthetic name.\nOutput:\n{output}"
+    );
+}
+
 /// Non-default function exports should NOT have the export hoisted before
 /// the function — they are handled in the preamble instead.
 #[test]

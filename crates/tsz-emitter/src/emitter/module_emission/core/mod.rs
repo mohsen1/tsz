@@ -1,3 +1,4 @@
+mod anonymous_default;
 mod export_default_parens;
 
 use super::super::{ModuleKind, Printer, ScriptTarget};
@@ -8,10 +9,6 @@ use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
-
-fn is_identifier_continue_byte(byte: Option<u8>) -> bool {
-    byte.is_some_and(|b| b == b'_' || b == b'$' || b.is_ascii_alphanumeric())
-}
 
 impl<'a> Printer<'a> {
     /// Emit a module specifier, rewriting extension if rewriteRelativeImportExtensions is set.
@@ -157,30 +154,6 @@ impl<'a> Printer<'a> {
                 return candidate;
             }
         }
-    }
-
-    pub(in crate::emitter) fn next_anonymous_default_export_name(&mut self) -> String {
-        loop {
-            self.next_anonymous_default_index += 1;
-            let candidate = format!("default_{}", self.next_anonymous_default_index);
-            if !self.source_has_identifier_text(&candidate) {
-                return candidate;
-            }
-        }
-    }
-
-    fn source_has_identifier_text(&self, candidate: &str) -> bool {
-        let Some(source) = self.source_text_for_map() else {
-            return false;
-        };
-        source.match_indices(candidate).any(|(start, _)| {
-            let before = start
-                .checked_sub(1)
-                .and_then(|idx| source.as_bytes().get(idx))
-                .copied();
-            let after = source.as_bytes().get(start + candidate.len()).copied();
-            !is_identifier_continue_byte(before) && !is_identifier_continue_byte(after)
-        })
     }
 
     /// Emit a CommonJS export with optional hoisting of the export assignment.
