@@ -949,16 +949,25 @@ run_conformance() {
   local rc="$?"
   set -e
 
-  grep -a 'FINAL RESULTS:' "$log_file" | tail -1 || true
+  local final_results_line
+  final_results_line="$(grep -a 'FINAL RESULTS:' "$log_file" | tail -1 || true)"
+  [[ -n "$final_results_line" ]] && echo "$final_results_line"
 
   local total_passed=0 total_tests=0 skipped_tests=0
   if [[ -f "$last_run" ]]; then
     read -r total_passed total_tests < <(read_conformance_results "$last_run")
   fi
-  total_passed="$(num_or_zero "$total_passed")"
-  total_tests="$(num_or_zero "$total_tests")"
   skipped_tests="$(awk '/^[[:space:]]*Skipped:/ { value=$2 } END { print value + 0 }' "$log_file")"
   skipped_tests="$(num_or_zero "$skipped_tests")"
+  if [[ "$final_results_line" =~ FINAL[[:space:]]RESULTS:[[:space:]]([0-9]+)/([0-9]+)[[:space:]]passed ]]; then
+    total_passed="${BASH_REMATCH[1]}"
+    # The runner reports evaluated tests in FINAL RESULTS and skipped tests
+    # separately. Count both toward coverage so runtime SKIP entries do not
+    # look like missing shard coverage in the aggregate job.
+    total_tests=$(( ${BASH_REMATCH[2]} + skipped_tests ))
+  fi
+  total_passed="$(num_or_zero "$total_passed")"
+  total_tests="$(num_or_zero "$total_tests")"
 
   printf '{"rc":%s,"passed":%s,"total":%s,"skipped":%s,"workers":%s,"shard_index":%s,"shard_count":%s,"offset":%s,"max":%s,"expected_passed":%s,"expected_total":%s,"expected_weight":%s,"strategy":"%s"}\n' \
     "$rc" "$total_passed" "$total_tests" "$skipped_tests" "$CONFORMANCE_WORKERS" \
