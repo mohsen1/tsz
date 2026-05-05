@@ -252,6 +252,40 @@ fn test_no_input_diagnostics_preserve_config_errors() {
     assert_eq!(codes, vec![5052, 18003]);
 }
 
+/// `--jsxFragmentFactory 234` is invalid (digits aren't a valid identifier
+/// chain) and tsc falls back to `React.Fragment` for emit while still
+/// surfacing the option-level diagnostic. `--jsxFactory` is asymmetric:
+/// tsc preserves it verbatim even when invalid (mirrors the
+/// `reactNamespaceInvalidInput` baseline). This test pins the fragment
+/// fallback by checking the resolved emitter option after parsing CLI args.
+#[test]
+fn test_invalid_jsx_fragment_factory_falls_back_to_react_fragment() {
+    let args = CliArgs::try_parse_from(["tsz", "--jsxFactory", "h", "--jsxFragmentFactory", "234"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert_eq!(options.checker.jsx_factory, "h");
+    assert_eq!(
+        options.checker.jsx_fragment_factory, "React.Fragment",
+        "Invalid jsxFragmentFactory must fall back to React.Fragment"
+    );
+}
+
+/// Asymmetric to the test above: invalid `--jsxFactory` is preserved
+/// verbatim, matching tsc's `reactNamespaceInvalidInput` baseline where
+/// `my-React-Lib.createElement` is emitted unchanged despite the dashes.
+#[test]
+fn test_invalid_jsx_factory_preserved_verbatim() {
+    let args = CliArgs::try_parse_from(["tsz", "--jsxFactory", "my-React-Lib.createElement"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert_eq!(
+        options.checker.jsx_factory, "my-React-Lib.createElement",
+        "Invalid jsxFactory should be preserved (matches tsc reactNamespace behavior)"
+    );
+}
+
 #[test]
 fn test_compile_invalid_react_namespace_reports_config_error_without_jsx_cascade() {
     let dir = tempfile::tempdir().expect("temp dir");

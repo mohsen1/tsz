@@ -2831,12 +2831,23 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.jsx = Some(jsx_emit);
     }
     if let Some(ref factory) = args.jsx_factory {
+        // tsc preserves `jsxFactory` verbatim — even when invalid (e.g.
+        // `my-React-Lib.createElement` from `--reactNamespace`). The TS5067
+        // / TS5059 diagnostics are surfaced separately during config
+        // validation; emit uses whatever was configured.
         options.checker.jsx_factory = factory.clone();
         options.checker.jsx_factory_from_config = true;
     }
     if let Some(ref frag) = args.jsx_fragment_factory {
-        options.checker.jsx_fragment_factory = frag.clone();
-        options.checker.jsx_fragment_factory_from_config = true;
+        // tsc validates `jsxFragmentFactory` at emit time and falls back to
+        // `React.Fragment` when the value is not a dot-separated identifier
+        // chain (e.g. `--jsxFragmentFactory 234`). This is asymmetric with
+        // `jsxFactory`, which is preserved verbatim.
+        if is_valid_jsx_factory_expression(frag) {
+            options.checker.jsx_fragment_factory = frag.clone();
+            options.checker.jsx_fragment_factory_from_config = true;
+        }
+        // else: keep default `React.Fragment`
     }
     if let Some(ref source) = args.jsx_import_source {
         options.checker.jsx_import_source = source.clone();
@@ -2891,6 +2902,28 @@ fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<St
     } else {
         None
     }
+}
+
+/// Validate that a `jsxFactory` / `jsxFragmentFactory` value is a
+/// dot-separated identifier chain (e.g. `h`, `React.createElement`).
+/// Empty segments, leading/trailing dots, and any non-identifier
+/// character (digits leading a segment, dashes, whitespace) fail
+/// validation. Mirrors tsc's "EntityName + identifier check" used to
+/// drive the TS5067 diagnostic and the runtime fallback.
+fn is_valid_jsx_factory_expression(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    s.split('.').all(|seg| {
+        let mut chars = seg.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first == '_' || first == '$' || first.is_alphabetic()) {
+            return false;
+        }
+        chars.all(|c| c == '_' || c == '$' || c.is_alphanumeric())
+    })
 }
 
 #[cfg(test)]
