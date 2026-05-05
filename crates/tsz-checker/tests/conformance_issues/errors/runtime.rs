@@ -1209,6 +1209,10 @@ makeThing('42', []);
         !has_error(&diagnostics, 2344),
         "Discriminated-union Record helper should not trigger TS2344.\nActual: {diagnostics:?}"
     );
+    assert!(
+        !has_error(&diagnostics, 2590),
+        "Representable large discriminated unions should not trigger TS2590 when used through Record helpers.\nActual: {diagnostics:?}"
+    );
 }
 
 /// Issue: instanceof narrowing uses structural subtyping instead of nominal class identity.
