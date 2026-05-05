@@ -309,6 +309,16 @@ fn check_closure_capture(
             }
         }
 
+        // Class member bodies and field initializers execute after the loop body
+        // has moved on, so they capture loop bindings just like closures do.
+        k if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::CLASS_EXPRESSION => {
+            if let Some(class_data) = arena.get_class(node) {
+                for &member_idx in &class_data.members.nodes {
+                    check_class_member_capture(arena, member_idx, loop_vars, info, inside_closure);
+                }
+            }
+        }
+
         // Identifier - check if it references a captured variable
         k if k == SyntaxKind::Identifier as u16 => {
             if inside_closure
@@ -325,6 +335,50 @@ fn check_closure_capture(
         // For all other nodes, recurse into children
         _ => {
             // Visit all children
+            visit_children(arena, node, |child_idx| {
+                check_closure_capture(arena, child_idx, loop_vars, info, inside_closure);
+            });
+        }
+    }
+}
+
+fn check_class_member_capture(
+    arena: &NodeArena,
+    idx: NodeIndex,
+    loop_vars: &FxHashSet<&str>,
+    info: &mut LoopCaptureInfo,
+    inside_closure: bool,
+) {
+    let Some(node) = arena.get(idx) else { return };
+
+    match node.kind {
+        k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+            if let Some(prop) = arena.get_property_decl(node) {
+                check_closure_capture(arena, prop.initializer, loop_vars, info, true);
+            }
+        }
+        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+            if let Some(method) = arena.get_method_decl(node) {
+                for &param_idx in &method.parameters.nodes {
+                    check_closure_capture(arena, param_idx, loop_vars, info, true);
+                }
+                check_closure_capture(arena, method.body, loop_vars, info, true);
+            }
+        }
+        k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+            if let Some(accessor) = arena.get_accessor(node) {
+                for &param_idx in &accessor.parameters.nodes {
+                    check_closure_capture(arena, param_idx, loop_vars, info, true);
+                }
+                check_closure_capture(arena, accessor.body, loop_vars, info, true);
+            }
+        }
+        k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+            visit_children(arena, node, |child_idx| {
+                check_closure_capture(arena, child_idx, loop_vars, info, inside_closure);
+            });
+        }
+        _ => {
             visit_children(arena, node, |child_idx| {
                 check_closure_capture(arena, child_idx, loop_vars, info, inside_closure);
             });

@@ -19,5 +19,6 @@ pub mod type_literal_checker;
 pub mod type_node;
 mod type_node_advanced;
 pub(crate) mod type_node_helpers;
+mod type_node_lowering;
 mod type_node_resolution;
 pub(crate) mod utilities;

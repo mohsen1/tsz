@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-infer-generic-return-extra-ts2769`
-- **PR**: #2867
-- **Status**: claimed
+- **PR**: #2867 (claim), #2887 (implementation)
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -18,11 +18,16 @@ overload diagnostic without losing the expected assignability diagnostics.
 
 - `docs/plan/claims/fix-checker-infer-generic-return-extra-ts2769.md`
   (claim)
+- `crates/tsz-solver/src/relations/subtype/rules/tuples.rs`
+- `crates/tsz-solver/src/tests/visitor_tests.rs`
 
 ## Verification
 
+- `cargo check --package tsz-solver`
 - `cargo check --package tsz-checker`
-- owning-crate regression test
+- `cargo test -p tsz-solver any_array_assignable_to_unknown_entry_tuple_for_map_inference -- --nocapture`
 - `./scripts/conformance/conformance.sh run --filter "inferFromGenericFunctionReturnTypes3" --verbose`
+  - TS2769 code mismatch fixed; case is now fingerprint-only on existing
+    literal/contextual-inference diagnostics.
 - `./scripts/conformance/conformance.sh run --max 200`
 - `scripts/githooks/pre-commit`

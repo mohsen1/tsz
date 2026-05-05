@@ -1575,7 +1575,7 @@ fn private_field_logical_and_assign_lowers_to_set_get_and_rhs() {
 /// the same name must still receive its own `var` declaration. The
 /// lowering pass tracks `declared_names` to suppress duplicate `var`
 /// emits, but the set must reset when entering and exiting a namespace
-/// body — names declared inside a nested IIFE don't leak out.
+/// body: names declared inside a nested IIFE don't leak out.
 #[test]
 fn nested_namespace_name_does_not_suppress_outer_var_declaration() {
     let source = "namespace m1 {\n    namespace m2 {\n        export var p = 1;\n    }\n}\nnamespace m2 {\n    export var q = 2;\n}\n";
@@ -1614,5 +1614,38 @@ fn reopened_same_scope_namespace_declares_var_only_once() {
     assert_eq!(
         var_count, 1,
         "Reopened namespace at same scope should declare `var m1;` once. Found {var_count}.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: a same-named inner declaration that is `declare`-ambient is
+/// erased at emit, so it must not trigger renaming of the namespace IIFE
+/// parameter. tsc emits `(function (M) { ... })`, not `(function (M_1) { ... })`,
+/// for `namespace M { export declare namespace M { } }`.
+#[test]
+fn namespace_iife_param_not_renamed_when_inner_same_name_is_declare() {
+    let source = "namespace M {\n    export declare var x;\n    export declare function f();\n    export declare class C { }\n    export declare enum E { }\n    export declare namespace M { }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("(function (M) {"),
+        "Declare-only inner `M` must not trigger IIFE param renaming.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (M_1)"),
+        "IIFE param must not be renamed to `M_1` when the only same-name binding is ambient.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: a *concrete* inner declaration with the same name DOES
+/// require IIFE-param renaming (so the outer-name reference and inner-name
+/// reference don't collide).
+#[test]
+fn namespace_iife_param_renamed_when_inner_same_name_is_concrete() {
+    let source = "namespace M {\n    export class M { foo() {} }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("M_1") || !output.contains("(function (M) {"),
+        "Concrete same-name inner declaration must rename IIFE param.\nOutput:\n{output}"
     );
 }

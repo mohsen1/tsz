@@ -210,6 +210,12 @@ impl<'a> CheckerState<'a> {
             );
             return TypeId::ANY;
         }
+        if callee_type == TypeId::ERROR
+            && let Some(recovered_type) = self.recover_declared_type_for_tdz_callee(call.expression)
+        {
+            callee_type = recovered_type;
+        }
+
         if callee_type == TypeId::ERROR {
             self.reemit_namespace_value_error_for_call_callee(call.expression);
             // Still evaluate type arguments to catch TS2304 for unresolved type names

@@ -547,6 +547,7 @@ impl<'a> Printer<'a> {
         if body_captures_arguments {
             self.ctx.rewrite_arguments_to_arguments_1 = true;
         }
+        self.function_scope_depth += 1;
         // Emit the block body's statements directly
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
@@ -560,6 +561,7 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+        self.function_scope_depth -= 1;
         self.ctx.emit_await_as_yield = saved_yield;
         self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
 
