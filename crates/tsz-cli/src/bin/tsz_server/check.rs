@@ -848,6 +848,7 @@ impl Server {
             isolated_modules: options.isolated_modules,
             no_lib: options.no_lib,
             no_types_and_symbols: false,
+            types_explicitly_set: false,
             target: checker_target,
             module: if let Some(module_str) = &options.module {
                 // Parse module kind from string (inline version of parse_module_kind)

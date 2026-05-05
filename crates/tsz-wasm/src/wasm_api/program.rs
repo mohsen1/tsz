@@ -92,6 +92,7 @@ impl TsCompilerOptions {
             exact_optional_property_types: false,
             no_lib: self.no_lib.unwrap_or(false),
             no_types_and_symbols: false,
+            types_explicitly_set: false,
             target: tsz::checker::context::ScriptTarget::default(),
             module: self.resolve_module(),
             es_module_interop: false,

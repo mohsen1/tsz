@@ -30309,6 +30309,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             no_fallthrough_cases_in_switch: false,
             jsx_mode: tsz_common::checker_options::JsxMode::None,
             module_explicitly_set: false,
+            types_explicitly_set: false,
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
             no_implicit_use_strict: false,
