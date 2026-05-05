@@ -1164,6 +1164,67 @@ a.m("nope");
 }
 
 #[test]
+fn test_jsdoc_chained_prototype_and_static_function_assignments_preserve_member_types() {
+    let source = r#"
+function A () {
+    this.x = 1
+    /** @type {1} */
+    this.first = this.second = 1
+}
+/** @param {number} n */
+A.prototype.y = A.prototype.z = function f(n) {
+    return n + this.x
+}
+/** @param {number} m */
+A.s = A.t = function g(m) {
+    return m + this.x
+}
+var a = new A()
+a.y('no')
+a.z('not really')
+A.s('still no')
+A.t('not here either')
+a.first = 10
+"#;
+    let diagnostics = check_js(source);
+    let z_missing = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2339 && message.contains("Property 'z' does not exist on type 'A'")
+        })
+        .count();
+    assert_eq!(
+        z_missing, 0,
+        "chained prototype method assignments should expose both y and z on instances; got: {diagnostics:?}"
+    );
+    let string_to_number = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2345
+                && message.contains(
+                    "Argument of type 'string' is not assignable to parameter of type 'number'",
+                )
+        })
+        .count();
+    assert_eq!(
+        string_to_number, 2,
+        "expected both annotated prototype method calls to reject string arguments; got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message.contains("Property 'x' does not exist on type 'typeof A'")
+        }),
+        "static chained assignment function body should bind this to typeof A; got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message.contains("Property 'x' does not exist on type 'g'")
+        }),
+        "static chained assignment must not bind this to the function value itself; got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_prototype_object_function_properties_keep_constructor_this_and_ts7006() {
     let source = r#"
 function Color(obj) {

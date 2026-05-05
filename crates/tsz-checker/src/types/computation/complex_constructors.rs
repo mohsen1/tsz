@@ -411,6 +411,122 @@ impl<'a> CheckerState<'a> {
             has_prototype_evidence,
         );
     }
+
+    fn collect_chained_prototype_function_bindings(
+        &mut self,
+        expr_idx: NodeIndex,
+        func_name: &str,
+        parent_sym: Option<tsz_binder::SymbolId>,
+        method_bindings: &mut Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
+        this_props: &mut Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
+        has_prototype_evidence: &mut bool,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return;
+        };
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return;
+        }
+        let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+            return;
+        };
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return;
+        }
+
+        if let Some(lhs_node) = self.ctx.arena.get(binary.left)
+            && Self::is_property_like_access_kind(lhs_node.kind)
+            && let Some(lhs_access) = self.ctx.arena.get_access_expr(lhs_node)
+            && self.access_matches_function_prototype(lhs_access.expression, func_name)
+        {
+            *has_prototype_evidence = true;
+
+            if lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && lhs_access.name_or_argument.is_some()
+            {
+                let is_computed_name = self
+                    .ctx
+                    .arena
+                    .get(lhs_access.name_or_argument)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+                let resolved_property_name = if is_computed_name {
+                    self.js_prototype_binding_resolved_name(lhs_access.name_or_argument)
+                } else {
+                    self.get_property_name_resolved(lhs_access.name_or_argument)
+                };
+
+                if let Some(method_name_str) = resolved_property_name {
+                    let method_name_atom = self.ctx.types.intern_string(&method_name_str);
+                    let is_method_like = self
+                        .ctx
+                        .arena
+                        .get(binary.right)
+                        .is_some_and(|rhs| rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION);
+                    let rhs_type = if is_method_like {
+                        self.shallow_object_literal_callable_type(binary.right)
+                    } else {
+                        self.get_type_of_node(binary.right)
+                    };
+                    method_bindings.push((
+                        method_name_atom,
+                        tsz_solver::PropertyInfo {
+                            name: method_name_atom,
+                            type_id: rhs_type,
+                            write_type: rhs_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: is_method_like,
+                            is_class_prototype: false,
+                            visibility: tsz_solver::Visibility::Public,
+                            parent_id: parent_sym,
+                            declaration_order: 0,
+                            is_string_named: false,
+                            single_quoted_name: false,
+                        },
+                    ));
+                }
+            }
+
+            if let Some(rhs_node) = self.ctx.arena.get(binary.right)
+                && rhs_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                && let Some(rhs_func) = self.ctx.arena.get_function(rhs_node)
+                && rhs_func.body.is_some()
+            {
+                let mut method_this_props: rustc_hash::FxHashMap<
+                    tsz_common::interner::Atom,
+                    tsz_solver::PropertyInfo,
+                > = rustc_hash::FxHashMap::default();
+                self.collect_js_constructor_this_properties(
+                    rhs_func.body,
+                    &mut method_this_props,
+                    parent_sym,
+                    false,
+                );
+                self.collect_nested_arrow_this_properties(
+                    rhs_func.body,
+                    &mut method_this_props,
+                    parent_sym,
+                );
+
+                for (name, prop) in method_this_props {
+                    this_props.push((name, prop));
+                }
+            }
+        }
+
+        self.collect_chained_prototype_function_bindings(
+            binary.right,
+            func_name,
+            parent_sym,
+            method_bindings,
+            this_props,
+            has_prototype_evidence,
+        );
+    }
+
     const fn is_property_like_access_kind(kind: u16) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -730,6 +846,14 @@ impl<'a> CheckerState<'a> {
                 func_name,
                 parent_sym,
                 &mut method_bindings,
+                &mut has_prototype_evidence,
+            );
+            self.collect_chained_prototype_function_bindings(
+                binary.right,
+                func_name,
+                parent_sym,
+                &mut method_bindings,
+                &mut this_props,
                 &mut has_prototype_evidence,
             );
 
