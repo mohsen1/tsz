@@ -11,6 +11,7 @@ use crate::error_reporter::fingerprint_policy::{
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -603,7 +604,9 @@ impl<'a> CheckerState<'a> {
             && all_failures_are_argument_mismatches
             && callback_overloads_are_callable_only
             && !callback_argument_has_prior_diagnostics;
-        let allow_new_argument_anchor = is_new_call && anchor_argument_from_all_failures;
+        let allow_new_argument_anchor = is_new_call
+            && anchor_argument_from_all_failures
+            && !self.is_weak_collection_constructor_new(idx);
         let anchor_first_argument = (!is_new_call || allow_new_argument_anchor)
             && (!argument_anchor_is_callback || allow_callback_argument_anchor)
             && !is_bind_method_call
@@ -710,6 +713,20 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .any(|sig| !sig.type_params.is_empty())
             })
+    }
+
+    fn is_weak_collection_constructor_new(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_call_expr(node)
+            .and_then(|call| self.ctx.arena.get_identifier_text(call.expression))
+            .is_some_and(|name| matches!(name, "WeakMap" | "WeakSet"))
     }
 
     fn tagged_template_generic_overload_anchor(&self, idx: NodeIndex) -> Option<NodeIndex> {

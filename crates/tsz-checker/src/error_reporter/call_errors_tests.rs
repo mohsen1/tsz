@@ -1225,6 +1225,78 @@ class Foo<T> extends Base<T> {
 }
 
 #[test]
+fn failed_weak_collection_new_recovers_constraint_for_method_diagnostics() {
+    let source = r#"
+interface WeakSet<T extends object> {
+    add(value: T): this;
+    has(value: T): boolean;
+    delete(value: T): boolean;
+}
+declare var WeakSet: {
+    new <T extends object>(values: T[]): WeakSet<T>;
+    new <T extends object>(values: readonly T[]): WeakSet<T>;
+};
+
+interface WeakMap<K extends object, V> {
+    set(key: K, value: V): this;
+    has(key: K): boolean;
+    get(key: K): V | undefined;
+    delete(key: K): boolean;
+}
+declare var WeakMap: {
+    new <K extends object, V>(entries: [K, V][]): WeakMap<K, V>;
+    new <K extends object, V>(entries: readonly (readonly [K, V])[]): WeakMap<K, V>;
+};
+
+declare const s: symbol;
+
+const ws = new WeakSet([s]);
+ws.add(s);
+ws.has(s);
+ws.delete(s);
+
+const wm = new WeakMap([[s, false]]);
+wm.set(s, true);
+wm.has(s);
+wm.get(s);
+wm.delete(s);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let weak_set_anchor = source
+        .find("WeakSet([s])")
+        .expect("expected WeakSet constructor") as u32;
+    let weak_map_anchor = source
+        .find("WeakMap([[s, false]])")
+        .expect("expected WeakMap constructor") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 2769 && diag.start == weak_set_anchor),
+        "WeakSet TS2769 should anchor at the constructor identifier, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 2769 && diag.start == weak_map_anchor),
+        "WeakMap TS2769 should anchor at the constructor identifier, got: {diagnostics:#?}"
+    );
+
+    let object_arg_errors = diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == 2345
+                && diag.message_text
+                    == "Argument of type 'symbol' is not assignable to parameter of type 'object'."
+        })
+        .count();
+    assert_eq!(
+        object_arg_errors, 7,
+        "failed weak collection constructors should recover as object-keyed instances: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn ts2769_array_best_common_type_keeps_nullable_member() {
     let source = r#"
 class Box {
