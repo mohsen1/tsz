@@ -249,6 +249,17 @@ impl<'a> CheckerState<'a> {
             && def.type_params.is_empty()
         {
             if let Some(body) = def.body {
+                if crate::query_boundaries::common::is_type_query_type(self.ctx.types, body)
+                    || self.type_alias_definition_body_is_type_query(&def)
+                {
+                    let evaluated = self.evaluate_type_with_env(ty);
+                    if evaluated != ty && evaluated != TypeId::ERROR {
+                        return self
+                            .format_type_diagnostic_for_assignability_display_skipping_type_alias(
+                                evaluated, def_id,
+                            );
+                    }
+                }
                 // Only expand computed bodies. For generic function type aliases like
                 // `type bar = <U>(source: ...) => void`, tsc shows the alias name.
                 if self.ctx.definition_store.is_computed_body(body) {
@@ -1858,6 +1869,14 @@ impl<'a> CheckerState<'a> {
         // Only use the alias for non-generic type aliases.  Generic aliases
         // need type argument display (e.g., B<string> not B).
         if !def.type_params.is_empty() {
+            return None;
+        }
+        // `type T = typeof value` aliases display as the resolved value type
+        // in assignment diagnostics. Do not repaint that resolved body as `T`.
+        if def.body.is_some_and(|body| {
+            crate::query_boundaries::common::is_type_query_type(self.ctx.types, body)
+        }) || self.type_alias_definition_body_is_type_query(&def)
+        {
             return None;
         }
         // Skip aliases whose body was computed by intersection reduction or
