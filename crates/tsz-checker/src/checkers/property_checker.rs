@@ -400,7 +400,11 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn class_chain_declares_static_member(&self, class_idx: NodeIndex, property_name: &str) -> bool {
+    fn class_chain_declares_static_member(
+        &self,
+        class_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
         use rustc_hash::FxHashSet;
 
         let mut current = class_idx;
