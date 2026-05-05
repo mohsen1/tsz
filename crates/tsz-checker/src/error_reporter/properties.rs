@@ -3,6 +3,7 @@
 use crate::diagnostics::diagnostic_codes;
 use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, DiagnosticRenderRequest};
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
+use crate::query_boundaries::common as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
@@ -137,6 +138,66 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn excess_property_target_annotation_for_site(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(String, bool, Option<NodeIndex>)> {
+        let mut current = idx;
+        let mut from_nested_container = false;
+        loop {
+            let info = self.ctx.arena.node_info(current)?;
+            let parent_idx = info.parent;
+            let parent = self.ctx.arena.get(parent_idx)?;
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent)
+                && var_decl.initializer == current
+                && var_decl.type_annotation.is_some()
+            {
+                return self.node_text(var_decl.type_annotation).and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
+                        .map(|text| (text, from_nested_container, Some(var_decl.type_annotation)))
+                });
+            }
+            if parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                let grandparent_idx = self.ctx.arena.node_info(parent_idx)?.parent;
+                let grandparent = self.ctx.arena.get(grandparent_idx)?;
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(grandparent)
+                    && var_decl.initializer == parent_idx
+                    && var_decl.type_annotation.is_some()
+                {
+                    return self.node_text(var_decl.type_annotation).and_then(|text| {
+                        self.sanitize_type_annotation_text_for_diagnostic(text, true)
+                            .map(|text| {
+                                (text, from_nested_container, Some(var_decl.type_annotation))
+                            })
+                    });
+                }
+                if let Some(jsdoc_satisfies_text) =
+                    self.jsdoc_satisfies_type_text_for_node(parent_idx)
+                {
+                    return Some((jsdoc_satisfies_text, from_nested_container, None));
+                }
+                if matches!(
+                    grandparent.kind,
+                    syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                ) {
+                    from_nested_container = true;
+                    current = grandparent_idx;
+                    continue;
+                }
+                return None;
+            }
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            ) {
+                from_nested_container = true;
+            }
+            current = parent_idx;
+        }
+    }
+
     fn excess_property_target_display_for_site(
         &mut self,
         target: TypeId,
@@ -145,7 +206,9 @@ impl<'a> CheckerState<'a> {
         let inferred_display = self
             .format_pick_over_all_keys_as_keyof(target)
             .unwrap_or_else(|| self.format_excess_property_target_type(target));
-        if let Some(annotation_text) = self.excess_property_target_annotation_text_for_site(idx) {
+        if let Some((annotation_text, annotation_from_nested_container, annotation_type_node)) =
+            self.excess_property_target_annotation_for_site(idx)
+        {
             let annotation_display = self.format_annotation_like_type(&annotation_text);
             if inferred_display.starts_with('{') && annotation_display.contains("object &") {
                 return annotation_display;
@@ -186,8 +249,38 @@ impl<'a> CheckerState<'a> {
             {
                 return annotation_display;
             }
+            if Self::is_plain_type_alias_display(&annotation_display)
+                && annotation_from_nested_container
+                && annotation_type_node
+                    .is_some_and(|type_node| self.annotation_type_resolves_to_union(type_node))
+                && annotation_display != inferred_display
+                && !inferred_display.contains('|')
+            {
+                return annotation_display;
+            }
         }
         Self::collapse_pick_literal_union_display(&inferred_display).unwrap_or(inferred_display)
+    }
+
+    fn is_plain_type_alias_display(display: &str) -> bool {
+        let mut chars = display.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first.is_ascii_alphabetic() || first == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    fn annotation_type_resolves_to_union(&mut self, type_node: NodeIndex) -> bool {
+        let type_id = self.get_type_from_type_node(type_node);
+        [
+            type_id,
+            self.resolve_ref_type(type_id),
+            self.evaluate_type_with_env(type_id),
+            self.resolve_type_for_property_access(type_id),
+        ]
+        .into_iter()
+        .any(|candidate| query::union_members(self.ctx.types, candidate).is_some())
     }
 
     /// If `display` looks like a generic application of the form `Name<...>`
