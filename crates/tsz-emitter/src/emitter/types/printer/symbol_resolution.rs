@@ -598,6 +598,18 @@ impl<'a> TypePrinter<'a> {
                 }
                 return result;
             }
+            if !visitor::is_infer_type(self.interner, type_id)
+                && !self.outer_type_param_names.contains(&param_info.name)
+            {
+                let name = self.interner.resolve_atom(param_info.name);
+                if let Some(constraint) = param_info.constraint {
+                    let mut scoped = self.clone();
+                    scoped.outer_type_param_names.push(param_info.name);
+                    let constraint_text = scoped.print_type(constraint);
+                    return Self::replace_type_param_name_with_any(&constraint_text, &name);
+                }
+                return "unknown".to_string();
+            }
             return self.print_type_parameter(&param_info);
         }
         if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id) {
