@@ -97,6 +97,65 @@ fn test_inferred_generic_function_type_omits_synthesized_optional_undefined() {
 }
 
 #[test]
+fn test_returned_class_expression_preserves_extends_type_parameter() {
+    let source = r#"
+export type Constructor<T = {}> = new (...args: any[]) => T;
+
+export function Timestamped<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+        timestamp = Date.now();
+    };
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let source_file = parser
+        .arena
+        .get(root)
+        .and_then(|node| parser.arena.get_source_file(node))
+        .expect("missing source file");
+    let func = source_file
+        .statements
+        .nodes
+        .iter()
+        .find_map(|&stmt_idx| {
+            let stmt_node = parser.arena.get(stmt_idx)?;
+            if let Some(func) = parser.arena.get_function(stmt_node) {
+                return Some(func);
+            }
+            let export = parser.arena.get_export_decl(stmt_node)?;
+            let clause_node = parser.arena.get(export.export_clause)?;
+            parser.arena.get_function(clause_node)
+        })
+        .expect("missing function");
+    let return_expr = parser
+        .arena
+        .get(func.body)
+        .and_then(|node| parser.arena.get_block(node))
+        .and_then(|block| parser.arena.get(block.statements.nodes[0]))
+        .and_then(|node| parser.arena.get_return_statement(node))
+        .and_then(|ret| ret.expression.is_some().then_some(ret.expression))
+        .expect("missing returned class expression");
+
+    let interner = TypeInterner::new();
+    let type_cache = TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .preferred_expression_type_text(return_expr)
+        .expect("missing class expression type text");
+    assert!(
+        type_text.contains("} & TBase"),
+        "Expected returned class expression to preserve extends type parameter: {type_text}"
+    );
+    assert!(
+        type_text.contains("new (...args: any[]):"),
+        "Expected mixin constructor to forward base constructor args: {type_text}"
+    );
+}
+
+#[test]
 fn test_function_variable_type_preserves_inline_parameter_comments() {
     let output = emit_dts(
         r#"

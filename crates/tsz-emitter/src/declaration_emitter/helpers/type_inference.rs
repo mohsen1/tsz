@@ -1455,11 +1455,20 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(expr_idx)
             }
-            k if k == syntax_kind_ext::CLASS_EXPRESSION => self
-                .get_node_type_or_names(&[expr_idx])
-                .map(|type_id| self.print_type_id(type_id))
-                .filter(|type_text| type_text != "any")
-                .or_else(|| self.class_expression_constructor_type_text_from_ast(expr_idx)),
+            k if k == syntax_kind_ext::CLASS_EXPRESSION => {
+                let ast_type_text = self.class_expression_constructor_type_text_from_ast(expr_idx);
+                if ast_type_text
+                    .as_ref()
+                    .is_some_and(|type_text| type_text.contains(" & "))
+                {
+                    ast_type_text
+                } else {
+                    self.get_node_type_or_names(&[expr_idx])
+                        .map(|type_id| self.print_type_id(type_id))
+                        .filter(|type_text| type_text != "any")
+                        .or(ast_type_text)
+                }
+            }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.array_literal_expression_type_text(expr_idx)
             }
@@ -1481,6 +1490,8 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         let class = self.arena.get_class(expr_node)?;
+        let extends_parameter_type_text =
+            self.class_expression_extends_parameter_type_text(expr_idx, class);
 
         let mut params_text = String::new();
         if let Some(ctor_idx) = class.members.nodes.iter().copied().find(|&member_idx| {
@@ -1498,6 +1509,9 @@ impl<'a> DeclarationEmitter<'a> {
             scratch.in_constructor_params = false;
             params_text = scratch.writer.take_output();
         }
+        if params_text.is_empty() && extends_parameter_type_text.is_some() {
+            params_text = "...args: any[]".to_string();
+        }
 
         let mut member_scratch = self.scratch_declaration_emitter();
         member_scratch.indent_level = self.indent_level + 2;
@@ -1513,13 +1527,67 @@ impl<'a> DeclarationEmitter<'a> {
         let members = member_scratch.writer.take_output();
         let members = members.trim_end();
 
-        if members.is_empty() {
-            Some(format!("{{\n    new ({params_text}): {{}};\n}}"))
+        let constructor_type = if members.is_empty() {
+            format!("{{\n    new ({params_text}): {{}};\n}}")
         } else {
-            Some(format!(
-                "{{\n    new ({params_text}): {{\n{members}\n    }};\n}}"
-            ))
+            format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n}}")
+        };
+
+        if let Some(base_type_text) = extends_parameter_type_text {
+            Some(format!("{constructor_type} & {base_type_text}"))
+        } else {
+            Some(constructor_type)
         }
+    }
+
+    fn class_expression_extends_parameter_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> Option<String> {
+        let enclosing_func = self.enclosing_function_for_node(expr_idx)?;
+        let heritage_clauses = class.heritage_clauses.as_ref()?;
+        for clause_idx in heritage_clauses.nodes.iter().copied() {
+            let heritage = self.arena.get_heritage_clause_at(clause_idx)?;
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            let base_idx = heritage.types.nodes.first().copied()?;
+            let base_node = self.arena.get(base_idx)?;
+            let base_expr = self
+                .arena
+                .get_expr_type_args(base_node)
+                .map(|expr| expr.expression)
+                .unwrap_or(base_idx);
+            if let Some(type_text) = self.function_parameter_type_text(enclosing_func, base_expr) {
+                return Some(type_text);
+            }
+        }
+
+        None
+    }
+
+    fn enclosing_function_for_node(
+        &self,
+        node_idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        let mut current = node_idx;
+        for _ in 0..32 {
+            let parent_idx = self.arena.parent_of(current)?;
+            if !parent_idx.is_some() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+            if self.arena.get_source_file(parent_node).is_some() {
+                return None;
+            }
+            if let Some(func) = self.arena.get_function(parent_node) {
+                return Some(func);
+            }
+            current = parent_idx;
+        }
+
+        None
     }
 
     fn scratch_declaration_emitter(&self) -> DeclarationEmitter<'a> {
@@ -3884,6 +3952,12 @@ impl<'a> DeclarationEmitter<'a> {
         source_type_text: &str,
         inferred_return_type: tsz_solver::types::TypeId,
     ) -> bool {
+        if source_type_text.contains("{\n    new ")
+            && source_type_text.contains(" & ")
+            && self.print_type_id(inferred_return_type) != source_type_text
+        {
+            return true;
+        }
         if !source_type_text.contains("typeof ") {
             return false;
         }
