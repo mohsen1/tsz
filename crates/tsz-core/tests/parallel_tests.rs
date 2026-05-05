@@ -1154,6 +1154,238 @@ const text: string = outputValue;
 }
 
 #[test]
+fn test_check_files_parallel_zod_issue_data_cross_file_spread() {
+    let files = vec![
+        (
+            "helpers/util.ts".to_string(),
+            r#"
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Exclude<T, U> = T extends U ? never : T;
+
+export namespace util {
+    export type OmitKeys<T, K extends string> = Pick<T, Exclude<keyof T, K>>;
+    export const arrayToEnum = <T extends string, U extends [T, ...T[]]>(
+        items: U
+    ): { [k in U[number]]: k } => {
+        const obj: any = {};
+        return obj as any;
+    };
+}
+"#
+            .to_string(),
+        ),
+        (
+            "ZodError.ts".to_string(),
+            r#"
+import { ZodParsedType } from "./helpers/parseUtil";
+import { util } from "./helpers/util";
+
+export const ZodIssueCode = util.arrayToEnum([
+    "invalid_type",
+    "custom",
+    "invalid_union",
+    "invalid_enum_value",
+    "unrecognized_keys",
+    "invalid_arguments",
+    "invalid_return_type",
+    "invalid_date",
+    "invalid_string",
+    "too_small",
+    "too_big",
+    "invalid_intersection_types",
+    "not_multiple_of",
+]);
+
+export type ZodIssueCode = keyof typeof ZodIssueCode;
+
+export type ZodIssueBase = {
+    path: (string | number)[];
+    message?: string;
+};
+
+export interface ZodInvalidTypeIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.invalid_type;
+    expected: ZodParsedType;
+    received: ZodParsedType;
+}
+
+export interface ZodCustomIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.custom;
+    params?: { [k: string]: any };
+}
+
+export interface ZodInvalidUnionIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.invalid_union;
+    unionErrors: ZodError[];
+}
+
+export interface ZodInvalidEnumValueIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.invalid_enum_value;
+    options: (string | number)[];
+}
+
+export interface ZodUnrecognizedKeysIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.unrecognized_keys;
+    keys: string[];
+}
+
+export interface ZodInvalidArgumentsIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.invalid_arguments;
+    argumentsError: ZodError;
+}
+
+export interface ZodInvalidReturnTypeIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.invalid_return_type;
+    returnTypeError: ZodError;
+}
+
+export interface ZodInvalidDateIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.invalid_date;
+}
+
+export type StringValidation = "email" | "url" | "uuid" | "regex" | "cuid";
+
+export interface ZodInvalidStringIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.invalid_string;
+    validation: StringValidation;
+}
+
+export interface ZodTooSmallIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.too_small;
+    minimum: number;
+    inclusive: boolean;
+    type: "array" | "string" | "number";
+}
+
+export interface ZodTooBigIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.too_big;
+    maximum: number;
+    inclusive: boolean;
+    type: "array" | "string" | "number";
+}
+
+export interface ZodInvalidIntersectionTypesIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.invalid_intersection_types;
+}
+
+export interface ZodNotMultipleOfIssue extends ZodIssueBase {
+    code: typeof ZodIssueCode.not_multiple_of;
+    multipleOf: number;
+}
+
+export type ZodIssueOptionalMessage =
+    | ZodInvalidTypeIssue
+    | ZodUnrecognizedKeysIssue
+    | ZodInvalidUnionIssue
+    | ZodInvalidEnumValueIssue
+    | ZodInvalidArgumentsIssue
+    | ZodInvalidReturnTypeIssue
+    | ZodInvalidDateIssue
+    | ZodInvalidStringIssue
+    | ZodTooSmallIssue
+    | ZodTooBigIssue
+    | ZodInvalidIntersectionTypesIssue
+    | ZodNotMultipleOfIssue
+    | ZodCustomIssue;
+
+export type ZodIssue = ZodIssueOptionalMessage & { message: string };
+
+export class ZodError {
+    issues: ZodIssue[] = [];
+    constructor(issues: ZodIssue[]) {
+        this.issues = issues;
+    }
+}
+
+type stripPath<T extends object> = T extends any
+    ? util.OmitKeys<T, "path">
+    : never;
+
+export type IssueData = stripPath<ZodIssueOptionalMessage> & {
+    path?: (string | number)[];
+};
+"#
+            .to_string(),
+        ),
+        (
+            "helpers/parseUtil.ts".to_string(),
+            r#"
+import {
+    IssueData,
+    ZodIssue,
+    ZodIssueOptionalMessage,
+} from "../ZodError";
+import { util } from "./util";
+
+export const ZodParsedType = util.arrayToEnum([
+    "string",
+    "nan",
+    "number",
+    "integer",
+    "boolean",
+    "undefined",
+    "null",
+    "array",
+    "object",
+    "unknown",
+]);
+
+export type ZodParsedType = keyof typeof ZodParsedType;
+
+export const makeIssue = (params: {
+    path: (string | number)[];
+    issueData: IssueData;
+}): ZodIssue => {
+    const { path, issueData } = params;
+    const fullPath = [...path, ...(issueData.path || [])];
+    const fullIssue = {
+        ...issueData,
+        path: fullPath,
+    };
+
+    consume(fullIssue);
+
+    return {
+        ...issueData,
+        path: fullPath,
+        message: issueData.message || "",
+    };
+};
+
+declare function consume(issue: ZodIssueOptionalMessage): void;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let target_diags: Vec<_> = result
+        .file_results
+        .iter()
+        .flat_map(|file| file.diagnostics.iter())
+        .filter(|diag| matches!(diag.code, 2339 | 2345 | 2322))
+        .collect();
+    assert!(
+        target_diags.is_empty(),
+        "Expected Zod IssueData cross-file spread to preserve union properties. Actual diagnostics: {target_diags:#?}"
+    );
+}
+
+#[test]
 fn test_check_files_parallel_keeps_namespace_local_component_for_create_element_inference() {
     let files = vec![(
         "test.ts".to_string(),
