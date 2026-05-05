@@ -452,6 +452,31 @@ export { impl as myFunc };
 }
 
 #[test]
+fn named_export_specifier_for_ambient_const_skips_runtime_assignment() {
+    let source = "declare const _await: any;\nexport { _await as await };\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.await = void 0;"),
+        "Ambient named export should keep the preamble initialization.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.await = _await;"),
+        "Ambient named export should not emit a runtime assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn inline_cjs_export_skips_initializerless_vars() {
     let source = "export var eVar1, eVar2 = 10;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
