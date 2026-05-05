@@ -267,31 +267,23 @@ impl<'a> CheckerState<'a> {
         Some(format!("[{expr_text}]"))
     }
 
-    fn is_this_options_property_access(&self, expr_idx: NodeIndex) -> bool {
+    fn this_options_property_access_receiver(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
-        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
+        let expr_node = self.ctx.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return false;
+            return None;
         }
-        let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
-            return false;
-        };
+        let access = self.ctx.arena.get_access_expr(expr_node)?;
 
         let base_idx = self
             .ctx
             .arena
             .skip_parenthesized_and_assertions(access.expression);
-        let Some(base_node) = self.ctx.arena.get(base_idx) else {
-            return false;
-        };
+        let base_node = self.ctx.arena.get(base_idx)?;
         if base_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return false;
+            return None;
         }
-        let Some(base_access) = self.ctx.arena.get_access_expr(base_node) else {
-            return false;
-        };
+        let base_access = self.ctx.arena.get_access_expr(base_node)?;
         let base_name_is_options = self
             .ctx
             .arena
@@ -299,7 +291,7 @@ impl<'a> CheckerState<'a> {
             .and_then(|node| self.ctx.arena.get_identifier(node))
             .is_some_and(|ident| ident.escaped_text == "options");
         if !base_name_is_options {
-            return false;
+            return None;
         }
 
         let receiver_idx = self
@@ -310,6 +302,7 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(receiver_idx)
             .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            .then_some(receiver_idx)
     }
 
     pub(crate) fn get_type_of_object_literal_with_request(
@@ -385,6 +378,7 @@ impl<'a> CheckerState<'a> {
         let mut spread_string_index_types: Vec<TypeId> = Vec::new();
         let mut spread_number_index_types: Vec<TypeId> = Vec::new();
         let mut has_spread = false;
+        let mut has_any_spread = false;
         let mut has_union_spread = false;
         let mut union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
         // Track type-parameter-containing spread types for intersection creation.
@@ -2407,6 +2401,18 @@ impl<'a> CheckerState<'a> {
                     };
                     let spread_type =
                         self.get_type_of_node_with_request(spread_expr, &spread_request);
+                    let this_options_receiver_type = self
+                        .this_options_property_access_receiver(spread_expr)
+                        .map(|receiver_idx| self.get_type_of_node(receiver_idx));
+                    let is_contextual_this_options_any_spread = spread_type == TypeId::ANY
+                        && this_options_receiver_type
+                            .is_some_and(|receiver_type| receiver_type != TypeId::ANY);
+                    if !self.ctx.in_destructuring_target
+                        && spread_type == TypeId::ANY
+                        && !is_contextual_this_options_any_spread
+                    {
+                        has_any_spread = true;
+                    }
                     // TS2698: Spread types may only be created from object types.
                     // Only check in expression context — in destructuring targets,
                     // `{ ...x }` is a rest binding (x receives remaining properties),
@@ -2659,7 +2665,7 @@ impl<'a> CheckerState<'a> {
                         // construction based on the actual spread source.
                         let spread_props_for_overwrite = if spread_props.is_empty()
                             && spread_type == TypeId::ANY
-                            && self.is_this_options_property_access(spread_expr)
+                            && is_contextual_this_options_any_spread
                             && let Some(ctx_type) = contextual_type
                         {
                             self.collect_object_spread_properties(ctx_type)
@@ -2765,6 +2771,7 @@ impl<'a> CheckerState<'a> {
             string_index_types,
             number_index_types,
             has_spread,
+            has_any_spread,
             has_union_spread,
             union_spread_branches,
             generic_spread_types,
