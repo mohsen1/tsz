@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix-ts2741-private-name-base-display`
-- **PR**: TBD
+- **PR**: #2780
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
