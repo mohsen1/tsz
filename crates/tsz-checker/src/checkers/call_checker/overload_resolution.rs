@@ -3,6 +3,7 @@
 //! Split from the parent `call_checker` module — pure code motion.
 
 use crate::context::TypingRequest;
+use crate::context::speculation::FullSnapshot;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
 use crate::query_boundaries::common::{ContextualTypeContext, PendingDiagnosticBuilder};
 use crate::state::CheckerState;
@@ -10,9 +11,21 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-use super::{CallableContext, OverloadResolution};
+use super::{CallableContext, OverloadResolution, SelectedTypePredicate};
+
+type NoReturnContextFallback = (Vec<TypeId>, TypeId, SelectedTypePredicate, FullSnapshot);
 
 impl<'a> CheckerState<'a> {
+    fn selected_overload_type_predicate(
+        sig: &tsz_solver::CallSignature,
+        instantiated_predicate: SelectedTypePredicate,
+    ) -> SelectedTypePredicate {
+        instantiated_predicate.or_else(|| {
+            sig.type_predicate
+                .map(|predicate| (predicate, sig.params.clone()))
+        })
+    }
+
     /// Resolve an overloaded call by trying each signature.
     ///
     /// This method iterates through overload signatures and returns the first
@@ -175,11 +188,7 @@ impl<'a> CheckerState<'a> {
         // (couldn't infer type params from contextual return type), defer it as
         // a fallback and continue trying later overloads which might have better
         // return context inference.
-        let mut no_rcs_fallback: Option<(
-            Vec<TypeId>,
-            TypeId,
-            crate::context::speculation::FullSnapshot,
-        )> = None;
+        let mut no_rcs_fallback: Option<NoReturnContextFallback> = None;
         for (idx, (sig, &func_type)) in signatures.iter().zip(signature_types.iter()).enumerate() {
             tracing::debug!("Trying overload {} with {} args", idx, arg_types.len());
             self.ensure_relation_input_ready(func_type);
@@ -193,7 +202,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
-            let (result, _instantiated_predicate, instantiated_params) = self
+            let (result, instantiated_predicate, instantiated_params) = self
                 .resolve_call_with_checker_adapter(
                     resolved_func_type,
                     &arg_types,
@@ -201,6 +210,8 @@ impl<'a> CheckerState<'a> {
                     contextual_type,
                     None,
                 );
+            let selected_type_predicate =
+                Self::selected_overload_type_predicate(sig, instantiated_predicate);
 
             match &result {
                 CallResult::ArgumentTypeMismatch {
@@ -519,6 +530,7 @@ impl<'a> CheckerState<'a> {
                         no_rcs_fallback = Some((
                             final_arg_types.clone(),
                             final_return_type,
+                            selected_type_predicate.clone(),
                             self.ctx.snapshot_full(),
                         ));
                         continue;
@@ -563,6 +575,7 @@ impl<'a> CheckerState<'a> {
                     return Some(OverloadResolution {
                         arg_types: final_arg_types,
                         result: CallResult::Success(final_return_type),
+                        selected_type_predicate,
                     });
                 }
                 CallResult::ArgumentTypeMismatch { index, .. } => {
@@ -574,6 +587,7 @@ impl<'a> CheckerState<'a> {
                         return Some(OverloadResolution {
                             arg_types: arg_types.clone(),
                             result: CallResult::Success(sig.return_type),
+                            selected_type_predicate,
                         });
                     }
                 }
@@ -590,6 +604,7 @@ impl<'a> CheckerState<'a> {
                     return Some(OverloadResolution {
                         arg_types: arg_types.clone(),
                         result: CallResult::Success(return_type),
+                        selected_type_predicate,
                     });
                 }
                 _ => {}
@@ -598,12 +613,15 @@ impl<'a> CheckerState<'a> {
 
         // If the first pass deferred an overload without return context substitution
         // but no later overload succeeded, accept the deferred fallback.
-        if let Some((fallback_arg_types, fallback_return_type, fallback_snap)) = no_rcs_fallback {
+        if let Some((fallback_arg_types, fallback_return_type, fallback_predicate, fallback_snap)) =
+            no_rcs_fallback
+        {
             self.ctx.rollback_full(&fallback_snap);
             self.ctx.node_types.merge(&temp_node_types);
             return Some(OverloadResolution {
                 arg_types: fallback_arg_types,
                 result: CallResult::Success(fallback_return_type),
+                selected_type_predicate: fallback_predicate,
             });
         }
 
@@ -857,7 +875,7 @@ impl<'a> CheckerState<'a> {
 
             self.ensure_relation_input_ready(func_type);
 
-            let (mut result, _instantiated_predicate, instantiated_params) = self
+            let (mut result, instantiated_predicate, instantiated_params) = self
                 .resolve_call_with_checker_adapter(
                     resolved_func_type,
                     &sig_arg_types,
@@ -865,6 +883,8 @@ impl<'a> CheckerState<'a> {
                     contextual_type,
                     actual_this_type,
                 );
+            let mut selected_type_predicate =
+                Self::selected_overload_type_predicate(sig, instantiated_predicate);
             let sig_shape = FunctionShape {
                 params: sig.params.clone(),
                 return_type: sig.return_type,
@@ -984,7 +1004,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.preserve_literal_types = prev_preserve_literals_retry;
                 self.ctx.in_const_assertion = prev_in_const_assertion_retry;
 
-                let (retry_result, _retry_predicate, _retry_instantiated_params) = self
+                let (retry_result, retry_predicate, _retry_instantiated_params) = self
                     .resolve_call_with_checker_adapter(
                         resolved_func_type,
                         &refreshed_arg_types,
@@ -992,6 +1012,9 @@ impl<'a> CheckerState<'a> {
                         contextual_type,
                         actual_this_type,
                     );
+                if retry_predicate.is_some() {
+                    selected_type_predicate = retry_predicate;
+                }
                 match retry_result {
                     CallResult::Success(_)
                     | CallResult::ArgumentTypeMismatch { .. }
@@ -1031,6 +1054,7 @@ impl<'a> CheckerState<'a> {
                                         actual,
                                         fallback_return: return_type,
                                     },
+                                    selected_type_predicate: None,
                                 },
                                 std::mem::take(&mut self.ctx.node_types),
                             ));
@@ -1103,6 +1127,7 @@ impl<'a> CheckerState<'a> {
                                         actual: return_type,
                                         fallback_return: return_type,
                                     },
+                                    selected_type_predicate: None,
                                 },
                                 std::mem::take(&mut self.ctx.node_types),
                             ));
@@ -1146,6 +1171,7 @@ impl<'a> CheckerState<'a> {
                         return Some(OverloadResolution {
                             arg_types: sig_arg_types,
                             result: CallResult::Success(return_type),
+                            selected_type_predicate,
                         });
                     }
                     let preserved_first_pass_diags = self.collect_non_callback_diagnostics_between(
@@ -1178,6 +1204,7 @@ impl<'a> CheckerState<'a> {
                     return Some(OverloadResolution {
                         arg_types: sig_arg_types,
                         result: CallResult::Success(return_type),
+                        selected_type_predicate,
                     });
                 }
                 CallResult::ArgumentTypeMismatch { index, .. } => {
@@ -1189,6 +1216,7 @@ impl<'a> CheckerState<'a> {
                         return Some(OverloadResolution {
                             arg_types: sig_arg_types,
                             result: CallResult::Success(sig.return_type),
+                            selected_type_predicate,
                         });
                     }
 
@@ -1227,6 +1255,7 @@ impl<'a> CheckerState<'a> {
                                         actual,
                                         fallback_return,
                                     },
+                                    selected_type_predicate: None,
                                 },
                                 std::mem::take(&mut self.ctx.node_types),
                             ));
@@ -1287,6 +1316,7 @@ impl<'a> CheckerState<'a> {
                     return Some(OverloadResolution {
                         arg_types: sig_arg_types,
                         result: CallResult::Success(return_type),
+                        selected_type_predicate,
                     });
                 }
                 _ => {
@@ -1329,6 +1359,7 @@ impl<'a> CheckerState<'a> {
             return Some(OverloadResolution {
                 arg_types: fallback_arg_types,
                 result: CallResult::Success(fallback_return_type),
+                selected_type_predicate: None,
             });
         }
 
@@ -1372,6 +1403,7 @@ impl<'a> CheckerState<'a> {
                             expected_low,
                             expected_high,
                         },
+                        selected_type_predicate: None,
                     });
                 }
             }
@@ -1389,6 +1421,7 @@ impl<'a> CheckerState<'a> {
                     },
                     actual: args.len(),
                 },
+                selected_type_predicate: None,
             });
         }
 
@@ -1413,6 +1446,7 @@ impl<'a> CheckerState<'a> {
                 failures,
                 fallback_return,
             },
+            selected_type_predicate: None,
         })
     }
 }

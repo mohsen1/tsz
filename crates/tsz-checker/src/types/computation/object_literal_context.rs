@@ -1571,6 +1571,49 @@ impl<'a> CheckerState<'a> {
                         if present_property_names.contains(&prop_name_str) {
                             continue;
                         }
+                        let member_is_array_like = member_candidates.iter().any(|&candidate| {
+                            crate::query_boundaries::common::array_element_type(
+                                self.ctx.types,
+                                candidate,
+                            )
+                            .is_some()
+                                || crate::query_boundaries::common::tuple_elements(
+                                    self.ctx.types,
+                                    candidate,
+                                )
+                                .is_some()
+                                || crate::query_boundaries::common::object_shape_for_type(
+                                    self.ctx.types,
+                                    candidate,
+                                )
+                                .is_some_and(|shape| {
+                                    shape.number_index.is_some() || {
+                                        let has_length = shape.properties.iter().any(|prop| {
+                                            self.ctx.types.resolve_atom_ref(prop.name).as_ref()
+                                                == "length"
+                                        });
+                                        let has_array_method =
+                                            shape.properties.iter().any(|prop| {
+                                                matches!(
+                                                    self.ctx
+                                                        .types
+                                                        .resolve_atom_ref(prop.name)
+                                                        .as_ref(),
+                                                    "push" | "pop" | "concat" | "slice"
+                                                )
+                                            });
+                                        has_length && has_array_method
+                                    }
+                                })
+                        });
+                        if !member_is_array_like
+                            && !crate::query_boundaries::common::is_unit_type(
+                                self.ctx.types,
+                                prop.type_id,
+                            )
+                        {
+                            continue;
+                        }
                         // This member requires a property that the literal doesn't have.
                         // Check if at least one other member doesn't require it (optional or absent).
                         let some_other_doesnt_require = members.iter().any(|&other| {

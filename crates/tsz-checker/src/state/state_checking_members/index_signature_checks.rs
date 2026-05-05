@@ -5,6 +5,67 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn property_type_assignable_to_index_type(
+        &mut self,
+        prop_type: TypeId,
+        index_value_type: TypeId,
+    ) -> bool {
+        if let Some(list_id) = crate::query_boundaries::common::union_list_id(
+            self.ctx.types,
+            self.resolve_lazy_type(prop_type),
+        ) {
+            let members: Vec<TypeId> = self.ctx.types.type_list(list_id).to_vec();
+            return members
+                .into_iter()
+                .all(|member| self.is_assignable_to(member, index_value_type));
+        }
+
+        self.is_assignable_to(prop_type, index_value_type)
+    }
+
+    fn format_ts2411_type(&mut self, type_id: TypeId) -> String {
+        let type_queries =
+            crate::query_boundaries::common::collect_type_queries(self.ctx.types, type_id);
+        let mut replacements = Vec::new();
+        for symbol_ref in type_queries {
+            let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+            let value_type = self.get_type_of_symbol(sym_id);
+            if value_type != TypeId::ANY
+                && value_type != TypeId::ERROR
+                && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
+            {
+                env.insert(symbol_ref, value_type);
+            }
+            if value_type != TypeId::ANY
+                && value_type != TypeId::ERROR
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                let mut value_display = self.format_type(value_type);
+                if value_display == symbol.escaped_name {
+                    let constructor_name = format!("{}Constructor", symbol.escaped_name);
+                    let has_constructor_symbol =
+                        self.ctx.binder.file_locals.get(&constructor_name).is_some()
+                            || self.ctx.lib_contexts.iter().any(|lib_ctx| {
+                                lib_ctx.binder.file_locals.get(&constructor_name).is_some()
+                            });
+                    if has_constructor_symbol {
+                        value_display = constructor_name;
+                    }
+                }
+                replacements.push((format!("typeof {}", symbol.escaped_name), value_display));
+            }
+        }
+        let evaluated = self.evaluate_type_with_env(type_id);
+        let resolved = self.resolve_type_query_type(evaluated);
+        let mut formatted = self.format_type(resolved);
+        for (from, to) in replacements {
+            if from != to {
+                formatted = formatted.replace(&from, &to);
+            }
+        }
+        formatted
+    }
+
     /// Check index signature parameter type (TS1268).
     /// An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.
     pub(crate) fn check_index_signature_parameter_type(&mut self, member_idx: NodeIndex) {
@@ -711,10 +772,10 @@ impl<'a> CheckerState<'a> {
                         symbol_value_type
                     };
                     if let Some(sym_value_type) = applicable_symbol_value
-                        && !self.is_assignable_to(prop_type, sym_value_type)
+                        && !self.property_type_assignable_to_index_type(prop_type, sym_value_type)
                     {
-                        let prop_type_str = self.format_type(prop_type);
-                        let index_type_str = self.format_type(sym_value_type);
+                        let prop_type_str = self.format_ts2411_type(prop_type);
+                        let index_type_str = self.format_ts2411_type(sym_value_type);
                         self.error_at_node_msg(
                             name_idx,
                             diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
@@ -803,7 +864,7 @@ impl<'a> CheckerState<'a> {
             // Check against number index signature first (for numeric properties)
             if let Some(number_value_type) = applicable_number_value
                 && is_numeric_property
-                && !self.is_assignable_to(prop_type, number_value_type)
+                && !self.property_type_assignable_to_index_type(prop_type, number_value_type)
             {
                 // Deduplicate TS2411 across merged interface bodies.
                 // Property names like `1` (numeric) and `'1'` (string) are semantically
@@ -812,8 +873,8 @@ impl<'a> CheckerState<'a> {
                 if !self.ctx.emitted_ts2411_for_iface_prop.contains(&dedup_key) {
                     self.ctx.emitted_ts2411_for_iface_prop.insert(dedup_key);
 
-                    let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(number_value_type);
+                    let prop_type_str = self.format_ts2411_type(prop_type);
+                    let index_type_str = self.format_ts2411_type(number_value_type);
 
                     self.error_at_node_msg(
                         name_idx,
@@ -825,15 +886,15 @@ impl<'a> CheckerState<'a> {
 
             // Check against string index signature
             if let Some(string_value_type) = applicable_string_value
-                && !self.is_assignable_to(prop_type, string_value_type)
+                && !self.property_type_assignable_to_index_type(prop_type, string_value_type)
             {
                 // Deduplicate TS2411 across merged interface bodies (same as above).
                 let dedup_key = (iface_type.0, prop_name.clone(), false);
                 if !self.ctx.emitted_ts2411_for_iface_prop.contains(&dedup_key) {
                     self.ctx.emitted_ts2411_for_iface_prop.insert(dedup_key);
 
-                    let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(string_value_type);
+                    let prop_type_str = self.format_ts2411_type(prop_type);
+                    let index_type_str = self.format_ts2411_type(string_value_type);
 
                     self.error_at_node_msg(
                         name_idx,
@@ -1172,10 +1233,10 @@ impl<'a> CheckerState<'a> {
                 prop_name.starts_with("[Symbol.") || prop_name.starts_with("__@");
             if is_symbol_property {
                 if let Some(sym_value_type) = symbol_value_type
-                    && !self.is_assignable_to(prop_type, sym_value_type)
+                    && !self.property_type_assignable_to_index_type(prop_type, sym_value_type)
                 {
-                    let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(sym_value_type);
+                    let prop_type_str = self.format_ts2411_type(prop_type);
+                    let index_type_str = self.format_ts2411_type(sym_value_type);
                     let error_node = symbol_index_sig_node.unwrap_or(name_fallback_node);
 
                     self.error_at_node_msg(
@@ -1194,10 +1255,10 @@ impl<'a> CheckerState<'a> {
             if let Some(ref number_idx) = index_info.number_index
                 && is_numeric_property
                 && !number_index_covered.contains(&prop_name)
-                && !self.is_assignable_to(prop_type, number_idx.value_type)
+                && !self.property_type_assignable_to_index_type(prop_type, number_idx.value_type)
             {
-                let prop_type_str = self.format_type(prop_type);
-                let index_type_str = self.format_type(number_idx.value_type);
+                let prop_type_str = self.format_ts2411_type(prop_type);
+                let index_type_str = self.format_ts2411_type(number_idx.value_type);
                 let error_node = number_index_sig_node.unwrap_or(name_fallback_node);
 
                 self.error_at_node_msg(
@@ -1210,10 +1271,10 @@ impl<'a> CheckerState<'a> {
             // Skip properties already covered by a base that owns the string index sig.
             if let Some(ref string_idx) = index_info.string_index
                 && !string_index_covered.contains(&prop_name)
-                && !self.is_assignable_to(prop_type, string_idx.value_type)
+                && !self.property_type_assignable_to_index_type(prop_type, string_idx.value_type)
             {
-                let prop_type_str = self.format_type(prop_type);
-                let index_type_str = self.format_type(string_idx.value_type);
+                let prop_type_str = self.format_ts2411_type(prop_type);
+                let index_type_str = self.format_ts2411_type(string_idx.value_type);
                 let error_node = string_index_sig_node.unwrap_or(name_fallback_node);
 
                 self.error_at_node_msg(

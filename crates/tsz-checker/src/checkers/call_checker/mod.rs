@@ -42,9 +42,13 @@ impl CallableContext {
     }
 }
 
+pub(crate) type SelectedTypePredicate =
+    Option<(tsz_solver::TypePredicate, Vec<tsz_solver::ParamInfo>)>;
+
 pub(crate) struct OverloadResolution {
     pub(crate) arg_types: Vec<TypeId>,
     pub(crate) result: CallResult,
+    pub(crate) selected_type_predicate: SelectedTypePredicate,
 }
 
 pub(super) struct CheckerCallAssignabilityAdapter<'s, 'ctx> {

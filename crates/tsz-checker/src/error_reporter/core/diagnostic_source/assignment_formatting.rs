@@ -237,6 +237,9 @@ impl<'a> CheckerState<'a> {
             }
         }
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
+            if let Some(display) = self.type_assertion_mapped_alias_source_display(expr_idx) {
+                return display;
+            }
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
                 && display.contains("=>")
             {
@@ -982,6 +985,40 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn type_assertion_mapped_alias_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if !matches!(
+            node.kind,
+            syntax_kind_ext::AS_EXPRESSION | syntax_kind_ext::TYPE_ASSERTION
+        ) {
+            return None;
+        }
+        let assertion = self.ctx.arena.get_type_assertion(node)?;
+        let assertion_type = self.get_type_from_type_node(assertion.type_node);
+        let is_generic_mapped_alias =
+            crate::query_boundaries::common::is_generic_application(self.ctx.types, assertion_type)
+                && crate::query_boundaries::common::get_application_lazy_def_id(
+                    self.ctx.types,
+                    assertion_type,
+                )
+                .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                .is_some_and(|def| {
+                    def.kind == tsz_solver::def::DefKind::TypeAlias
+                        && def.body.is_some_and(|body| {
+                            crate::query_boundaries::common::is_mapped_type(self.ctx.types, body)
+                        })
+                });
+        if !is_generic_mapped_alias {
+            return None;
+        }
+        self.node_text(assertion.type_node)
+            .and_then(|text| self.sanitize_type_annotation_text_for_diagnostic(text, false))
+            .map(|text| self.format_annotation_like_type(&text))
     }
 
     /// Whether to suppress the AST-literal short-circuit for an

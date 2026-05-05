@@ -771,3 +771,50 @@ fn test_class_expression_static_field_and_block_evaluation_order_preserved() {
          a_pos={a_pos}, block_pos={block_pos}, b_pos={b_pos}.\nOutput:\n{output}"
     );
 }
+
+/// Regression: when an *anonymous* class expression with private fields is
+/// assigned to a variable, the binding name (e.g. `C` in `const C = class
+/// { ... }`) is used to derive `WeakMap` names like `_C_field`, but it is the
+/// outer variable, not a class self-binding. References to that name from
+/// inside the class body must NOT be rewritten to the synthesized class
+/// alias (`_a`). Only a *named* class expression (`class N { ... }`) gives
+/// rise to a self-binding that should be aliased.
+#[test]
+fn test_anonymous_class_expr_binding_is_not_rewritten_as_self_alias() {
+    let source = r"const C = class {
+    #field = this.#method();
+    #method() { return 42; }
+    static getInstance() { return new C(); }
+    getField() { return this.#field };
+}
+";
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("return new C()"),
+        "anonymous class expression with const-binding name must preserve `new C()` (the outer const), not rewrite to the synthesized alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return new _a()"),
+        "must not substitute the binding name with the class alias in anonymous class bodies.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: a *named* class expression's name is a self-binding that
+/// shadows any outer binding, so references inside the class body must be
+/// rewritten to the synthesized alias when the class is wrapped in the
+/// `(_a = class N { ... }, _a)` form for static-private bookkeeping.
+#[test]
+fn test_named_class_expr_self_reference_uses_alias() {
+    let source = r"const X = class N {
+    static #count = 0;
+    static getCount() { return N.#count; }
+}
+";
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__classPrivateFieldGet(_a"),
+        "named class expression must rewrite self-reference `N` to alias `_a` for static private field access.\nOutput:\n{output}"
+    );
+}

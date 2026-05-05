@@ -177,7 +177,31 @@ impl<'a> CheckerState<'a> {
                 // variants instead of generic Application types.
                 // NoInfer, Uppercase, etc. are intrinsic — their DefId has no body,
                 // so Application(Lazy(DefId), args) can never be evaluated.
-                if self.lookup_type_parameter(name).is_none() {
+                let is_builtin_array = name == "Array" || name == "ReadonlyArray";
+                let type_param = self.lookup_type_parameter(name);
+                let type_resolution =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx);
+                let sym_id = match type_resolution {
+                    TypeSymbolResolution::Type(sym_id) => Some(sym_id),
+                    TypeSymbolResolution::ValueOnly(sym_id) => {
+                        self.report_wrong_meaning(
+                            name,
+                            type_name_idx,
+                            sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
+                        return TypeId::ERROR;
+                    }
+                    TypeSymbolResolution::NotFound => None,
+                };
+
+                let intrinsic_reference_is_unshadowed = type_param.is_none()
+                    && match sym_id {
+                        Some(sym_id) => self.ctx.symbol_is_from_actual_lib(sym_id),
+                        None => true,
+                    };
+                if intrinsic_reference_is_unshadowed {
                     match name {
                         "NoInfer" => {
                             if let Some(args) = &type_ref.type_arguments
@@ -201,24 +225,6 @@ impl<'a> CheckerState<'a> {
                         _ => {}
                     }
                 }
-                let is_builtin_array = name == "Array" || name == "ReadonlyArray";
-                let type_param = self.lookup_type_parameter(name);
-                let type_resolution =
-                    self.resolve_identifier_symbol_in_type_position(type_name_idx);
-                let sym_id = match type_resolution {
-                    TypeSymbolResolution::Type(sym_id) => Some(sym_id),
-                    TypeSymbolResolution::ValueOnly(sym_id) => {
-                        self.report_wrong_meaning(
-                            name,
-                            type_name_idx,
-                            sym_id,
-                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
-                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
-                        );
-                        return TypeId::ERROR;
-                    }
-                    TypeSymbolResolution::NotFound => None,
-                };
 
                 if is_builtin_array && type_param.is_none() && sym_id.is_none() {
                     // Array/ReadonlyArray not found - check if lib files are loaded

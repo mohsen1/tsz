@@ -578,6 +578,43 @@ fn test_collection_extractors() {
 }
 
 #[test]
+fn any_array_assignable_to_unknown_entry_tuple_for_map_inference() {
+    let interner = TypeInterner::new();
+    let any_array = interner.array(TypeId::ANY);
+    let unknown_pair = interner.readonly_tuple(vec![
+        TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let concrete_pair = interner.readonly_tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(is_subtype_of(&interner, any_array, unknown_pair));
+    assert!(!is_subtype_of(&interner, any_array, concrete_pair));
+}
+
+#[test]
 fn test_literal_and_intrinsic_extractors() {
     let interner = TypeInterner::new();
 

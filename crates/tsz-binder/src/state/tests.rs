@@ -989,6 +989,40 @@ function outer() {
 }
 
 #[test]
+fn function_body_declarations_hoist_even_in_strict_es2015() {
+    // A function body's top-level block is the function scope for declaration
+    // hoisting. Nested blocks are block-scoped in ES2015 strict mode, but the
+    // direct function body is not a nested block.
+    let options = BinderOptions {
+        target: ScriptTarget::ES2015,
+        always_strict: true,
+    };
+    let (binder, _parser) = parse_and_bind_with_options(
+        r#"
+function outer() {
+    var clash;
+    function clash() {}
+}
+"#,
+        options,
+    );
+
+    let function_scope_clash = binder.scopes.iter().find_map(|scope| {
+        (scope.kind == ContainerKind::Function)
+            .then(|| scope.table.get("clash"))
+            .flatten()
+    });
+    let clash_sym = function_scope_clash
+        .and_then(|sym_id| binder.symbols.get(sym_id))
+        .expect("expected `clash` in the function scope");
+    assert!(
+        clash_sym.flags & symbol_flags::FUNCTION != 0,
+        "function-body declaration should hoist to the function scope, got flags {}",
+        clash_sym.flags
+    );
+}
+
+#[test]
 fn function_in_block_not_hoisted_in_strict_mode() {
     // In strict mode (via "use strict"), function declarations in blocks
     // should be block-scoped, not hoisted.

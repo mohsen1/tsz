@@ -613,6 +613,41 @@ impl<'a> LoweringPass<'a> {
             let start = body_node.pos;
             let end = body_node.end;
 
+            // First pass: collect indices of private-field property accesses that
+            // appear as assignment LHS or unary mutation operands. These are
+            // already classified by the binary/unary handling and must not be
+            // double-counted as standalone reads.
+            let mut consumed_pa: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            for i in 0..self.arena.len() {
+                let nidx = NodeIndex(i as u32);
+                let Some(n) = self.arena.get(nidx) else {
+                    continue;
+                };
+                if n.pos < start || n.end > end {
+                    continue;
+                }
+                if n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(bin) = self.arena.get_binary_expr(n)
+                    && tsz_solver::is_assignment_operator(bin.operator_token)
+                {
+                    let left = self.unwrap_parens(bin.left);
+                    if self.is_private_field_access(left) {
+                        consumed_pa.insert(left.0);
+                    }
+                }
+                if (n.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    || n.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+                    && let Some(unary) = self.arena.get_unary_expr(n)
+                    && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                        || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                {
+                    let operand = self.unwrap_parens(unary.operand);
+                    if self.is_private_field_access(operand) {
+                        consumed_pa.insert(operand.0);
+                    }
+                }
+            }
+
             for i in 0..self.arena.len() {
                 let nidx = NodeIndex(i as u32);
                 let Some(n) = self.arena.get(nidx) else {
@@ -668,6 +703,17 @@ impl<'a> LoweringPass<'a> {
                         earliest_pos = Some(n.pos);
                         earliest_is_write_only = false;
                     }
+                }
+                // Standalone private-field read (e.g., `return this.#foo;`,
+                // `f(this.#foo)`, `x.#m()`). Skip ones we already classified as
+                // assignment targets or ++/-- operands.
+                if n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && self.is_private_field_access(nidx)
+                    && !consumed_pa.contains(&nidx.0)
+                    && (earliest_pos.is_none() || n.pos < earliest_pos.unwrap())
+                {
+                    earliest_pos = Some(n.pos);
+                    earliest_is_write_only = false;
                 }
             }
         }
@@ -1056,6 +1102,62 @@ impl<'a> LoweringPass<'a> {
         Some(&ident.escaped_text)
     }
 
+    pub(super) fn resolve_class_expr_binding_name(&self, class_idx: NodeIndex) -> Option<&str> {
+        let ext = self.arena.get_extended(class_idx)?;
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent_node = self.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+
+        let decl = self.arena.get_variable_declaration(parent_node)?;
+        self.get_identifier_text_ref(decl.name)
+            .filter(|name| !name.is_empty())
+    }
+
+    pub(super) fn class_expr_static_comma_needs_set_function_name(
+        &self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        if class.name.is_some() || self.resolve_class_expr_binding_name(class_idx).is_none() {
+            return false;
+        }
+
+        let needs_private_field_lowering = self.ctx.needs_es2022_lowering;
+        let target_needs_field_lowering =
+            self.ctx.needs_es2022_lowering || !self.ctx.options.use_define_for_class_fields;
+        #[allow(clippy::nonminimal_bool)]
+        let has_static_field_comma_expr = target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(member).is_some_and(|prop| {
+                            self.arena.is_static(&prop.modifiers)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                                && !(needs_private_field_lowering
+                                    && is_private_identifier(self.arena, prop.name))
+                        })
+                })
+            });
+        let has_static_block_comma_expr = self.ctx.needs_es2022_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                })
+            });
+
+        has_static_field_comma_expr || has_static_block_comma_expr
+    }
+
     pub(super) fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<IdentifierId> {
         self.get_module_root_name_inner(name_idx, 0)
     }
@@ -1099,7 +1201,10 @@ impl<'a> LoweringPass<'a> {
         &self,
         node: &Node,
     ) -> Option<&tsz_parser::parser::node::BlockData> {
-        if node.kind == syntax_kind_ext::BLOCK || node.kind == syntax_kind_ext::CASE_BLOCK {
+        if node.kind == syntax_kind_ext::BLOCK
+            || node.kind == syntax_kind_ext::CASE_BLOCK
+            || node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+        {
             self.arena.blocks.get(node.data_index as usize)
         } else {
             None

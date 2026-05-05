@@ -940,6 +940,8 @@ fn compile_inner(
             || d.code == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
             || d.code
                 == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+            || d.code
+                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
     }) {
         return Ok(CompilationResult {
             diagnostics: config_diagnostics,
@@ -2575,6 +2577,15 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if let Some(root_dir) = args.root_dir.as_ref() {
         options.root_dir = Some(root_dir.clone());
+    }
+    if let Some(declaration_dir) = args.declaration_dir.as_ref() {
+        options.declaration_dir = Some(declaration_dir.clone());
+    }
+    if let Some(types) = args.types.as_ref() {
+        options.types = Some(types.clone());
+    }
+    if let Some(type_roots) = args.type_roots.as_ref() {
+        options.type_roots = Some(type_roots.clone());
     }
     if args.composite {
         options.composite = true;

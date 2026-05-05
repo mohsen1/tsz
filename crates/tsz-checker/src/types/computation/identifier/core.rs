@@ -1090,7 +1090,10 @@ impl<'a> CheckerState<'a> {
                         }
                         let target = self.get_symbol_globally(target_sym_id)?;
                         let tflags = target.flags;
-                        if (tflags & tsz_binder::symbol_flags::INTERFACE) != 0
+                        if (tflags
+                            & (tsz_binder::symbol_flags::INTERFACE
+                                | tsz_binder::symbol_flags::TYPE_ALIAS))
+                            != 0
                             && (tflags & tsz_binder::symbol_flags::VALUE) != 0
                             && target.value_declaration.is_some()
                         {

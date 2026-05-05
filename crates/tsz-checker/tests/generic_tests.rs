@@ -204,6 +204,38 @@ type Paths<OverridePathOptions extends Partial<PathsOptions> = {}> =
 }
 
 #[test]
+fn test_module_local_partial_default_constraint_uses_local_alias() {
+    let source = r#"
+export {};
+
+type Partial<T> = {
+  required: T;
+};
+
+type Box<T extends Partial<{ value: number }> = {}> = T;
+
+type Result = Box;
+"#;
+    let diagnostics = crate::test_utils::check_source_diagnostics(source);
+    let ts2344 = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2344)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2344.len(),
+        1,
+        "Expected exactly one TS2344 for the local Partial alias constraint. Got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2344[0]
+            .message_text
+            .contains("Type '{}' does not satisfy the constraint 'Partial<{ value: number; }>'."),
+        "Expected TS2344 to reference the local Partial constraint. Actual diagnostic: {ts2344:#?}"
+    );
+}
+
+#[test]
 fn test_generic_class_type_parameter_constraint() {
     let source = r#"
 class Container<T extends number> {

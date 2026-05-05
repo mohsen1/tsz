@@ -45,6 +45,9 @@ impl<'a> InferSubstitutor<'a> {
 
         let result = match key {
             TypeData::Infer(info) => self.bindings.get(&info.name).copied().unwrap_or(type_id),
+            TypeData::UnresolvedTypeName(name) => {
+                self.bindings.get(&name).copied().unwrap_or(type_id)
+            }
             TypeData::Array(elem) => {
                 let substituted = self.substitute(elem);
                 if substituted == elem {

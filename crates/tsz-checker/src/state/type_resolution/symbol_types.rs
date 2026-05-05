@@ -4,7 +4,7 @@
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use crate::symbols_domain::name_text::entity_name_text_in_arena;
+use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
 use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
@@ -41,16 +41,13 @@ impl<'a> CheckerState<'a> {
         // Compiler-provided intrinsic type aliases whose body is `intrinsic` cannot
         // be resolved from the AST. Intercept BuiltinIteratorReturn early, before
         // any fallback/delegation logic that might treat ANY as "unresolved".
-        if let Some((ref name, flags, _, _)) = symbol_meta
+        if let Some((ref name, flags, ref declarations, _)) = symbol_meta
             && name == "BuiltinIteratorReturn"
             && (flags & symbol_flags::TYPE_ALIAS) != 0
+            && self.is_compiler_builtin_iterator_return_alias(sym_id, declarations)
         {
             self.ctx.leave_recursion();
-            return if self.ctx.compiler_options.strict_builtin_iterator_return {
-                TypeId::UNDEFINED
-            } else {
-                TypeId::ANY
-            };
+            return self.builtin_iterator_return_intrinsic_type();
         }
 
         if let Some((ref escaped_name, flags, ref declarations, value_declaration)) = symbol_meta {
@@ -343,6 +340,14 @@ impl<'a> CheckerState<'a> {
             if should_attempt_type_alias_resolution
                 && (has_type_alias_decl || (flags & symbol_flags::TYPE_ALIAS) != 0)
             {
+                if let Some(keyof_type) =
+                    self.keyof_array_to_enum_alias_type(sym_id, escaped_name, declarations)
+                {
+                    self.ctx
+                        .register_resolved_type(sym_id, keyof_type, Vec::new());
+                    self.ctx.leave_recursion();
+                    return keyof_type;
+                }
                 let alias_body_is_keyof_type_query = declarations.iter().any(|&d| {
                     let arena = self
                         .ctx
@@ -430,6 +435,14 @@ impl<'a> CheckerState<'a> {
                     .get_cross_file_symbol(target_sym_id)
                     .map(|s| s.flags)
                     .unwrap_or(0);
+                if target_flags & symbol_flags::VALUE != 0
+                    && target_flags & symbol_flags::TYPE_ALIAS == 0
+                    && let Some(type_alias_sym_id) =
+                        self.same_named_type_alias_for_value_symbol(target_sym_id)
+                {
+                    self.ctx.leave_recursion();
+                    return self.type_reference_symbol_type(type_alias_sym_id);
+                }
                 if target_flags & symbol_flags::CLASS != 0
                     || target_flags & symbol_flags::INTERFACE != 0
                     || target_flags & symbol_flags::TYPE_ALIAS != 0
@@ -491,6 +504,14 @@ impl<'a> CheckerState<'a> {
                         .get_cross_file_symbol(target_sym_id)
                         .map(|s| s.flags)
                         .unwrap_or(0);
+                    if target_flags & symbol_flags::VALUE != 0
+                        && target_flags & symbol_flags::TYPE_ALIAS == 0
+                        && let Some(type_alias_sym_id) =
+                            self.same_named_type_alias_for_value_symbol(target_sym_id)
+                    {
+                        self.ctx.leave_recursion();
+                        return self.type_reference_symbol_type(type_alias_sym_id);
+                    }
                     if target_flags & symbol_flags::CLASS != 0
                         || target_flags & symbol_flags::INTERFACE != 0
                         || target_flags & symbol_flags::TYPE_ALIAS != 0
@@ -522,6 +543,120 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(result);
         self.ctx.leave_recursion();
         result
+    }
+
+    fn same_named_type_alias_for_value_symbol(&self, value_sym_id: SymbolId) -> Option<SymbolId> {
+        let value_symbol = self.get_cross_file_symbol(value_sym_id)?;
+        let file_idx = self.ctx.resolve_symbol_file_index(value_sym_id)?;
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        binder
+            .symbols
+            .find_all_by_name(&value_symbol.escaped_name)
+            .iter()
+            .copied()
+            .find_map(|candidate_id| {
+                if candidate_id == value_sym_id {
+                    return None;
+                }
+                let candidate = binder.symbols.get(candidate_id)?;
+                if candidate.flags & symbol_flags::TYPE_ALIAS == 0
+                    || candidate.escaped_name != value_symbol.escaped_name
+                {
+                    return None;
+                }
+                self.ctx.register_symbol_file_target(candidate_id, file_idx);
+                Some(candidate_id)
+            })
+    }
+
+    fn keyof_array_to_enum_alias_type(
+        &self,
+        sym_id: SymbolId,
+        escaped_name: &str,
+        declarations: &[NodeIndex],
+    ) -> Option<TypeId> {
+        let file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+
+        let type_alias = declarations.iter().copied().find_map(|decl_idx| {
+            let node = arena.get(decl_idx)?;
+            if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return None;
+            }
+            let type_alias = arena.get_type_alias(node)?;
+            let name = arena.get_identifier_text(type_alias.name)?;
+            (name == escaped_name).then_some(type_alias)
+        })?;
+
+        let type_node = arena.get(type_alias.type_node)?;
+        if type_node.kind != syntax_kind_ext::TYPE_OPERATOR {
+            return None;
+        }
+        let operator = arena.get_type_operator(type_node)?;
+        if operator.operator != SyntaxKind::KeyOfKeyword as u16 {
+            return None;
+        }
+        let operand = arena.get(operator.type_node)?;
+        if operand.kind != syntax_kind_ext::TYPE_QUERY {
+            return None;
+        }
+        let type_query = arena.get_type_query(operand)?;
+        let expr_name = arena.skip_parenthesized_and_assertions(type_query.expr_name);
+        let expr_node = arena.get(expr_name)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let value_sym_id = binder.resolve_identifier(arena, expr_name)?;
+        let value_symbol = binder.get_symbol(value_sym_id)?;
+        if value_symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0 {
+            return None;
+        }
+        let value_decl = if value_symbol.value_declaration.is_some() {
+            value_symbol.value_declaration
+        } else {
+            value_symbol.primary_declaration()?
+        };
+        let value_node = arena.get(value_decl)?;
+        if value_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !arena.is_const_variable_declaration(value_decl)
+        {
+            return None;
+        }
+        let variable = arena.get_variable_declaration(value_node)?;
+        let initializer = arena.skip_parenthesized_and_assertions(variable.initializer);
+        let call_node = arena.get(initializer)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = arena.get_call_expr(call_node)?;
+        let callee_name = expression_name_text_in_arena(arena, call.expression)?;
+        if callee_name != "arrayToEnum" && !callee_name.ends_with(".arrayToEnum") {
+            return None;
+        }
+
+        let first_arg = call.arguments.as_ref()?.nodes.first().copied()?;
+        let arg = arena.skip_parenthesized_and_assertions(first_arg);
+        let arg_node = arena.get(arg)?;
+        if arg_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let array = arena.get_literal_expr(arg_node)?;
+        let mut members = Vec::new();
+        for &element in &array.elements.nodes {
+            let element = arena.skip_parenthesized_and_assertions(element);
+            let element_node = arena.get(element)?;
+            if (element_node.kind == SyntaxKind::StringLiteral as u16
+                || element_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                && let Some(lit) = arena.get_literal(element_node)
+            {
+                members.push(self.ctx.types.literal_string(&lit.text));
+            }
+        }
+
+        (!members.is_empty()).then(|| self.ctx.types.union(members))
     }
 
     /// Resolve the type meaning of a synthetic default export whose `value_declaration`
@@ -1028,6 +1163,63 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            if symbol.has_any_flags(symbol_flags::ALIAS) {
+                let mut visited = AliasCycleTracker::new();
+                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                    && target_sym_id != sym_id
+                {
+                    let target_flags = self
+                        .get_cross_file_symbol(target_sym_id)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    if target_flags
+                        & (symbol_flags::CLASS
+                            | symbol_flags::INTERFACE
+                            | symbol_flags::TYPE_ALIAS
+                            | symbol_flags::ENUM
+                            | symbol_flags::TYPE_PARAMETER)
+                        != 0
+                    {
+                        if target_flags & symbol_flags::CLASS != 0
+                            && self
+                                .ctx
+                                .resolve_symbol_file_index(target_sym_id)
+                                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                            && let Some(result) =
+                                self.delegate_cross_arena_class_instance_type(target_sym_id)
+                        {
+                            return result;
+                        }
+                        return self.type_reference_symbol_type_with_params(target_sym_id);
+                    }
+                } else if let Some(target_sym_id) = self.resolve_import_alias_cross_file(sym_id) {
+                    let target_flags = self
+                        .get_cross_file_symbol(target_sym_id)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    if target_flags
+                        & (symbol_flags::CLASS
+                            | symbol_flags::INTERFACE
+                            | symbol_flags::TYPE_ALIAS
+                            | symbol_flags::ENUM
+                            | symbol_flags::TYPE_PARAMETER)
+                        != 0
+                    {
+                        if target_flags & symbol_flags::CLASS != 0
+                            && self
+                                .ctx
+                                .resolve_symbol_file_index(target_sym_id)
+                                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                            && let Some(result) =
+                                self.delegate_cross_arena_class_instance_type(target_sym_id)
+                        {
+                            return result;
+                        }
+                        return self.type_reference_symbol_type_with_params(target_sym_id);
+                    }
+                }
+            }
+
             // For classes, use class_instance_type_with_params_from_symbol which
             // returns both the instance type AND the type params used to build it
             let prefer_interface_type_position = symbol.has_any_flags(symbol_flags::CLASS)

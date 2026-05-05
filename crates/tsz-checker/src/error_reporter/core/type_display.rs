@@ -4,7 +4,7 @@ use crate::query_boundaries::diagnostics as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
-use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -1564,45 +1564,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         result
-    }
-
-    pub(crate) fn excess_property_target_annotation_text_for_site(
-        &self,
-        idx: NodeIndex,
-    ) -> Option<String> {
-        let mut current = idx;
-        loop {
-            let info = self.ctx.arena.node_info(current)?;
-            let parent_idx = info.parent;
-            let parent = self.ctx.arena.get(parent_idx)?;
-            if parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                let mut container_idx = parent_idx;
-                loop {
-                    let grandparent_idx = self.ctx.arena.node_info(container_idx)?.parent;
-                    let grandparent = self.ctx.arena.get(grandparent_idx)?;
-                    if let Some(var_decl) = self.ctx.arena.get_variable_declaration(grandparent)
-                        && var_decl.initializer == container_idx
-                        && var_decl.type_annotation.is_some()
-                    {
-                        return self.sanitize_type_annotation_text_for_diagnostic(
-                            self.node_text(var_decl.type_annotation)?,
-                            true,
-                        );
-                    }
-                    if grandparent.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-                        break;
-                    }
-                    container_idx = grandparent_idx;
-                }
-                if let Some(jsdoc_satisfies_text) =
-                    self.jsdoc_satisfies_type_text_for_node(parent_idx)
-                {
-                    return Some(jsdoc_satisfies_text);
-                }
-                return None;
-            }
-            current = parent_idx;
-        }
     }
 
     pub(in crate::error_reporter) fn should_use_evaluated_assignability_display(

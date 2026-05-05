@@ -1020,6 +1020,140 @@ const y: OriginalB = x;
 }
 
 #[test]
+fn test_check_files_parallel_imported_value_wins_over_same_named_type_alias() {
+    let files = vec![
+        (
+            "util.ts".to_string(),
+            r#"
+export namespace util {
+    export const arrayToEnum = <T extends string, U extends [T, ...T[]]>(
+        items: U
+    ): { [k in U[number]]: k } => {
+        const obj: any = {};
+        for (const item of items) obj[item] = item;
+        return obj as any;
+    };
+}
+"#
+            .to_string(),
+        ),
+        (
+            "parseUtil.ts".to_string(),
+            r#"
+import { util } from "./util";
+
+export const ParsedType = util.arrayToEnum([
+    "string",
+    "undefined",
+]);
+
+export type ParsedType = keyof typeof ParsedType;
+"#
+            .to_string(),
+        ),
+        (
+            "types.ts".to_string(),
+            r#"
+import { ParsedType } from "./parseUtil";
+
+const direct: ParsedType = ParsedType.string;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let types_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "types.ts")
+        .expect("expected types.ts result");
+    assert!(
+        !types_file
+            .diagnostics
+            .iter()
+            .any(|diag| matches!(diag.code, 2339 | 2322 | 2345)),
+        "Expected imported enum-like const to remain usable in value position. Actual diagnostics: {:#?}",
+        types_file.diagnostics
+    );
+}
+
+#[test]
+fn test_check_files_parallel_zod_forward_generic_class_constraint() {
+    let files = vec![
+        (
+            "types.ts".to_string(),
+            r#"
+export interface ZodTypeDef {
+    errorMap?: unknown;
+}
+
+export type ZodTypeAny = ZodType<any, any, any>;
+export type TypeOf<T extends ZodType<any, any, any>> = T["_output"];
+export type input<T extends ZodType<any, any, any>> = T["_input"];
+export type output<T extends ZodType<any, any, any>> = T["_output"];
+
+export abstract class ZodType<
+    Output,
+    Def extends ZodTypeDef = ZodTypeDef,
+    Input = Output
+> {
+    readonly _output!: Output;
+    readonly _input!: Input;
+    readonly _def!: Def;
+}
+"#
+            .to_string(),
+        ),
+        (
+            "index.ts".to_string(),
+            r#"
+import { TypeOf, ZodType } from "./types";
+
+declare const schema: ZodType<string>;
+declare const outputValue: TypeOf<typeof schema>;
+const text: string = outputValue;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let all_diags: Vec<_> = result
+        .file_results
+        .iter()
+        .flat_map(|file| file.diagnostics.iter())
+        .filter(|diag| matches!(diag.code, 2313 | 2339 | 2322))
+        .collect();
+    assert!(
+        all_diags.is_empty(),
+        "Expected Zod forward generic class constraints to work in parallel checking. Actual diagnostics: {all_diags:#?}"
+    );
+}
+
+#[test]
 fn test_check_files_parallel_keeps_namespace_local_component_for_create_element_inference() {
     let files = vec![(
         "test.ts".to_string(),

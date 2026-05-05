@@ -16,40 +16,7 @@
 //! literal/primitive (or a union/intersection of those), display the
 //! resolved form. Otherwise, keep the alias.
 
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn check_strict(source: &str) -> Vec<(u32, String)> {
-    let options = CheckerOptions {
-        strict: true,
-        strict_null_checks: true,
-        no_implicit_any: true,
-        ..Default::default()
-    };
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
-}
+use crate::test_utils::check_source_strict_messages as check_strict;
 
 /// `KeysExtendedBy<M, number>` evaluates to the literal `"b"`. tsc drops
 /// the alias and shows `'"b"'` in the TS2345 parameter slot.

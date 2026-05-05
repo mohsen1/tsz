@@ -305,13 +305,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.evaluate(cond.false_type);
                 }
 
-                // Simplification for non-distributive identity conditionals.
-                //
-                // A distributive naked-type-parameter conditional like
-                // `T extends T ? X : never` must stay deferred because `T = never`
-                // distributes to `never`, not `X`. Non-distributive identity
-                // conditionals (for example an indexed access that evaluated to
-                // `XX extends XX`) can still take the true branch.
+                if cond.is_distributive
+                    && check_type == extends_type
+                    && cond.true_type == cond.check_type
+                    && cond.false_type == TypeId::NEVER
+                {
+                    return check_type;
+                }
+
                 if !cond.is_distributive && check_type == extends_type {
                     return self.evaluate_preserving_intersection_branch_alias(cond.true_type);
                 }

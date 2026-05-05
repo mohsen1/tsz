@@ -123,6 +123,45 @@ pub fn check_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnost
     check_source(source, "test.ts", options)
 }
 
+/// Canonical "strict" `CheckerOptions` for tests that opt into the
+/// `strict` + `strictNullChecks` + `noImplicitAny` combo.
+///
+/// Many checker tests need this exact triple. The shared factory keeps a
+/// single source of truth; per-test overlays should clone this and tweak
+/// the fields they actually care about.
+pub fn strict_checker_options() -> CheckerOptions {
+    CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    }
+}
+
+/// Parse, bind, and type-check `source` under [`strict_checker_options`].
+///
+/// Returns full [`Diagnostic`]s; tests that only need codes or
+/// `(code, message)` pairs should use the `_codes` / `_messages` projections.
+pub fn check_source_strict(source: &str) -> Vec<Diagnostic> {
+    check_with_options(source, strict_checker_options())
+}
+
+/// Code-only projection of [`check_source_strict`].
+pub fn check_source_strict_codes(source: &str) -> Vec<u32> {
+    check_source_strict(source)
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
+}
+
+/// `(code, message_text)` projection of [`check_source_strict`].
+pub fn check_source_strict_messages(source: &str) -> Vec<(u32, String)> {
+    check_source_strict(source)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     //! Self-tests for the `test_utils` helpers themselves.
@@ -268,6 +307,64 @@ class C {}
         assert!(
             !codes.contains(&1219),
             "experimental_decorators flag should suppress TS1219, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn strict_checker_options_sets_canonical_triple() {
+        let opts = strict_checker_options();
+        assert!(opts.strict, "strict_checker_options must set strict");
+        assert!(
+            opts.strict_null_checks,
+            "strict_checker_options must set strict_null_checks"
+        );
+        assert!(
+            opts.no_implicit_any,
+            "strict_checker_options must set no_implicit_any"
+        );
+        // Other fields are explicit defaults — the factory must not silently
+        // turn them on (callers rely on overlay-by-spread).
+        let defaults = CheckerOptions::default();
+        assert_eq!(opts.strict_function_types, defaults.strict_function_types);
+        assert_eq!(
+            opts.exact_optional_property_types,
+            defaults.exact_optional_property_types
+        );
+    }
+
+    #[test]
+    fn check_source_strict_matches_explicit_strict_options() {
+        let source = "let s: string = 1;";
+        let lhs = check_source_strict(source);
+        let rhs = check_with_options(source, strict_checker_options());
+        let lhs_codes: Vec<u32> = lhs.iter().map(|d| d.code).collect();
+        let rhs_codes: Vec<u32> = rhs.iter().map(|d| d.code).collect();
+        assert_eq!(lhs_codes, rhs_codes);
+    }
+
+    #[test]
+    fn check_source_strict_codes_and_messages_project_strict_diagnostics() {
+        let source = "let s: string = 1;";
+        let codes = check_source_strict_codes(source);
+        let pairs = check_source_strict_messages(source);
+        let diags = check_source_strict(source);
+        assert_eq!(codes.len(), diags.len());
+        assert_eq!(pairs.len(), diags.len());
+        for (i, code) in codes.iter().enumerate() {
+            assert_eq!(*code, diags[i].code);
+            assert_eq!(pairs[i].0, diags[i].code);
+            assert_eq!(pairs[i].1, diags[i].message_text);
+        }
+    }
+
+    #[test]
+    fn check_source_strict_emits_ts2322_for_implicit_string_to_number() {
+        // strict + strictNullChecks + noImplicitAny is enough to surface the
+        // TS2322 mismatch on `let s: string = 1;`.
+        let codes = check_source_strict_codes("let s: string = 1;");
+        assert!(
+            codes.contains(&2322),
+            "expected TS2322 under strict_checker_options, got: {codes:?}"
         );
     }
 

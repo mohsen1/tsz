@@ -114,6 +114,34 @@ function foo2(x: C1 | C2 | C3): string {
     );
 }
 
+#[test]
+fn never_receiver_from_declared_discriminated_intersection_suppresses_ts2339() {
+    let src = r#"
+type RuntimeValue =
+    | { type: 'number', value: number }
+    | { type: 'string', value: string }
+    | { type: 'boolean', value: boolean };
+
+function foo1(x: RuntimeValue & { type: 'number' }) {
+    if (x.type === 'number') {
+        x.value;
+    }
+    else {
+        x.value;
+    }
+}
+"#;
+    let diags = diagnostic_messages(src);
+    let ts2339_on_value = diags.iter().find(|(code, msg)| {
+        *code == 2339 && msg.contains("'value'") && msg.contains("type 'never'")
+    });
+    assert!(
+        ts2339_on_value.is_none(),
+        "declared discriminated intersections should preserve their property surface in \
+         unreachable branches, got: {diags:?}"
+    );
+}
+
 /// Literal-typed receivers must keep their literal display in TS2339 — the
 /// helper must not collapse `''` to `'string'` just because the lookup
 /// resolves through a primitive apparent type.
