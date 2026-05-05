@@ -572,6 +572,37 @@ export class XmlElement2 extends Mixin(
 }
 
 #[test]
+fn test_local_class_mixin_preserves_base_static_intersection() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Constructor<C> { new (...args: any[]): C; }
+
+function mixin<B extends Constructor<{}>>(Base: B) {
+    class PrivateMixed extends Base {
+        bar = 2;
+    }
+    return PrivateMixed;
+}
+
+export class Unmixed {
+    foo = 1;
+}
+
+export const Mixed = mixin(Unmixed);
+"#,
+    );
+
+    assert!(
+        output.contains("} & typeof Unmixed;"),
+        "Expected mixin constructor type to preserve base static side: {output}"
+    );
+    assert!(
+        !output.contains("foo: number;\n        bar: number;"),
+        "Inherited base instance fields should stay behind typeof base intersection: {output}"
+    );
+}
+
+#[test]
 #[ignore = "regressed after remote changes: class extends expression declaration emit loses local dependency source order"]
 fn test_named_class_extends_expression_keeps_local_dependency_in_source_order() {
     let source = r#"

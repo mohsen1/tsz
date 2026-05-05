@@ -770,9 +770,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(&alias_name);
         self.write(": ");
         let type_text = self.print_synthetic_class_extends_alias_type(type_id);
-        let type_text = if type_text == "never" {
-            self.synthetic_class_extends_alias_source_type_text(heritage)
-                .unwrap_or(type_text)
+        let source_type_text = self.synthetic_class_extends_alias_source_type_text(heritage);
+        let prefer_source_text = type_text == "never"
+            || source_type_text
+                .as_ref()
+                .is_some_and(|source_text| source_text.contains(" & "));
+        let type_text = if prefer_source_text {
+            source_type_text.unwrap_or(type_text)
         } else {
             type_text
         };
