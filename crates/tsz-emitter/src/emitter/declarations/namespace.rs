@@ -468,10 +468,16 @@ impl<'a> Printer<'a> {
                 // Save/restore declared_namespace_names so names from the outer scope
                 // don't suppress declarations inside the nested IIFE (each IIFE creates
                 // a new function scope), and names declared inside don't leak out.
+                //
+                // Pass `iife_param` (not `name`) as the inner's parent: inside this
+                // IIFE's body the outer namespace is bound under the renamed param
+                // (e.g., `Y` → `Y_1`), so the inner's `(N = parent.N || ...)` argument
+                // must reference that local binding to avoid shadowing by the
+                // `var N;` we just emitted for the inner namespace.
                 if let Some(inner_module) = self.arena.get_module(body_node) {
                     let inner_module = inner_module.clone();
                     let prev_declared = std::mem::take(&mut self.declared_namespace_names);
-                    self.emit_namespace_iife(&inner_module, Some(&name));
+                    self.emit_namespace_iife(&inner_module, Some(&iife_param));
                     self.declared_namespace_names = prev_declared;
                 }
             } else {
@@ -1851,6 +1857,33 @@ mod tests {
         assert!(
             output.contains("(function (M_1)"),
             "Namespace IIFE parameter should be renamed to M_1 when body has 'import M = ...'.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a dotted namespace `Y.Y` collides at every level (outer renamed to
+    /// `Y_1`, inner to `Y_2` because the body declares `enum Y`), the inner
+    /// IIFE's argument expression must reference the outer's renamed binding,
+    /// not the original name. The original name is shadowed inside the outer's
+    /// body by the `var Y;` we emit for the inner namespace.
+    #[test]
+    fn dotted_namespace_inner_iife_uses_outer_renamed_param_in_argument() {
+        let source = "namespace Y.Y {\n  export enum Y { Red, Blue }\n}";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("})(Y = Y_1.Y || (Y_1.Y = {}));"),
+            "Inner IIFE argument should reference the outer's renamed param Y_1.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("})(Y = Y.Y || (Y.Y = {}));"),
+            "Inner IIFE argument must not reference the shadowed original Y.\nOutput:\n{output}"
         );
     }
 
