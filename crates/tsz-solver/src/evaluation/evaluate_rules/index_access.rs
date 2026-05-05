@@ -27,7 +27,6 @@ use super::string_index_helpers::string_index_signature_applies;
 use crate::objects::apparent::is_member;
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
-
 /// Lazily compute and cache array member types (length + apparent methods).
 /// Shared between `ArrayKeyVisitor` and `TupleKeyVisitor`.
 fn get_or_init_array_member_types(
