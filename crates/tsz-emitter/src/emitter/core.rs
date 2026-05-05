@@ -451,6 +451,11 @@ pub struct Printer<'a> {
     /// object that should qualify them.
     pub(crate) namespace_ancestor_export_qualifiers: FxHashMap<String, String>,
 
+    /// Class/function/enum names declared in the current namespace block.
+    /// These local value bindings shadow parent namespace exports while
+    /// qualifying identifiers inside namespace IIFEs.
+    pub(crate) namespace_current_class_fn_enum_names: FxHashSet<String>,
+
     /// Names of variables exported from the current CJS module.
     /// Used to qualify identifier reads: `x` → `exports.x` in expression positions.
     pub(crate) commonjs_exported_var_names: FxHashSet<String>,
@@ -895,6 +900,7 @@ impl<'a> Printer<'a> {
             namespace_exported_names: FxHashSet::default(),
             namespace_parent_exported_names: FxHashSet::default(),
             namespace_ancestor_export_qualifiers: FxHashMap::default(),
+            namespace_current_class_fn_enum_names: FxHashSet::default(),
             commonjs_exported_var_names: FxHashSet::default(),
             commonjs_exported_var_shadow_stack: Vec::new(),
             deferred_local_export_bindings: None,

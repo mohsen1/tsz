@@ -390,6 +390,21 @@ fn test_nested_namespace_extends_parent_export_when_name_conflicts() {
 }
 
 #[test]
+fn test_namespace_heritage_prefers_current_block_class_over_parent_export() {
+    let source = "namespace M {\n    export namespace C { export function f() {} }\n}\nnamespace M.P {\n    export class C {}\n    export class E extends C {}\n}\n";
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("class E extends C"),
+        "Heritage references should prefer a class declared in the current namespace block.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("class E extends M.C"),
+        "Parent namespace export should not shadow the current block's local class binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_nested_namespace_qualifies_parent_class_from_prior_block() {
     // Regression for #2521 review: when a parent namespace is reopened in a
     // later block that contains a nested namespace, references to a class

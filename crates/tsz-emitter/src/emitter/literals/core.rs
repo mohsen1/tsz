@@ -78,6 +78,13 @@ impl<'a> Printer<'a> {
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
             && self
+                .namespace_current_class_fn_enum_names
+                .contains(original_text.as_str())
+        {
+            self.write_identifier(emit_text);
+        } else if self.in_namespace_iife
+            && !self.suppress_ns_qualification
+            && self
                 .namespace_parent_exported_names
                 .contains(original_text.as_str())
             && let Some(ref parent_name) = self.parent_namespace_name
