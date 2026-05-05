@@ -29,7 +29,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .iter()
             .map(|ctx| std::sync::Arc::clone(&ctx.binder))
             .collect();
-        let mut current_sym = self
+        let mut current_sym: tsz_binder::SymbolId = self
             .ctx
             .binder
             .file_locals
@@ -48,6 +48,23 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             .is_some_and(|symbol| symbol.escaped_name == root_name)
                     })
                 })
+            })
+            // Cross-file fallback: when neither the current file's binder
+            // nor any lib context has the root name in `file_locals`,
+            // consult the merged `global_file_locals_index`. This recovers
+            // names like `util` (an imported namespace in another user
+            // file) when the current checker context's binder is a sibling
+            // file that didn't import it. Without this fallback, qualified
+            // names like `util.OmitKeys` get lowered to
+            // `Application(UnresolvedTypeName(...), args)` and silently
+            // disappear from downstream object spreads / intersections.
+            .or_else(|| {
+                self.ctx
+                    .global_file_locals_index
+                    .as_ref()
+                    .and_then(|idx| idx.get(root_name))
+                    .and_then(|entries| entries.iter().max_by_key(|(_, sym)| sym.0))
+                    .map(|&(_, sym)| sym)
             })?;
 
         for segment in segments {

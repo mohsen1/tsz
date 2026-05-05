@@ -487,7 +487,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             return true;
         }
 
-        assignable_check(type_id, func_ty) || assignable_check(type_id, TypeId::FUNCTION)
+        assignable_check(type_id, func_ty)
     }
 
     /// Check if a type has call or construct signatures.

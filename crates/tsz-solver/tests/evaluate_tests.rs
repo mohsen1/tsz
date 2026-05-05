@@ -11465,6 +11465,7 @@ fn test_keyof_readonly_and_optional_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -11479,6 +11480,7 @@ fn test_keyof_readonly_and_optional_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -12512,6 +12514,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -12596,6 +12599,7 @@ fn test_mapped_type_remove_readonly_modifier() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(b_name, TypeId::STRING),
@@ -12648,6 +12652,7 @@ fn test_mapped_type_remove_optional_modifier() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(b_name, TypeId::NUMBER),
@@ -12700,6 +12705,7 @@ fn test_mapped_type_add_readonly_modifier() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::readonly(y_name, TypeId::BOOLEAN),
@@ -12752,6 +12758,7 @@ fn test_mapped_type_add_optional_modifier() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::opt(foo_name, TypeId::STRING),
@@ -12800,6 +12807,7 @@ fn test_mapped_type_both_modifiers() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -12846,6 +12854,7 @@ fn test_mapped_type_both_remove_modifiers() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -12892,6 +12901,7 @@ fn test_mapped_type_add_readonly_remove_optional() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -12938,6 +12948,7 @@ fn test_mapped_type_remove_readonly_add_optional() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -12991,6 +13002,7 @@ fn test_mapped_type_minus_readonly_on_readonly_source() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(b_name, TypeId::STRING),
@@ -13042,6 +13054,7 @@ fn test_mapped_type_plus_optional_on_required_source() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::opt(y_name, TypeId::NUMBER),
@@ -13209,6 +13222,7 @@ fn test_mapped_type_add_both_modifiers_on_source() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -15312,6 +15326,7 @@ fn test_application_ref_expansion_with_readonly_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -15372,6 +15387,7 @@ fn test_application_ref_expansion_with_optional_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -16208,6 +16224,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -16222,6 +16239,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -18192,6 +18210,7 @@ fn test_indexed_access_optional_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -18223,6 +18242,7 @@ fn test_indexed_access_mixed_optional_required() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -18237,6 +18257,7 @@ fn test_indexed_access_mixed_optional_required() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -18373,6 +18394,7 @@ fn test_indexed_access_readonly_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -18540,6 +18562,7 @@ fn test_generator_function_async_return() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -18567,6 +18590,7 @@ fn test_generator_function_async_return() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     subst.insert(t_name, input_obj);
@@ -18918,6 +18942,7 @@ fn test_module_augmentation_class_extension() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -22446,6 +22471,7 @@ fn test_iterable_with_symbol_iterator() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -23311,6 +23337,7 @@ fn test_noinfer_with_object_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -23793,6 +23820,7 @@ fn test_partial_simple_object() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -23807,6 +23835,7 @@ fn test_partial_simple_object() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -23842,6 +23871,7 @@ fn test_partial_nested_object() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -23857,6 +23887,7 @@ fn test_partial_nested_object() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -23901,6 +23932,7 @@ fn test_partial_deep_nesting() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -23915,6 +23947,7 @@ fn test_partial_deep_nesting() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -23962,6 +23995,7 @@ fn test_required_simple_object() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -23976,6 +24010,7 @@ fn test_required_simple_object() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -24011,6 +24046,7 @@ fn test_required_nested_optionals() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -24026,6 +24062,7 @@ fn test_required_nested_optionals() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -24100,6 +24137,7 @@ fn test_readonly_simple_object() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -24114,6 +24152,7 @@ fn test_readonly_simple_object() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -24199,6 +24238,7 @@ fn test_readonly_nested() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -24310,6 +24350,7 @@ fn test_partial_with_methods() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -24373,6 +24414,7 @@ fn test_partial_required_inverse() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -24405,6 +24447,7 @@ fn test_readonly_with_optional() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -27229,6 +27272,7 @@ fn test_recursive_conditional_type_unwrap_promise() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -29810,6 +29854,7 @@ fn test_satisfies_optional_property_satisfied() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -30919,6 +30964,7 @@ fn test_const_object_literal_readonly_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::readonly(interner.intern_string("b"), hello),
@@ -31555,6 +31601,7 @@ fn test_pick_preserves_optional() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(key_b, TypeId::STRING),
@@ -32067,6 +32114,7 @@ fn test_omit_preserves_readonly() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(key_b, TypeId::STRING),
@@ -32139,6 +32187,7 @@ fn test_omit_preserves_optional_via_subset_homomorphic() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -32153,6 +32202,7 @@ fn test_omit_preserves_optional_via_subset_homomorphic() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -38083,6 +38133,7 @@ fn test_infer_ignores_readonly() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -39923,6 +39974,7 @@ fn test_infer_return_promise_like() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -42186,6 +42238,7 @@ fn test_homomorphic_mapped_keyof_preserves_optional() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -42200,6 +42253,7 @@ fn test_homomorphic_mapped_keyof_preserves_optional() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -42260,6 +42314,7 @@ fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -42274,6 +42329,7 @@ fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -42330,6 +42386,7 @@ fn test_homomorphic_mapped_keyof_preserves_readonly() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 

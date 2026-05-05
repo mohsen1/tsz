@@ -29,8 +29,8 @@
 //! as a shared utility to avoid circular dependencies. This module re-exports it
 //! for backward compatibility.
 
-use rustc_hash::FxHashMap;
-use tsz_parser::parser::node::NodeArena;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -171,11 +171,252 @@ pub fn get_private_field_name(arena: &NodeArena, name_idx: NodeIndex) -> Option<
     Some(ident.escaped_text.clone())
 }
 
+/// Collect top-level value bindings visible to generated private-name helpers.
+pub fn collect_enclosing_source_binding_names(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+) -> FxHashSet<String> {
+    let mut root_idx = node_idx;
+    while let Some(parent_idx) = arena.parent_of(root_idx) {
+        if parent_idx.is_none() {
+            break;
+        }
+        root_idx = parent_idx;
+    }
+
+    let mut names = FxHashSet::default();
+    let source_file = arena
+        .get(root_idx)
+        .and_then(|root_node| arena.get_source_file(root_node))
+        .or_else(|| find_containing_source_file(arena, node_idx));
+    let Some(source_file) = source_file else {
+        return names;
+    };
+
+    for &stmt_idx in &source_file.statements.nodes {
+        collect_statement_binding_names(arena, stmt_idx, &mut names);
+    }
+    names
+}
+
+fn find_containing_source_file(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+) -> Option<&tsz_parser::parser::node::SourceFileData> {
+    let node = arena.get(node_idx)?;
+    for candidate in &arena.nodes {
+        if candidate.kind != syntax_kind_ext::SOURCE_FILE {
+            continue;
+        }
+        if candidate.pos <= node.pos
+            && candidate.end >= node.end
+            && let Some(source_file) = arena.get_source_file(candidate)
+        {
+            return Some(source_file);
+        }
+    }
+    None
+}
+
+/// Allocate a generated private helper name without colliding with existing names.
+pub fn make_unique_private_name(base: &str, used_names: &mut FxHashSet<String>) -> String {
+    if used_names.insert(base.to_string()) {
+        return base.to_string();
+    }
+
+    let mut suffix = 1usize;
+    loop {
+        let candidate = format!("{base}_{suffix}");
+        if used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+fn collect_statement_binding_names(
+    arena: &NodeArena,
+    stmt_idx: NodeIndex,
+    names: &mut FxHashSet<String>,
+) {
+    let Some(stmt_node) = arena.get(stmt_idx) else {
+        return;
+    };
+
+    match stmt_node.kind {
+        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+            if let Some(variable) = arena.get_variable(stmt_node) {
+                for &decl_idx in &variable.declarations.nodes {
+                    collect_variable_declaration_binding_names(arena, decl_idx, names);
+                }
+                if variable.declarations.nodes.is_empty() {
+                    collect_variable_binding_names_from_subtree(arena, stmt_idx, names);
+                }
+            } else {
+                collect_variable_binding_names_from_subtree(arena, stmt_idx, names);
+            }
+        }
+        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+            if let Some(function) = arena.get_function(stmt_node) {
+                collect_identifier_binding_name(arena, function.name, names);
+            }
+        }
+        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+            if let Some(class) = arena.get_class(stmt_node) {
+                collect_identifier_binding_name(arena, class.name, names);
+            }
+        }
+        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+            if let Some(enm) = arena.get_enum(stmt_node) {
+                collect_identifier_binding_name(arena, enm.name, names);
+            }
+        }
+        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+            if let Some(module) = arena.get_module(stmt_node) {
+                collect_identifier_binding_name(arena, module.name, names);
+            }
+        }
+        k if k == syntax_kind_ext::IMPORT_DECLARATION => {
+            collect_import_binding_names(arena, stmt_node, names);
+        }
+        _ => {}
+    }
+}
+
+fn collect_variable_binding_names_from_subtree(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+    names: &mut FxHashSet<String>,
+) {
+    let Some(node) = arena.get(node_idx) else {
+        return;
+    };
+    if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+        collect_variable_declaration_binding_names(arena, node_idx, names);
+        return;
+    }
+
+    for child_idx in arena.get_children(node_idx) {
+        collect_variable_binding_names_from_subtree(arena, child_idx, names);
+    }
+}
+
+fn collect_import_binding_names(
+    arena: &NodeArena,
+    stmt_node: &tsz_parser::parser::node::Node,
+    names: &mut FxHashSet<String>,
+) {
+    let Some(import_decl) = arena.get_import_decl(stmt_node) else {
+        return;
+    };
+    let Some(import_clause_node) = arena.get(import_decl.import_clause) else {
+        return;
+    };
+    let Some(import_clause) = arena.get_import_clause(import_clause_node) else {
+        return;
+    };
+
+    collect_identifier_binding_name(arena, import_clause.name, names);
+
+    let Some(named_bindings_node) = arena.get(import_clause.named_bindings) else {
+        return;
+    };
+    let Some(named_bindings) = arena.get_named_imports(named_bindings_node) else {
+        return;
+    };
+
+    collect_identifier_binding_name(arena, named_bindings.name, names);
+    for &spec_idx in &named_bindings.elements.nodes {
+        let Some(spec_node) = arena.get(spec_idx) else {
+            continue;
+        };
+        if let Some(spec) = arena.get_specifier(spec_node) {
+            collect_identifier_binding_name(arena, spec.name, names);
+        }
+    }
+}
+
+fn collect_variable_declaration_binding_names(
+    arena: &NodeArena,
+    decl_idx: NodeIndex,
+    names: &mut FxHashSet<String>,
+) {
+    let Some(decl_node) = arena.get(decl_idx) else {
+        return;
+    };
+    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+        if let Some(decl_list) = arena.get_variable(decl_node) {
+            for &inner_decl_idx in &decl_list.declarations.nodes {
+                collect_variable_declaration_binding_names(arena, inner_decl_idx, names);
+            }
+        }
+        return;
+    }
+    if let Some(decl) = arena.get_variable_declaration(decl_node) {
+        collect_binding_pattern_names(arena, decl.name, names);
+    }
+}
+
+fn collect_binding_pattern_names(
+    arena: &NodeArena,
+    name_idx: NodeIndex,
+    names: &mut FxHashSet<String>,
+) {
+    let Some(node) = arena.get(name_idx) else {
+        return;
+    };
+
+    if node.kind == SyntaxKind::Identifier as u16 {
+        collect_identifier_binding_name(arena, name_idx, names);
+        return;
+    }
+
+    if (node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+        || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+        && let Some(pattern) = arena.get_binding_pattern(node)
+    {
+        for &element_idx in &pattern.elements.nodes {
+            let Some(element_node) = arena.get(element_idx) else {
+                continue;
+            };
+            if let Some(element) = arena.get_binding_element(element_node) {
+                collect_binding_pattern_names(arena, element.name, names);
+            }
+        }
+    }
+}
+
+fn collect_identifier_binding_name(
+    arena: &NodeArena,
+    name_idx: NodeIndex,
+    names: &mut FxHashSet<String>,
+) {
+    let Some(node) = arena.get(name_idx) else {
+        return;
+    };
+    if node.kind == SyntaxKind::Identifier as u16
+        && let Some(identifier) = arena.get_identifier(node)
+    {
+        names.insert(identifier.escaped_text.clone());
+    }
+}
+
 /// Collect private fields from a class
 pub fn collect_private_fields(
     arena: &NodeArena,
     class_idx: NodeIndex,
     class_name: &str,
+) -> Vec<PrivateFieldInfo> {
+    let mut used_names = collect_enclosing_source_binding_names(arena, class_idx);
+    collect_private_fields_with_reserved(arena, class_idx, class_name, &mut used_names)
+}
+
+/// Collect private fields from a class, avoiding the provided reserved names.
+pub fn collect_private_fields_with_reserved(
+    arena: &NodeArena,
+    class_idx: NodeIndex,
+    class_name: &str,
+    used_names: &mut FxHashSet<String>,
 ) -> Vec<PrivateFieldInfo> {
     let mut fields = Vec::new();
 
@@ -200,7 +441,8 @@ pub fn collect_private_fields(
             if is_private_identifier(arena, prop_data.name) {
                 let field_name = get_private_field_name(arena, prop_data.name).unwrap_or_default();
                 let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
-                let weakmap_name = format!("_{class_name}_{clean_name}");
+                let weakmap_name =
+                    make_unique_private_name(&format!("_{class_name}_{clean_name}"), used_names);
                 let is_static = arena.has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword);
 
                 fields.push(PrivateFieldInfo {
@@ -222,6 +464,17 @@ pub fn collect_private_accessors(
     arena: &NodeArena,
     class_idx: NodeIndex,
     class_name: &str,
+) -> Vec<PrivateAccessorInfo> {
+    let mut used_names = collect_enclosing_source_binding_names(arena, class_idx);
+    collect_private_accessors_with_reserved(arena, class_idx, class_name, &mut used_names)
+}
+
+/// Collect private accessors from a class, avoiding the provided reserved names.
+pub fn collect_private_accessors_with_reserved(
+    arena: &NodeArena,
+    class_idx: NodeIndex,
+    class_name: &str,
+    used_names: &mut FxHashSet<String>,
 ) -> Vec<PrivateAccessorInfo> {
     let mut accessors: FxHashMap<String, PrivateAccessorInfo> = FxHashMap::default();
 
@@ -258,8 +511,14 @@ pub fn collect_private_accessors(
                     .entry(clean_name.to_string())
                     .or_insert_with(|| PrivateAccessorInfo {
                         name: clean_name.to_string(),
-                        get_var_name: Some(format!("_{class_name}_{clean_name}_get")),
-                        set_var_name: Some(format!("_{class_name}_{clean_name}_set")),
+                        get_var_name: Some(make_unique_private_name(
+                            &format!("_{class_name}_{clean_name}_get"),
+                            used_names,
+                        )),
+                        set_var_name: Some(make_unique_private_name(
+                            &format!("_{class_name}_{clean_name}_set"),
+                            used_names,
+                        )),
                         getter_body: None,
                         setter_body: None,
                         setter_param: None,
@@ -316,6 +575,17 @@ pub fn collect_private_methods(
     class_idx: NodeIndex,
     class_name: &str,
 ) -> Vec<PrivateMethodInfo> {
+    let mut used_names = collect_enclosing_source_binding_names(arena, class_idx);
+    collect_private_methods_with_reserved(arena, class_idx, class_name, &mut used_names)
+}
+
+/// Collect private methods from a class, avoiding the provided reserved names.
+pub fn collect_private_methods_with_reserved(
+    arena: &NodeArena,
+    class_idx: NodeIndex,
+    class_name: &str,
+    used_names: &mut FxHashSet<String>,
+) -> Vec<PrivateMethodInfo> {
     let mut methods = Vec::new();
 
     let Some(class_node) = arena.get(class_idx) else {
@@ -342,7 +612,8 @@ pub fn collect_private_methods(
 
             let field_name = get_private_field_name(arena, method_data.name).unwrap_or_default();
             let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
-            let fn_var_name = format!("_{class_name}_{clean_name}");
+            let fn_var_name =
+                make_unique_private_name(&format!("_{class_name}_{clean_name}"), used_names);
             let is_static = arena.has_modifier(&method_data.modifiers, SyntaxKind::StaticKeyword);
             let is_async = arena.has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword);
 

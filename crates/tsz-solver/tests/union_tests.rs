@@ -218,6 +218,7 @@ fn test_union_not_assignable_to_mixed_optional_required() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::opt(interner.intern_string("b"), TypeId::STRING),
@@ -265,6 +266,7 @@ fn test_union_with_type_mismatch_not_assignable() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::opt(interner.intern_string("b"), TypeId::STRING),
@@ -486,6 +488,7 @@ fn test_discriminated_union_narrowing() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::opt(interner.intern_string("radius"), TypeId::NUMBER),
@@ -535,6 +538,7 @@ fn test_union_with_common_discriminant_property() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING),
@@ -764,6 +768,7 @@ fn test_discriminated_union_optional_property_narrowing() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -780,6 +785,7 @@ fn test_discriminated_union_optional_property_narrowing() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 

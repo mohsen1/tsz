@@ -54,6 +54,7 @@ fn object_with(interner: &TypeInterner, t_id: TypeId) -> TypeId {
         parent_id: None,
         declaration_order: 0,
         is_string_named: true,
+        is_symbol_named: false,
         single_quoted_name: false,
     };
     interner.object(vec![prop])

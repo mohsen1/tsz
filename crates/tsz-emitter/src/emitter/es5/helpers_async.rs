@@ -9,6 +9,16 @@ use super::helpers::ArraySegment;
 use crate::transforms::emit_utils;
 
 impl<'a> Printer<'a> {
+    fn next_arguments_capture_name(&mut self) -> String {
+        loop {
+            self.ctx.arguments_capture_counter += 1;
+            let candidate = format!("arguments_{}", self.ctx.arguments_capture_counter);
+            if !self.file_identifiers.contains(&candidate) {
+                return candidate;
+            }
+        }
+    }
+
     fn get_class_expression_name(&self, class_node: NodeIndex) -> Option<String> {
         let mut current = class_node;
         let mut hops = 0;
@@ -495,9 +505,17 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Emit `var arguments_1 = arguments;` before __awaiter for ES2015 path
+        let arguments_capture_name = if body_captures_arguments {
+            Some(self.next_arguments_capture_name())
+        } else {
+            None
+        };
+
+        // Emit captured `arguments` before __awaiter for ES2015 path.
         if body_captures_arguments {
-            self.write("var arguments_1 = arguments;");
+            self.write("var ");
+            self.write(arguments_capture_name.as_deref().unwrap_or("arguments_1"));
+            self.write(" = arguments;");
             self.write_line();
         }
 
@@ -543,9 +561,11 @@ impl<'a> Printer<'a> {
         // Emit function body with await→yield substitution
         let saved_yield = self.ctx.emit_await_as_yield;
         let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+        let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
         self.ctx.emit_await_as_yield = true;
         if body_captures_arguments {
             self.ctx.rewrite_arguments_to_arguments_1 = true;
+            self.ctx.arguments_capture_name = arguments_capture_name;
         }
         self.function_scope_depth += 1;
         // Emit the block body's statements directly
@@ -564,6 +584,7 @@ impl<'a> Printer<'a> {
         self.function_scope_depth -= 1;
         self.ctx.emit_await_as_yield = saved_yield;
         self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+        self.ctx.arguments_capture_name = saved_arguments_capture_name;
 
         self.decrease_indent();
         self.write("});");

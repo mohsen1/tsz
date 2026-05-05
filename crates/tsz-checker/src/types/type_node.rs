@@ -1043,6 +1043,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             continue;
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
+                        let is_symbol_named = self.is_symbol_property_name(sig.name);
 
                         if member.kind == METHOD_SIGNATURE {
                             let (_type_params, type_param_updates) = self
@@ -1081,6 +1082,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 parent_id: None,
                                 declaration_order: (properties.len() + 1) as u32,
                                 is_string_named: false,
+                                is_symbol_named,
                                 single_quoted_name: false,
                             });
                         } else {
@@ -1104,6 +1106,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 parent_id: None,
                                 declaration_order: (properties.len() + 1) as u32,
                                 is_string_named: false,
+                                is_symbol_named,
                                 single_quoted_name: false,
                             });
                         }
@@ -1260,6 +1263,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && let Some(name) = self.get_property_name_resolved(accessor.name)
             {
                 let name_atom = self.ctx.types.intern_string(&name);
+                let is_symbol_named = self.is_symbol_property_name(accessor.name);
                 let is_getter = member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
                 if is_getter {
                     let getter_type = if accessor.type_annotation.is_some() {
@@ -1282,6 +1286,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             parent_id: None,
                             declaration_order: (properties.len() + 1) as u32,
                             is_string_named: false,
+                            is_symbol_named,
                             single_quoted_name: false,
                         });
                     }
@@ -1313,6 +1318,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             parent_id: None,
                             declaration_order: (properties.len() + 1) as u32,
                             is_string_named: false,
+                            is_symbol_named,
                             single_quoted_name: false,
                         });
                     }
@@ -1774,6 +1780,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         self.get_property_name(name_idx)
+    }
+
+    fn is_symbol_property_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        self.get_property_name_resolved(name_idx)
+            .is_some_and(|name| name.starts_with("[Symbol.") || name.starts_with("__unique_"))
     }
 
     fn get_well_known_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {

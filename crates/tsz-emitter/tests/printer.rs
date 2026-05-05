@@ -116,6 +116,14 @@ fn test_es6_generator_param_named_yield_keeps_identifier_text() {
 }
 
 #[test]
+fn recovered_template_object_property_name_emits_as_recovered_statements() {
+    let source = "var x = {\n    `abc${ 123 }def${ 456 }ghi`: 321\n}";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert_eq!(output, "var x = {} `abc${123}def${456}ghi`;\n321;\n");
+}
+
+#[test]
 fn test_optional_catch_binding_downlevel_to_param() {
     let source = "try {\n} catch {\n}\n";
     let output = parse_lower_print(
@@ -487,6 +495,25 @@ fn test_commonjs_void_zero_exports_are_emitted_in_reverse_declaration_order() {
     assert!(
         output.contains("exports.b = exports.a = void 0;"),
         "unexpected output:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_computed_instance_field_side_effects_fold_into_method_name() {
+    let source = "class C {\n    [Symbol.iterator] = 0;\n    [Symbol.unscopables]: number;\n    [Symbol.toPrimitive]() { }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("this[_a] = 0;"),
+        "expected constructor to use hoisted computed field temp:\n{output}"
+    );
+    assert!(
+        output.contains("[(_a = Symbol.iterator, Symbol.unscopables, Symbol.toPrimitive)]() { }"),
+        "expected prior computed field expressions to fold into the computed method name:\n{output}"
+    );
+    assert!(
+        !output.contains("_a = Symbol.iterator, Symbol.unscopables;"),
+        "unexpected trailing computed field side-effect expression:\n{output}"
     );
 }
 

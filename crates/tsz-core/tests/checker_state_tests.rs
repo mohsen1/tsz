@@ -6140,6 +6140,7 @@ fn test_contextual_typing_for_object_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -6154,6 +6155,7 @@ fn test_contextual_typing_for_object_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -6814,6 +6816,7 @@ fn test_strict_null_checks_property_access() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6859,6 +6862,7 @@ fn test_strict_null_checks_undefined_type() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6902,6 +6906,7 @@ fn test_strict_null_checks_both_null_and_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6957,6 +6962,7 @@ fn test_strict_null_checks_non_nullable_success() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 

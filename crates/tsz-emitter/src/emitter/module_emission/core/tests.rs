@@ -239,12 +239,55 @@ fn es5_arrow_this_capture_skips_multiple_user_bindings() {
 }
 
 #[test]
+fn private_field_weakmap_name_avoids_user_binding() {
+    let source = r#"const _C_x = "user binding";
+
+class C {
+    #x = 1;
+
+    getX() {
+        return this.#x;
+    }
+}
+
+export const result = [new C().getX(), _C_x];
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _C_x_1;"),
+        "Private field lowering should skip the real _C_x binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C_x_1 = new WeakMap()"),
+        "WeakMap initialization should use the collision-free helper name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("[new C().getX(), _C_x]"),
+        "The user binding must still be referenced by its original name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn commonjs_module_temp_skips_user_binding() {
     let source = r#"import { value } from "foo";
 
 const foo_1 = "user binding";
 
 export const result = value + ":" + foo_1;
+}
 "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -307,6 +350,76 @@ export const result = value + ":" + local.value;
     assert!(
         !output.contains("{ foo_1.value:"),
         "CommonJS substitution must not create an invalid property key.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_arguments_capture_skips_user_binding() {
+    let source = r#"export async function f() {
+  const arguments_1 = "user binding";
+  await 0;
+  return [arguments.length, arguments_1];
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var arguments_2 = arguments;"),
+        "Async lowering should skip the user arguments_1 binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [arguments_2.length, arguments_1];"),
+        "Captured arguments references should use the fresh generated binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_arguments_capture_skips_parameter_and_pattern_bindings() {
+    let source = r#"export async function f({ arguments_1 }: { arguments_1: string }) {
+  const [arguments_2] = ["user binding"];
+  await 0;
+  return [arguments.length, arguments_1, arguments_2];
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var arguments_3 = arguments;"),
+        "Async lowering should skip parameter and binding-pattern names.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("arguments_3.length"),
+        "Captured arguments references should use the binding-pattern-safe name.\nOutput:\n{output}"
     );
 }
 

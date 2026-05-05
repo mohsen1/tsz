@@ -240,10 +240,10 @@ fn test_symbol_named_properties_do_not_satisfy_string_index_signatures() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let source = interner.object(vec![PropertyInfo::new(
-        interner.intern_string("__unique_7"),
-        TypeId::NUMBER,
-    )]);
+    let source = interner.object(vec![PropertyInfo {
+        is_symbol_named: true,
+        ..PropertyInfo::new(interner.intern_string("__unique_7"), TypeId::NUMBER)
+    }]);
     let target = interner.object_with_index(crate::types::ObjectShape {
         symbol: None,
         flags: crate::types::ObjectFlags::empty(),
@@ -268,10 +268,10 @@ fn test_symbol_index_signatures_check_symbol_named_properties() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let source = interner.object(vec![PropertyInfo::new(
-        interner.intern_string("__unique_7"),
-        TypeId::NUMBER,
-    )]);
+    let source = interner.object(vec![PropertyInfo {
+        is_symbol_named: true,
+        ..PropertyInfo::new(interner.intern_string("__unique_7"), TypeId::NUMBER)
+    }]);
     let target = interner.object_with_index(crate::types::ObjectShape {
         symbol: None,
         flags: crate::types::ObjectFlags::empty(),

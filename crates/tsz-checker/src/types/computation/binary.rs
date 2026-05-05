@@ -4,6 +4,7 @@
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -24,6 +25,19 @@ enum SyntacticNullishness {
 }
 
 impl<'a> CheckerState<'a> {
+    fn global_function_interface_type_for_instanceof(&mut self) -> Option<TypeId> {
+        let function_sym_id = self.ctx.binder.lib_symbol_ids.iter().find_map(|&sym_id| {
+            self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+                (symbol.escaped_name == "Function" && symbol.has_any_flags(symbol_flags::INTERFACE))
+                    .then_some(sym_id)
+            })
+        });
+
+        function_sym_id
+            .map(|sym_id| self.get_type_of_symbol(sym_id))
+            .or_else(|| self.resolve_lib_type_by_name("Function"))
+    }
+
     fn declared_instanceof_left_operand_type(
         &mut self,
         left_idx: NodeIndex,
@@ -2202,13 +2216,7 @@ impl<'a> CheckerState<'a> {
         if eval_right != TypeId::ERROR {
             let mut is_valid_rhs = false;
 
-            let func_ty_opt = self
-                .ctx
-                .binder
-                .file_locals
-                .get("Function")
-                .map(|sym_id| self.get_type_of_symbol(sym_id))
-                .or_else(|| self.resolve_lib_type_by_name("Function"));
+            let func_ty_opt = self.global_function_interface_type_for_instanceof();
 
             if let Some(func_ty) = func_ty_opt {
                 let evaluator =

@@ -117,6 +117,43 @@ const unused = 1;
     );
 }
 
+#[test]
+fn instanceof_rhs_validation_uses_lib_function_when_local_type_shadows_function() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"export {};
+
+type Function = { tag: string };
+
+declare const value: object;
+declare const fakeConstructor: { tag: string };
+
+value instanceof fakeConstructor;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 2359),
+        "expected TS2359 for non-callable instanceof RHS despite local Function type alias, got: {:?}",
+        result.diagnostics
+    );
+}
+
 fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_loader::LibFile>> {
     let lib_paths = crate::config::resolve_default_lib_files(target).expect("default libs");
     let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
@@ -13742,6 +13779,92 @@ module.exports = B;
         ts2323.len(),
         2,
         "Expected TS2323 on overlapping CommonJS alias defineProperty exports, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_define_property_commonjs_exports_make_js_files_module_scoped() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true,
+            "module": "commonjs",
+            "target": "es2020",
+            "types": []
+          },
+          "files": ["exporter.js", "importer.ts", "exporter-module.js", "importer-module.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("exporter.js"),
+        r#"// @ts-check
+const URL = 1;
+
+Object.defineProperty(exports, "value", {
+  value: URL,
+});
+"#,
+    );
+    write_file(
+        &base.join("importer.ts"),
+        r#"import { value } from "./exporter";
+
+const n: number = value;
+const s: string = value;
+n;
+s;
+"#,
+    );
+    write_file(
+        &base.join("exporter-module.js"),
+        r#"// @ts-check
+const Headers = 1;
+
+Object.defineProperty(module.exports, "value", {
+  value: Headers,
+});
+"#,
+    );
+    write_file(
+        &base.join("importer-module.ts"),
+        r#"import { value } from "./exporter-module";
+
+const n: number = value;
+const s: string = value;
+n;
+s;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE),
+        "Object.defineProperty CommonJS exporters should be module-scoped, got diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected only importer assignment errors, got diagnostics: {:?}",
         result.diagnostics
     );
 }

@@ -183,8 +183,12 @@ impl<'a> CheckerState<'a> {
             if self.body_has_arguments_reference(access.expression) {
                 return true;
             }
-            // Element access: also check the argument (e.g. arguments[0])
-            if self.body_has_arguments_reference(access.name_or_argument) {
+            // Element access: also check the index expression (e.g. obj[arguments]).
+            // Property names like `holder.arguments` are not references to the
+            // function's implicit `arguments` object.
+            if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && self.body_has_arguments_reference(access.name_or_argument)
+            {
                 return true;
             }
         } else if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {

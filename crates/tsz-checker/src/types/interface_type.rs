@@ -279,6 +279,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: member_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }
@@ -534,6 +535,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: entry.declaration_order,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -564,6 +566,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: accessor.declaration_order,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }

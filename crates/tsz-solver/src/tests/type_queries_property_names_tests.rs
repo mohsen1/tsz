@@ -14,6 +14,7 @@ fn object_with_property(interner: &TypeInterner, name: &str) -> TypeId {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }])
 }
@@ -74,6 +75,7 @@ fn keyof_object_properties_excludes_non_public_members() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -88,6 +90,7 @@ fn keyof_object_properties_excludes_non_public_members() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -102,6 +105,7 @@ fn keyof_object_properties_excludes_non_public_members() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -150,6 +154,7 @@ fn keyof_object_properties_preserves_declaration_order() {
         parent_id: None,
         declaration_order: order,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     };
     // Pass declaration_order explicitly to defeat the per-shape "auto-assign

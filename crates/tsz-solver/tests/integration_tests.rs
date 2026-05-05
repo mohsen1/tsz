@@ -901,6 +901,7 @@ mod lawyer_strict_mode_tests {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }])
     }
@@ -2560,6 +2561,7 @@ mod homomorphic_mapped_type_tests {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             },
             PropertyInfo {
@@ -2574,6 +2576,7 @@ mod homomorphic_mapped_type_tests {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             },
         ]);
