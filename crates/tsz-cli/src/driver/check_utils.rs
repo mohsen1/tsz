@@ -1539,6 +1539,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1111 // Private field must be declared in an enclosing class
         | 1139 // Can not use 'JSDoc' type in TS
         | 1141 // String literal expected
+        | 1163 // A 'yield' expression is only allowed in a generator body
         | 1192 // Module has no default export
         | 1196 // Catch clause variable type annotation
         | 1206 // Decorators are not valid here
@@ -3335,6 +3336,14 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
         assert!(
             is_ts1xxx_allowed_in_js(17014),
             "TS17014 should be preserved for JS JSX fragment recovery diagnostics"
+        );
+    }
+
+    #[test]
+    fn js_parse_allowlist_keeps_ts1163() {
+        assert!(
+            is_ts1xxx_allowed_in_js(1163),
+            "TS1163 should be preserved for JS yield-outside-generator diagnostics"
         );
     }
 
