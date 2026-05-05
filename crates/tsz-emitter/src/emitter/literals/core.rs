@@ -196,6 +196,12 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_numeric_literal(&mut self, node: &Node) {
+        if let Some(text) = self.numeric_literal_emit_text(node) {
+            self.write(&text);
+        }
+    }
+
+    pub(in crate::emitter) fn numeric_literal_emit_text(&self, node: &Node) -> Option<String> {
         if let Some(lit) = self.arena.get_literal(node) {
             // Strip numeric separators: 1_000_000 → 1000000
             // Only strip for targets below ES2021 — separators are valid ES2021+ syntax.
@@ -211,8 +217,7 @@ impl<'a> Printer<'a> {
                 && decimal_literal_has_exponent(&text)
                 && let Ok(value) = text.parse::<f64>()
             {
-                self.write(&format_js_number(value));
-                return;
+                return Some(format_js_number(value));
             }
 
             // Convert numeric literals that need downleveling:
@@ -221,19 +226,18 @@ impl<'a> Printer<'a> {
             // - Any prefixed literal (0b/0o/0x) with numeric separators: for < ES2021 targets
             //   (tsc converts these to decimal because separators are an ES2021 feature)
             if let Some(converted) = self.convert_numeric_literal_downlevel(&text, had_separators) {
-                self.write(&converted);
-                return;
+                return Some(converted);
             }
 
             if let Some(converted) =
                 self.convert_decimal_separator_exponent_literal(&text, had_separators)
             {
-                self.write(&converted);
-                return;
+                return Some(converted);
             }
 
-            self.write(&text);
+            return Some(text);
         }
+        None
     }
 
     fn convert_decimal_separator_exponent_literal(

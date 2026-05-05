@@ -342,33 +342,9 @@ impl<'a> Printer<'a> {
         }
         if let Some(inner_node) = self.arena.get(idx) {
             if inner_node.kind == SyntaxKind::NumericLiteral as u16 {
-                // Check the source text of the numeric literal to see if it already
-                // contains a decimal point or exponent.  If not, we need "..".
-                let needs_extra_dot = if let Some(text) = self.source_text {
-                    let start = inner_node.pos as usize;
-                    let end = inner_node.end as usize;
-                    if end <= text.len() && start < end {
-                        let lit = &text[start..end];
-                        let num_text = lit.trim();
-                        // Only plain decimal integers need `..`.
-                        // Hex (0x/0X), octal (0o/0O), and binary (0b/0B) never
-                        // need it because their prefix already disambiguates.
-                        let is_prefixed = num_text.starts_with("0x")
-                            || num_text.starts_with("0X")
-                            || num_text.starts_with("0o")
-                            || num_text.starts_with("0O")
-                            || num_text.starts_with("0b")
-                            || num_text.starts_with("0B");
-                        !is_prefixed
-                            && !num_text.contains('.')
-                            && !num_text.contains('e')
-                            && !num_text.contains('E')
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                let needs_extra_dot = self
+                    .numeric_literal_emit_text(inner_node)
+                    .is_some_and(|text| text.bytes().all(|b| b.is_ascii_digit()));
                 // If the numeric literal is wrapped in parentheses (or a type
                 // assertion that was erased), the parens already disambiguate and
                 // a single dot suffices: `(1).toString()` not `(1)..toString()`.
@@ -1432,6 +1408,31 @@ mod tests {
         assert!(
             !output.contains("1e0..foo"),
             "Exponent literal must NOT use double-dot.\nOutput:\n{output}"
+        );
+    }
+
+    /// Downleveled decimal/exponent spellings can emit as plain integers.
+    /// The dot decision must be based on emitted text: `08.8e5.foo` becomes
+    /// `880000..foo`, not `880000.foo`.
+    #[test]
+    fn downleveled_numeric_literal_property_access_plain_integer() {
+        let source = "08.8e5 .foo;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("880000..foo"),
+            "Downleveled numeric literal property access must use `..` when emitted as an integer.\nOutput:\n{output}"
         );
     }
 
