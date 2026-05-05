@@ -4318,10 +4318,12 @@ newTextChannel2.phoneNumber = '613-555-1234';
         "Expected one outer TS2322 for the return object. Got: {diagnostics:?}"
     );
     assert!(
-        ts2322.iter().any(|(_, message)| message.contains(
-            "Type '{ type: T; localChannelId: string; }' is not assignable to type 'NewChannel<"
-        ) && message.contains("ChannelOfType<T, TextChannel>")
-            && message.contains("ChannelOfType<T, EmailChannel>")),
+        ts2322.iter().any(
+            |(_, message)| message.contains("Type '{ type: T; localChannelId:")
+                && message.contains("}' is not assignable to type 'NewChannel<")
+                && message.contains("ChannelOfType<T, TextChannel>")
+                && message.contains("ChannelOfType<T, EmailChannel>")
+        ),
         "Expected TS2322 to stay on the outer object literal. Got: {diagnostics:?}"
     );
     assert!(

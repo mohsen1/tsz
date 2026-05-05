@@ -1539,6 +1539,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TypeId::ERROR;
         }
 
+        // `T[never]` and `T[keyof T]` where the key set is empty index over no
+        // properties, so they evaluate to `never`. Keep this narrower than all
+        // indexes that simplify to `never`, because some mapped/utility-type
+        // paths rely on the existing concrete lookup fallback behavior.
+        let is_empty_index_access = evaluated_index == TypeId::NEVER
+            && (index_type == TypeId::NEVER
+                || matches!(
+                    self.interner().lookup(index_type),
+                    Some(TypeData::KeyOf(inner))
+                        if inner == object_type
+                            || inner == evaluated_object
+                            || self.evaluate(inner) == object_type
+                            || self.evaluate(inner) == evaluated_object
+                ));
+        if is_empty_index_access {
+            return TypeId::NEVER;
+        }
+
         // Rule #38: Distribute over index union at the top level (Cartesian product expansion)
         // T[A | B] -> T[A] | T[B]
         // This must happen before checking the object type to ensure full cross-product expansion
