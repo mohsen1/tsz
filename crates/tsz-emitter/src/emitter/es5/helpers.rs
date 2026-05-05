@@ -1468,6 +1468,7 @@ impl<'a> Printer<'a> {
         async_emitter.set_lexical_this(this_expr != "this");
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             async_emitter.set_tslib_prefix(true);
+            async_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
 
         let body_has_await = async_emitter.body_contains_await(func.body);

@@ -295,6 +295,7 @@ impl<'a> Printer<'a> {
             async_emitter.set_lexical_this(this_expr != "this");
             if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
                 async_emitter.set_tslib_prefix(true);
+                async_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
             }
 
             let body_has_await = async_emitter.body_contains_await(body);
@@ -609,6 +610,7 @@ impl<'a> Printer<'a> {
         printer.set_indent_level(self.writer.indent_level());
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             printer.set_tslib_prefix(true);
+            printer.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         printer.emit(&ir);
         self.write(&printer.take_output());
@@ -904,6 +906,7 @@ impl<'a> Printer<'a> {
         }
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             es5_emitter.set_tslib_prefix(true);
+            es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
 

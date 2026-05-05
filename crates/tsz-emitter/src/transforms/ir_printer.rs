@@ -72,8 +72,9 @@ pub struct IRPrinter<'a> {
     target_es5: bool,
     /// When true, comments like `/** @class */` are suppressed in output.
     remove_comments: bool,
-    /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
+    /// CommonJS `tslib` binding used to prefix runtime helper calls for importHelpers.
     tslib_prefix: bool,
+    tslib_import_binding: String,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     pub(crate) base_printer_options: Option<PrinterOptions>,
     generator_state_name: &'static str,
@@ -254,6 +255,7 @@ impl<'a> IRPrinter<'a> {
             target_es5: false,
             remove_comments: false,
             tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
             generator_state_name: "_a",
@@ -277,6 +279,7 @@ impl<'a> IRPrinter<'a> {
             target_es5: false,
             remove_comments: false,
             tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
             generator_state_name: "_a",
@@ -300,6 +303,7 @@ impl<'a> IRPrinter<'a> {
             target_es5: false,
             remove_comments: false,
             tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
             generator_state_name: "_a",
@@ -316,6 +320,10 @@ impl<'a> IRPrinter<'a> {
         self.tslib_prefix = enable;
     }
 
+    pub fn set_tslib_import_binding(&mut self, binding: String) {
+        self.tslib_import_binding = binding;
+    }
+
     pub fn set_commonjs_import_substitutions(
         &mut self,
         subs: rustc_hash::FxHashMap<String, String>,
@@ -326,7 +334,8 @@ impl<'a> IRPrinter<'a> {
     /// Write a runtime helper name, prefixing with `tslib_1.` when `tslib_prefix` is active.
     fn write_helper(&mut self, name: &str) {
         if self.tslib_prefix {
-            self.output.push_str("tslib_1.");
+            self.output.push_str(&self.tslib_import_binding);
+            self.output.push('.');
         }
         self.output.push_str(name);
     }

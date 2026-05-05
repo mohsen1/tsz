@@ -93,6 +93,7 @@ pub struct TC39DecoratorEmitter<'a> {
     use_static_blocks: bool,
     /// When true, prefix helper calls with `tslib_1.` (importHelpers + commonjs).
     tslib_prefix: bool,
+    tslib_import_binding: String,
     /// When true, emit as an expression (no `let C = ` wrapper) for class expressions.
     expression_mode: bool,
     /// Function name for class expression named evaluation (__setFunctionName).
@@ -115,13 +116,14 @@ struct DecoratedFieldInfo {
 }
 
 impl<'a> TC39DecoratorEmitter<'a> {
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             source_text: None,
             indent: 0,
             use_static_blocks: false,
             tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             expression_mode: false,
             function_name: None,
             use_define_for_class_fields: false,
@@ -144,6 +146,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
         self.tslib_prefix = prefix;
     }
 
+    pub fn set_tslib_import_binding(&mut self, binding: String) {
+        self.tslib_import_binding = binding;
+    }
+
     pub const fn set_expression_mode(&mut self, expr: bool) {
         self.expression_mode = expr;
     }
@@ -161,7 +167,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
     /// Returns the helper function name with optional tslib prefix.
     fn helper(&self, name: &str) -> String {
         if self.tslib_prefix {
-            format!("tslib_1.{name}")
+            format!("{}.{name}", self.tslib_import_binding)
         } else {
             name.to_string()
         }
