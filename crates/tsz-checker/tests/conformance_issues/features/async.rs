@@ -797,6 +797,29 @@ function ok(value: number, NaN: number) {
 }
 
 #[test]
+fn test_script_global_nan_still_triggers_ts2845() {
+    // `compiler/nanEquality.ts` is a script, not an external module. A
+    // script-level ambient declaration must not prevent bare `NaN` from
+    // resolving as the standard lib global.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+declare const x: number;
+if (x === NaN) {}
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert_eq!(
+        ts2845.len(),
+        1,
+        "Expected one TS2845 for script global NaN comparison, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
