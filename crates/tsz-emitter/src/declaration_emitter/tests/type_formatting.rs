@@ -207,6 +207,48 @@ fn test_inferred_generic_function_type_omits_synthesized_optional_undefined() {
 }
 
 #[test]
+fn test_returned_local_generic_function_renames_shadowed_type_param() {
+    let source = r#"
+const foo = <T,>(x: T) => {
+    const inner = <T,>(y: T) => [x, y] as const;
+    return inner;
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let var_stmt_idx = source_file.statements.nodes[0];
+    let outer_func = parser
+        .arena
+        .get(var_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .and_then(|decl| parser.arena.get(decl.initializer))
+        .and_then(|node| parser.arena.get_function(node))
+        .expect("missing outer function");
+    let interner = TypeInterner::new();
+    let type_cache = TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let returned_identifier = emitter
+        .function_body_unique_return_identifier(outer_func.body)
+        .expect("missing returned identifier");
+    let type_text = emitter
+        .function_return_identifier_type_text(outer_func, returned_identifier)
+        .expect("missing returned function type");
+
+    assert_eq!(type_text, "<T_1>(y: T_1) => readonly [T, T_1]");
+}
+
+#[test]
 fn test_returned_class_expression_preserves_extends_type_parameter() {
     let source = r#"
 export type Constructor<T = {}> = new (...args: any[]) => T;

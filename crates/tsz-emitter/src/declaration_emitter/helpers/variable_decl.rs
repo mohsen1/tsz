@@ -1246,6 +1246,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         self.function_parameter_type_text(func, identifier_idx)
             .or_else(|| {
+                if let Some(type_text) =
+                    self.returned_function_initializer_type_text(func, identifier_idx)
+                {
+                    return Some(type_text);
+                }
                 let type_text = self.reference_declared_type_annotation_text(identifier_idx)?;
                 if let Some(type_id) = self.reference_declared_type_id(identifier_idx)
                     && (self.printed_type_uses_non_emittable_local_alias_root(&type_text)
