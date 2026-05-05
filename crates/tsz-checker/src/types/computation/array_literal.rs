@@ -274,6 +274,15 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        if self.ctx.in_const_assertion && self.array_literal_produces_too_large_tuple(idx) {
+            self.error_at_node(
+                idx,
+                crate::diagnostics::diagnostic_messages::EXPRESSION_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                crate::diagnostics::diagnostic_codes::EXPRESSION_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+            );
+            return TypeId::ANY;
+        }
+
         if array.elements.nodes.is_empty() {
             // In const assertion context (e.g., `[] as const` or inside a `const T`
             // type parameter call), empty arrays become empty readonly tuples, not

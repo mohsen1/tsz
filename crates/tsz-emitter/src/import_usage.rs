@@ -60,6 +60,137 @@ const fn is_ident_continue(byte: u8) -> bool {
     is_ident_start(byte) || byte.is_ascii_digit()
 }
 
+fn push_non_code_blank(result: &mut String, byte: u8) {
+    if byte == b'\t' {
+        result.push('\t');
+    } else {
+        result.push(' ');
+    }
+}
+
+fn strip_quoted_literal_text(bytes: &[u8], i: &mut usize, result: &mut String, quote: u8) {
+    result.push(quote as char);
+    *i += 1;
+    while *i < bytes.len() {
+        if bytes[*i] == b'\\' && *i + 1 < bytes.len() {
+            push_non_code_blank(result, bytes[*i]);
+            push_non_code_blank(result, bytes[*i + 1]);
+            *i += 2;
+        } else if bytes[*i] == quote {
+            result.push(quote as char);
+            *i += 1;
+            break;
+        } else {
+            push_non_code_blank(result, bytes[*i]);
+            *i += 1;
+        }
+    }
+}
+
+fn strip_template_literal_text(bytes: &[u8], i: &mut usize, result: &mut String) {
+    result.push('`');
+    *i += 1;
+    while *i < bytes.len() {
+        if bytes[*i] == b'\\' && *i + 1 < bytes.len() {
+            push_non_code_blank(result, bytes[*i]);
+            push_non_code_blank(result, bytes[*i + 1]);
+            *i += 2;
+        } else if bytes[*i] == b'`' {
+            result.push('`');
+            *i += 1;
+            break;
+        } else if bytes[*i] == b'$' && *i + 1 < bytes.len() && bytes[*i + 1] == b'{' {
+            push_non_code_blank(result, bytes[*i]);
+            result.push('{');
+            *i += 2;
+            let mut depth = 1u32;
+            while *i < bytes.len() && depth > 0 {
+                match bytes[*i] {
+                    b'\'' | b'"' => {
+                        let quote = bytes[*i];
+                        strip_quoted_literal_text(bytes, i, result, quote);
+                    }
+                    b'/' if *i + 1 < bytes.len() && bytes[*i + 1] == b'*' => {
+                        push_non_code_blank(result, bytes[*i]);
+                        push_non_code_blank(result, bytes[*i + 1]);
+                        *i += 2;
+                        while *i < bytes.len() {
+                            if bytes[*i] == b'*' && *i + 1 < bytes.len() && bytes[*i + 1] == b'/' {
+                                push_non_code_blank(result, bytes[*i]);
+                                push_non_code_blank(result, bytes[*i + 1]);
+                                *i += 2;
+                                break;
+                            }
+                            push_non_code_blank(result, bytes[*i]);
+                            *i += 1;
+                        }
+                    }
+                    b'/' if *i + 1 < bytes.len() && bytes[*i + 1] == b'/' => {
+                        *i = bytes.len();
+                    }
+                    b'{' => {
+                        depth += 1;
+                        result.push('{');
+                        *i += 1;
+                    }
+                    b'}' => {
+                        depth -= 1;
+                        result.push('}');
+                        *i += 1;
+                    }
+                    _ => {
+                        result.push(bytes[*i] as char);
+                        *i += 1;
+                    }
+                }
+            }
+        } else {
+            push_non_code_blank(result, bytes[*i]);
+            *i += 1;
+        }
+    }
+}
+
+fn strip_non_code_text(line: &str, in_block_comment: &mut bool) -> String {
+    let mut result = String::with_capacity(line.len());
+    let bytes = line.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if *in_block_comment {
+            if bytes[i] == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                push_non_code_blank(&mut result, bytes[i]);
+                push_non_code_blank(&mut result, bytes[i + 1]);
+                i += 2;
+                *in_block_comment = false;
+            } else {
+                push_non_code_blank(&mut result, bytes[i]);
+                i += 1;
+            }
+            continue;
+        }
+
+        match bytes[i] {
+            b'\'' | b'"' => {
+                let quote = bytes[i];
+                strip_quoted_literal_text(bytes, &mut i, &mut result, quote);
+            }
+            b'`' => strip_template_literal_text(bytes, &mut i, &mut result),
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => break,
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                push_non_code_blank(&mut result, bytes[i]);
+                push_non_code_blank(&mut result, bytes[i + 1]);
+                i += 2;
+                *in_block_comment = true;
+            }
+            _ => {
+                result.push(bytes[i] as char);
+                i += 1;
+            }
+        }
+    }
+    result
+}
+
 /// Strip type-only content from source text so that identifiers in type
 /// positions are not mistaken for value usages.
 ///
@@ -76,8 +207,10 @@ pub fn strip_type_only_content(source: &str) -> String {
     // Track brace depth to skip multi-line type declaration bodies
     // (interface, type alias, declare blocks)
     let mut type_brace_depth: u32 = 0;
+    let mut in_block_comment = false;
     for line in source.lines() {
-        let trimmed = line.trim();
+        let code_line = strip_non_code_text(line, &mut in_block_comment);
+        let trimmed = code_line.trim();
 
         // If we're inside a type declaration body, count braces to find the end
         if type_brace_depth > 0 {
@@ -135,7 +268,7 @@ pub fn strip_type_only_content(source: &str) -> String {
             continue;
         }
         // For remaining lines, strip type annotations
-        let stripped = strip_type_annotations_safe(line);
+        let stripped = strip_type_annotations_safe(&code_line);
         result.push_str(&stripped);
         result.push('\n');
     }
@@ -604,6 +737,206 @@ fn skip_type_annotation(bytes: &[u8], mut i: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Under `--emitDecoratorMetadata`, type annotations on decorated class
+/// members become *value* references at runtime (via `__metadata(
+/// "design:type", T)` for properties / `"design:paramtypes"` for methods).
+/// The standard `strip_type_only_content` pass would erase those names from
+/// the value-usage haystack, causing the import that owns the name to be
+/// elided as type-only.
+///
+/// This helper scans the *unstripped* source for `@<ident>` decorator
+/// patterns followed by a class member whose type annotation references
+/// `ident_to_find`. We only need a coarse match — the import is preserved
+/// if any decorated member's type annotation mentions the name.
+pub fn name_appears_in_decorator_metadata_type(source: &str, ident_to_find: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'@' {
+            i += 1;
+            continue;
+        }
+        let prev_ok = i == 0
+            || matches!(
+                bytes[i - 1],
+                b' ' | b'\t' | b'\n' | b'\r' | b'{' | b'(' | b',' | b';' | b'}'
+            );
+        let next_is_ident = i + 1 < bytes.len()
+            && (bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'_' || bytes[i + 1] == b'$');
+        if !prev_ok || !next_is_ident {
+            i += 1;
+            continue;
+        }
+        // Walk past the decorator: identifier (with `.` chains) and an
+        // optional balanced `(...)`.
+        let mut j = match scan_past_decorator(bytes, i) {
+            Some(end) => end,
+            None => {
+                i += 1;
+                continue;
+            }
+        };
+        // Skip whitespace, more decorators, modifiers between decorator and member.
+        loop {
+            while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'@' {
+                if let Some(after) = scan_past_decorator(bytes, j) {
+                    j = after;
+                    continue;
+                }
+                break;
+            }
+            let modifier = next_word(bytes, j);
+            if matches!(
+                modifier,
+                Some(
+                    "declare"
+                        | "public"
+                        | "private"
+                        | "protected"
+                        | "readonly"
+                        | "static"
+                        | "abstract"
+                        | "override"
+                        | "async"
+                        | "accessor",
+                )
+            ) {
+                j += modifier.unwrap().len();
+                continue;
+            }
+            break;
+        }
+        // Find the first member-level annotation `:` (the property type or
+        // method return type). Stay at outer depth — parameter annotations
+        // inside method `(...)` are handled by parsing the param list as a
+        // sub-region after this scan.
+        let scan_start = j;
+        let mut paren_depth = 0u32;
+        let mut bracket_depth = 0u32;
+        let mut method_param_region: Option<(usize, usize)> = None;
+        while j < bytes.len() {
+            let b = bytes[j];
+            if paren_depth == 0 && bracket_depth == 0 && (b == b':' || b == b'=' || b == b';') {
+                break;
+            }
+            match b {
+                b'(' => {
+                    if paren_depth == 0 && bracket_depth == 0 {
+                        method_param_region = Some((j + 1, 0));
+                    }
+                    paren_depth += 1;
+                }
+                b')' if paren_depth > 0 => {
+                    paren_depth -= 1;
+                    if paren_depth == 0
+                        && bracket_depth == 0
+                        && let Some((start, _)) = method_param_region
+                    {
+                        method_param_region = Some((start, j));
+                    }
+                }
+                b'[' => bracket_depth += 1,
+                b']' if bracket_depth > 0 => bracket_depth -= 1,
+                b'\'' | b'"' | b'`' => {
+                    let q = b;
+                    j += 1;
+                    while j < bytes.len() && bytes[j] != q {
+                        if bytes[j] == b'\\' && j + 1 < bytes.len() {
+                            j += 2;
+                            continue;
+                        }
+                        j += 1;
+                    }
+                }
+                b'\n' if paren_depth == 0 && bracket_depth == 0 => break,
+                _ => {}
+            }
+            j += 1;
+        }
+        // If the decorated member is a method, its parameter list is also a
+        // metadata position (`design:paramtypes`). Scan it for the name.
+        if let Some((start, end)) = method_param_region
+            && end > start
+            && let Ok(region) = std::str::from_utf8(&bytes[start..end])
+            && contains_identifier_occurrence(region, ident_to_find)
+        {
+            return true;
+        }
+        if j >= bytes.len() || bytes[j] != b':' {
+            i = scan_start.max(i + 1);
+            continue;
+        }
+        // Scan the type annotation for the identifier.
+        j += 1;
+        let ann_start = j;
+        let mut angle = 0u32;
+        let mut paren = 0u32;
+        let mut brace = 0u32;
+        while j < bytes.len() {
+            let b = bytes[j];
+            match b {
+                b'<' => angle += 1,
+                b'>' if angle > 0 => angle -= 1,
+                b'(' => paren += 1,
+                b')' if paren > 0 => paren -= 1,
+                b'{' => brace += 1,
+                b'}' if brace > 0 => brace -= 1,
+                b';' | b'=' | b'\n' if angle == 0 && paren == 0 && brace == 0 => break,
+                _ => {}
+            }
+            j += 1;
+        }
+        let annotation = &source[ann_start..j];
+        if contains_identifier_occurrence(annotation, ident_to_find) {
+            return true;
+        }
+        i = j.max(i + 1);
+    }
+    false
+}
+
+fn scan_past_decorator(bytes: &[u8], start: usize) -> Option<usize> {
+    if start >= bytes.len() || bytes[start] != b'@' {
+        return None;
+    }
+    let mut j = start + 1;
+    while j < bytes.len() {
+        let b = bytes[j];
+        if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b == b'.' {
+            j += 1;
+            continue;
+        }
+        break;
+    }
+    if j < bytes.len() && bytes[j] == b'(' {
+        let mut depth = 1u32;
+        j += 1;
+        while j < bytes.len() && depth > 0 {
+            match bytes[j] {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                _ => {}
+            }
+            j += 1;
+        }
+    }
+    Some(j)
+}
+
+fn next_word(bytes: &[u8], start: usize) -> Option<&str> {
+    let mut j = start;
+    while j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
+        j += 1;
+    }
+    if j == start {
+        return None;
+    }
+    std::str::from_utf8(&bytes[start..j]).ok()
 }
 
 #[cfg(test)]

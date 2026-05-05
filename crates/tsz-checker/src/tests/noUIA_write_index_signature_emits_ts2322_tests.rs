@@ -70,3 +70,23 @@ const x: boolean | undefined = strMap["k"];
         "boolean|undefined slot must accept NUIA-widened read. Got: {codes:?}",
     );
 }
+
+#[test]
+fn nuia_generic_index_signature_return_message_keeps_undefined() {
+    let source = r#"
+function generic1<T extends { [s: string]: boolean }>(arg: T): boolean {
+    return arg["blah"];
+}
+"#;
+    let diags = diags_for_strict_nuia(source);
+    let ts2322 = diags
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for NUIA-widened generic index signature return");
+    assert!(
+        ts2322
+            .message_text
+            .contains("Type 'boolean | undefined' is not assignable to type 'boolean'."),
+        "NUIA return diagnostic should preserve the read-side undefined, got: {ts2322:?}",
+    );
+}

@@ -92,6 +92,11 @@ impl<'a> Printer<'a> {
             && self
                 .commonjs_exported_var_names
                 .contains(original_text.as_str())
+            && !self
+                .commonjs_exported_var_shadow_stack
+                .iter()
+                .rev()
+                .any(|scope| scope.contains(original_text.as_str()))
         {
             // In CJS modules, inline-exported variable references (let/const/var)
             // are rewritten to `exports.X` for both reads and writes.
@@ -559,12 +564,22 @@ impl<'a> Printer<'a> {
         }
 
         let quote = bytes[0];
-        if (quote != b'\'' && quote != b'"') || bytes[bytes.len() - 1] != quote {
+        if quote != b'\'' && quote != b'"' {
             return None;
         }
 
         let quote_char = quote as char;
-        let inner = &raw[1..bytes.len() - 1];
+        let terminated = bytes[bytes.len() - 1] == quote;
+        if !terminated && !raw[1..].contains("\\u{") {
+            return None;
+        }
+
+        let inner_end = if terminated {
+            bytes.len() - 1
+        } else {
+            bytes.len()
+        };
+        let inner = &raw[1..inner_end];
         let converted = self.downlevel_codepoint_escapes_in_literal_text(inner, quote_char, false);
         Some(format!("{quote_char}{converted}{quote_char}"))
     }
@@ -875,6 +890,22 @@ mod tests {
         assert!(
             !output.contains("1e10;") && !output.contains("12.34e56;"),
             "Decimal exponent separators should be normalized through the numeric value.\nGot: {output}"
+        );
+    }
+
+    #[test]
+    fn unterminated_codepoint_escape_string_downlevels_to_cooked_text() {
+        let source = "var x = \"\\u{00000000000067}\r\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var x = \"g\";"),
+            "ES5 should downlevel unterminated codepoint escape strings through cooked text.\nGot: {output}"
         );
     }
 

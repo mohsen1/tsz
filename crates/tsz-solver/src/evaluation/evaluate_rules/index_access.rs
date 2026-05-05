@@ -27,7 +27,6 @@ use super::string_index_helpers::string_index_signature_applies;
 use crate::objects::apparent::is_member;
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
-
 /// Lazily compute and cache array member types (length + apparent methods).
 /// Shared between `ArrayKeyVisitor` and `TupleKeyVisitor`.
 fn get_or_init_array_member_types(
@@ -99,6 +98,26 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         &mut self,
         mapped: &crate::types::MappedType,
     ) -> TypeId {
+        if let Some(TypeData::IndexAccess(template_obj, template_idx)) =
+            self.evaluator.interner().lookup(mapped.template)
+            && matches!(
+                self.evaluator.interner().lookup(template_idx),
+                Some(TypeData::TypeParameter(tp)) if tp.name == mapped.type_param.name
+            )
+        {
+            let mut value_type = self
+                .evaluator
+                .interner()
+                .index_access(template_obj, mapped.constraint);
+            if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                value_type = self
+                    .evaluator
+                    .interner()
+                    .union2(value_type, TypeId::UNDEFINED);
+            }
+            return value_type;
+        }
+
         let constrained_key = self.evaluator.interner().type_param(TypeParamInfo {
             name: mapped.type_param.name,
             constraint: Some(mapped.constraint),
@@ -1708,8 +1727,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(name) =
             crate::type_queries::get_literal_property_name(self.interner(), index_type)
         {
-            let name_str = self.interner().resolve_atom(name);
-            let is_symbol_key = name_str.starts_with("__unique_");
+            let is_symbol_key = matches!(
+                self.interner().lookup(index_type),
+                Some(TypeData::UniqueSymbol(_))
+            );
             for prop in &shape.properties {
                 if prop.name == name {
                     return self.optional_property_type(prop);
@@ -1828,8 +1849,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(name) =
             crate::type_queries::get_literal_property_name(self.interner(), index_type)
         {
-            let name_str = self.interner().resolve_atom(name);
-            let is_symbol_key = name_str.starts_with("__unique_");
+            let is_symbol_key = matches!(
+                self.interner().lookup(index_type),
+                Some(TypeData::UniqueSymbol(_))
+            );
             for prop in &shape.properties {
                 if prop.name == name {
                     return self.optional_property_type(prop);

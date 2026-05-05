@@ -1391,7 +1391,18 @@ impl<'a> CheckerState<'a> {
             // A miss recorded before lib contexts were attached is not stable
             // for child/cross-arena checkers. Retry once libs are available so
             // imported declaration files can resolve globals like `Error`.
-            if cached.is_some() || !self.ctx.has_lib_loaded() {
+            //
+            // Likewise, a `None` cached for a qualified name like
+            // `util.OmitKeys` may have been recorded by an earlier checker
+            // state whose binder couldn't see the imported namespace
+            // member yet. Retry such misses so a later checker state with
+            // the merged binder graph can recover the correct `DefId`.
+            // Without this retry, the first failed lookup poisons the cache
+            // and silently strands the alias body's downstream consumers
+            // (object spread, intersection reduction) on
+            // `UnresolvedTypeName`.
+            let retry_dotted_miss = cached.is_none() && name.contains('.');
+            if cached.is_some() || (!self.ctx.has_lib_loaded() && !retry_dotted_miss) {
                 return cached;
             }
         }

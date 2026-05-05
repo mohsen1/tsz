@@ -97,13 +97,32 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         narrowing: &NarrowingContext,
     ) -> TypeId {
+        if matches!(type_id, TypeId::UNKNOWN | TypeId::ANY)
+            && self.is_matching_reference(switch_expr, target)
+        {
+            let case_expr = self.skip_parenthesized(case_expr);
+            if let Some(sym_id) = self.binder.resolve_identifier(self.arena, case_expr)
+                && let Some(case_type) = self.annotation_comparison_type(sym_id)
+            {
+                return case_type;
+            }
+        }
+
         let binary = BinaryExprData {
             left: switch_expr,
             operator_token: SyntaxKind::EqualsEqualsEqualsToken as u16,
             right: case_expr,
         };
 
-        self.narrow_by_binary_expr(type_id, &binary, target, true, narrowing, FlowNodeId::NONE)
+        self.narrow_by_binary_expr(
+            type_id,
+            &binary,
+            target,
+            true,
+            narrowing,
+            FlowNodeId::NONE,
+            true,
+        )
     }
 
     pub(crate) fn narrow_by_switch_case_clause(
@@ -293,6 +312,7 @@ impl<'a> FlowAnalyzer<'a> {
                 false,
                 narrowing,
                 FlowNodeId::NONE,
+                true,
             );
         }
 
@@ -477,6 +497,7 @@ impl<'a> FlowAnalyzer<'a> {
                 false,
                 narrowing,
                 FlowNodeId::NONE,
+                true,
             );
         }
 
@@ -704,6 +725,7 @@ impl<'a> FlowAnalyzer<'a> {
                                     is_true_branch,
                                     &narrowing,
                                     antecedent_id,
+                                    false,
                                 );
                             }
                         }
@@ -719,6 +741,7 @@ impl<'a> FlowAnalyzer<'a> {
                         is_true_branch,
                         &narrowing,
                         antecedent_id,
+                        false,
                     );
                     return narrowed;
                 }
@@ -1216,6 +1239,7 @@ impl<'a> FlowAnalyzer<'a> {
         is_true_branch: bool,
         narrowing: &NarrowingContext,
         antecedent_id: FlowNodeId,
+        allow_untyped_comparison_fallback: bool,
     ) -> TypeId {
         let operator = bin.operator_token;
 
@@ -1476,26 +1500,20 @@ impl<'a> FlowAnalyzer<'a> {
         // This handles cases like: if (x === y) { ... }
         // where both x and y are variables (not just literals)
         if is_strict {
-            // Helper to get flow type of the "other" node
-            let get_other_flow_type = |other_node: NodeIndex| -> Option<TypeId> {
-                let node_types = self.node_types?;
-                let initial_type = *node_types.get(&other_node.0)?;
-
-                // CRITICAL FIX: Use flow analysis if we have a valid flow node
-                // This gets the flow-narrowed type of the other reference
-                if antecedent_id.is_some() {
-                    Some(self.get_flow_type(other_node, initial_type, antecedent_id))
-                } else {
-                    // Fallback for tests or when no flow context exists
-                    Some(initial_type)
-                }
-            };
-
             // Check if target is on the left side (x === y, target is x)
             if self.is_matching_reference(bin.left, target) {
                 // We need the type of the RIGHT side (y)
-                if let Some(right_type) = get_other_flow_type(bin.right) {
+                if let Some(right_type) = self.flow_comparison_type(
+                    bin.right,
+                    antecedent_id,
+                    allow_untyped_comparison_fallback,
+                ) {
                     if effective_truth {
+                        if allow_untyped_comparison_fallback
+                            && matches!(type_id, TypeId::UNKNOWN | TypeId::ANY)
+                        {
+                            return right_type;
+                        }
                         return narrowing.narrow_type(
                             type_id,
                             &TypeGuard::LiteralEquality(right_type),
@@ -1514,8 +1532,17 @@ impl<'a> FlowAnalyzer<'a> {
             // Check if target is on the right side (y === x, target is x)
             if self.is_matching_reference(bin.right, target) {
                 // We need the type of the LEFT side (y)
-                if let Some(left_type) = get_other_flow_type(bin.left) {
+                if let Some(left_type) = self.flow_comparison_type(
+                    bin.left,
+                    antecedent_id,
+                    allow_untyped_comparison_fallback,
+                ) {
                     if effective_truth {
+                        if allow_untyped_comparison_fallback
+                            && matches!(type_id, TypeId::UNKNOWN | TypeId::ANY)
+                        {
+                            return left_type;
+                        }
                         return narrowing.narrow_type(
                             type_id,
                             &TypeGuard::LiteralEquality(left_type),
@@ -1888,7 +1915,10 @@ impl<'a> FlowAnalyzer<'a> {
     /// only use this when the source is `unknown`/`any` and MUST NOT
     /// exclude the result in the false branch — primitive intrinsics
     /// are not unit types.
-    fn literal_type_from_node_for_unknown_target(&self, idx: NodeIndex) -> Option<TypeId> {
+    pub(super) fn literal_type_from_node_for_unknown_target(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
         if let Some(t) = self.literal_type_from_node(idx) {
             return Some(t);
         }

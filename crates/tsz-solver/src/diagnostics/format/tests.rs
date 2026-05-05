@@ -134,6 +134,7 @@ fn object_type_with_hyphenated_property_quoted() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     };
     let obj = db.object(vec![prop]);
@@ -1667,6 +1668,74 @@ fn format_template_literal_complex() {
     );
 }
 
+#[test]
+fn format_template_literal_flattens_nested_alias_interpolations() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let number_pattern = db.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let alias_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("A"),
+        vec![],
+        number_pattern,
+    ));
+    let alias_ref = db.lazy(alias_def);
+    let spaced = db.template_literal(vec![
+        TemplateSpan::Type(alias_ref),
+        TemplateSpan::Text(db.intern_string(" ")),
+        TemplateSpan::Type(alias_ref),
+    ]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(spaced), "`${number} ${number}`");
+}
+
+#[test]
+fn format_template_literal_pattern_union_does_not_repaint_application_alias() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let protocol_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Protocol"),
+        vec![
+            TypeParamInfo {
+                name: db.intern_string("T"),
+                constraint: Some(TypeId::STRING),
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: db.intern_string("U"),
+                constraint: Some(TypeId::STRING),
+                default: None,
+                is_const: false,
+            },
+        ],
+        TypeId::STRING,
+    ));
+    let protocols = db.union(vec![
+        db.literal_string("http"),
+        db.literal_string("https"),
+        db.literal_string("ftp"),
+    ]);
+    let evaluated = db.template_literal(vec![
+        TemplateSpan::Type(protocols),
+        TemplateSpan::Text(db.intern_string("://")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let app = db.application(db.lazy(protocol_def), vec![protocols, TypeId::STRING]);
+    db.store_display_alias(evaluated, app);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(evaluated);
+
+    assert!(
+        !result.starts_with("Protocol<"),
+        "template pattern unions should show the expanded pattern, got {result}"
+    );
+    assert!(result.contains("`http://${string}`"), "{result}");
+    assert!(result.contains("`https://${string}`"), "{result}");
+    assert!(result.contains("`ftp://${string}`"), "{result}");
+}
+
 // =================================================================
 // String intrinsic formatting
 // =================================================================
@@ -2154,6 +2223,7 @@ fn format_no_infer_in_union_with_function_member() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let no_infer_obj = db.no_infer(obj);
@@ -3313,6 +3383,7 @@ fn optional_property_shows_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let result = fmt.format(obj);
@@ -3341,6 +3412,7 @@ fn optional_property_never_shows_as_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let result = fmt.format(obj);
@@ -3369,6 +3441,7 @@ fn optional_property_with_union_undefined_keeps_it() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let result = fmt.format(obj);

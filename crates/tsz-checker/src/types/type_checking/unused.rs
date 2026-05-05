@@ -996,18 +996,28 @@ impl<'a> CheckerState<'a> {
     /// Check if a declaration is a catch clause variable.
     fn is_catch_clause_variable(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
-        let parent_idx = self
-            .ctx
-            .arena
-            .get_extended(idx)
-            .map_or(NodeIndex::NONE, |ext| ext.parent);
-        if parent_idx.is_none() {
-            return false;
-        }
-        if let Some(parent) = self.ctx.arena.get(parent_idx)
-            && parent.kind == syntax_kind_ext::CATCH_CLAUSE
-        {
-            return true;
+        let mut current = idx;
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::CATCH_CLAUSE => return true,
+                syntax_kind_ext::BINDING_ELEMENT
+                | syntax_kind_ext::OBJECT_BINDING_PATTERN
+                | syntax_kind_ext::ARRAY_BINDING_PATTERN
+                | syntax_kind_ext::VARIABLE_DECLARATION => {
+                    current = parent;
+                }
+                _ => return false,
+            }
         }
         false
     }
@@ -1019,7 +1029,7 @@ impl<'a> CheckerState<'a> {
         // Walk up from parameter to find containing function/method/constructor
         // Structure: Parameter → SyntaxList/ParameterList → FunctionDecl/MethodDecl/Constructor
         let mut current = idx;
-        for _ in 0..5 {
+        for _ in 0..20 {
             let parent_idx = self
                 .ctx
                 .arena

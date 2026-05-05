@@ -295,46 +295,45 @@ mod ts2397_tests {
         assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
     }
 
-    // Module files: `undefined` is module-scoped and does not conflict with the global.
-    // tsc accepts these without TS2397.
-
+    // Module-scoped declarations of `undefined` must NOT get TS2397 — they are
+    // contained within the module and do not conflict with the global built-in.
     #[test]
-    fn const_undefined_in_module_no_ts2397() {
+    fn module_const_undefined_no_ts2397() {
         let errors = check_and_collect("const undefined = \"local\";\nexport {};", 2397);
         assert_eq!(
             errors.len(),
             0,
-            "No TS2397 for const undefined in module: {errors:?}"
+            "No TS2397 for module-scoped undefined: {errors:?}"
         );
     }
 
     #[test]
-    fn let_undefined_in_module_no_ts2397() {
+    fn module_let_undefined_no_ts2397() {
         let errors = check_and_collect("let undefined = 1;\nexport {};", 2397);
         assert_eq!(
             errors.len(),
             0,
-            "No TS2397 for let undefined in module: {errors:?}"
+            "No TS2397 for module-scoped let undefined: {errors:?}"
         );
     }
 
     #[test]
-    fn var_undefined_in_module_no_ts2397() {
-        let errors = check_and_collect("var undefined;\nexport {};", 2397);
+    fn module_var_undefined_no_ts2397() {
+        let errors = check_and_collect("var undefined = null;\nexport {};", 2397);
         assert_eq!(
             errors.len(),
             0,
-            "No TS2397 for var undefined in module: {errors:?}"
+            "No TS2397 for module-scoped var undefined: {errors:?}"
         );
     }
 
     #[test]
-    fn global_this_in_module_no_ts2397() {
+    fn module_global_this_no_ts2397() {
         let errors = check_and_collect("var globalThis;\nexport {};", 2397);
         assert_eq!(
             errors.len(),
             0,
-            "No TS2397 for globalThis in module: {errors:?}"
+            "No TS2397 for module-scoped globalThis: {errors:?}"
         );
     }
 }

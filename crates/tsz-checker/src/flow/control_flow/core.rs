@@ -635,6 +635,33 @@ impl<'a> FlowAnalyzer<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::TrueKeyword as u16)
     }
 
+    fn flow_chain_contains_switch_clause(&self, flow_id: FlowNodeId) -> bool {
+        let mut worklist = VecDeque::from([flow_id]);
+        let mut visited = FxHashSet::default();
+        let mut steps = 0usize;
+
+        while let Some(current) = worklist.pop_front() {
+            if current.is_none() || !visited.insert(current) {
+                continue;
+            }
+            steps += 1;
+            if steps > 32 {
+                return false;
+            }
+            let Some(flow) = self.binder.flow_nodes.get(current) else {
+                continue;
+            };
+            if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
+                return true;
+            }
+            for &ant in &flow.antecedent {
+                worklist.push_back(ant);
+            }
+        }
+
+        false
+    }
+
     #[inline]
     fn switch_can_affect_reference(&self, switch_expr: NodeIndex, reference: NodeIndex) -> bool {
         // switch(true) can narrow any reference — each case expression is an
@@ -1159,6 +1186,8 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     (false, false)
                 };
+            let skip_cache_for_explicit_unknown_switch = initial_type == TypeId::UNKNOWN
+                && self.flow_chain_contains_switch_clause(current_flow);
 
             // Use cache if: 1) not a switch clause, AND
             // 2) either initial type is concrete OR this is a loop label.
@@ -1167,6 +1196,7 @@ impl<'a> FlowAnalyzer<'a> {
             // stack overflow when types contain type parameters.
             if !is_switch_clause
                 && (!skip_cache_for_control_flow_typed_any || is_loop_label_node)
+                && !skip_cache_for_explicit_unknown_switch
                 && (!initial_has_type_params || is_loop_label_node)
                 && let Some(cache) = self.flow_cache
             {
@@ -1541,45 +1571,58 @@ impl<'a> FlowAnalyzer<'a> {
                                 if self.is_logical_assignment(flow.node) {
                                     assigned_type
                                 } else if self.is_access_reference(reference) {
-                                    // Property/element access reads should keep their declared read
-                                    // type for constructor-valued and generic callable members.
-                                    // A prior write can be assignment-compatible without changing the
-                                    // member's declared read surface, especially for interface/class
-                                    // members with generic call/construct signatures.
-                                    let widened = query::widen_literal_to_primitive(
-                                        self.interner,
-                                        assigned_type,
-                                    );
-                                    let callable_read_preserves_declared_type = |type_id| {
-                                        let function_shape =
-                                            query::function_shape_for_type(self.interner, type_id);
-                                        let has_generic_call_signatures =
-                                            query::call_signatures_for_type(self.interner, type_id)
+                                    if self.arena.get(reference).is_some_and(|node| {
+                                        node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                                    }) && initial_has_type_params
+                                    {
+                                        initial_type
+                                    } else {
+                                        // Property/element access reads should keep their declared read
+                                        // type for constructor-valued and generic callable members.
+                                        // A prior write can be assignment-compatible without changing the
+                                        // member's declared read surface, especially for interface/class
+                                        // members with generic call/construct signatures.
+                                        let widened = query::widen_literal_to_primitive(
+                                            self.interner,
+                                            assigned_type,
+                                        );
+                                        let callable_read_preserves_declared_type = |type_id| {
+                                            let function_shape = query::function_shape_for_type(
+                                                self.interner,
+                                                type_id,
+                                            );
+                                            let has_generic_call_signatures =
+                                                query::call_signatures_for_type(
+                                                    self.interner,
+                                                    type_id,
+                                                )
                                                 .is_some_and(|sigs| {
                                                     sigs.iter()
                                                         .any(|sig| !sig.type_params.is_empty())
                                                 });
-                                        let construct_signatures =
-                                            query::construct_signatures_for_type(
-                                                self.interner,
-                                                type_id,
-                                            );
-                                        function_shape.as_ref().is_some_and(|shape| {
-                                            shape.is_constructor || !shape.type_params.is_empty()
-                                        }) || has_generic_call_signatures
-                                            || construct_signatures
-                                                .as_ref()
-                                                .is_some_and(|sigs| !sigs.is_empty())
-                                    };
-                                    let preserves_declared_callable_read_type =
-                                        callable_read_preserves_declared_type(initial_type)
-                                            || callable_read_preserves_declared_type(widened);
-                                    if preserves_declared_callable_read_type {
-                                        initial_type
-                                    } else if self.is_assignable_to(widened, initial_type) {
-                                        widened
-                                    } else {
-                                        initial_type
+                                            let construct_signatures =
+                                                query::construct_signatures_for_type(
+                                                    self.interner,
+                                                    type_id,
+                                                );
+                                            function_shape.as_ref().is_some_and(|shape| {
+                                                shape.is_constructor
+                                                    || !shape.type_params.is_empty()
+                                            }) || has_generic_call_signatures
+                                                || construct_signatures
+                                                    .as_ref()
+                                                    .is_some_and(|sigs| !sigs.is_empty())
+                                        };
+                                        let preserves_declared_callable_read_type =
+                                            callable_read_preserves_declared_type(initial_type)
+                                                || callable_read_preserves_declared_type(widened);
+                                        if preserves_declared_callable_read_type {
+                                            initial_type
+                                        } else if self.is_assignable_to(widened, initial_type) {
+                                            widened
+                                        } else {
+                                            initial_type
+                                        }
                                     }
                                 } else if is_destructuring
                                     && self.arena.get(flow.node).is_some_and(|node| {
@@ -1995,6 +2038,8 @@ impl<'a> FlowAnalyzer<'a> {
                 && cacheable_walk
                 && (!skip_cache_for_control_flow_typed_any
                     || flow.has_any_flags(flow_flags::LOOP_LABEL))
+                && !(initial_type == TypeId::UNKNOWN
+                    && self.flow_chain_contains_switch_clause(current_flow))
             {
                 let final_has_type_params = self.contains_type_parameters_cached(final_type);
 

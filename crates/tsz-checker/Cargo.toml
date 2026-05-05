@@ -114,6 +114,10 @@ name = "ts6133_unused_type_params_tests"
 path = "tests/ts6133_unused_type_params_tests.rs"
 
 [[test]]
+name = "unused_parameter_tests"
+path = "tests/unused_parameter_tests.rs"
+
+[[test]]
 name = "private_brands"
 path = "tests/private_brands.rs"
 
@@ -274,6 +278,10 @@ name = "js_jsdoc_diagnostics_tests"
 path = "tests/js_jsdoc_diagnostics_tests.rs"
 
 [[test]]
+name = "js_arguments_reference_tests"
+path = "tests/js_arguments_reference_tests.rs"
+
+[[test]]
 name = "static_member_access_types"
 path = "tests/static_member_access_types.rs"
 
@@ -384,6 +392,10 @@ path = "tests/call_resolution_regression_tests.rs"
 [[test]]
 name = "signature_assignability_regression_tests"
 path = "tests/signature_assignability_regression_tests.rs"
+
+[[test]]
+name = "element_access_structural_codes_tests"
+path = "tests/element_access_structural_codes_tests.rs"
 
 [[test]]
 name = "enum_recursion_tests"
@@ -524,6 +536,10 @@ path = "tests/jsdoc_template_in_body_scope_tests.rs"
 [[test]]
 name = "jsdoc_class_template_cross_comment_tests"
 path = "tests/jsdoc_class_template_cross_comment_tests.rs"
+
+[[test]]
+name = "jsdoc_cross_file_typedef_tests"
+path = "tests/jsdoc_cross_file_typedef_tests.rs"
 
 [[test]]
 name = "override_intersection_display_tests"
@@ -716,6 +732,10 @@ path = "tests/ts1262_multiple_await_declarations_tests.rs"
 [[test]]
 name = "unused_jsdoc_pattern_comment_scoped_tests"
 path = "tests/unused_jsdoc_pattern_comment_scoped_tests.rs"
+
+[[test]]
+name = "unused_catch_binding_tests"
+path = "tests/unused_catch_binding_tests.rs"
 
 [lints]
 workspace = true

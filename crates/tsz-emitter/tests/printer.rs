@@ -116,6 +116,14 @@ fn test_es6_generator_param_named_yield_keeps_identifier_text() {
 }
 
 #[test]
+fn recovered_template_object_property_name_emits_as_recovered_statements() {
+    let source = "var x = {\n    `abc${ 123 }def${ 456 }ghi`: 321\n}";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert_eq!(output, "var x = {} `abc${123}def${456}ghi`;\n321;\n");
+}
+
+#[test]
 fn test_optional_catch_binding_downlevel_to_param() {
     let source = "try {\n} catch {\n}\n";
     let output = parse_lower_print(
@@ -487,6 +495,47 @@ fn test_commonjs_void_zero_exports_are_emitted_in_reverse_declaration_order() {
     assert!(
         output.contains("exports.b = exports.a = void 0;"),
         "unexpected output:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_computed_instance_field_side_effects_fold_into_method_name() {
+    let source = "class C {\n    [Symbol.iterator] = 0;\n    [Symbol.unscopables]: number;\n    [Symbol.toPrimitive]() { }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("this[_a] = 0;"),
+        "expected constructor to use hoisted computed field temp:\n{output}"
+    );
+    assert!(
+        output.contains("[(_a = Symbol.iterator, Symbol.unscopables, Symbol.toPrimitive)]() { }"),
+        "expected prior computed field expressions to fold into the computed method name:\n{output}"
+    );
+    assert!(
+        !output.contains("_a = Symbol.iterator, Symbol.unscopables;"),
+        "unexpected trailing computed field side-effect expression:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_local_undefined_export_skips_redundant_assignment() {
+    let source = "var undefined;\nexport { undefined };\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.undefined = void 0;\nvar undefined;"),
+        "expected undefined export preamble and local declaration:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.undefined = undefined;"),
+        "unexpected redundant undefined export assignment:\n{output}"
     );
 }
 
@@ -1254,6 +1303,29 @@ fn test_commonjs_class_export_before_static_block_iife() {
 }
 
 #[test]
+fn erased_computed_class_fields_emit_native_static_block_side_effects() {
+    let source = r#"declare const s: unique symbol;
+declare namespace N { const s: unique symbol; }
+class C {
+    static [s]: "a";
+    static [N.s]: "b";
+    [s]: "a";
+    [N.s]: "b";
+}
+"#;
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("class C {\n    static { N.s, N.s; }\n}"),
+        "Erased computed class field side effects should stay inside a native static block.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("}\nN.s;"),
+        "Erased computed class field side effects should not be emitted after the class.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_lowered_static_block_recovered_await_emits_yield() {
     let source = "class C {\n    static {\n        await 1;\n        yield 1;\n    }\n}\n";
     let output = parse_lower_print(
@@ -1760,5 +1832,130 @@ fn instantiation_expression_with_empty_args_emits_bare() {
     assert!(
         !output.contains("let f0 = (fx);"),
         "Empty type-argument list must not retain the wrapping parens.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: `(({}) as any).foo` was emitting `(({}).foo)` — wrapping
+/// the entire property access in extra outer parens because the
+/// "object-literal access" emitter unconditionally wrote `(` and `)`
+/// even when the inner emit was already producing `({})` (from the
+/// nested `ParenthesizedExpression`). tsc emits `({}).foo`.
+#[test]
+fn property_access_on_paren_cast_paren_object_literal_emits_single_paren() {
+    let source = "interface T {}\n(({}) as any as T).foo;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("({}).foo"),
+        "Receiver should be `({{}})` with `.foo` suffix outside the parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(({}).foo)"),
+        "Outer parens around the property access are redundant when the receiver is already parenthesized.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: `export default (X as T)` where `X` is a class or function
+/// expression. The parens only existed to delimit the type cast; after
+/// erasure they look removable, but stripping them silently changes the
+/// export from "default-export an expression" to "default-export a
+/// declaration". tsc preserves the parens.
+#[test]
+fn export_default_paren_class_expression_with_cast_keeps_parens() {
+    let source = "export default (class Foo {} as any);\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("export default (class Foo {"),
+        "Parens around the class expression must be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export default class Foo {"),
+        "Stripping parens would change the export shape from expression to declaration.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: `export default class Foo {}` (no parens, no cast) is a
+/// class declaration export and stays unchanged.
+#[test]
+fn export_default_class_declaration_unchanged() {
+    let source = "export default class Foo {}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("export default class Foo"),
+        "Bare default-class export should not gain parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export default (class Foo"),
+        "Bare default-class export must not be wrapped in parens.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: `({ foo, bar } = foo)` reassigns the same identifier on
+/// both sides. Inlining as `(foo = foo.foo, bar = foo.bar)` reads
+/// `foo.bar` AFTER `foo` has been clobbered. tsc captures the RHS in a
+/// temp first: `_a = foo, foo = _a.foo, bar = _a.bar`.
+#[test]
+fn es5_assignment_destructuring_reassigning_rhs_uses_temp() {
+    let source = "var foo: any = { foo: 1, bar: 2 };\nvar bar: any;\n({ foo, bar } = foo);\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("(_a = foo, foo = _a.foo, bar = _a.bar);"),
+        "RHS reassigned by LHS must capture in `_a` first.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(foo = foo.foo, bar = foo.bar);"),
+        "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
+    );
+}
+
+/// Same hazard for `var { foo, baz } = foo;` — must lower to
+/// `var _a = foo, foo = _a.foo, baz = _a.baz;`.
+#[test]
+fn es5_var_destructuring_reassigning_rhs_uses_temp() {
+    let source = "var foo: any = { foo: 1, baz: 2 };\nvar { foo, baz } = foo;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a = foo, foo = _a.foo, baz = _a.baz;"),
+        "Var declaration whose pattern reassigns the RHS identifier must capture in a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var foo = foo.foo, baz = foo.baz;"),
+        "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
     );
 }

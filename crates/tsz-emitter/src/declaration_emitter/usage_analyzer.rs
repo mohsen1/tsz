@@ -262,14 +262,16 @@ impl<'a> UsageAnalyzer<'a> {
                             }
                         }
                         // Default export with expression: export default new A()
-                        // Unwrap new/call to find the constructor reference.
-                        k if k == syntax_kind_ext::NEW_EXPRESSION
-                            || k == syntax_kind_ext::CALL_EXPRESSION =>
-                        {
+                        // Keep constructor references for `new A()` surfaces, but
+                        // do not retain private call helpers for `f()`; the
+                        // declaration emitter retains the inferred return type's
+                        // symbols before pruning.
+                        k if k == syntax_kind_ext::NEW_EXPRESSION => {
                             let callee =
                                 self.unwrap_export_default_expression(export.export_clause);
                             self.analyze_entity_name(callee);
                         }
+                        k if k == syntax_kind_ext::CALL_EXPRESSION => {}
                         _ => {}
                     }
                 }

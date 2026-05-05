@@ -834,19 +834,28 @@ impl BinderState {
             let Some(expr_node) = arena.get(expr_stmt.expression) else {
                 continue;
             };
-            // Check for assignment: `lhs = rhs`
-            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                continue;
-            }
-            let Some(binary) = arena.get_binary_expr(expr_node) else {
-                continue;
-            };
-            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-                continue;
-            }
-            // Check left side for `module.exports` or `exports.x` pattern
-            if Self::is_commonjs_export_target(arena, binary.left) {
-                return true;
+            match expr_node.kind {
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let Some(binary) = arena.get_binary_expr(expr_node) else {
+                        continue;
+                    };
+                    if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                        continue;
+                    }
+                    // Check left side for `module.exports` or `exports.x` pattern
+                    if Self::is_commonjs_export_target(arena, binary.left) {
+                        return true;
+                    }
+                }
+                syntax_kind_ext::CALL_EXPRESSION
+                    if Self::is_commonjs_define_property_export_call(
+                        arena,
+                        expr_stmt.expression,
+                    ) =>
+                {
+                    return true;
+                }
+                _ => {}
             }
         }
         false
@@ -899,6 +908,68 @@ impl BinderState {
         }
 
         false
+    }
+
+    /// Check for `Object.defineProperty(exports, ...)` or
+    /// `Object.defineProperty(module.exports, ...)` as a CommonJS export marker.
+    fn is_commonjs_define_property_export_call(arena: &NodeArena, idx: NodeIndex) -> bool {
+        let Some(call_node) = arena.get(idx) else {
+            return false;
+        };
+        let Some(call) = arena.get_call_expr(call_node) else {
+            return false;
+        };
+        let Some(callee_node) = arena.get(call.expression) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(callee) = arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let is_object_define_property = arena
+            .get_identifier_at(callee.expression)
+            .is_some_and(|ident| ident.escaped_text == "Object")
+            && arena
+                .get_identifier_at(callee.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "defineProperty");
+        if !is_object_define_property {
+            return false;
+        }
+        let Some(args) = &call.arguments else {
+            return false;
+        };
+        if args.nodes.len() < 3 {
+            return false;
+        }
+        Self::is_commonjs_export_base(arena, args.nodes[0])
+    }
+
+    /// Check if a node is a CommonJS export base: `exports` or `module.exports`.
+    fn is_commonjs_export_base(arena: &NodeArena, idx: NodeIndex) -> bool {
+        if arena
+            .get_identifier_at(idx)
+            .is_some_and(|ident| ident.escaped_text == "exports")
+        {
+            return true;
+        }
+
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(node) else {
+            return false;
+        };
+        arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports")
     }
 
     pub(crate) fn source_file_contains_import_meta(arena: &NodeArena, root: NodeIndex) -> bool {

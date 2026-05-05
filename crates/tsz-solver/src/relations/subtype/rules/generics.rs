@@ -1030,13 +1030,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             flatten_mapped_chain(self.interner, source_mapped_id),
             flatten_mapped_chain(self.interner, target_mapped_id),
         ) {
+            let constraints_match =
+                self.mapped_key_constraint_covers(s_flat.key_constraint, t_flat.key_constraint);
             let sources_match = if s_flat.source == t_flat.source {
                 true
             } else {
                 self.check_subtype(s_flat.source, t_flat.source).is_true()
             };
 
-            if sources_match {
+            if constraints_match && sources_match {
                 if s_flat.has_optional && !t_flat.has_optional {
                     return SubtypeResult::False;
                 }
@@ -1047,17 +1049,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_mapped = self.interner.get_mapped(source_mapped_id);
         let target_mapped = self.interner.get_mapped(target_mapped_id);
 
-        let constraints_match = if source_mapped.constraint == target_mapped.constraint {
-            true
-        } else {
-            let s_eval = self.evaluate_type(source_mapped.constraint);
-            let t_eval = self.evaluate_type(target_mapped.constraint);
-            s_eval == t_eval
-                || (self.mapped_name_types_compatible(&source_mapped, &target_mapped)
-                    && self
-                        .check_subtype(target_mapped.constraint, source_mapped.constraint)
-                        .is_true())
-        };
+        let constraints_match = self
+            .mapped_key_constraint_covers(source_mapped.constraint, target_mapped.constraint)
+            || (self.mapped_name_types_compatible(&source_mapped, &target_mapped)
+                && self
+                    .check_subtype(target_mapped.constraint, source_mapped.constraint)
+                    .is_true());
 
         if !constraints_match {
             return SubtypeResult::False;
@@ -1094,28 +1091,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         self.check_subtype(source_template, target_template)
-    }
-
-    fn mapped_name_types_compatible(
-        &mut self,
-        source_mapped: &MappedType,
-        target_mapped: &MappedType,
-    ) -> bool {
-        let (Some(source_name), Some(target_name)) =
-            (source_mapped.name_type, target_mapped.name_type)
-        else {
-            return source_mapped.name_type == target_mapped.name_type;
-        };
-
-        let source_param = self.interner.type_param(source_mapped.type_param);
-        let target_param = self.interner.type_param(target_mapped.type_param);
-        let equiv_start = self.type_param_equivalences.len();
-        self.type_param_equivalences
-            .push((source_param, target_param));
-        let compatible = self.check_subtype(source_name, target_name).is_true()
-            && self.check_subtype(target_name, source_name).is_true();
-        self.type_param_equivalences.truncate(equiv_start);
-        compatible
     }
 
     /// Check Mapped expansion to target (one-sided Mapped case).
@@ -1221,6 +1196,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // The target must be the same type parameter as the constraint source,
         // or assignable to it.
         if constraint_source == target {
+            return true;
+        }
+        if let Some(source_param) = type_param_info(self.interner, constraint_source)
+            && let Some(source_constraint) = source_param.constraint
+            && self.check_subtype(source_constraint, target).is_true()
+        {
             return true;
         }
         if let Some(target_param) = type_param_info(self.interner, target) {
@@ -1751,6 +1732,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -1875,6 +1857,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 pub(crate) struct FlattenedMapped {
     /// The ultimate source type (e.g., T in Partial<Readonly<T>>)
     pub source: TypeId,
+    /// The outer mapped key constraint (e.g., `keyof T` or `K`).
+    pub key_constraint: TypeId,
     /// Whether any mapped type in the chain adds optional (?)
     pub has_optional: bool,
     /// Whether any mapped type in the chain adds readonly
@@ -1925,6 +1909,7 @@ pub(crate) fn flatten_mapped_chain(
     {
         return Some(FlattenedMapped {
             source: inner.source,
+            key_constraint: mapped.constraint,
             has_optional: if removes_optional {
                 false
             } else {
@@ -1941,6 +1926,7 @@ pub(crate) fn flatten_mapped_chain(
     // Base case: source object is not a mapped type
     Some(FlattenedMapped {
         source: obj,
+        key_constraint: mapped.constraint,
         has_optional,
         has_readonly,
     })

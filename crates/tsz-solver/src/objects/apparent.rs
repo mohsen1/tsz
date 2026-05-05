@@ -430,6 +430,7 @@ pub fn apparent_primitive_shape(
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             }),
             ApparentMemberKind::Method(return_type) => {
@@ -446,6 +447,7 @@ pub fn apparent_primitive_shape(
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }

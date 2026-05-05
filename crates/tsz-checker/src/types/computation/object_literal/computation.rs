@@ -142,6 +142,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
+                        is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                     });
                 } else {
@@ -211,6 +212,33 @@ impl<'a> CheckerState<'a> {
             self.ctx.this_type_stack.pop();
         }
         self.pop_partial_object_literal_initializer(partial_initializer_stack_index);
+    }
+
+    fn contextual_this_type_from_marker(&self, ctx_type: TypeId) -> Option<TypeId> {
+        use crate::query_boundaries::common::ContextualTypeContext;
+
+        let env = self.ctx.type_env.borrow();
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            ctx_type,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+        if let Some(this_type) = ctx_helper.get_this_type_from_marker_with_resolver(&*env) {
+            return Some(this_type);
+        }
+
+        let def_id = self.ctx.definition_store.find_def_for_type(ctx_type)?;
+        let body = self.ctx.definition_store.get_body(def_id)?;
+        if body == ctx_type {
+            return None;
+        }
+
+        let body_helper = ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            body,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+        body_helper.get_this_type_from_marker_with_resolver(&*env)
     }
 
     fn function_like_has_explicit_signature_annotations(&self, expr_idx: NodeIndex) -> bool {
@@ -488,14 +516,7 @@ impl<'a> CheckerState<'a> {
         // pattern) after union narrowing so discriminated object literals choose
         // the matching union member's marker.
         let marker_this_type: Option<TypeId> = if let Some(ctx_type) = contextual_type {
-            use crate::query_boundaries::common::ContextualTypeContext;
-            let ctx_helper = ContextualTypeContext::with_expected_and_options(
-                self.ctx.types,
-                ctx_type,
-                self.ctx.compiler_options.no_implicit_any,
-            );
-            let env = self.ctx.type_env.borrow();
-            ctx_helper.get_this_type_from_marker_with_resolver(&*env)
+            self.contextual_this_type_from_marker(ctx_type)
         } else {
             None
         };
@@ -1073,6 +1094,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                         declaration_order: order,
                         is_string_named,
+                        is_symbol_named: self.is_symbol_property_name(prop.name),
                         single_quoted_name,
                     };
                     properties.insert(name_atom, prop_info.clone());
@@ -1504,6 +1526,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                         declaration_order: order,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     };
                     properties.insert(name_atom, prop_info.clone());
@@ -1826,6 +1849,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                         declaration_order: order,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     };
                     properties.insert(name_atom, prop_info.clone());
@@ -2026,6 +2050,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: None,
                                 declaration_order: 0,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             });
                         }
@@ -2202,6 +2227,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: existing_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         };
                         properties.insert(name_atom, prop_info.clone());
@@ -2232,6 +2258,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         };
                         properties.insert(name_atom, prop_info.clone());

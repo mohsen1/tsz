@@ -82,7 +82,8 @@ use crate::transforms::ir::{
     IRPropertyKind, IRSwitchCase,
 };
 use crate::transforms::private_fields_es5::{
-    PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
+    PrivateAccessorInfo, PrivateFieldInfo, collect_enclosing_source_binding_names,
+    collect_private_accessors_with_reserved, collect_private_fields_with_reserved,
 };
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
@@ -1553,8 +1554,19 @@ impl<'a> ES5ClassTransformer<'a> {
         self.class_name = class_name;
 
         // Collect private fields and accessors
-        self.private_fields = collect_private_fields(self.arena, class_idx, &self.class_name);
-        self.private_accessors = collect_private_accessors(self.arena, class_idx, &self.class_name);
+        let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);
+        self.private_fields = collect_private_fields_with_reserved(
+            self.arena,
+            class_idx,
+            &self.class_name,
+            &mut used_private_names,
+        );
+        self.private_accessors = collect_private_accessors_with_reserved(
+            self.arena,
+            class_idx,
+            &self.class_name,
+            &mut used_private_names,
+        );
         self.auto_accessors = collect_auto_accessor_fields(self.arena, class_idx, &self.class_name);
 
         // Check for extends clause
@@ -1651,6 +1663,34 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
+        let computed_prop_temp_names: Vec<String> = computed_prop_entries
+            .iter()
+            .filter_map(|(temp, _)| temp.clone())
+            .collect();
+        let mut deferred_computed_prop_entries = Vec::new();
+        if !computed_prop_entries.is_empty() {
+            let mut comma_parts: Vec<IRNode> = Vec::new();
+            for (temp_name, expr_idx) in &computed_prop_entries {
+                let expr_ir = self.convert_expression(*expr_idx);
+                if let Some(temp) = temp_name {
+                    comma_parts.push(IRNode::assign(IRNode::id(temp.clone()), expr_ir));
+                } else {
+                    comma_parts.push(expr_ir);
+                }
+            }
+            if !comma_parts.is_empty() {
+                let result = comma_parts
+                    .into_iter()
+                    .reduce(|left, right| IRNode::BinaryExpr {
+                        left: Box::new(left),
+                        operator: std::borrow::Cow::Borrowed(","),
+                        right: Box::new(right),
+                    })
+                    .unwrap();
+                deferred_computed_prop_entries.push(IRNode::ExpressionStatement(Box::new(result)));
+            }
+        }
+
         // Build IIFE body
         let mut body = Vec::new();
 
@@ -1672,50 +1712,12 @@ impl<'a> ES5ClassTransformer<'a> {
             )));
         }
 
-        // Emit computed property temp var declarations and comma expression
-        if !computed_prop_entries.is_empty() {
-            // var _a, _b, _c;
-            let temp_names: Vec<String> = computed_prop_entries
-                .iter()
-                .filter_map(|(temp, _)| temp.clone())
-                .collect();
-            if !temp_names.is_empty() {
-                let var_decls: Vec<IRNode> = temp_names
-                    .iter()
-                    .map(|name| IRNode::VarDecl {
-                        name: name.clone().into(),
-                        initializer: None,
-                    })
-                    .collect();
-                body.push(IRNode::VarDeclList(var_decls));
-            }
-            // _a = expr1, sideEffect, _b = expr2, ...;
-            // Use chained BinaryExpr with comma operator to avoid parenthesization.
-            let mut comma_parts: Vec<IRNode> = Vec::new();
-            for (temp_name, expr_idx) in &computed_prop_entries {
-                let expr_ir = self.convert_expression(*expr_idx);
-                if let Some(temp) = temp_name {
-                    comma_parts.push(IRNode::assign(IRNode::id(temp.clone()), expr_ir));
-                } else {
-                    comma_parts.push(expr_ir);
-                }
-            }
-            if !comma_parts.is_empty() {
-                // Chain parts with comma operator: a, b, c → BinaryExpr(BinaryExpr(a, b), c)
-                let result = comma_parts
-                    .into_iter()
-                    .reduce(|left, right| IRNode::BinaryExpr {
-                        left: Box::new(left),
-                        operator: std::borrow::Cow::Borrowed(","),
-                        right: Box::new(right),
-                    })
-                    .unwrap();
-                body.push(IRNode::ExpressionStatement(Box::new(result)));
-            }
-        }
-
         // Prototype methods and static members interleaved in source order
-        let deferred_static_blocks = self.emit_all_members_ir(&mut body, class_idx);
+        let mut deferred_static_blocks = self.emit_all_members_ir(&mut body, class_idx);
+        if !deferred_computed_prop_entries.is_empty() {
+            deferred_computed_prop_entries.append(&mut deferred_static_blocks);
+            deferred_static_blocks = deferred_computed_prop_entries;
+        }
 
         // Legacy decorator __decorate calls (inside IIFE, before return)
         if self.legacy_decorators {
@@ -1757,11 +1759,8 @@ impl<'a> ES5ClassTransformer<'a> {
         body.push(IRNode::ret(Some(IRNode::id(self.class_name.clone()))));
 
         // Build WeakMap declarations and instantiations
-        let mut weakmap_decls: Vec<String> = self
-            .private_fields
-            .iter()
-            .map(|f| f.weakmap_name.clone())
-            .collect();
+        let mut weakmap_decls: Vec<String> = computed_prop_temp_names;
+        weakmap_decls.extend(self.private_fields.iter().map(|f| f.weakmap_name.clone()));
 
         // Add private accessor WeakMap variables
         for acc in &self.private_accessors {

@@ -909,6 +909,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
+                        let is_symbol_named = self.is_symbol_property_name(sig.name);
 
                         if member.kind == METHOD_SIGNATURE {
                             if let Some(ref _params) = sig.parameters {}
@@ -971,6 +972,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: None,
                                 declaration_order: member_order,
                                 is_string_named: false,
+                                is_symbol_named,
                                 single_quoted_name: false,
                             });
                         }
@@ -1120,7 +1122,7 @@ impl<'a> CheckerState<'a> {
             if (member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR
                 || member.kind == tsz_parser::parser::syntax_kind_ext::SET_ACCESSOR)
                 && let Some(accessor) = self.ctx.arena.get_accessor(member)
-                && let Some(name) = self.get_property_name(accessor.name)
+                && let Some(name) = self.get_property_name_resolved(accessor.name)
             {
                 let name_atom = self.ctx.types.intern_string(&name);
                 let is_new_accessor = !accessors.contains_key(&name_atom);
@@ -1240,6 +1242,11 @@ impl<'a> CheckerState<'a> {
             let read_type = getter_type.or(setter_type).unwrap_or(TypeId::UNKNOWN);
             let write_type = setter_type.or(getter_type).unwrap_or(read_type);
             let readonly = getter_type.is_some() && setter_type.is_none();
+            let is_symbol_named = accessor
+                .getter
+                .as_ref()
+                .or(accessor.setter.as_ref())
+                .is_some_and(|member| self.is_symbol_property_name(member.name_idx));
             properties.push(PropertyInfo {
                 name,
                 type_id: read_type,
@@ -1252,6 +1259,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: accessor.declaration_order,
                 is_string_named: false,
+                is_symbol_named,
                 single_quoted_name: false,
             });
         }
@@ -1301,6 +1309,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: decl_order,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }

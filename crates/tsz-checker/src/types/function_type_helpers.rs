@@ -183,8 +183,12 @@ impl<'a> CheckerState<'a> {
             if self.body_has_arguments_reference(access.expression) {
                 return true;
             }
-            // Element access: also check the argument (e.g. arguments[0])
-            if self.body_has_arguments_reference(access.name_or_argument) {
+            // Element access: also check the index expression (e.g. obj[arguments]).
+            // Property names like `holder.arguments` are not references to the
+            // function's implicit `arguments` object.
+            if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && self.body_has_arguments_reference(access.name_or_argument)
+            {
                 return true;
             }
         } else if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
@@ -631,7 +635,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let trimmed = ret_type_str.trim();
-        if trimmed.starts_with("Promise") || trimmed.starts_with("PromiseLike") {
+        if Self::jsdoc_return_type_is_exact_promise_reference(trimmed) {
             return;
         }
 
@@ -705,6 +709,14 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
             );
         }
+    }
+
+    fn jsdoc_return_type_is_exact_promise_reference(trimmed: &str) -> bool {
+        let Some(rest) = trimmed.strip_prefix("Promise") else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        rest.is_empty() || rest.starts_with('<') || rest.starts_with(".<")
     }
 
     /// Check if a type is a type alias application that resolves to Promise.

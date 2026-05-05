@@ -323,6 +323,46 @@ fn test_computed_method_name() {
 }
 
 #[test]
+fn type_only_computed_field_side_effect_emits_after_iife() {
+    let source = r#"class C {
+            [Symbol.isRegExp]: string;
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed in test");
+
+    assert!(
+        output.contains("return C;\n}());\nSymbol.isRegExp;"),
+        "type-only computed field side effect should emit after the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Symbol.isRegExp;\n    return C;"),
+        "type-only computed field side effect should not emit inside the class IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn computed_field_temp_assignment_emits_after_iife() {
+    let source = r#"class C {
+            [Symbol.toStringTag]: string = "";
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed in test");
+
+    assert!(
+        output.starts_with("var _a;\nvar C = "),
+        "computed field temp should be declared before the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this[_a] = \"\";"),
+        "constructor should reference the computed field temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return C;\n}());\n_a = Symbol.toStringTag;"),
+        "computed field temp assignment should emit after the class IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_getter_only() {
     let source = r#"class ReadOnly {
             get value() { return 42; }

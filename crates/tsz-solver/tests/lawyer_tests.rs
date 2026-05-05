@@ -728,6 +728,7 @@ fn test_private_brands_nominality() {
         parent_id: Some(tsz_binder::SymbolId(1)), // Class A's declaration
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -744,6 +745,7 @@ fn test_private_brands_nominality() {
         parent_id: Some(tsz_binder::SymbolId(2)), // Class B's declaration (different!)
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -780,6 +782,7 @@ fn test_subclass_inherits_parent_brand() {
         parent_id: Some(tsz_binder::SymbolId(1)), // Parent's declaration
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -796,6 +799,7 @@ fn test_subclass_inherits_parent_brand() {
         parent_id: Some(tsz_binder::SymbolId(1)), // Inherited from parent (same!)
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -827,6 +831,7 @@ fn test_protected_brands_nominality() {
         parent_id: Some(tsz_binder::SymbolId(1)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -843,6 +848,7 @@ fn test_protected_brands_nominality() {
         parent_id: Some(tsz_binder::SymbolId(2)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -874,6 +880,7 @@ fn test_public_members_structural() {
         parent_id: Some(tsz_binder::SymbolId(1)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -890,6 +897,7 @@ fn test_public_members_structural() {
         parent_id: Some(tsz_binder::SymbolId(2)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -921,6 +929,7 @@ fn test_visibility_leakage_prevented() {
         parent_id: Some(tsz_binder::SymbolId(1)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -937,6 +946,7 @@ fn test_visibility_leakage_prevented() {
         parent_id: Some(tsz_binder::SymbolId(2)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -969,6 +979,7 @@ fn test_private_brands_in_intersection() {
         parent_id: Some(tsz_binder::SymbolId(1)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 

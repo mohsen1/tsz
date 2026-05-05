@@ -4,8 +4,10 @@ use super::replace_identifier;
 use super::{AutoAccessorInfo, StaticFieldInit};
 use crate::emitter::core::PrivateMemberInfo;
 use crate::transforms::private_fields_es5::{
-    PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo, collect_private_accessors,
-    collect_private_fields, collect_private_methods, get_private_field_name, is_private_identifier,
+    PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo,
+    collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
+    collect_private_fields_with_reserved, collect_private_methods_with_reserved,
+    get_private_field_name, is_private_identifier, make_unique_private_name,
 };
 use std::sync::Arc;
 use tsz_parser::parser::node::{Node, NodeAccess};
@@ -281,18 +283,38 @@ impl<'a> Printer<'a> {
         // Private field lowering: when target < ES2022, transform #fields to WeakMap pattern
         let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
             && self.ctx.options.target != ScriptTarget::ESNext;
+        let mut used_private_names = if needs_private_field_lowering {
+            collect_enclosing_source_binding_names(self.arena, _idx)
+        } else {
+            rustc_hash::FxHashSet::default()
+        };
         let private_fields: Vec<PrivateFieldInfo> = if needs_private_field_lowering {
-            collect_private_fields(self.arena, _idx, &class_name)
+            collect_private_fields_with_reserved(
+                self.arena,
+                _idx,
+                &class_name,
+                &mut used_private_names,
+            )
         } else {
             Vec::new()
         };
         let private_methods: Vec<PrivateMethodInfo> = if needs_private_field_lowering {
-            collect_private_methods(self.arena, _idx, &class_name)
+            collect_private_methods_with_reserved(
+                self.arena,
+                _idx,
+                &class_name,
+                &mut used_private_names,
+            )
         } else {
             Vec::new()
         };
         let private_accessors: Vec<PrivateAccessorInfo> = if needs_private_field_lowering {
-            collect_private_accessors(self.arena, _idx, &class_name)
+            collect_private_accessors_with_reserved(
+                self.arena,
+                _idx,
+                &class_name,
+                &mut used_private_names,
+            )
         } else {
             Vec::new()
         };
@@ -301,7 +323,10 @@ impl<'a> Printer<'a> {
         let has_instance_methods_or_accessors = private_methods.iter().any(|m| !m.is_static)
             || private_accessors.iter().any(|a| !a.is_static);
         let instances_weakset_name = if has_instance_methods_or_accessors {
-            Some(format!("_{class_name}_instances"))
+            Some(make_unique_private_name(
+                &format!("_{class_name}_instances"),
+                &mut used_private_names,
+            ))
         } else {
             None
         };
@@ -765,20 +790,18 @@ impl<'a> Printer<'a> {
 
         let mut computed_prop_entries_consumed_by_member_name: Vec<usize> = Vec::new();
         if needs_computed_prop_hoisting && !computed_prop_entries.is_empty() {
-            let mut pending_static_computed_entries = Vec::new();
+            let mut pending_computed_entries = Vec::new();
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
 
                 if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                    if let Some(prop) = self.arena.get_property_decl(member_node)
-                        && self.arena.is_static(&prop.modifiers)
-                        && let Some(entry_idx) = computed_prop_entries
-                            .iter()
-                            .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
+                    if let Some(entry_idx) = computed_prop_entries
+                        .iter()
+                        .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
                     {
-                        pending_static_computed_entries.push(entry_idx);
+                        pending_computed_entries.push(entry_idx);
                     }
                     continue;
                 }
@@ -806,12 +829,12 @@ impl<'a> Printer<'a> {
                 let Some(computed) = self.arena.get_computed_property(computed_name) else {
                     continue;
                 };
-                if pending_static_computed_entries.is_empty() {
+                if pending_computed_entries.is_empty() {
                     continue;
                 }
 
                 let mut comma_parts = Vec::new();
-                for entry_idx in pending_static_computed_entries.drain(..) {
+                for entry_idx in pending_computed_entries.drain(..) {
                     let (temp_name, expr_idx, _) = computed_prop_entries[entry_idx].clone();
                     let expr_text = self.capture_emit(expr_idx);
                     if let Some(temp) = temp_name {
@@ -1944,6 +1967,20 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let computed_side_effects_emitted_in_static_block =
+            !computed_property_side_effects.is_empty() && class_expr_temp.is_none();
+        if computed_side_effects_emitted_in_static_block {
+            self.write("static { ");
+            for (i, expr_idx) in computed_property_side_effects.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.emit_expression(*expr_idx);
+            }
+            self.write("; }");
+            self.write_line();
+        }
+
         // Skip orphaned comments inside the class body.
         // When class members are erased (type-only properties, abstract members, etc.),
         // comments on lines between erased members or between the last erased member
@@ -2046,7 +2083,7 @@ impl<'a> Printer<'a> {
                     self.write(";");
                 }
             }
-        } else {
+        } else if !computed_side_effects_emitted_in_static_block {
             // Emit computed property name side-effect statements for erased members
             // (when hoisting is not active, e.g., ES2022+ targets).
             // e.g., `[Symbol.iterator]: Type` → `Symbol.iterator;`

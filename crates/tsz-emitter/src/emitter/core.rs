@@ -443,6 +443,10 @@ pub struct Printer<'a> {
     /// Used to qualify identifier reads: `x` → `exports.x` in expression positions.
     pub(crate) commonjs_exported_var_names: FxHashSet<String>,
 
+    /// Function parameter names that shadow CJS-exported variables in the current
+    /// function scope. These must keep resolving to the local parameter binding.
+    pub(crate) commonjs_exported_var_shadow_stack: Vec<FxHashSet<String>>,
+
     /// Deferred local export bindings active for the current wrapped region.
     /// Maps local variable names to their exported names so nested variable
     /// statements can append the right export binding after initialization.
@@ -877,6 +881,7 @@ impl<'a> Printer<'a> {
             namespace_exported_names: FxHashSet::default(),
             namespace_parent_exported_names: FxHashSet::default(),
             commonjs_exported_var_names: FxHashSet::default(),
+            commonjs_exported_var_shadow_stack: Vec::new(),
             deferred_local_export_bindings: None,
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,

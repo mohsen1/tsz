@@ -74,7 +74,19 @@ impl KeyofKeySet {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
-    fn property_name_atom_to_key_type(&self, name: Atom) -> TypeId {
+    fn property_name_to_key_type(&self, prop: &PropertyInfo) -> TypeId {
+        let name = prop.name;
+        let name_text = self.interner().resolve_atom_ref(name);
+        if prop.is_symbol_named
+            && let Some(symbol_ref) = name_text.strip_prefix("__unique_")
+            && let Ok(id) = symbol_ref.parse::<u32>()
+        {
+            return self.interner().unique_symbol(crate::types::SymbolRef(id));
+        }
+        self.interner().literal_string_atom(name)
+    }
+
+    fn synthetic_property_name_atom_to_key_type(&self, name: Atom) -> TypeId {
         let name_text = self.interner().resolve_atom_ref(name);
         if let Some(symbol_ref) = name_text.strip_prefix("__unique_")
             && let Ok(id) = symbol_ref.parse::<u32>()
@@ -118,7 +130,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     number_index,
                 } => {
                     for prop in properties {
-                        let source_key = self.property_name_atom_to_key_type(prop.name);
+                        let source_key = self.property_name_to_key_type(&prop);
                         match self.remap_key_type_for_mapped(mapped, source_key) {
                             Ok(Some(remapped_key)) => {
                                 self.push_remapped_key_type(&mut key_types, remapped_key);
@@ -170,7 +182,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut sorted_names: Vec<_> = names.into_iter().collect();
             sorted_names.sort_by_key(|atom| atom.0);
             for name in sorted_names {
-                key_types.push(self.property_name_atom_to_key_type(name));
+                key_types.push(self.synthetic_property_name_atom_to_key_type(name));
             }
         }
 
@@ -369,7 +381,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     props.sort_by_key(|p| p.declaration_order);
                     let key_types: Vec<TypeId> = props
                         .into_iter()
-                        .map(|p| self.property_name_atom_to_key_type(p.name))
+                        .map(|p| self.property_name_to_key_type(p))
                         .collect();
                     if key_types.is_empty() {
                         return TypeId::NEVER;
@@ -386,7 +398,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     props.sort_by_key(|p| p.declaration_order);
                     let mut key_types: Vec<TypeId> = props
                         .into_iter()
-                        .map(|p| self.property_name_atom_to_key_type(p.name))
+                        .map(|p| self.property_name_to_key_type(p))
                         .collect();
 
                     if shape.string_index.is_some() {
@@ -412,7 +424,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     props.sort_by_key(|p| p.declaration_order);
                     let mut key_types: Vec<TypeId> = props
                         .into_iter()
-                        .map(|p| self.property_name_atom_to_key_type(p.name))
+                        .map(|p| self.property_name_to_key_type(p))
                         .collect();
 
                     if shape.string_index.is_some() {
@@ -565,7 +577,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let mut keys = Vec::with_capacity(base_props.len() + 1);
                 keys.push(TypeId::NUMBER);
                 for prop in base_props {
-                    keys.push(self.property_name_atom_to_key_type(prop.name));
+                    keys.push(self.property_name_to_key_type(&prop));
                 }
                 return keys;
             }

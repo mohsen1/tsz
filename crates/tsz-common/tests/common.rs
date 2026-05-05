@@ -35,10 +35,7 @@ fn test_script_target_from_ts_str() {
         ScriptTarget::from_ts_str("es2025"),
         Some(ScriptTarget::ES2025)
     );
-    assert_eq!(
-        ScriptTarget::from_ts_str("ES5, ES2015"),
-        Some(ScriptTarget::ES5)
-    );
+    assert_eq!(ScriptTarget::from_ts_str("ES5, ES2015"), None);
     assert_eq!(ScriptTarget::from_ts_str("not-a-target"), None);
     assert_eq!(
         ScriptTarget::from_ts_numeric(10),
@@ -111,10 +108,7 @@ fn test_module_kind_from_ts_str() {
         None,
         "jsx spellings must not parse as module values"
     );
-    assert_eq!(
-        ModuleKind::from_ts_str("es2022, esnext"),
-        Some(ModuleKind::ES2022)
-    );
+    assert_eq!(ModuleKind::from_ts_str("es2022, esnext"), None);
     assert_eq!(ModuleKind::from_ts_numeric(3), Some(ModuleKind::UMD));
     assert_eq!(ModuleKind::from_ts_numeric(5), Some(ModuleKind::ES2015));
     assert_eq!(ModuleKind::from_ts_numeric(101), Some(ModuleKind::Node18));

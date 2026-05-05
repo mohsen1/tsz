@@ -466,10 +466,10 @@ impl<'a> FlowAnalyzer<'a> {
                 let ctor_expr = self.skip_parens_and_assertions(bin.right);
                 if let Some(ident) = self.arena.get_identifier_at(ctor_expr) {
                     let name = &ident.escaped_text;
-                    if name == "Object" {
+                    if name == "Object" && self.is_builtin_global_reference(ctor_expr) {
                         return Some((TypeGuard::Instanceof(TypeId::OBJECT, true), target, false));
                     }
-                    if name == "Function" {
+                    if name == "Function" && self.is_builtin_global_reference(ctor_expr) {
                         return Some((
                             TypeGuard::Instanceof(TypeId::FUNCTION, true),
                             target,
@@ -762,6 +762,9 @@ impl<'a> FlowAnalyzer<'a> {
         if obj_text != "Array" {
             return None;
         }
+        if !self.is_builtin_global_reference(access.expression) {
+            return None;
+        }
 
         // Check if the property name is "isArray"
         let prop_text = self
@@ -804,6 +807,9 @@ impl<'a> FlowAnalyzer<'a> {
             .and_then(|node| self.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.as_str())?;
         if obj_text != "ArrayBuffer" {
+            return None;
+        }
+        if !self.is_builtin_global_reference(access.expression) {
             return None;
         }
 
@@ -869,6 +875,12 @@ impl<'a> FlowAnalyzer<'a> {
             },
             arg,
         ))
+    }
+
+    fn is_builtin_global_reference(&self, reference: NodeIndex) -> bool {
+        self.binder
+            .resolve_identifier(self.arena, reference)
+            .is_none_or(|symbol_id| self.binder.lib_symbol_ids.contains(&symbol_id))
     }
 
     /// Check if a call is `array.every(predicate)` where predicate has a type predicate.
@@ -1024,7 +1036,8 @@ impl<'a> FlowAnalyzer<'a> {
     /// `TypePredicate` so callers can narrow on the function's call.
     ///
     /// `body_idx` is the function body (either an arrow's expression body or a
-    /// block whose only statement is `return <expr>`). `params_list` is the
+    /// block ending in `return <expr>` with only simple prefix statements).
+    /// `params_list` is the
     /// list of parameter declaration nodes (parallel to `params` minus any
     /// `this` parameter). Returns `None` for any pattern outside the
     /// well-defined inference cases.
@@ -1092,21 +1105,25 @@ impl<'a> FlowAnalyzer<'a> {
     ///
     /// Returns the expression node when:
     ///   * the body is itself an expression (arrow function expression body),
-    ///   * the body is a `{ return <expr>; }` block with no other statements.
+    ///   * the body is a `{ return <expr>; }` block,
+    ///   * the body is a block with simple non-control-flow statements before
+    ///     the final `return <expr>`.
     ///
-    /// Anything else (multiple statements, missing return value, statements
-    /// before the return) is rejected so we never infer a predicate from a
-    /// body that may also produce side-effects or alternative paths.
+    /// Anything else (missing return value, earlier control-flow statements, or
+    /// non-final returns) is rejected so we never infer a predicate from a body
+    /// that may also produce alternative paths.
     fn find_inferable_predicate_body_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
         let body = self.arena.get(body_idx)?;
         if body.kind != syntax_kind_ext::BLOCK {
             return Some(body_idx);
         }
         let block = self.arena.get_block(body)?;
-        if block.statements.nodes.len() != 1 {
-            return None;
+        let (&stmt_idx, prefix_statements) = block.statements.nodes.split_last()?;
+        for &prefix_stmt_idx in prefix_statements {
+            if !self.is_inferable_predicate_prefix_statement(prefix_stmt_idx) {
+                return None;
+            }
         }
-        let stmt_idx = block.statements.nodes[0];
         let stmt = self.arena.get(stmt_idx)?;
         if stmt.kind != syntax_kind_ext::RETURN_STATEMENT {
             return None;
@@ -1116,6 +1133,32 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
         Some(ret.expression)
+    }
+
+    fn is_inferable_predicate_prefix_statement(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        match stmt.kind {
+            syntax_kind_ext::EMPTY_STATEMENT
+            | syntax_kind_ext::DEBUGGER_STATEMENT
+            | syntax_kind_ext::VARIABLE_STATEMENT => true,
+            syntax_kind_ext::EXPRESSION_STATEMENT => {
+                let Some(expr_stmt) = self.arena.get_expression_statement(stmt) else {
+                    return false;
+                };
+                let Some(expr) = self.arena.get(expr_stmt.expression) else {
+                    return false;
+                };
+                !matches!(
+                    expr.kind,
+                    syntax_kind_ext::BINARY_EXPRESSION
+                        | syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                        | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                )
+            }
+            _ => false,
+        }
     }
 
     /// If `node` is a property-access chain rooted at one of the parameters

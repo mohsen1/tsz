@@ -384,6 +384,26 @@ pub fn application_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeA
     })
 }
 
+/// Extract the interned name atom if this is an `UnresolvedTypeName`.
+///
+/// Useful for boundary helpers that need to re-attempt qualified-name
+/// resolution at evaluation time (e.g. for cross-file `Application` bases
+/// that the lowering pass couldn't bind because an imported namespace
+/// member wasn't visible when the alias body was first lowered).
+#[inline]
+pub fn unresolved_type_name_atom(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_common::interner::Atom> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+    extract_type_data(types, type_id, |key| match key {
+        TypeData::UnresolvedTypeName(atom) => Some(*atom),
+        _ => None,
+    })
+}
+
 /// Extract the mapped type id if this is a mapped type.
 pub fn mapped_type_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<MappedTypeId> {
     if type_id.is_intrinsic() {

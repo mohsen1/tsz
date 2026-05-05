@@ -117,6 +117,43 @@ const unused = 1;
     );
 }
 
+#[test]
+fn instanceof_rhs_validation_uses_lib_function_when_local_type_shadows_function() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"export {};
+
+type Function = { tag: string };
+
+declare const value: object;
+declare const fakeConstructor: { tag: string };
+
+value instanceof fakeConstructor;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 2359),
+        "expected TS2359 for non-callable instanceof RHS despite local Function type alias, got: {:?}",
+        result.diagnostics
+    );
+}
+
 fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_loader::LibFile>> {
     let lib_paths = crate::config::resolve_default_lib_files(target).expect("default libs");
     let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
@@ -241,6 +278,90 @@ export const amdCase = 1;
             result.diagnostics
         );
     }
+}
+
+#[test]
+fn compile_import_elision_ignores_string_and_block_comment_text() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("string-literal.ts"),
+        r#"import { Foo } from "./dep";
+
+const label = "Foo";
+
+label;
+"#,
+    );
+    write_file(
+        &base.join("block-comment.ts"),
+        r#"import { Foo } from "./dep";
+
+/* Foo */
+const label = "bar";
+
+label;
+"#,
+    );
+    write_file(
+        &base.join("line-comment.ts"),
+        r#"import { Foo } from "./dep";
+
+// Foo
+const label = "bar";
+
+label;
+"#,
+    );
+    write_file(&base.join("dep.ts"), "export const Foo = 1;\n");
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "esnext",
+            "strict": true,
+            "outDir": "dist"
+          },
+          "files": [
+            "string-literal.ts",
+            "block-comment.ts",
+            "line-comment.ts",
+            "dep.ts"
+          ]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+
+    let string_js =
+        fs::read_to_string(base.join("dist/string-literal.js")).expect("read string output");
+    let block_js =
+        fs::read_to_string(base.join("dist/block-comment.js")).expect("read block output");
+    let line_js = fs::read_to_string(base.join("dist/line-comment.js")).expect("read line output");
+
+    for output in [&string_js, &block_js, &line_js] {
+        assert!(
+            !output.contains("import { Foo }"),
+            "unused Foo import should be elided; output:\n{output}"
+        );
+        assert!(
+            output.contains("export {};"),
+            "module marker should remain after import elision; output:\n{output}"
+        );
+    }
+    assert!(string_js.contains("const label = \"Foo\";"));
+    assert!(block_js.contains("/* Foo */"));
+    assert!(line_js.contains("// Foo"));
 }
 
 #[test]
@@ -12244,6 +12365,67 @@ export const y = x.item;
 }
 
 #[test]
+fn checked_js_async_jsdoc_promise_prefixed_alias_reports_ts1064() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "module": "commonjs",
+    "target": "es2020",
+    "types": []
+  },
+  "files": ["main.js"]
+}"#,
+    );
+    write_file(
+        &base.join("main.js"),
+        r#"// @ts-check
+
+/**
+ * @template T
+ * @typedef {{ value: T }} PromiseButNot
+ */
+
+/** @type {function(): Promise<string>} */
+const ok = async () => "ok";
+
+/** @type {function(): PromiseButNot<string>} */
+const f = async () => "ok";
+
+ok;
+f;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts1064: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1064)
+        .collect();
+    assert_eq!(
+        ts1064.len(),
+        1,
+        "expected TS1064 only for PromiseButNot, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts1064[0].message_text.contains("PromiseButNot<string>"),
+        "expected TS1064 to suggest wrapping PromiseButNot<string>, got: {:?}",
+        ts1064[0]
+    );
+}
+
+#[test]
 fn namespace_import_alias_const_enum_member_condition_reports_ts2845() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -13597,6 +13779,92 @@ module.exports = B;
         ts2323.len(),
         2,
         "Expected TS2323 on overlapping CommonJS alias defineProperty exports, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_define_property_commonjs_exports_make_js_files_module_scoped() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true,
+            "module": "commonjs",
+            "target": "es2020",
+            "types": []
+          },
+          "files": ["exporter.js", "importer.ts", "exporter-module.js", "importer-module.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("exporter.js"),
+        r#"// @ts-check
+const URL = 1;
+
+Object.defineProperty(exports, "value", {
+  value: URL,
+});
+"#,
+    );
+    write_file(
+        &base.join("importer.ts"),
+        r#"import { value } from "./exporter";
+
+const n: number = value;
+const s: string = value;
+n;
+s;
+"#,
+    );
+    write_file(
+        &base.join("exporter-module.js"),
+        r#"// @ts-check
+const Headers = 1;
+
+Object.defineProperty(module.exports, "value", {
+  value: Headers,
+});
+"#,
+    );
+    write_file(
+        &base.join("importer-module.ts"),
+        r#"import { value } from "./exporter-module";
+
+const n: number = value;
+const s: string = value;
+n;
+s;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE),
+        "Object.defineProperty CommonJS exporters should be module-scoped, got diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected only importer assignment errors, got diagnostics: {:?}",
         result.diagnostics
     );
 }

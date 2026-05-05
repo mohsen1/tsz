@@ -819,6 +819,9 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(return_type_text) = self.boolean_default_param_return_type_text(func) {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if func_body.is_some()
             && self.emit_js_returned_define_property_function_type(func_body)
         {
@@ -1615,6 +1618,9 @@ impl<'a> DeclarationEmitter<'a> {
                 &func.parameters,
             )
         {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) = self.boolean_default_param_return_type_text(func) {
             self.write(": ");
             self.write(&return_type_text);
         } else if func_body.is_some()

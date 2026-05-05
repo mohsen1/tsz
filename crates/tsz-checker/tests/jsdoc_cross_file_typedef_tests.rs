@@ -1,8 +1,8 @@
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -301,6 +301,43 @@ module.exports = /** @type {FooFun} */(void 0);
     assert!(
         !codes.contains(&2300),
         "Expected imported JSDoc typedef alias to avoid cross-file TS2300, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn bare_jsdoc_type_does_not_resolve_external_module_export() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "fromage.d.ts",
+        r#"
+export interface Foo {
+  value: string;
+}
+"#,
+        "index.js",
+        r#"
+// @ts-check
+
+/** @type {Foo} */
+const x = { value: 123 };
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2022,
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&2304),
+        "Expected TS2304 for unimported JSDoc type `Foo`, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Bare JSDoc lookup must not leak `Foo` from an external module, got diagnostics: {diagnostics:?}"
     );
 }
 

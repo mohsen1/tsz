@@ -349,7 +349,10 @@ impl<'a> Printer<'a> {
     /// Used to detect redundant outer parens: `((<Error>({...})))` → the type
     /// assertion wraps `({...})` which is already parenthesized, so outer parens
     /// are redundant.
-    fn type_assertion_result_is_parenthesized(&self, mut idx: NodeIndex) -> bool {
+    pub(in crate::emitter) fn type_assertion_result_is_parenthesized(
+        &self,
+        mut idx: NodeIndex,
+    ) -> bool {
         // Unwrap type assertions to find the underlying expression
         loop {
             let Some(node) = self.arena.get(idx) else {

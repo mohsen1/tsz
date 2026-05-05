@@ -627,6 +627,9 @@ impl<'a> Printer<'a> {
         if self.emit_recovered_ambiguous_generic_assertion_variable_statement(node) {
             return;
         }
+        if self.emit_recovered_template_property_name_variable_statement(node) {
+            return;
+        }
 
         let is_exported = self.ctx.is_commonjs()
             && self
@@ -984,6 +987,15 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_recovered_typeof_member_call_after_variable_statement(&mut self, node: &Node) {
+        // Only recover when every declaration in the statement lacks an initializer.
+        // If any declaration has an initializer, .typeof( is a valid property call
+        // in a value expression that was already emitted — not a type-annotation tail.
+        if let Some(var_stmt) = self.arena.get_variable(node) {
+            if !self.all_declarations_lack_initializer(&var_stmt.declarations) {
+                return;
+            }
+        }
+
         let Some(text) = self.source_text else {
             return;
         };
@@ -1151,6 +1163,96 @@ impl<'a> Printer<'a> {
         self.write(&head);
         self.write_line();
         self.write(&recovered);
+        true
+    }
+
+    fn emit_recovered_template_property_name_variable_statement(&mut self, node: &Node) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        if self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            || var_stmt.declarations.nodes.len() != 1
+        {
+            return false;
+        }
+        let Some(decl_list_idx) = var_stmt.declarations.nodes.first().copied() else {
+            return false;
+        };
+        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+            return false;
+        };
+        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+            return false;
+        };
+        if decl_list.declarations.nodes.len() != 1 {
+            return false;
+        }
+        let Some(decl_idx) = decl_list.declarations.nodes.first().copied() else {
+            return false;
+        };
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if decl.initializer.is_none() {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(decl.initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
+        if obj.elements.nodes.len() != 1 {
+            return false;
+        }
+        let Some(prop_node) = obj
+            .elements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+        else {
+            return false;
+        };
+        if prop_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+            return false;
+        }
+        let Some(prop) = self.arena.get_property_assignment(prop_node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(prop.name) else {
+            return false;
+        };
+        if name_node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            && name_node.kind != syntax_kind_ext::TEMPLATE_EXPRESSION
+        {
+            return false;
+        }
+
+        let flags = decl_list_node.flags as u32;
+        let keyword = if flags & node_flags::CONST != 0 {
+            "const"
+        } else if flags & node_flags::LET != 0 {
+            "let"
+        } else {
+            "var"
+        };
+        self.write(keyword);
+        self.write(" ");
+        self.emit_decl_name(decl.name);
+        self.write(" = {} ");
+        self.emit(prop.name);
+        self.write(";");
+        self.write_line();
+        self.emit_expression(prop.initializer);
+        self.write(";");
         true
     }
 
@@ -1792,11 +1894,52 @@ impl<'a> Printer<'a> {
             self.emit(expr_stmt.expression);
         }
         self.ctx.flags.in_statement_expression = prev_stmt_expr;
+        if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
+            self.write_line();
+        }
         self.map_trailing_semicolon(node);
         if !self.output_ends_with_semicolon() {
             self.write_semicolon();
         }
         self.emit_trailing_comment_after_semicolon(node);
+    }
+
+    fn emit_recovered_jsx_unary_trailing_less_than(
+        &mut self,
+        statement: &Node,
+        expression: NodeIndex,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return false;
+        }
+        let Some(unary) = self.arena.get_unary_expr(expr_node) else {
+            return false;
+        };
+        let Some(operand_node) = self.arena.get(unary.operand) else {
+            return false;
+        };
+        if operand_node.kind != syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT {
+            return false;
+        }
+
+        let Ok(source) =
+            crate::safe_slice::slice(text, statement.pos as usize, statement.end as usize)
+        else {
+            return false;
+        };
+        let recovered_source = format!("{}< <", super::super::get_operator_text(unary.operator));
+        if source.trim() != recovered_source {
+            return false;
+        }
+
+        self.write(" <");
+        true
     }
 
     fn emit_import_type_arguments_statement_expression(&mut self, expression: NodeIndex) -> bool {

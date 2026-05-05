@@ -312,6 +312,7 @@ fn test_variance_invariant_explicit_write_type() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -921,6 +922,10 @@ fn test_variance_template_literal_covariant() {
     assert!(
         variance.is_covariant(),
         "Template literal type span should be covariant"
+    );
+    assert!(
+        variance.rejection_unreliable(),
+        "Template literal stringification can make failed argument variance checks structurally valid"
     );
 }
 
