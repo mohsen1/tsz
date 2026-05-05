@@ -1,17 +1,17 @@
 {
-  "timestamp": "2026-05-04T16:47:39.670Z",
+  "timestamp": "2026-05-05T10:53:04.145Z",
   "summary": {
     "jsTotal": 13526,
-    "jsPass": 12571,
-    "jsFail": 955,
+    "jsPass": 12592,
+    "jsFail": 934,
     "jsSkip": 1,
     "jsTimeout": 0,
-    "jsPassRate": 92.9,
+    "jsPassRate": 93.1,
     "dtsTotal": 1670,
-    "dtsPass": 1380,
-    "dtsFail": 290,
+    "dtsPass": 1386,
+    "dtsFail": 284,
     "dtsSkip": 11857,
-    "dtsPassRate": 82.6
+    "dtsPassRate": 83
   },
   "results": [
     {
@@ -20,7 +20,7 @@
       "testPath": "tests/cases/compiler/2dArrays.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 30
+      "elapsed": 42
     },
     {
       "name": "APISample_Watch",
@@ -44,7 +44,7 @@
       "testPath": "tests/cases/compiler/APISample_WatchWithOwnWatchHost.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "APISample_compile",
@@ -60,7 +60,7 @@
       "testPath": "tests/cases/compiler/APISample_jsdoc.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "APISample_linter",
@@ -164,7 +164,7 @@
       "testPath": "tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModuleMemberThatUsesClassTypeParameter.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "ClassAndModuleThatMergeWithModulesExportedGenericFunctionAndGenericClassStaticFunctionOfTheSameName",
@@ -188,7 +188,7 @@
       "testPath": "tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModulesExportedStaticFunctionUsingClassPrivateStatics.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "ClassAndModuleThatMergeWithStaticFunctionAndExportedFunctionThatShareAName",
@@ -380,7 +380,7 @@
       "testPath": "tests/cases/conformance/statements/for-ofStatements/ES3For-ofTypeCheck2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "ES3For-ofTypeCheck2(target=es5)",
@@ -516,7 +516,7 @@
       "testPath": "tests/cases/conformance/statements/for-ofStatements/ES5For-of14.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "ES5For-of15(target=es2015)",
@@ -644,7 +644,7 @@
       "testPath": "tests/cases/conformance/statements/for-ofStatements/ES5For-of20.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "ES5For-of21(target=es2015)",
@@ -900,7 +900,7 @@
       "testPath": "tests/cases/conformance/statements/for-ofStatements/ES5For-of36.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "ES5For-of37(target=es2015)",
@@ -940,7 +940,7 @@
       "testPath": "tests/cases/conformance/statements/for-ofStatements/ES5For-of5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "ES5For-of5(target=es5)",
@@ -1316,7 +1316,7 @@
       "testPath": "tests/cases/conformance/Symbols/ES5SymbolProperty5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "ES5SymbolProperty6(target=es2015)",
@@ -1660,7 +1660,7 @@
       "testPath": "tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration6_es6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "FunctionDeclaration7",
@@ -2012,7 +2012,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/Protected/Protected5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "Protected6",
@@ -2388,7 +2388,7 @@
       "testPath": "tests/cases/conformance/es6/yieldExpressions/YieldExpression18_es6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "YieldExpression19_es6",
@@ -2588,7 +2588,7 @@
       "testPath": "tests/cases/compiler/abstractPropertyInConstructor.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "abstractPropertyInitializer",
@@ -2708,7 +2708,7 @@
       "testPath": "tests/cases/compiler/accessorDeclarationOrder.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "accessorInAmbientContextES5(target=es2015)",
@@ -2796,7 +2796,7 @@
       "testPath": "tests/cases/compiler/accessorWithLineTerminator.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "accessorWithMismatchedAccessibilityModifiers(target=es2015)",
@@ -3068,7 +3068,7 @@
       "testPath": "tests/cases/conformance/expressions/binaryOperators/additionOperator/additionOperatorWithNumberAndEnum.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "additionOperatorWithOnlyNullValueOrUndefinedValue",
@@ -3092,7 +3092,7 @@
       "testPath": "tests/cases/conformance/expressions/binaryOperators/additionOperator/additionOperatorWithTypeParameter.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "additionOperatorWithUndefinedValueAndInvalidOperands",
@@ -3260,7 +3260,7 @@
       "testPath": "tests/cases/compiler/aliasUsageInTypeArgumentOfExtendsClause.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "aliasUsageInVarAssignment",
@@ -3532,7 +3532,7 @@
       "testPath": "tests/cases/conformance/classes/propertyMemberDeclarations/memberAccessorDeclarations/ambientAccessors.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "ambientClassDeclarationWithExtends",
@@ -3876,7 +3876,7 @@
       "testPath": "tests/cases/compiler/ambientModules.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "ambientNameRestrictions",
@@ -4116,7 +4116,7 @@
       "testPath": "tests/cases/compiler/anonymousClassDeclarationDoesntPrintWithReadonly.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "anonymousClassExpression1",
@@ -4244,7 +4244,7 @@
       "testPath": "tests/cases/compiler/anyDeclare.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "anyIdenticalToItself",
@@ -4388,7 +4388,7 @@
       "testPath": "tests/cases/conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "arbitraryModuleNamespaceIdentifiers_module(module=node16)",
@@ -4596,7 +4596,7 @@
       "testPath": "tests/cases/compiler/argumentsPropertyNameInJsMode1.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "argumentsPropertyNameInJsMode2",
@@ -4668,7 +4668,7 @@
       "testPath": "tests/cases/conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithAnyAndNumber.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "arithmeticOperatorWithEnum",
@@ -4796,7 +4796,7 @@
       "testPath": "tests/cases/compiler/arrayAssignmentTest4.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "arrayAssignmentTest5",
@@ -4932,7 +4932,7 @@
       "testPath": "tests/cases/compiler/arrayFind.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "arrayFlatMap",
@@ -5156,7 +5156,7 @@
       "testPath": "tests/cases/conformance/expressions/arrayLiterals/arrayLiterals.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "arrayLiterals2ES5",
@@ -5284,7 +5284,7 @@
       "testPath": "tests/cases/conformance/types/specifyingTypes/typeLiterals/arrayTypeOfFunctionTypes.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "arrayTypeOfFunctionTypes2",
@@ -5580,7 +5580,7 @@
       "testPath": "tests/cases/compiler/asiAmbientFunctionDeclaration.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "asiArith",
@@ -5772,7 +5772,7 @@
       "testPath": "tests/cases/compiler/assertionFunctionWildcardImport2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "assertionFunctionsCanNarrowByDiscriminant",
@@ -5940,7 +5940,7 @@
       "testPath": "tests/cases/compiler/assignToFn.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "assignToInvalidLHS",
@@ -6100,7 +6100,7 @@
       "testPath": "tests/cases/conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignatures5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "assignmentCompatWithCallSignatures6",
@@ -6268,7 +6268,7 @@
       "testPath": "tests/cases/conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembers.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "assignmentCompatWithObjectMembers2",
@@ -6404,7 +6404,7 @@
       "testPath": "tests/cases/compiler/assignmentCompatability12.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "assignmentCompatability13",
@@ -6572,7 +6572,7 @@
       "testPath": "tests/cases/compiler/assignmentCompatability31.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "assignmentCompatability32",
@@ -6796,7 +6796,7 @@
       "testPath": "tests/cases/conformance/expressions/assignmentOperator/assignmentLHSIsValue.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "assignmentNestedInLiterals",
@@ -6852,7 +6852,7 @@
       "testPath": "tests/cases/compiler/assignmentToFunction.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "assignmentToInstantiationExpression",
@@ -7188,7 +7188,7 @@
       "testPath": "tests/cases/conformance/async/es5/asyncArrowFunction/asyncArrowFunction6_es5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "asyncArrowFunction6_es6",
@@ -7438,7 +7438,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+31/-100 lines",
-      "elapsed": 1
+      "elapsed": 2
     },
     {
       "name": "asyncAwait_es2017",
@@ -7695,7 +7695,7 @@
       "testPath": "tests/cases/conformance/async/es5/functionDeclarations/asyncFunctionDeclaration13_es5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "asyncFunctionDeclaration13_es6",
@@ -7719,7 +7719,7 @@
       "testPath": "tests/cases/conformance/async/es5/functionDeclarations/asyncFunctionDeclaration14_es5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "asyncFunctionDeclaration14_es5(target=es5)",
@@ -7847,7 +7847,7 @@
       "testPath": "tests/cases/conformance/async/es5/functionDeclarations/asyncFunctionDeclaration3_es5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 4
+      "elapsed": 0
     },
     {
       "name": "asyncFunctionDeclaration3_es6",
@@ -7959,7 +7959,7 @@
       "testPath": "tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration7_es2017.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "asyncFunctionDeclaration7_es5(target=es2015)",
@@ -7967,7 +7967,7 @@
       "testPath": "tests/cases/conformance/async/es5/functionDeclarations/asyncFunctionDeclaration7_es5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "asyncFunctionDeclaration7_es5(target=es5)",
@@ -8072,7 +8072,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+68/-35 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "asyncFunctionDeclarationParameterEvaluation(target=es2017)",
@@ -8170,7 +8170,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-5 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "asyncGeneratorParameterEvaluation(target=es2018)",
@@ -8292,7 +8292,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+13/-25 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "asyncMethodWithSuper_es5(target=es5)",
@@ -8301,7 +8301,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+20/-35 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "asyncMethodWithSuper_es6",
@@ -8310,7 +8310,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+63/-137 lines",
-      "elapsed": 2
+      "elapsed": 3
     },
     {
       "name": "asyncModule_es5(target=es2015)",
@@ -8374,7 +8374,7 @@
       "testPath": "tests/cases/conformance/async/es5/asyncQualifiedReturnType_es5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "asyncQualifiedReturnType_es5(target=es5)",
@@ -8743,7 +8743,7 @@
       "testPath": "tests/cases/compiler/augmentedTypesModules4.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "augmentedTypesVar",
@@ -9003,7 +9003,7 @@
       "testPath": "tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessor8.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "autoAccessor9",
@@ -9012,7 +9012,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+9/-19 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "autoAccessorAllowedModifiers",
@@ -9144,7 +9144,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+9/-9 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "awaitBinaryExpression1_es2017",
@@ -9200,7 +9200,7 @@
       "testPath": "tests/cases/conformance/async/es5/awaitBinaryExpression/awaitBinaryExpression2_es5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "awaitBinaryExpression2_es6",
@@ -9392,7 +9392,7 @@
       "testPath": "tests/cases/conformance/async/es5/awaitCallExpression/awaitCallExpression3_es5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "awaitCallExpression3_es6",
@@ -9648,7 +9648,7 @@
       "testPath": "tests/cases/compiler/awaitUnionPromise.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "awaitUnion_es5(target=es2015)",
@@ -9656,7 +9656,7 @@
       "testPath": "tests/cases/conformance/async/es5/awaitUnion_es5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 6
     },
     {
       "name": "awaitUnion_es5(target=es5)",
@@ -9681,7 +9681,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+193/-241 lines",
-      "elapsed": 7
+      "elapsed": 9
     },
     {
       "name": "awaitUsingDeclarations.1(target=es2017)",
@@ -9690,7 +9690,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+200/-216 lines",
-      "elapsed": 7
+      "elapsed": 8
     },
     {
       "name": "awaitUsingDeclarations.1(target=es2022)",
@@ -9699,7 +9699,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+184/-183 lines",
-      "elapsed": 6
+      "elapsed": 7
     },
     {
       "name": "awaitUsingDeclarations.1(target=es5)",
@@ -9708,7 +9708,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+295/-426 lines",
-      "elapsed": 19
+      "elapsed": 15
     },
     {
       "name": "awaitUsingDeclarations.1(target=esnext)",
@@ -9732,7 +9732,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.11.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "awaitUsingDeclarations.12",
@@ -9836,7 +9836,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "awaitUsingDeclarations.3(target=es2022)",
@@ -9852,7 +9852,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "awaitUsingDeclarations.3(target=esnext)",
@@ -10099,7 +10099,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-101 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "awaitUsingDeclarationsInForOf.5(target=esnext)",
@@ -10107,7 +10107,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "awaitUsingDeclarationsTopLevelOfModule.1(module=esnext)",
@@ -10467,7 +10467,7 @@
       "testPath": "tests/cases/compiler/bigIntWithTargetLessThanES2016.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "bigint64ArraySubarray",
@@ -10649,10 +10649,9 @@
       "name": "binderBinaryExpressionStress",
       "baselineFile": "binderBinaryExpressionStress.js",
       "testPath": "tests/cases/compiler/binderBinaryExpressionStress.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+3/-3960 lines",
-      "elapsed": 4
+      "elapsed": 1
     },
     {
       "name": "bindingPatternCannotBeOnlyInferenceSource",
@@ -10789,7 +10788,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+12/-43 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "blockScopedBindingsReassignedInLoop1",
@@ -10853,7 +10852,7 @@
       "testPath": "tests/cases/compiler/blockScopedEnumVariablesUseBeforeDef.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "blockScopedEnumVariablesUseBeforeDef_isolatedModules(target=es2015)",
@@ -11046,7 +11045,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+1/-7 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "blockScopedVariablesUseBeforeDef(target=es5)",
@@ -11055,7 +11054,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+47/-52 lines",
-      "elapsed": 1
+      "elapsed": 2
     },
     {
       "name": "bluebirdStaticThis",
@@ -11367,7 +11366,7 @@
       "testPath": "tests/cases/compiler/cachedModuleResolution2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "cachedModuleResolution3",
@@ -11383,7 +11382,7 @@
       "testPath": "tests/cases/compiler/cachedModuleResolution4.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "cachedModuleResolution5",
@@ -11783,7 +11782,7 @@
       "testPath": "tests/cases/conformance/types/objectTypeLiteral/callSignatures/callSignaturesThatDifferOnlyByReturnType.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "callSignaturesThatDifferOnlyByReturnType2",
@@ -11823,7 +11822,7 @@
       "testPath": "tests/cases/conformance/types/objectTypeLiteral/callSignatures/callSignaturesWithOptionalParameters.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "callSignaturesWithOptionalParameters2",
@@ -12080,7 +12079,7 @@
       "testPath": "tests/cases/compiler/capturedLetConstInLoop2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "capturedLetConstInLoop2_ES6",
@@ -12096,7 +12095,7 @@
       "testPath": "tests/cases/compiler/capturedLetConstInLoop3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "capturedLetConstInLoop3_ES6",
@@ -12129,7 +12128,7 @@
       "testPath": "tests/cases/compiler/capturedLetConstInLoop5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "capturedLetConstInLoop5_ES6",
@@ -12169,7 +12168,7 @@
       "testPath": "tests/cases/compiler/capturedLetConstInLoop7_ES6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "capturedLetConstInLoop8",
@@ -12227,7 +12226,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+19/-21 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "capturedShorthandPropertyAssignmentNoCheck(target=es2015)",
@@ -12427,7 +12426,7 @@
       "testPath": "tests/cases/compiler/chainedCallsWithTypeParameterConstrainedToOtherTypeParameter2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "chainedImportAlias",
@@ -12595,7 +12594,7 @@
       "testPath": "tests/cases/compiler/checkJsdocTypeTagOnExportAssignment6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "checkJsdocTypeTagOnExportAssignment7",
@@ -12836,7 +12835,7 @@
       "testPath": "tests/cases/compiler/checkSuperCallBeforeThisAccess.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "checkSuperCallBeforeThisAccessing1",
@@ -12948,7 +12947,7 @@
       "testPath": "tests/cases/compiler/circularAccessorAnnotations.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "circularBaseTypes",
@@ -13268,7 +13267,7 @@
       "testPath": "tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractExtends.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "classAbstractFactoryFunction",
@@ -13364,7 +13363,7 @@
       "testPath": "tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractMethodWithImplementation.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "classAbstractMixedWithModifiers",
@@ -13685,7 +13684,7 @@
       "testPath": "tests/cases/conformance/classes/classExpressions/classExpression2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "classExpression3",
@@ -13741,7 +13740,7 @@
       "testPath": "tests/cases/conformance/es6/classExpressions/classExpressionES63.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "classExpressionExtendingAbstractClass",
@@ -14080,7 +14079,7 @@
       "testPath": "tests/cases/conformance/classes/classDeclarations/classHeritageSpecification/classExtendsItselfIndirectly3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "classExtendsMultipleBaseClasses",
@@ -14104,7 +14103,7 @@
       "testPath": "tests/cases/conformance/classes/classDeclarations/classHeritageSpecification/classExtendsShadowedConstructorFunction.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "classExtendsValidConstructorFunction",
@@ -14466,7 +14465,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+7/-7 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "classNonUniqueSymbolMethodHasSymbolIndexer",
@@ -14773,7 +14772,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+18/-25 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "classStaticBlock18(target=esnext)",
@@ -14821,7 +14820,7 @@
       "testPath": "tests/cases/conformance/classes/classStaticBlock/classStaticBlock2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "classStaticBlock20",
@@ -14958,7 +14957,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+5/-7 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "classStaticBlock26(target=esnext)",
@@ -15057,7 +15056,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+8/-13 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "classStaticBlock6(target=es5)",
@@ -15066,7 +15065,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+36/-53 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "classStaticBlock7",
@@ -15123,7 +15122,7 @@
       "testPath": "tests/cases/conformance/classes/classStaticBlock/classStaticBlockUseBeforeDef4.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "classStaticBlockUseBeforeDef5",
@@ -15171,7 +15170,7 @@
       "testPath": "tests/cases/compiler/classStaticPropertyTypeGuard.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "classTypeParametersInStatics",
@@ -15284,7 +15283,7 @@
       "testPath": "tests/cases/conformance/classes/members/constructorFunctionTypes/classWithNoConstructorOrBaseClass.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "classWithOnlyPublicMembersEquivalentToInterface(target=es2015)",
@@ -15430,7 +15429,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+8/-7 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "classWithStaticFieldInParameterBindingPattern(target=esnext)",
@@ -15720,7 +15719,7 @@
       "testPath": "tests/cases/compiler/collisionArgumentsClassMethod.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "collisionArgumentsFunction(alwaysstrict=false,target=es2015)",
@@ -15808,7 +15807,7 @@
       "testPath": "tests/cases/compiler/collisionArgumentsInterfaceMembers.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "collisionCodeGenEnumWithEnumMemberConflict",
@@ -15973,7 +15972,7 @@
       "testPath": "tests/cases/compiler/collisionExportsRequireAndAmbientVar.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "collisionExportsRequireAndClass",
@@ -15981,7 +15980,7 @@
       "testPath": "tests/cases/compiler/collisionExportsRequireAndClass.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "collisionExportsRequireAndEnum",
@@ -16167,7 +16166,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+12/-12 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "collisionSuperAndLocalVarInConstructor",
@@ -16216,7 +16215,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+13/-15 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "collisionSuperAndParameter1",
@@ -16297,7 +16296,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+14/-26 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "collisionThisExpressionAndLocalVarInConstructor",
@@ -16578,7 +16577,7 @@
       "testPath": "tests/cases/compiler/commentOnAmbientClass1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "commentOnAmbientEnum",
@@ -17042,7 +17041,7 @@
       "testPath": "tests/cases/compiler/commentsClassMembers.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "commentsCommentParsing(target=es2015)",
@@ -17050,7 +17049,7 @@
       "testPath": "tests/cases/compiler/commentsCommentParsing.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "commentsCommentParsing(target=es5)",
@@ -17104,9 +17103,8 @@
       "name": "commentsExternalModules(target=es5)",
       "baselineFile": "commentsExternalModules(target=es5).js",
       "testPath": "tests/cases/compiler/commentsExternalModules.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "pass",
-      "jsError": "+10/-4 lines",
       "elapsed": 0
     },
     {
@@ -17121,9 +17119,8 @@
       "name": "commentsExternalModules2(target=es5)",
       "baselineFile": "commentsExternalModules2(target=es5).js",
       "testPath": "tests/cases/compiler/commentsExternalModules2.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "pass",
-      "jsError": "+10/-4 lines",
       "elapsed": 0
     },
     {
@@ -17138,10 +17135,9 @@
       "name": "commentsExternalModules3(target=es5)",
       "baselineFile": "commentsExternalModules3(target=es5).js",
       "testPath": "tests/cases/compiler/commentsExternalModules3.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "pass",
-      "jsError": "+8/-2 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "commentsFormatting(target=es2015)",
@@ -17155,9 +17151,10 @@
       "name": "commentsFormatting(target=es5)",
       "baselineFile": "commentsFormatting(target=es5).js",
       "testPath": "tests/cases/compiler/commentsFormatting.ts",
-      "jsStatus": "pass",
+      "jsStatus": "fail",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "jsError": "+0/-58 lines",
+      "elapsed": 1
     },
     {
       "name": "commentsFunction(target=es2015)",
@@ -17213,7 +17210,7 @@
       "testPath": "tests/cases/compiler/commentsModules.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "commentsModules(target=es5)",
@@ -17221,8 +17218,8 @@
       "testPath": "tests/cases/compiler/commentsModules.ts",
       "jsStatus": "fail",
       "dtsStatus": "pass",
-      "jsError": "+13/-10 lines",
-      "elapsed": 0
+      "jsError": "+9/-11 lines",
+      "elapsed": 1
     },
     {
       "name": "commentsMultiModuleMultiFile(target=es2015)",
@@ -17252,8 +17249,9 @@
       "name": "commentsMultiModuleSingleFile(target=es5)",
       "baselineFile": "commentsMultiModuleSingleFile(target=es5).js",
       "testPath": "tests/cases/compiler/commentsMultiModuleSingleFile.ts",
-      "jsStatus": "pass",
+      "jsStatus": "fail",
       "dtsStatus": "pass",
+      "jsError": "+0/-2 lines",
       "elapsed": 0
     },
     {
@@ -17303,7 +17301,7 @@
       "testPath": "tests/cases/compiler/commentsOnJSXExpressionsArePreserved.tsx",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "commentsOnJSXExpressionsArePreserved(jsx=react,module=commonjs,moduledetection=auto)",
@@ -17386,7 +17384,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-19 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "commentsOnJSXExpressionsArePreserved(jsx=react-jsx,module=system,moduledetection=force)",
@@ -17528,7 +17526,7 @@
       "testPath": "tests/cases/compiler/commentsOnPropertyOfObjectLiteral1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "commentsOnRequireStatement(target=es2015)",
@@ -17632,7 +17630,7 @@
       "testPath": "tests/cases/compiler/commentsdoNotEmitComments.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "commentsemitComments(target=es2015)",
@@ -17646,9 +17644,8 @@
       "name": "commentsemitComments(target=es5)",
       "baselineFile": "commentsemitComments(target=es5).js",
       "testPath": "tests/cases/compiler/commentsemitComments.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "pass",
-      "jsError": "+1/-1 lines",
       "elapsed": 0
     },
     {
@@ -17745,7 +17742,7 @@
       "testPath": "tests/cases/compiler/commonSourceDir2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "commonSourceDir3",
@@ -17969,7 +17966,7 @@
       "testPath": "tests/cases/conformance/expressions/binaryOperators/comparisonOperator/comparisonOperatorWithSubtypeObjectOnConstructorSignature.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "comparisonOperatorWithSubtypeObjectOnIndexSignature",
@@ -18073,7 +18070,7 @@
       "testPath": "tests/cases/compiler/complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "complicatedIndexesOfIntersectionsAreInferencable",
@@ -18098,7 +18095,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+1/-2 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "compositeGenericFunction",
@@ -18192,9 +18189,8 @@
       "name": "compoundExponentiationAssignmentLHSIsReference",
       "baselineFile": "compoundExponentiationAssignmentLHSIsReference.js",
       "testPath": "tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsReference.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+3/-3 lines",
       "elapsed": 0
     },
     {
@@ -18371,7 +18367,7 @@
       "testPath": "tests/cases/conformance/es6/computedProperties/computedPropertyNames11_ES5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "computedPropertyNames11_ES6",
@@ -18379,7 +18375,7 @@
       "testPath": "tests/cases/conformance/es6/computedProperties/computedPropertyNames11_ES6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "computedPropertyNames12_ES5(target=es2015)",
@@ -18755,7 +18751,7 @@
       "testPath": "tests/cases/conformance/es6/computedProperties/computedPropertyNames26_ES5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "computedPropertyNames26_ES6",
@@ -18811,7 +18807,7 @@
       "testPath": "tests/cases/conformance/es6/computedProperties/computedPropertyNames28_ES6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "computedPropertyNames29_ES5(target=es2015)",
@@ -19062,7 +19058,7 @@
       "testPath": "tests/cases/conformance/es6/computedProperties/computedPropertyNames38_ES5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "computedPropertyNames38_ES5(target=es5)",
@@ -19214,7 +19210,7 @@
       "testPath": "tests/cases/conformance/es6/computedProperties/computedPropertyNames43_ES5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "computedPropertyNames43_ES6",
@@ -19414,7 +19410,7 @@
       "testPath": "tests/cases/conformance/es6/computedProperties/computedPropertyNames51_ES6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "computedPropertyNames5_ES5(target=es2015)",
@@ -19694,7 +19690,7 @@
       "testPath": "tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType6_ES5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "computedPropertyNamesContextualType6_ES6",
@@ -20495,7 +20491,7 @@
       "testPath": "tests/cases/conformance/expressions/typeAssertions/constAssertions.ts",
       "jsStatus": "pass",
       "dtsStatus": "fail",
-      "dtsError": "+16/-18 lines",
+      "dtsError": "+14/-16 lines",
       "elapsed": 0
     },
     {
@@ -20592,7 +20588,7 @@
       "testPath": "tests/cases/compiler/constDeclarations-es5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "constDeclarations-es5(target=es5)",
@@ -20672,7 +20668,7 @@
       "testPath": "tests/cases/compiler/constDeclarations-validContexts.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "constDeclarations",
@@ -20929,7 +20925,7 @@
       "testPath": "tests/cases/compiler/constInClassExpression.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "constIndexedAccess",
@@ -21113,7 +21109,7 @@
       "testPath": "tests/cases/conformance/types/typeRelationships/assignmentCompatibility/constructSignatureAssignabilityInInheritance4.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "constructSignatureAssignabilityInInheritance5",
@@ -21241,7 +21237,7 @@
       "testPath": "tests/cases/compiler/constructorArgsErrors5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "constructorAsType",
@@ -21820,7 +21816,7 @@
       "testPath": "tests/cases/compiler/contextualTypeOfIndexedAccessParameter.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "contextualTypeOnYield1",
@@ -21876,7 +21872,7 @@
       "testPath": "tests/cases/conformance/types/union/contextualTypeWithUnionTypeMembers.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "contextualTypeWithUnionTypeObjectLiteral",
@@ -22156,7 +22152,7 @@
       "testPath": "tests/cases/compiler/contextualTyping39.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "contextualTyping4",
@@ -22527,14 +22523,6 @@
       "elapsed": 0
     },
     {
-      "name": "contextuallyTypedParametersWithInitializers1",
-      "baselineFile": "contextuallyTypedParametersWithInitializers1.js",
-      "testPath": "tests/cases/compiler/contextuallyTypedParametersWithInitializers1.ts",
-      "jsStatus": "pass",
-      "dtsStatus": "pass",
-      "elapsed": 0
-    },
-    {
       "name": "contextuallyTypedStringLiteralsInJsxAttributes01",
       "baselineFile": "contextuallyTypedStringLiteralsInJsxAttributes01.js",
       "testPath": "tests/cases/conformance/types/contextualTypes/jsxAttributes/contextuallyTypedStringLiteralsInJsxAttributes01.tsx",
@@ -22548,7 +22536,7 @@
       "testPath": "tests/cases/conformance/types/contextualTypes/jsxAttributes/contextuallyTypedStringLiteralsInJsxAttributes02.tsx",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "contextuallyTypedSymbolNamedProperties",
@@ -22637,7 +22625,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-5 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "continueLabel",
@@ -22749,7 +22737,7 @@
       "testPath": "tests/cases/compiler/contravariantTypeAliasInference.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "controlFlowAliasedDiscriminants",
@@ -22965,7 +22953,7 @@
       "testPath": "tests/cases/conformance/controlFlow/controlFlowElementAccess2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "controlFlowFinallyNoCatchAssignments",
@@ -23207,7 +23195,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-1 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "controlFlowPropertyInitializer",
@@ -23247,7 +23235,7 @@
       "testPath": "tests/cases/conformance/controlFlow/controlFlowTruthiness.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "controlFlowTypeofObject",
@@ -23296,7 +23284,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+624/-390 lines",
-      "elapsed": 22
+      "elapsed": 26
     },
     {
       "name": "convertClassExpressionToFunctionFromObjectProperty2(target=es2015)",
@@ -23313,7 +23301,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+624/-390 lines",
-      "elapsed": 22
+      "elapsed": 24
     },
     {
       "name": "convertKeywords",
@@ -23329,7 +23317,7 @@
       "testPath": "tests/cases/compiler/convertKeywordsYes.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "convertKeywordsYes(alwaysstrict=true)",
@@ -23394,7 +23382,7 @@
       "testPath": "tests/cases/conformance/jsx/correctlyMarkAliasAsReferences4.tsx",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "correlatedUnions",
@@ -23563,7 +23551,7 @@
       "testPath": "tests/cases/compiler/cyclicGenericTypeInstantiation.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "cyclicGenericTypeInstantiationInference",
@@ -23627,7 +23615,7 @@
       "testPath": "tests/cases/compiler/declFileAccessors.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declFileAliasUseBeforeDeclaration",
@@ -23851,7 +23839,7 @@
       "testPath": "tests/cases/compiler/declFileFunctions.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "declFileFunctions(target=es5)",
@@ -23891,7 +23879,7 @@
       "testPath": "tests/cases/compiler/declFileImportChainInExportAssignment.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declFileImportModuleWithExportAssignment",
@@ -24089,7 +24077,7 @@
       "testPath": "tests/cases/compiler/declFileTypeAnnotationArrayType.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "declFileTypeAnnotationBuiltInType(target=es2015)",
@@ -24137,7 +24125,7 @@
       "testPath": "tests/cases/compiler/declFileTypeAnnotationStringLiteral.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declFileTypeAnnotationTupleType(target=es2015)",
@@ -24313,7 +24301,7 @@
       "testPath": "tests/cases/compiler/declFileTypeAnnotationVisibilityErrorTypeLiteral.ts",
       "jsStatus": "fail",
       "dtsStatus": "pass",
-      "jsError": "+10/-9 lines",
+      "jsError": "+7/-6 lines",
       "elapsed": 0
     },
     {
@@ -24671,7 +24659,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+5/-5 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declarationEmitConstantNoWidening",
@@ -24695,7 +24683,7 @@
       "testPath": "tests/cases/compiler/declarationEmitCrossFileImportTypeOfAmbientModule.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "declarationEmitDefaultExport1",
@@ -24963,7 +24951,7 @@
       "testPath": "tests/cases/compiler/declarationEmitDistributiveConditionalWithInfer.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declarationEmitDoesNotUseReexportedNamespaceAsLocal",
@@ -25020,8 +25008,7 @@
       "baselineFile": "declarationEmitExpandoWithGenericConstraint.js",
       "testPath": "tests/cases/compiler/declarationEmitExpandoWithGenericConstraint.ts",
       "jsStatus": "pass",
-      "dtsStatus": "fail",
-      "dtsError": "+1/-1 lines",
+      "dtsStatus": "pass",
       "elapsed": 0
     },
     {
@@ -25336,7 +25323,7 @@
       "testPath": "tests/cases/compiler/declarationEmitInferredTypeAlias5.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declarationEmitInferredTypeAlias6",
@@ -25476,7 +25463,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+5/-3 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "declarationEmitLocalClassHasRequiredDeclare",
@@ -25749,7 +25736,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+2/-1 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declarationEmitPrefersPathKindBasedOnBundling(target=es2015)",
@@ -25791,7 +25778,7 @@
       "dtsStatus": "fail",
       "jsError": "+8/-9 lines",
       "dtsError": "+1/-3 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "declarationEmitPrivatePromiseLikeInterface",
@@ -25975,7 +25962,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+1/-1 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declarationEmitShadowing",
@@ -26130,7 +26117,7 @@
       "testPath": "tests/cases/compiler/declarationEmitTypeAliasTypeParameterExtendingUnknownSymbol.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "declarationEmitTypeAliasWithTypeParameters1",
@@ -26260,7 +26247,7 @@
       "testPath": "tests/cases/compiler/declarationEmitUnknownImport2.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declarationEmitUnknownImport2(target=es5)",
@@ -26529,7 +26516,7 @@
       "testPath": "tests/cases/compiler/declarationFilesGeneratingTypeReferences.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "declarationFilesWithTypeReferences1",
@@ -26545,7 +26532,7 @@
       "testPath": "tests/cases/compiler/declarationFilesWithTypeReferences2.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declarationFilesWithTypeReferences3",
@@ -26718,7 +26705,7 @@
       "testPath": "tests/cases/compiler/declareAlreadySeen.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "declareClassInterfaceImplementation",
@@ -26790,7 +26777,7 @@
       "testPath": "tests/cases/compiler/declareModifierOnTypeAlias.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "declaredClassMergedwithSelf",
@@ -26900,7 +26887,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-10 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "decoratedClassFromExternalModule",
@@ -27022,7 +27009,7 @@
       "testPath": "tests/cases/conformance/decorators/decoratorMetadata-jsdoc.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "decoratorMetadataConditionalType",
@@ -27066,7 +27053,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-2 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "decoratorMetadataForMethodWithNoReturnTypeAnnotation01(target=es2015)",
@@ -27396,7 +27383,7 @@
       "testPath": "tests/cases/conformance/decorators/class/decoratorOnClass2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "decoratorOnClass2(target=es5)",
@@ -27404,7 +27391,7 @@
       "testPath": "tests/cases/conformance/decorators/class/decoratorOnClass2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "decoratorOnClass2.es6",
@@ -27679,7 +27666,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-21 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "decoratorOnClassConstructor1(target=es2015)",
@@ -27703,7 +27690,7 @@
       "testPath": "tests/cases/conformance/decorators/class/constructor/decoratorOnClassConstructor2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "decoratorOnClassConstructor2(target=es5)",
@@ -27916,7 +27903,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+12/-21 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "decoratorOnClassMethod19(target=es2022)",
@@ -28190,7 +28177,7 @@
       "testPath": "tests/cases/conformance/decorators/class/property/decoratorOnClassProperty13.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "decoratorOnClassProperty2(target=es2015)",
@@ -28456,7 +28443,7 @@
       "testPath": "tests/cases/conformance/expressions/unaryOperators/decrementOperator/decrementOperatorWithNumberType.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "decrementOperatorWithNumberTypeInvalidOperations",
@@ -28520,7 +28507,7 @@
       "testPath": "tests/cases/compiler/deepKeysIndexing.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "deeplyNestedAssignabilityErrorsCombined",
@@ -28730,7 +28717,7 @@
       "testPath": "tests/cases/conformance/es6/moduleExportsSystem/defaultExportsGetExportedSystem.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "defaultExportsGetExportedUmd",
@@ -28891,7 +28878,7 @@
       "testPath": "tests/cases/compiler/deferredLookupTypeResolution2.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "deferredTypeReferenceWithinArrayWithinTuple",
@@ -28965,7 +28952,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+13/-13 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "deleteExpressionMustBeOptional(strict=false)",
@@ -29101,7 +29088,7 @@
       "testPath": "tests/cases/conformance/controlFlow/dependentDestructuredVariables.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "deprecatedBool",
@@ -29149,7 +29136,7 @@
       "testPath": "tests/cases/compiler/deprecatedCompilerOptions5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "deprecatedCompilerOptions6",
@@ -29230,7 +29217,7 @@
       "testPath": "tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassOverridesProtectedMembers.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "derivedClassOverridesProtectedMembers(target=es5)",
@@ -29336,7 +29323,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+282/-293 lines",
-      "elapsed": 9
+      "elapsed": 10
     },
     {
       "name": "derivedClassSuperStatementPosition(target=es2015)",
@@ -29344,7 +29331,7 @@
       "testPath": "tests/cases/conformance/classes/constructorDeclarations/superCalls/derivedClassSuperStatementPosition.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "derivedClassSuperStatementPosition(target=es5)",
@@ -29353,7 +29340,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+17/-35 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "derivedClassTransitivity",
@@ -29553,7 +29540,7 @@
       "testPath": "tests/cases/compiler/destructionAssignmentError.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "destructureCatchClause(strict=false,useunknownincatchvariables=false)",
@@ -29585,7 +29572,7 @@
       "testPath": "tests/cases/compiler/destructureCatchClause.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "destructureComputedProperty",
@@ -29814,7 +29801,7 @@
       "testPath": "tests/cases/compiler/destructuringInVariableDeclarations1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "destructuringInVariableDeclarations2",
@@ -29854,7 +29841,7 @@
       "testPath": "tests/cases/compiler/destructuringInVariableDeclarations6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "destructuringInVariableDeclarations7",
@@ -30021,7 +30008,7 @@
       "testPath": "tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration1ES5iterable.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "destructuringParameterDeclaration1ES6",
@@ -30111,7 +30098,7 @@
       "testPath": "tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration7ES5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "destructuringParameterDeclaration7ES5iterable(target=es2015)",
@@ -30217,7 +30204,7 @@
       "testPath": "tests/cases/conformance/es6/destructuring/destructuringSpread.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "destructuringTempOccursAfterPrologue",
@@ -30497,7 +30484,7 @@
       "testPath": "tests/cases/compiler/detachedCommentAtStartOfFunctionBody2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "detachedCommentAtStartOfLambdaFunction1",
@@ -30738,7 +30725,7 @@
       "testPath": "tests/cases/compiler/divergentAccessorsTypes1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "divergentAccessorsTypes2",
@@ -30834,7 +30821,7 @@
       "testPath": "tests/cases/compiler/doNotElaborateAssignabilityToTypeParameters.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "doNotEmitDetachedComments",
@@ -30938,7 +30925,7 @@
       "testPath": "tests/cases/compiler/doNotemitTripleSlashComments.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "doWhileBreakStatements",
@@ -31100,7 +31087,7 @@
       "testPath": "tests/cases/compiler/downlevelIterationDeprecated.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "downlevelIterationDeprecated(downleveliteration=true)",
@@ -31200,7 +31187,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+7/-7 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "downlevelLetConst16(target=es2015)",
@@ -31234,7 +31221,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+26/-26 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "downlevelLetConst18(target=es2015)",
@@ -31379,7 +31366,7 @@
       "testPath": "tests/cases/compiler/duplicateConstructorOverloadSignature.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "duplicateConstructorOverloadSignature2",
@@ -31509,7 +31496,7 @@
       "testPath": "tests/cases/compiler/duplicateIdentifierRelatedSpans1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "duplicateIdentifierRelatedSpans2",
@@ -31637,7 +31624,7 @@
       "testPath": "tests/cases/compiler/duplicateLocalVariable1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "duplicateLocalVariable2",
@@ -31757,7 +31744,7 @@
       "testPath": "tests/cases/compiler/duplicatePackage_relativeImportWithinPackage.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "duplicatePackage_relativeImportWithinPackage_scoped",
@@ -32016,7 +32003,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+12/-24 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "dynamicImportsDeclaration",
@@ -32205,7 +32192,7 @@
       "testPath": "tests/cases/conformance/es6/arrowFunction/emitArrowFunction.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "emitArrowFunctionAsIs(target=es2015)",
@@ -32253,7 +32240,7 @@
       "testPath": "tests/cases/conformance/es6/arrowFunction/emitArrowFunctionThisCapturing.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "emitArrowFunctionThisCapturingES6",
@@ -32709,7 +32696,7 @@
       "testPath": "tests/cases/conformance/es6/arrowFunction/emitArrowFunctionWhenUsingArguments12.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "emitArrowFunctionWhenUsingArguments12_ES6",
@@ -32765,7 +32752,7 @@
       "testPath": "tests/cases/conformance/es6/arrowFunction/emitArrowFunctionWhenUsingArguments13_ES6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "emitArrowFunctionWhenUsingArguments14(alwaysstrict=false,target=es2015)",
@@ -33157,7 +33144,7 @@
       "testPath": "tests/cases/conformance/es6/classDeclaration/emitClassDeclarationWithTypeArgumentInES6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "emitClassExpressionInDeclarationFile",
@@ -33215,7 +33202,7 @@
       "testPath": "tests/cases/conformance/es7/exponentiationOperator/emitCompoundExponentiationAssignmentWithIndexingOnLHS2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "emitCompoundExponentiationAssignmentWithIndexingOnLHS2(target=es5)",
@@ -33407,7 +33394,7 @@
       "testPath": "tests/cases/conformance/es6/defaultParameters/emitDefaultParametersFunctionProperty.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "emitDefaultParametersFunctionProperty(target=es5)",
@@ -33671,7 +33658,7 @@
       "testPath": "tests/cases/compiler/emitHelpersWithLocalCollisions.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "emitHelpersWithLocalCollisions(module=node20)",
@@ -33712,7 +33699,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-10 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "emitHelpersWithLocalCollisions(module=umd)",
@@ -33902,9 +33889,8 @@
       "name": "emitStatementsBeforeSuperCallWithDefineFields",
       "baselineFile": "emitStatementsBeforeSuperCallWithDefineFields.js",
       "testPath": "tests/cases/conformance/classes/constructorDeclarations/superCalls/emitStatementsBeforeSuperCallWithDefineFields.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+0/-6 lines",
       "elapsed": 0
     },
     {
@@ -34135,7 +34121,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-6 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "emitter.forAwait(target=es2018)",
@@ -34152,7 +34138,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-37 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "emitter.noCatchBinding.es2019",
@@ -34361,7 +34347,7 @@
       "testPath": "tests/cases/conformance/es6/destructuring/emptyAssignmentPatterns04_ES5.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "emptyAssignmentPatterns04_ES5iterable(target=es2015)",
@@ -34513,8 +34499,7 @@
       "baselineFile": "emptyTuplesTypeAssertion01.js",
       "testPath": "tests/cases/conformance/types/tuple/emptyTuples/emptyTuplesTypeAssertion01.ts",
       "jsStatus": "pass",
-      "dtsStatus": "fail",
-      "dtsError": "+1/-1 lines",
+      "dtsStatus": "pass",
       "elapsed": 0
     },
     {
@@ -34522,8 +34507,7 @@
       "baselineFile": "emptyTuplesTypeAssertion02.js",
       "testPath": "tests/cases/conformance/types/tuple/emptyTuples/emptyTuplesTypeAssertion02.ts",
       "jsStatus": "pass",
-      "dtsStatus": "fail",
-      "dtsError": "+1/-1 lines",
+      "dtsStatus": "pass",
       "elapsed": 0
     },
     {
@@ -34557,7 +34541,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+30/-30 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "emptyVariableDeclarationBindingPatterns01_ES5iterable(target=es2015)",
@@ -34574,7 +34558,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+42/-41 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "emptyVariableDeclarationBindingPatterns01_ES6",
@@ -35145,7 +35129,7 @@
       "testPath": "tests/cases/compiler/enumWithUnicodeEscape1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "enumWithoutInitializerAfterComputedMember",
@@ -35450,7 +35434,7 @@
       "testPath": "tests/cases/compiler/errorOnUnionVsObjectShouldDeeplyDisambiguate.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "errorOnUnionVsObjectShouldDeeplyDisambiguate2",
@@ -35507,7 +35491,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+13/-16 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "errorSupression1",
@@ -35579,7 +35563,7 @@
       "testPath": "tests/cases/compiler/errorsOnUnionsOfOverlappingObjects01.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "errorsWithInvokablesInUnions01",
@@ -35724,7 +35708,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+22/-49 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "es5-asyncFunctionBinaryExpressions(target=es2015)",
@@ -35732,7 +35716,7 @@
       "testPath": "tests/cases/compiler/es5-asyncFunctionBinaryExpressions.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "es5-asyncFunctionBinaryExpressions(target=es5)",
@@ -35775,7 +35759,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+9/-26 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "es5-asyncFunctionDoStatements(target=es2015)",
@@ -35860,7 +35844,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+19/-57 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "es5-asyncFunctionHoisting(target=es2015)",
@@ -35877,7 +35861,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+48/-26 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "es5-asyncFunctionIfStatements(target=es2015)",
@@ -35885,7 +35869,7 @@
       "testPath": "tests/cases/compiler/es5-asyncFunctionIfStatements.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "es5-asyncFunctionIfStatements(target=es5)",
@@ -35936,7 +35920,7 @@
       "testPath": "tests/cases/compiler/es5-asyncFunctionNewExpressions.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "es5-asyncFunctionNewExpressions(target=es5)",
@@ -36029,7 +36013,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+70/-74 lines",
-      "elapsed": 1
+      "elapsed": 2
     },
     {
       "name": "es5-asyncFunctionWhileStatements(target=es2015)",
@@ -36514,7 +36498,7 @@
       "testPath": "tests/cases/compiler/es5ExportDefaultFunctionDeclaration4.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "es5ExportDefaultIdentifier(target=es2015)",
@@ -36578,7 +36562,7 @@
       "testPath": "tests/cases/compiler/es5ModuleInternalNamedImports.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+9/-0 lines",
+      "jsError": "+8/-1 lines",
       "elapsed": 0
     },
     {
@@ -36854,7 +36838,7 @@
       "jsStatus": "fail",
       "dtsStatus": "pass",
       "jsError": "+3/-3 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "es6ExportClauseInEs5(target=es5)",
@@ -36889,7 +36873,7 @@
       "testPath": "tests/cases/compiler/es6ExportClauseWithoutModuleSpecifier.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "es6ExportClauseWithoutModuleSpecifierInEs5(target=es2015)",
@@ -37138,7 +37122,7 @@
       "testPath": "tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBinding1InEs5.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "es6ImportDefaultBindingFollowedWithNamespaceBinding1InEs5(target=es5)",
@@ -37290,7 +37274,7 @@
       "testPath": "tests/cases/compiler/es6ImportEqualsExportModuleCommonJsError.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "es6ImportEqualsExportModuleEs2015Error",
@@ -37578,7 +37562,7 @@
       "testPath": "tests/cases/compiler/es6ModuleClassDeclaration.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "es6ModuleConst",
@@ -37660,7 +37644,7 @@
       "testPath": "tests/cases/compiler/es6ModuleModuleDeclaration.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "es6ModuleVariableStatement",
@@ -37885,7 +37869,7 @@
       "testPath": "tests/cases/conformance/externalModules/es6/es6modulekindWithES5Target7.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "es6modulekindWithES5Target8(target=es2015)",
@@ -37966,7 +37950,7 @@
       "testPath": "tests/cases/conformance/esDecorators/classDeclaration/accessors/esDecorators-classDeclaration-accessors-nonStaticAbstract.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-classDeclaration-accessors-nonStaticAbstract(target=es2022)",
@@ -38041,7 +38025,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+27/-50 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classDeclaration-accessors-static(target=esnext)",
@@ -38084,7 +38068,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+8/-7 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-classDeclaration-classSuper.2",
@@ -38102,7 +38086,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+30/-29 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classDeclaration-classSuper.4",
@@ -38218,7 +38202,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+43/-46 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-classDeclaration-commentPreservation(module=esnext,target=es2022)",
@@ -38394,7 +38378,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+4/-11 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-classDeclaration-fields-nonStaticAccessor(target=es2022)",
@@ -38510,7 +38494,7 @@
       "testPath": "tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-static.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classDeclaration-fields-static(target=es2022,usedefineforclassfields=false)",
@@ -38553,7 +38537,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+5/-28 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-classDeclaration-fields-static(target=esnext,usedefineforclassfields=true)",
@@ -38587,15 +38571,14 @@
       "testPath": "tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-staticAccessor.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classDeclaration-fields-staticAmbient(target=es2015)",
       "baselineFile": "esDecorators-classDeclaration-fields-staticAmbient(target=es2015).js",
       "testPath": "tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-staticAmbient.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+3/-1 lines",
       "elapsed": 0
     },
     {
@@ -38610,9 +38593,8 @@
       "name": "esDecorators-classDeclaration-fields-staticAmbient(target=es5)",
       "baselineFile": "esDecorators-classDeclaration-fields-staticAmbient(target=es5).js",
       "testPath": "tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-staticAmbient.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+2/-0 lines",
       "elapsed": 0
     },
     {
@@ -38656,7 +38638,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+9/-20 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-classDeclaration-fields-staticPrivateAccessor(target=es2022)",
@@ -38722,7 +38704,7 @@
       "testPath": "tests/cases/conformance/esDecorators/classDeclaration/methods/esDecorators-classDeclaration-methods-nonStaticAbstract.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classDeclaration-methods-nonStaticAbstract(target=es5)",
@@ -38849,7 +38831,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+1/-3 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-classDeclaration-missingEmitHelpers-nonStaticPrivateAutoAccessor",
@@ -38884,7 +38866,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-2 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classDeclaration-missingEmitHelpers-nonStaticPrivateSetter",
@@ -39019,7 +39001,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+7/-14 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classDeclaration-outerThisReference(target=es2021)",
@@ -39028,7 +39010,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+7/-14 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-classDeclaration-outerThisReference(target=es2022)",
@@ -39088,7 +39070,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+4/-4 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classDeclaration-parameterProperties(target=es2015,usedefineforclassfields=true)",
@@ -39133,7 +39115,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+13/-30 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-classDeclaration-parameterProperties(target=esnext,usedefineforclassfields=false)",
@@ -39223,7 +39205,7 @@
       "jsStatus": "fail",
       "dtsStatus": "pass",
       "jsError": "+30/-42 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classDeclaration-sourceMap(target=es2022)",
@@ -39388,7 +39370,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-3 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-classExpression-missingEmitHelpers-classDecorator.17",
@@ -39472,7 +39454,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+9/-9 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classExpression-namedEvaluation.10",
@@ -39481,7 +39463,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+35/-58 lines",
-      "elapsed": 2
+      "elapsed": 1
     },
     {
       "name": "esDecorators-classExpression-namedEvaluation.11",
@@ -39498,7 +39480,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+251/-258 lines",
-      "elapsed": 5
+      "elapsed": 6
     },
     {
       "name": "esDecorators-classExpression-namedEvaluation.3",
@@ -39557,7 +39539,7 @@
       "testPath": "tests/cases/conformance/esDecorators/classExpression/namedEvaluation/esDecorators-classExpression-namedEvaluation.9.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-contextualTypes.2",
@@ -39630,7 +39612,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+32/-30 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-emitDecoratorMetadata(target=es2022)",
@@ -39639,7 +39621,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+36/-30 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-emitDecoratorMetadata(target=es5)",
@@ -39648,7 +39630,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+25/-112 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecorators-emitDecoratorMetadata(target=esnext)",
@@ -39666,7 +39648,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+10/-10 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecorators-privateFieldAccess",
@@ -39717,7 +39699,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-4 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esDecoratorsMetadata3(target=es2015)",
@@ -39726,7 +39708,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+8/-9 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "esDecoratorsMetadata3(target=es2022)",
@@ -39887,7 +39869,7 @@
       "testPath": "tests/cases/compiler/esNextWeakRefs_IterableWeakMap.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "escapedIdentifiers",
@@ -39943,7 +39925,7 @@
       "testPath": "tests/cases/conformance/externalModules/esnext/esnextmodulekind.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "esnextmodulekindWithES2015Target",
@@ -40256,7 +40238,7 @@
       "testPath": "tests/cases/compiler/excessPropertyCheckWithMultipleDiscriminants.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "excessPropertyCheckWithNestedArrayIntersection",
@@ -40354,7 +40336,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+5/-2 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "exhaustiveSwitchWithWideningLiteralTypes",
@@ -40468,7 +40450,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+1/-5 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "explicitAnyAfterSpreadNoImplicitAnyError",
@@ -40530,18 +40512,16 @@
       "name": "exponentiationOperatorSyntaxError1(target=es2015)",
       "baselineFile": "exponentiationOperatorSyntaxError1(target=es2015).js",
       "testPath": "tests/cases/conformance/es7/exponentiationOperator/exponentiationOperatorSyntaxError1.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-2 lines",
       "elapsed": 0
     },
     {
       "name": "exponentiationOperatorSyntaxError1(target=es5)",
       "baselineFile": "exponentiationOperatorSyntaxError1(target=es5).js",
       "testPath": "tests/cases/conformance/es7/exponentiationOperator/exponentiationOperatorSyntaxError1.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-2 lines",
       "elapsed": 0
     },
     {
@@ -40670,7 +40650,7 @@
       "testPath": "tests/cases/conformance/es7/exponentiationOperator/exponentiationOperatorWithUndefinedValueAndInvalidOperands.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "exponentiationOperatorWithUndefinedValueAndValidOperands",
@@ -41182,7 +41162,7 @@
       "testPath": "tests/cases/conformance/externalModules/exportAssignmentTopLevelClodule.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "exportAssignmentTopLevelEnumdule",
@@ -41222,7 +41202,7 @@
       "testPath": "tests/cases/compiler/exportAssignmentWithDeclareAndExportModifiers.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "exportAssignmentWithDeclareModifier",
@@ -41507,7 +41487,7 @@
       "testPath": "tests/cases/compiler/exportDefaultAbstractClass.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "exportDefaultAlias_excludesEverything",
@@ -41548,7 +41528,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-4 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "exportDefaultClassNameWithObject(target=es2015)",
@@ -41635,9 +41615,8 @@
       "name": "exportDefaultInterfaceAndTwoFunctions",
       "baselineFile": "exportDefaultInterfaceAndTwoFunctions.js",
       "testPath": "tests/cases/compiler/exportDefaultInterfaceAndTwoFunctions.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+2/-2 lines",
       "elapsed": 0
     },
     {
@@ -41685,8 +41664,7 @@
       "baselineFile": "exportDefaultNamespace.js",
       "testPath": "tests/cases/conformance/declarationEmit/exportDefaultNamespace.ts",
       "jsStatus": "pass",
-      "dtsStatus": "fail",
-      "dtsError": "+1/-5 lines",
+      "dtsStatus": "pass",
       "elapsed": 0
     },
     {
@@ -41695,7 +41673,7 @@
       "testPath": "tests/cases/compiler/exportDefaultParenthesize.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "exportDefaultParenthesize(target=es5)",
@@ -42056,7 +42034,7 @@
       "testPath": "tests/cases/compiler/exportImport.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "exportImportAlias",
@@ -42081,7 +42059,7 @@
       "jsStatus": "fail",
       "dtsStatus": "pass",
       "jsError": "+14/-2 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "exportImportCanSubstituteConstEnumForValue(target=es5)",
@@ -42241,8 +42219,7 @@
       "baselineFile": "exportNamespaceDeclarationRetainsVisibility.js",
       "testPath": "tests/cases/compiler/exportNamespaceDeclarationRetainsVisibility.ts",
       "jsStatus": "pass",
-      "dtsStatus": "fail",
-      "dtsError": "+0/-7 lines",
+      "dtsStatus": "pass",
       "elapsed": 0
     },
     {
@@ -42738,7 +42715,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+4/-1 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "exportsAndImports1-es6",
@@ -42804,7 +42781,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+8/-5 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "exportsAndImports3-es6",
@@ -43007,7 +42984,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+8/-8 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "expressionsForbiddenInParameterInitializers",
@@ -43151,7 +43128,7 @@
       "testPath": "tests/cases/conformance/types/primitives/number/extendNumberInterface.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "extendPrivateConstructorClass",
@@ -43408,7 +43385,7 @@
       "testPath": "tests/cases/compiler/externalModuleResolution2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "externalModuleWithoutCompilerFlag1",
@@ -43610,7 +43587,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+1/-2 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "fillInMissingTypeArgsOnConstructCalls",
@@ -43666,7 +43643,7 @@
       "testPath": "tests/cases/conformance/fixSignatureCaching.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 2
     },
     {
       "name": "fixTypeParameterInSignatureWithRestParameters",
@@ -43739,7 +43716,7 @@
       "testPath": "tests/cases/conformance/types/thisType/fluentClasses.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "fluentInterfaces",
@@ -44083,7 +44060,7 @@
       "testPath": "tests/cases/conformance/es6/for-ofStatements/for-of37.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "for-of38",
@@ -44243,7 +44220,7 @@
       "testPath": "tests/cases/conformance/es6/for-ofStatements/for-of55.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "for-of56(alwaysstrict=false)",
@@ -44342,7 +44319,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+19/-77 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "forBreakStatements",
@@ -44374,7 +44351,7 @@
       "testPath": "tests/cases/compiler/forIn2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "forInBreakStatements",
@@ -44542,7 +44519,7 @@
       "testPath": "tests/cases/compiler/formatToPartsFractionalSecond.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "forwardDeclaredCommonTypes01(target=es2015)",
@@ -44855,7 +44832,7 @@
       "testPath": "tests/cases/compiler/functionCallOnConstrainedTypeVariable.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "functionCalls",
@@ -44919,7 +44896,7 @@
       "testPath": "tests/cases/compiler/functionExpressionAndLambdaMatchesFunction.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "functionExpressionContextualTyping1",
@@ -45248,7 +45225,7 @@
       "testPath": "tests/cases/compiler/functionOverloads18.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "functionOverloads19",
@@ -45785,7 +45762,7 @@
       "testPath": "tests/cases/compiler/functionWithDefaultParameterWithNoStatements5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "functionWithDefaultParameterWithNoStatements6",
@@ -45986,7 +45963,7 @@
       "testPath": "tests/cases/conformance/expressions/contextualTyping/generatedContextualTyping.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "generativeRecursionWithTypeOf",
@@ -46066,7 +46043,7 @@
       "testPath": "tests/cases/conformance/generators/generatorImplicitAny.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "generatorInAmbientContext1",
@@ -46211,7 +46188,7 @@
       "testPath": "tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "generatorTypeCheck10",
@@ -46635,7 +46612,7 @@
       "testPath": "tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck57.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "generatorTypeCheck58",
@@ -46995,7 +46972,7 @@
       "testPath": "tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithGenericSignatureArguments3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "genericCallWithNonGenericArgs1",
@@ -47019,7 +46996,7 @@
       "testPath": "tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithObjectLiteralArgs.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "genericCallWithObjectLiteralArguments1",
@@ -47300,7 +47277,7 @@
       "testPath": "tests/cases/compiler/genericClasses1.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "genericClasses2",
@@ -47412,7 +47389,7 @@
       "testPath": "tests/cases/compiler/genericConstraint2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "genericConstraint3",
@@ -47500,7 +47477,7 @@
       "testPath": "tests/cases/compiler/genericDefaults.ts",
       "jsStatus": "pass",
       "dtsStatus": "fail",
-      "dtsError": "+15/-15 lines",
+      "dtsError": "+20/-20 lines",
       "elapsed": 0
     },
     {
@@ -47509,7 +47486,7 @@
       "testPath": "tests/cases/compiler/genericDefaultsErrors.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "genericDerivedTypeWithSpecializedBase",
@@ -47718,7 +47695,7 @@
       "testPath": "tests/cases/compiler/genericIndexedAccessMethodIntersectionCanBeAccessed.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "genericIndexedAccessVarianceComparisonResultCorrect",
@@ -47847,7 +47824,7 @@
       "testPath": "tests/cases/compiler/genericMemberFunction.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "genericMergedDeclarationUsingTypeParameter",
@@ -48040,7 +48017,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+32/-22 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "genericRestParameters2",
@@ -48080,7 +48057,7 @@
       "testPath": "tests/cases/compiler/genericReversingTypeParameters.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "genericReversingTypeParameters2",
@@ -48104,7 +48081,7 @@
       "testPath": "tests/cases/compiler/genericSignatureIdentity.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "genericSignatureInheritance",
@@ -49036,7 +49013,7 @@
       "testPath": "tests/cases/compiler/ignoredJsxAttributes.tsx",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "illegalGenericWrapping1",
@@ -49068,7 +49045,7 @@
       "testPath": "tests/cases/compiler/implementArrayInterface.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "implementClausePrecedingExtends",
@@ -49405,7 +49382,7 @@
       "testPath": "tests/cases/compiler/impliedNodeFormatEmit2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "impliedNodeFormatEmit2(module=esnext)",
@@ -49493,7 +49470,7 @@
       "testPath": "tests/cases/compiler/importAliasFromNamespace.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "importAliasIdentifiers",
@@ -49838,7 +49815,7 @@
       "testPath": "tests/cases/conformance/dynamicImport/importCallExpression2ES2020.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "importCallExpression3ES2020",
@@ -49887,7 +49864,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+12/-9 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "importCallExpressionAsyncES5AMD(target=es5)",
@@ -49896,7 +49873,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+34/-40 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "importCallExpressionAsyncES5CJS(target=es2015)",
@@ -49966,7 +49943,7 @@
       "testPath": "tests/cases/conformance/dynamicImport/importCallExpressionAsyncES6CJS.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "importCallExpressionAsyncES6System",
@@ -49984,7 +49961,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+18/-16 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "importCallExpressionCheckReturntype1",
@@ -50320,7 +50297,7 @@
       "testPath": "tests/cases/conformance/dynamicImport/importCallExpressionIncorrect1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "importCallExpressionIncorrect2",
@@ -50472,7 +50449,7 @@
       "testPath": "tests/cases/conformance/dynamicImport/importCallExpressionNestedUMD2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "importCallExpressionNoModuleKindSpecified",
@@ -50818,7 +50795,7 @@
       "testPath": "tests/cases/conformance/externalModules/typeOnly/importEquals1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "importEquals2",
@@ -50891,7 +50868,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-6 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "importHelpersAmd(target=es2015)",
@@ -51065,7 +51042,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-6 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "importHelpersOutFile(target=es2015)",
@@ -51100,7 +51077,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-5 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "importHelpersVerbatimModuleSyntax",
@@ -51383,7 +51360,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+5/-11 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "importImportOnlyModule",
@@ -51433,7 +51410,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+4/-1 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "importMeta(module=es2020,target=esnext)",
@@ -51467,7 +51444,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+59/-64 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "importMeta(module=system,target=esnext)",
@@ -51563,7 +51540,7 @@
       "testPath": "tests/cases/compiler/importNonExportedMember6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "importNonExportedMember7",
@@ -51708,7 +51685,7 @@
       "testPath": "tests/cases/conformance/types/import/importTypeInJSDoc.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "importTypeLocal",
@@ -51972,7 +51949,7 @@
       "testPath": "tests/cases/compiler/inOperatorWithFunction.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "inOperatorWithGeneric",
@@ -52679,7 +52656,7 @@
       "testPath": "tests/cases/compiler/inferFromGenericFunctionReturnTypes1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "inferFromGenericFunctionReturnTypes2",
@@ -52711,7 +52688,7 @@
       "testPath": "tests/cases/compiler/inferParameterWithMethodCallInitializer.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "inferRestArgumentsMappedTuple",
@@ -52801,7 +52778,7 @@
       "dtsStatus": "fail",
       "jsError": "+13/-11 lines",
       "dtsError": "+26/-29 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "inferTypes1",
@@ -52810,7 +52787,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+2/-5 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "inferTypes2",
@@ -52932,7 +52909,7 @@
       "testPath": "tests/cases/compiler/inferenceOptionalPropertiesToIndexSignatures.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "inferenceOuterResultNotIncorrectlyInstantiatedWithInnerResult",
@@ -53091,7 +53068,8 @@
       "baselineFile": "inferredReturnTypeIncorrectReuse1.js",
       "testPath": "tests/cases/compiler/inferredReturnTypeIncorrectReuse1.ts",
       "jsStatus": "pass",
-      "dtsStatus": "pass",
+      "dtsStatus": "fail",
+      "dtsError": "+1/-0 lines",
       "elapsed": 0
     },
     {
@@ -53212,7 +53190,7 @@
       "testPath": "tests/cases/compiler/infinitelyExpandingBaseTypes2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "infinitelyExpandingOverloads",
@@ -53348,7 +53326,7 @@
       "testPath": "tests/cases/compiler/inheritanceGrandParentPrivateMemberCollision.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "inheritanceGrandParentPrivateMemberCollisionWithPublicMember",
@@ -53725,7 +53703,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-6 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "initializedDestructuringAssignmentTypes",
@@ -54046,8 +54024,8 @@
       "testPath": "tests/cases/conformance/classes/propertyMemberDeclarations/instanceMemberWithComputedPropertyName2.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+1/-11 lines",
-      "elapsed": 0
+      "jsError": "+2/-4 lines",
+      "elapsed": 1
     },
     {
       "name": "instanceOfAssignability",
@@ -54535,7 +54513,7 @@
       "testPath": "tests/cases/conformance/interfaces/interfacesExtendingClasses/interfaceExtendingClassWithPrivates2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "interfaceExtendingClassWithProtecteds",
@@ -54559,7 +54537,7 @@
       "testPath": "tests/cases/conformance/interfaces/interfaceDeclarations/interfaceExtendingOptionalChain.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "interfaceExtendsClass1",
@@ -55008,7 +54986,7 @@
       "testPath": "tests/cases/compiler/internalAliasClass.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "internalAliasClassInsideLocalModuleWithExport",
@@ -55081,7 +55059,7 @@
       "testPath": "tests/cases/compiler/internalAliasEnumInsideLocalModuleWithoutExportAccessError.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "internalAliasEnumInsideTopLevelModuleWithExport",
@@ -55435,7 +55413,7 @@
       "testPath": "tests/cases/compiler/intersectionOfMixinConstructorTypeAndNonConstructorType.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "intersectionOfTypeVariableHasApparentSignatures",
@@ -55555,7 +55533,7 @@
       "testPath": "tests/cases/conformance/types/intersection/intersectionTypeMembers.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "intersectionTypeNormalization",
@@ -55708,7 +55686,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+1/-1 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "intrinsicKeyword",
@@ -55847,7 +55825,7 @@
       "testPath": "tests/cases/conformance/internalModules/moduleDeclarations/invalidInstantiatedModule.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "invalidLetInForOfAndForIn_ES5",
@@ -55916,7 +55894,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+17/-45 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "invalidNewTarget.es6",
@@ -56055,7 +56033,7 @@
       "testPath": "tests/cases/conformance/es2018/invalidTaggedTemplateEscapeSequences.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "invalidThisEmitInContextualObjectLiteral",
@@ -56105,7 +56083,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-1 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "invalidUndefinedAssignments",
@@ -56642,7 +56620,7 @@
       "testPath": "tests/cases/compiler/isolatedModulesPlainFile-CommonJS.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "isolatedModulesPlainFile-ES6",
@@ -56722,7 +56700,7 @@
       "testPath": "tests/cases/compiler/isolatedModulesUnspecifiedModule.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "isolatedModulesWithDeclarationFile",
@@ -57115,7 +57093,7 @@
       "testPath": "tests/cases/conformance/es6/spread/iteratorSpreadInCall.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "iteratorSpreadInCall10",
@@ -57335,7 +57313,7 @@
       "testPath": "tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassLikeHeuristic.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsDeclarationsClassMethod",
@@ -57414,7 +57392,7 @@
       "testPath": "tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassesErr.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsDeclarationsComputedNames(target=es2015)",
@@ -57527,7 +57505,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+23/-19 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "jsDeclarationsEnums(target=es2015)",
@@ -57537,7 +57515,7 @@
       "dtsStatus": "fail",
       "jsError": "+5/-4 lines",
       "dtsError": "+5/-4 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsDeclarationsEnums(target=es5)",
@@ -57711,7 +57689,7 @@
       "testPath": "tests/cases/conformance/jsdoc/declarations/jsDeclarationsExportAssignedVisibility.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsDeclarationsExportAssignedVisibility(target=es5)",
@@ -57736,7 +57714,7 @@
       "testPath": "tests/cases/conformance/jsdoc/declarations/jsDeclarationsExportAssignmentExpressionPlusSecondary.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "jsDeclarationsExportAssignmentWithKeywordName(target=es2015)",
@@ -57915,7 +57893,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+90/-90 lines",
-      "elapsed": 1
+      "elapsed": 2
     },
     {
       "name": "jsDeclarationsFunctionLikeClasses(target=es2015)",
@@ -57989,7 +57967,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+25/-24 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "jsDeclarationsGetterSetter",
@@ -58034,7 +58012,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+36/-19 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsDeclarationsJson(target=es2015)",
@@ -58106,7 +58084,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+6/-6 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "jsDeclarationsMultipleExportFromMerge(target=es2015)",
@@ -58205,7 +58183,7 @@
       "dtsStatus": "fail",
       "jsError": "+55/-2 lines",
       "dtsError": "+10/-11 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsDeclarationsReactComponents(target=es5)",
@@ -58299,7 +58277,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+16/-16 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "jsDeclarationsSubclassWithExplicitNoArgumentConstructor",
@@ -58424,7 +58402,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+0/-8 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsDeclarationsTypedefFunction",
@@ -58564,7 +58542,7 @@
       "testPath": "tests/cases/compiler/jsFileCompilationLetBeingRenamed.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "jsFileCompilationLetDeclarationOrder",
@@ -58707,7 +58685,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+3/-59 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsFileImportPreservedWhenUsed",
@@ -58845,7 +58823,7 @@
       "testPath": "tests/cases/conformance/jsdoc/jsdocNeverUndefinedNull.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "jsdocParameterParsingInvalidName",
@@ -58920,7 +58898,7 @@
       "testPath": "tests/cases/conformance/jsdoc/jsdocTypeTagCast.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsdocTypecastNoTypeNoCrash",
@@ -59139,7 +59117,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+1/-1 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "jsxElementTypeLiteral",
@@ -59190,7 +59168,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+0/-35 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsxEmptyExpressionNotCountedAsChild(jsx=react-jsx)",
@@ -59236,9 +59214,8 @@
       "name": "jsxFactoryAndJsxFragmentFactoryErrorNotIdentifier",
       "baselineFile": "jsxFactoryAndJsxFragmentFactoryErrorNotIdentifier.js",
       "testPath": "tests/cases/compiler/jsxFactoryAndJsxFragmentFactoryErrorNotIdentifier.tsx",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+3/-3 lines",
       "elapsed": 0
     },
     {
@@ -59422,9 +59399,8 @@
       "name": "jsxImportSourceNonPragmaComment",
       "baselineFile": "jsxImportSourceNonPragmaComment.js",
       "testPath": "tests/cases/compiler/jsxImportSourceNonPragmaComment.tsx",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-1 lines",
       "elapsed": 0
     },
     {
@@ -59498,7 +59474,7 @@
       "testPath": "tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformChildren.tsx",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "jsxJsxsCjsTransformChildren(jsx=react-jsxdev)",
@@ -59588,7 +59564,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+1/-1 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsx)",
@@ -59882,7 +59858,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+8/-9 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "jsxRuntimePragma(jsx=preserve)",
@@ -59891,7 +59867,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+0/-36 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "jsxRuntimePragma(jsx=react)",
@@ -60073,7 +60049,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+1/-1 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "keyofIsLiteralContexualType",
@@ -60181,7 +60157,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+31/-22 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "labeledStatementDeclarationListInLoopNoCrash4(target=es2015)",
@@ -60232,7 +60208,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-14 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "labeledStatementWithLabel_es2015",
@@ -60306,7 +60282,7 @@
       "testPath": "tests/cases/compiler/largeControlFlowGraph.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 2
     },
     {
       "name": "lastPropertyInLiteralWins",
@@ -60323,7 +60299,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+5/-5 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "lateBoundAssignmentCandidateJS2",
@@ -60372,7 +60348,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+11/-11 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "legacyNodeModulesExportsSpecifierGenerationConditions",
@@ -60623,7 +60599,7 @@
       "testPath": "tests/cases/compiler/letInConstDeclarations_ES5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "letInConstDeclarations_ES5(target=es5)",
@@ -60672,7 +60648,7 @@
       "testPath": "tests/cases/compiler/letInLetDeclarations_ES5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "letInLetDeclarations_ES5(target=es5)",
@@ -61057,7 +61033,7 @@
       "testPath": "tests/cases/conformance/types/literal/literalTypeWidening.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "literalTypes1",
@@ -61065,7 +61041,7 @@
       "testPath": "tests/cases/conformance/types/literal/literalTypes1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "literalTypes2",
@@ -61514,7 +61490,7 @@
       "testPath": "tests/cases/conformance/es2021/logicalAssignment/logicalAssignment6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "logicalAssignment6(target=es2021)",
@@ -61586,7 +61562,7 @@
       "testPath": "tests/cases/conformance/es2021/logicalAssignment/logicalAssignment8.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "logicalAssignment8(target=esnext)",
@@ -61746,7 +61722,7 @@
       "testPath": "tests/cases/compiler/mapConstructor.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "mapConstructorOnReadonlyTuple",
@@ -61810,7 +61786,7 @@
       "testPath": "tests/cases/conformance/types/mapped/mappedTypeAsClauseRelationships.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "mappedTypeAsClauses",
@@ -61948,7 +61924,7 @@
       "testPath": "tests/cases/compiler/mappedTypeNoTypeNoCrash.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "mappedTypeNotMistakenlyHomomorphic",
@@ -62038,7 +62014,7 @@
       "testPath": "tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "mappedTypeWithAsClauseAndLateBoundProperty2",
@@ -62064,7 +62040,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+69/-6 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "mappedTypes2",
@@ -62130,7 +62106,7 @@
       "testPath": "tests/cases/compiler/matchReturnTypeInAllBranches.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "matchingOfObjectLiteralConstraints",
@@ -62218,7 +62194,7 @@
       "testPath": "tests/cases/compiler/memberScope.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "memberVariableDeclarations1",
@@ -62541,7 +62517,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-3 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "mergedModuleDeclarationCodeGen3",
@@ -62550,7 +62526,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-6 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "mergedModuleDeclarationCodeGen4",
@@ -63070,7 +63046,7 @@
       "testPath": "tests/cases/conformance/classes/mixinAbstractClasses.2.ts",
       "jsStatus": "pass",
       "dtsStatus": "fail",
-      "dtsError": "+1/-1 lines",
+      "dtsError": "+4/-1 lines",
       "elapsed": 0
     },
     {
@@ -63079,7 +63055,7 @@
       "testPath": "tests/cases/conformance/classes/mixinAbstractClasses.ts",
       "jsStatus": "pass",
       "dtsStatus": "fail",
-      "dtsError": "+2/-2 lines",
+      "dtsError": "+8/-2 lines",
       "elapsed": 0
     },
     {
@@ -63089,7 +63065,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+11/-10 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "mixinAccessModifiers",
@@ -63098,7 +63074,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+1/-1 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "mixinAccessors1",
@@ -63124,7 +63100,7 @@
       "testPath": "tests/cases/conformance/classes/mixinAccessors3.ts",
       "jsStatus": "pass",
       "dtsStatus": "fail",
-      "dtsError": "+3/-5 lines",
+      "dtsError": "+4/-3 lines",
       "elapsed": 0
     },
     {
@@ -63258,7 +63234,7 @@
       "testPath": "tests/cases/compiler/modifierParenCast.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "modifierParenCast(target=es5)",
@@ -63667,7 +63643,7 @@
       "testPath": "tests/cases/compiler/moduleAugmentationGlobal6_1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "moduleAugmentationGlobal7",
@@ -63846,7 +63822,7 @@
       "dtsStatus": "fail",
       "jsError": "+7/-7 lines",
       "dtsError": "+24/-33 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "moduleAugmentationsBundledOutput1(target=es5)",
@@ -63856,7 +63832,7 @@
       "dtsStatus": "fail",
       "jsError": "+7/-7 lines",
       "dtsError": "+24/-33 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "moduleClassArrayCodeGenTest",
@@ -64072,7 +64048,7 @@
       "testPath": "tests/cases/compiler/moduleMemberMissingErrorIsRelative.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "moduleMemberWithoutTypeAnnotation1",
@@ -64089,7 +64065,7 @@
       "testPath": "tests/cases/compiler/moduleMemberWithoutTypeAnnotation2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "moduleMerge",
@@ -64496,7 +64472,7 @@
       "testPath": "tests/cases/compiler/moduleResolutionWithModule.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "moduleResolutionWithModule(module=node20,moduleresolution=node16)",
@@ -64504,7 +64480,7 @@
       "testPath": "tests/cases/compiler/moduleResolutionWithModule.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "moduleResolutionWithModule(module=node20,moduleresolution=nodenext)",
@@ -64920,7 +64896,7 @@
       "testPath": "tests/cases/compiler/moduleUnassignedVariable.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "moduleVariableArrayIndexer",
@@ -64984,7 +64960,7 @@
       "testPath": "tests/cases/conformance/internalModules/moduleBody/moduleWithStatementsOfEveryKind.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "moduleWithTryStatement1",
@@ -65051,7 +65027,7 @@
       "dtsStatus": "fail",
       "jsError": "+12/-0 lines",
       "dtsError": "+16/-5 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "multiCallOverloads",
@@ -65091,7 +65067,7 @@
       "testPath": "tests/cases/compiler/multiLineContextDiagnosticWithPretty.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "multiLineErrors",
@@ -65348,7 +65324,7 @@
       "testPath": "tests/cases/compiler/multivar.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "mutrec",
@@ -65503,7 +65479,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+3/-12 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "namedTupleMembersErrors",
@@ -65705,7 +65681,7 @@
       "testPath": "tests/cases/compiler/narrowedConstInMethod.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "narrowedImports",
@@ -65826,7 +65802,7 @@
       "testPath": "tests/cases/compiler/narrowingPlainJsNoCrash1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "narrowingRestGenericCall",
@@ -65923,7 +65899,7 @@
       "testPath": "tests/cases/compiler/nativeToBoxedTypes.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nearbyIdenticalGenericLambdasAssignable",
@@ -66147,10 +66123,9 @@
       "name": "nestedExcessPropertyChecking",
       "baselineFile": "nestedExcessPropertyChecking.js",
       "testPath": "tests/cases/compiler/nestedExcessPropertyChecking.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-1 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nestedFreshLiteral",
@@ -66264,7 +66239,7 @@
       "testPath": "tests/cases/compiler/nestedModulePrivateAccess.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nestedModules",
@@ -66420,7 +66395,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+5/-5 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "neverTypeErrors1",
@@ -66799,7 +66774,7 @@
       "testPath": "tests/cases/compiler/noCrashOnImportShadowing.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "noCrashOnMixin",
@@ -67128,7 +67103,7 @@
       "testPath": "tests/cases/compiler/noImplicitAnyParametersInAmbientClass.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "noImplicitAnyParametersInAmbientFunctions",
@@ -67161,7 +67136,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+34/-32 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "noImplicitAnyParametersInInterface",
@@ -67274,7 +67249,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+5150/-12 lines",
-      "elapsed": 24
+      "elapsed": 28
     },
     {
       "name": "noImplicitThisFunctions",
@@ -67331,7 +67306,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+2/-5 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "noInferRedeclaration",
@@ -67590,7 +67565,7 @@
       "jsStatus": "fail",
       "dtsStatus": "pass",
       "jsError": "+5/-86 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nodeModules1(module=node20)",
@@ -67626,7 +67601,7 @@
       "jsStatus": "fail",
       "dtsStatus": "pass",
       "jsError": "+5/-86 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nodeModulesAllowJs1(module=node20)",
@@ -67700,7 +67675,7 @@
       "testPath": "tests/cases/conformance/node/allowJs/nodeModulesAllowJsDynamicImport.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nodeModulesAllowJsDynamicImport(module=nodenext)",
@@ -67924,7 +67899,7 @@
       "testPath": "tests/cases/conformance/node/allowJs/nodeModulesAllowJsImportHelpersCollisions3.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nodeModulesAllowJsImportHelpersCollisions3(module=node18,target=es2015)",
@@ -68108,7 +68083,7 @@
       "testPath": "tests/cases/conformance/node/allowJs/nodeModulesAllowJsPackagePatternExportsExclude.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nodeModulesAllowJsPackagePatternExportsExclude(module=node18)",
@@ -68340,7 +68315,7 @@
       "testPath": "tests/cases/conformance/node/nodeModulesDeclarationEmitDynamicImportWithPackageExports.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nodeModulesDeclarationEmitWithPackageExports(module=node16)",
@@ -68556,7 +68531,7 @@
       "testPath": "tests/cases/conformance/node/nodeModulesExportsSpecifierGenerationConditions.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nodeModulesExportsSpecifierGenerationConditions(module=nodenext)",
@@ -68872,7 +68847,7 @@
       "testPath": "tests/cases/conformance/node/nodeModulesImportAttributesModeDeclarationEmitErrors.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nodeModulesImportAttributesModeDeclarationEmitErrors(module=node20)",
@@ -69184,7 +69159,7 @@
       "testPath": "tests/cases/conformance/node/nodeModulesImportModeDeclarationEmitErrors1.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nodeModulesImportModeDeclarationEmitErrors1(module=node18)",
@@ -69304,7 +69279,7 @@
       "testPath": "tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmit1.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nodeModulesImportTypeModeDeclarationEmitErrors1(module=node16)",
@@ -69556,7 +69531,7 @@
       "testPath": "tests/cases/conformance/node/nodeModulesSynchronousCallErrors.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nodeModulesSynchronousCallErrors(module=node18)",
@@ -69716,7 +69691,7 @@
       "testPath": "tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit4.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nodeModulesTripleSlashReferenceModeDeclarationEmit4(module=node18)",
@@ -70004,7 +69979,7 @@
       "testPath": "tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeOverrideModeError.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nodeModulesTripleSlashReferenceModeOverrideModeError(module=node18)",
@@ -70212,7 +70187,7 @@
       "testPath": "tests/cases/conformance/node/nodePackageSelfName.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nodePackageSelfName(module=nodenext)",
@@ -70364,7 +70339,7 @@
       "testPath": "tests/cases/compiler/nonExportedElementsOfMergedModules.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nonGenericClassExtendingGenericClassWithAny",
@@ -70525,7 +70500,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+1/-1 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nonObjectUnionNestedExcessPropertyCheck",
@@ -70717,7 +70692,7 @@
       "testPath": "tests/cases/compiler/nongenericPartialInstantiationsRelatedInBothDirections.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nonnullAssertionPropegatesContextualType",
@@ -70820,9 +70795,8 @@
       "name": "nullishCoalescingAssignmentVsPrivateFieldsJsEmit1",
       "baselineFile": "nullishCoalescingAssignmentVsPrivateFieldsJsEmit1.js",
       "testPath": "tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingAssignmentVsPrivateFieldsJsEmit1.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-1 lines",
       "elapsed": 0
     },
     {
@@ -70871,7 +70845,7 @@
       "testPath": "tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "nullishCoalescingOperator4",
@@ -70879,7 +70853,7 @@
       "testPath": "tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator4.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "nullishCoalescingOperator5",
@@ -71092,7 +71066,7 @@
       "testPath": "tests/cases/compiler/numericEnumMappedType.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "numericIndexExpressions",
@@ -71212,7 +71186,7 @@
       "testPath": "tests/cases/conformance/types/literal/numericLiteralTypes3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "numericLiteralsWithTrailingDecimalPoints01",
@@ -71430,7 +71404,7 @@
       "testPath": "tests/cases/compiler/objectCreationOfElementAccessExpression.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "objectFreeze",
@@ -71599,7 +71573,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-3 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "objectLiteralExcessProperties",
@@ -71704,7 +71678,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+25/-27 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "objectLiteralParameterResolution",
@@ -71939,7 +71913,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+8/-8 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "objectRest2",
@@ -71990,7 +71964,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+7/-11 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "objectRestParameterES5(target=es2015)",
@@ -72051,7 +72025,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+12/-4 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "objectSpreadComputedProperty",
@@ -72084,7 +72058,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-2 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "objectSpreadNegativeParse",
@@ -72301,7 +72275,7 @@
       "testPath": "tests/cases/conformance/types/typeRelationships/recursiveTypes/objectTypeWithRecursiveWrappedProperty2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "objectTypeWithRecursiveWrappedPropertyCheckedNominally",
@@ -72333,7 +72307,7 @@
       "testPath": "tests/cases/conformance/types/members/objectTypeWithStringNamedNumericProperty.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "objectTypeWithStringNamedNumericProperty(target=es5)",
@@ -72573,7 +72547,7 @@
       "testPath": "tests/cases/conformance/types/typeRelationships/typeAndMemberIdentity/objectTypesIdentityWithGenericConstructSignaturesDifferingByConstraints3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "objectTypesIdentityWithGenericConstructSignaturesDifferingByReturnType",
@@ -72677,7 +72651,7 @@
       "testPath": "tests/cases/conformance/types/typeRelationships/typeAndMemberIdentity/objectTypesIdentityWithPrivates2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "objectTypesIdentityWithPrivates3",
@@ -73037,7 +73011,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-6 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "optionalChainingInTypeAssertions(target=esnext)",
@@ -73190,7 +73164,7 @@
       "testPath": "tests/cases/compiler/optionalParameterRetainsNull.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "optionalParamterAndVariableDeclaration",
@@ -73658,7 +73632,7 @@
       "testPath": "tests/cases/compiler/overloadOnConstNoStringImplementation2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "overloadOnConstantsInvalidOverload1",
@@ -73706,7 +73680,7 @@
       "testPath": "tests/cases/conformance/expressions/functionCalls/overloadResolutionConstructors.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "overloadResolutionOnDefaultConstructor1",
@@ -73988,7 +73962,7 @@
       "testPath": "tests/cases/conformance/override/override16.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "override17(target=es2015)",
@@ -74010,9 +73984,8 @@
       "name": "override18(target=es2015)",
       "baselineFile": "override18(target=es2015).js",
       "testPath": "tests/cases/conformance/override/override18.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+0/-8 lines",
       "elapsed": 0
     },
     {
@@ -74077,7 +74050,7 @@
       "testPath": "tests/cases/conformance/override/override5.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "override6",
@@ -74232,7 +74205,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-4 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parameterInitializersForwardReferencing(target=es2015)",
@@ -74273,7 +74246,7 @@
       "testPath": "tests/cases/conformance/functions/parameterInitializersForwardReferencing1_es6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parameterListAsTupleType",
@@ -74536,7 +74509,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+12/-12 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parseClassDeclarationInStrictModeByDefaultInES6",
@@ -74842,7 +74815,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.octal.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parser.numericSeparators.octalNegative",
@@ -74962,7 +74935,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509677.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parser509693",
@@ -75082,7 +75055,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/RegressionTests/parser630933.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parser642331",
@@ -75340,7 +75313,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/Accessors/parserAccessors6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserAccessors6(target=es5)",
@@ -75436,7 +75409,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/Generics/parserAmbiguityWithBinaryOperator1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserAmbiguityWithBinaryOperator2",
@@ -75892,7 +75865,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration20.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserClassDeclaration21",
@@ -76328,7 +76301,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserComputedPropertyName7",
@@ -76376,7 +76349,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/Generics/parserConstructorAmbiguity2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserConstructorAmbiguity3",
@@ -76833,7 +76806,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/Statements/parserES5ForOfStatement16.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserES5ForOfStatement17(target=es2015)",
@@ -76865,7 +76838,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/Statements/parserES5ForOfStatement18.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserES5ForOfStatement19(target=es2015)",
@@ -77316,7 +77289,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/EnumDeclarations/parserEnumDeclaration1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserEnumDeclaration2",
@@ -77424,7 +77397,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserErrorRecoveryArrayLiteralExpression3",
@@ -77959,7 +77932,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript6/Iterators/parserForOfStatement12.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserForOfStatement13",
@@ -78287,7 +78260,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/PropertyAssignments/parserFunctionPropertyAssignment4.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserFuzz1",
@@ -78552,7 +78525,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserGreaterThanTokenAmbiguity7",
@@ -78792,7 +78765,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/InterfaceDeclarations/parserInterfaceDeclaration3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserInterfaceDeclaration4",
@@ -79329,7 +79302,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/MethodSignatures/parserMethodSignature10.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserMethodSignature11",
@@ -79697,7 +79670,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/ObjectTypes/parserObjectType3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserObjectType4",
@@ -79873,7 +79846,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/ParameterLists/parserParameterList9.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserParenthesizedVariableAndFunctionInTernary",
@@ -80034,7 +80007,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/parserRealSource10.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserRealSource11",
@@ -80050,7 +80023,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/parserRealSource12.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserRealSource13",
@@ -80066,7 +80039,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/parserRealSource14.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserRealSource2",
@@ -80074,7 +80047,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/parserRealSource2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserRealSource3",
@@ -80115,7 +80088,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/parserRealSource7.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserRealSource8",
@@ -80123,7 +80096,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/parserRealSource8.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserRealSource9",
@@ -80872,7 +80845,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript6/Symbols/parserSymbolProperty8.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parserSymbolProperty9",
@@ -80928,7 +80901,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/Types/parserTypeQuery3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "parserTypeQuery4",
@@ -81305,7 +81278,7 @@
       "testPath": "tests/cases/conformance/parser/ecmascript5/Statements/BreakStatements/parser_breakInIterationOrSwitchStatement4.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "parser_breakNotInIterationOrSwitchStatement1",
@@ -81530,7 +81503,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-6 lines",
-      "elapsed": 8
+      "elapsed": 9
     },
     {
       "name": "parserindenter",
@@ -81539,7 +81512,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+20/-0 lines",
-      "elapsed": 3
+      "elapsed": 4
     },
     {
       "name": "parservoidInQualifiedName0",
@@ -81907,7 +81880,7 @@
       "testPath": "tests/cases/compiler/pathsValidation2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "pathsValidation3",
@@ -82052,7 +82025,7 @@
       "testPath": "tests/cases/conformance/expressions/unaryOperators/plusOperator/plusOperatorWithBooleanType.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "plusOperatorWithEnumType",
@@ -82132,7 +82105,7 @@
       "testPath": "tests/cases/compiler/prefixedNumberLiteralAssignToNumberLiteralType.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "preserveConstEnums",
@@ -82486,8 +82459,7 @@
       "baselineFile": "privacyClassImplementsClauseDeclFile.js",
       "testPath": "tests/cases/compiler/privacyClassImplementsClauseDeclFile.ts",
       "jsStatus": "pass",
-      "dtsStatus": "fail",
-      "dtsError": "+0/-3 lines",
+      "dtsStatus": "pass",
       "elapsed": 0
     },
     {
@@ -82520,7 +82492,7 @@
       "testPath": "tests/cases/compiler/privacyFunctionParameterDeclFile.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "privacyFunctionReturnTypeDeclFile",
@@ -82529,7 +82501,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+2/-2 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "privacyGetter(target=es2015)",
@@ -82545,7 +82517,7 @@
       "testPath": "tests/cases/compiler/privacyGetter.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "privacyGloClass",
@@ -82561,7 +82533,7 @@
       "testPath": "tests/cases/compiler/privacyGloFunc.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "privacyGloGetter(target=es2015)",
@@ -82630,7 +82602,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-2 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "privacyInterface",
@@ -82645,8 +82617,7 @@
       "baselineFile": "privacyInterfaceExtendsClauseDeclFile.js",
       "testPath": "tests/cases/compiler/privacyInterfaceExtendsClauseDeclFile.ts",
       "jsStatus": "pass",
-      "dtsStatus": "fail",
-      "dtsError": "+0/-3 lines",
+      "dtsStatus": "pass",
       "elapsed": 0
     },
     {
@@ -82656,7 +82627,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+5/-5 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "privacyLocalInternalReferenceImportWithoutExport",
@@ -82700,7 +82671,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+7/-9 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "privacyTypeParameterOfFunction",
@@ -82764,7 +82735,7 @@
       "testPath": "tests/cases/compiler/privacyVarDeclFile.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "privateAccessInSubclass1",
@@ -83011,7 +82982,7 @@
       "testPath": "tests/cases/conformance/classes/members/privateNames/privateNameBadDeclaration.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "privateNameBadSuper",
@@ -83110,7 +83081,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-1 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "privateNameComputedPropertyName3(target=es2022)",
@@ -83199,9 +83170,8 @@
       "name": "privateNameES5Ban(target=es2015)",
       "baselineFile": "privateNameES5Ban(target=es2015).js",
       "testPath": "tests/cases/conformance/classes/members/privateNames/privateNameES5Ban.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-1 lines",
       "elapsed": 0
     },
     {
@@ -83217,10 +83187,9 @@
       "name": "privateNameEmitHelpers",
       "baselineFile": "privateNameEmitHelpers.js",
       "testPath": "tests/cases/conformance/classes/members/privateNames/privateNameEmitHelpers.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-1 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "privateNameEnum",
@@ -83362,7 +83331,7 @@
       "testPath": "tests/cases/conformance/classes/members/privateNames/privateNameInInExpression.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "privateNameInInExpression(target=esnext)",
@@ -83370,15 +83339,14 @@
       "testPath": "tests/cases/conformance/classes/members/privateNames/privateNameInInExpression.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "privateNameInInExpressionTransform(target=es2020)",
       "baselineFile": "privateNameInInExpressionTransform(target=es2020).js",
       "testPath": "tests/cases/conformance/classes/members/privateNames/privateNameInInExpressionTransform.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-1 lines",
       "elapsed": 0
     },
     {
@@ -83509,7 +83477,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-3 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "privateNameMethodAsync",
@@ -83527,7 +83495,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+5/-6 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "privateNameMethodClassExpression",
@@ -83660,7 +83628,7 @@
       "testPath": "tests/cases/conformance/classes/members/privateNames/privateNameStaticAccessorsCallExpression.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+4/-5 lines",
+      "jsError": "+3/-4 lines",
       "elapsed": 0
     },
     {
@@ -83699,9 +83667,8 @@
       "name": "privateNameStaticEmitHelpers",
       "baselineFile": "privateNameStaticEmitHelpers.js",
       "testPath": "tests/cases/conformance/classes/members/privateNames/privateNameStaticEmitHelpers.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-1 lines",
       "elapsed": 0
     },
     {
@@ -83845,7 +83812,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-3 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "privateNameStaticMethodAsync",
@@ -83854,7 +83821,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+4/-6 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "privateNameStaticMethodCallExpression",
@@ -83931,7 +83898,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+6/-0 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "privateNamesAndFields",
@@ -83973,7 +83940,7 @@
       "testPath": "tests/cases/conformance/classes/members/privateNames/privateNamesAndMethods.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "privateNamesAndStaticFields",
@@ -84080,7 +84047,7 @@
       "testPath": "tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+2/-11 lines",
+      "jsError": "+1/-10 lines",
       "elapsed": 0
     },
     {
@@ -84138,7 +84105,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-8 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "privateNamesUnique-4",
@@ -84244,7 +84211,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+9/-20 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "promiseChaining",
@@ -84396,7 +84363,7 @@
       "testPath": "tests/cases/compiler/promiseTypeInferenceUnion.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "promiseTypeStrictNull",
@@ -84665,7 +84632,7 @@
       "testPath": "tests/cases/conformance/types/typeParameters/typeParameterLists/propertyAccessOnTypeParameterWithConstraints4.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "propertyAccessOnTypeParameterWithConstraints5",
@@ -84954,7 +84921,7 @@
       "testPath": "tests/cases/conformance/classes/members/accessibility/protectedClassPropertyAccessibleWithinNestedClass.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "protectedClassPropertyAccessibleWithinNestedSubclass(target=es2015)",
@@ -85090,7 +85057,7 @@
       "testPath": "tests/cases/compiler/protoAsIndexInIndexExpression.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "protoAssignment",
@@ -85210,7 +85177,7 @@
       "testPath": "tests/cases/compiler/quickinfoTypeAtReturnPositionsInaccurate.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "quotedAccessorName1",
@@ -85485,7 +85452,7 @@
       "testPath": "tests/cases/compiler/reachabilityChecksIgnored.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "reachabilityChecksNoCrash1",
@@ -85527,7 +85494,7 @@
       "testPath": "tests/cases/compiler/reactImportUnusedInNewJSXEmit.tsx",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "reactImportUnusedInNewJSXEmit(jsx=react-jsxdev)",
@@ -85634,7 +85601,8 @@
       "baselineFile": "reactTransitiveImportHasValidDeclaration.js",
       "testPath": "tests/cases/compiler/reactTransitiveImportHasValidDeclaration.ts",
       "jsStatus": "pass",
-      "dtsStatus": "pass",
+      "dtsStatus": "fail",
+      "dtsError": "+1/-1 lines",
       "elapsed": 0
     },
     {
@@ -85741,7 +85709,7 @@
       "testPath": "tests/cases/compiler/readonlyMembers.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "readonlyPropertySubtypeRelationDirected",
@@ -85765,7 +85733,7 @@
       "testPath": "tests/cases/conformance/es6/restParameters/readonlyRestParameters.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "readonlyTupleAndArrayElaboration",
@@ -86086,7 +86054,7 @@
       "testPath": "tests/cases/compiler/recursiveGenericSignatureInstantiation.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "recursiveGenericTypeHierarchy",
@@ -86094,7 +86062,7 @@
       "testPath": "tests/cases/compiler/recursiveGenericTypeHierarchy.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "recursiveGenericUnionType1",
@@ -86456,7 +86424,7 @@
       "testPath": "tests/cases/compiler/recursivelySpecializedConstructorDeclaration.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "redeclarationOfVarWithGenericType",
@@ -86464,7 +86432,7 @@
       "testPath": "tests/cases/compiler/redeclarationOfVarWithGenericType.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "redeclareParameterInCatchBlock",
@@ -87279,7 +87247,7 @@
       "testPath": "tests/cases/conformance/generators/restParameterInDownlevelGenerator.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "restParameterInDownlevelGenerator(target=es5)",
@@ -87420,7 +87388,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+28/-9 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "restTypeRetainsMappyness",
@@ -87532,7 +87500,7 @@
       "testPath": "tests/cases/compiler/returnTypePredicateIsInstantiateInContextOfTarget.tsx",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "returnTypeTypeArguments",
@@ -87821,7 +87789,7 @@
       "testPath": "tests/cases/conformance/scanner/ecmascript5/scannerNumericLiteral5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "scannerNumericLiteral5(target=es5)",
@@ -87957,7 +87925,7 @@
       "testPath": "tests/cases/conformance/scanner/ecmascript5/scannerStringLiterals.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "scannerUnexpectedNullCharacter1",
@@ -88278,7 +88246,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-0 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "shadowingViaLocalValue",
@@ -88520,7 +88488,7 @@
       "testPath": "tests/cases/compiler/sideEffectImports3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "sideEffectImports4(nouncheckedsideeffectimports=false)",
@@ -88617,7 +88585,7 @@
       "testPath": "tests/cases/compiler/singletonLabeledTuple.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "slashBeforeVariableDeclaration1",
@@ -89042,7 +89010,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+50/-41 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "sourceMapValidationDestructuringForOfObjectBindingPattern(target=es2015)",
@@ -89066,7 +89034,7 @@
       "testPath": "tests/cases/compiler/sourceMapValidationDestructuringForOfObjectBindingPattern2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "sourceMapValidationDestructuringForOfObjectBindingPattern2(target=es5)",
@@ -89091,7 +89059,7 @@
       "testPath": "tests/cases/compiler/sourceMapValidationDestructuringForOfObjectBindingPatternDefaultValues.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "sourceMapValidationDestructuringForOfObjectBindingPatternDefaultValues2(target=es2015)",
@@ -89388,7 +89356,7 @@
       "testPath": "tests/cases/compiler/sourceMapValidationDestructuringVariableStatementObjectBindingPattern2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "sourceMapValidationDestructuringVariableStatementObjectBindingPattern3",
@@ -89725,7 +89693,7 @@
       "testPath": "tests/cases/conformance/types/objectTypeLiteral/callSignatures/specializedSignatureIsSubtypeOfNonSpecializedSignature.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "specializedSignatureOverloadReturnTypeWithIndexers",
@@ -89813,7 +89781,7 @@
       "testPath": "tests/cases/compiler/spreadBooleanRespectsFreshness.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "spreadContextualTypedBindingPattern",
@@ -89829,7 +89797,7 @@
       "testPath": "tests/cases/conformance/types/spread/spreadDuplicate.ts",
       "jsStatus": "pass",
       "dtsStatus": "fail",
-      "dtsError": "+4/-4 lines",
+      "dtsError": "+3/-3 lines",
       "elapsed": 0
     },
     {
@@ -89837,8 +89805,7 @@
       "baselineFile": "spreadDuplicateExact.js",
       "testPath": "tests/cases/conformance/types/spread/spreadDuplicateExact.ts",
       "jsStatus": "pass",
-      "dtsStatus": "fail",
-      "dtsError": "+2/-2 lines",
+      "dtsStatus": "pass",
       "elapsed": 0
     },
     {
@@ -89928,7 +89895,7 @@
       "testPath": "tests/cases/compiler/spreadObjectPermutations.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "spreadObjectPermutations(exactoptionalpropertytypes=true)",
@@ -90105,7 +90072,7 @@
       "testPath": "tests/cases/compiler/staticAnonymousTypeNotReferencingTypeParameter.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "staticAsIdentifier",
@@ -90147,7 +90114,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+11/-22 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "staticClassMemberError",
@@ -90212,7 +90179,7 @@
       "testPath": "tests/cases/conformance/classes/staticIndexSignature/staticIndexSignature1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "staticIndexSignature2",
@@ -90357,7 +90324,7 @@
       "testPath": "tests/cases/conformance/classes/propertyMemberDeclarations/memberFunctionDeclarations/staticMemberAssignsToConstructorFunctionMembers.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "staticMemberExportAccess",
@@ -90488,7 +90455,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+21/-26 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "staticPropertyNameConflicts(target=es2015,usedefineforclassfields=true)",
@@ -90496,8 +90463,8 @@
       "testPath": "tests/cases/conformance/classes/propertyMemberDeclarations/staticPropertyNameConflicts.ts",
       "jsStatus": "fail",
       "dtsStatus": "skip",
-      "jsError": "+36/-281 lines",
-      "elapsed": 3
+      "jsError": "+151/-181 lines",
+      "elapsed": 6
     },
     {
       "name": "staticPropertyNameConflicts(target=es5,usedefineforclassfields=false)",
@@ -90515,7 +90482,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+370/-496 lines",
-      "elapsed": 24
+      "elapsed": 26
     },
     {
       "name": "staticPropertyNotInClassType",
@@ -90611,7 +90578,7 @@
       "testPath": "tests/cases/conformance/functions/strictBindCallApply2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "strictBooleanMemberAssignability",
@@ -90870,7 +90837,7 @@
       "testPath": "tests/cases/compiler/stringHasStringValuedNumericIndexer.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "stringIncludes",
@@ -90958,7 +90925,7 @@
       "testPath": "tests/cases/conformance/types/stringLiteral/stringLiteralMatchedInSwitch01.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "stringLiteralObjectLiteralDeclaration1",
@@ -91243,7 +91210,7 @@
       "testPath": "tests/cases/conformance/types/stringLiteral/stringLiteralTypesWithVariousOperators02.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "stringLiteralsAssertionsInEqualityComparisons01",
@@ -91316,7 +91283,7 @@
       "testPath": "tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements01.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "stringLiteralsWithSwitchStatements02",
@@ -91621,7 +91588,7 @@
       "testPath": "tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypesOfTypeParameterWithRecursiveConstraints.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "subtypesOfUnion",
@@ -91653,7 +91620,7 @@
       "testPath": "tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithCallSignatures2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "subtypingWithCallSignatures3",
@@ -91998,7 +91965,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+5/-5 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "superAccessCastedCall",
@@ -92311,7 +92278,7 @@
       "testPath": "tests/cases/compiler/superInConstructorParam1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "superInLambdas(target=es2015)",
@@ -92329,7 +92296,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+4/-4 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "superInObjectLiterals_ES5(target=es2015)",
@@ -92386,7 +92353,7 @@
       "testPath": "tests/cases/conformance/classes/members/instanceAndStaticMembers/superInStaticMembers1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "superInStaticMembers1(target=esnext)",
@@ -92467,7 +92434,7 @@
       "testPath": "tests/cases/compiler/superPropertyAccess2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "superPropertyAccessInComputedPropertiesOfNestedType_ES5(target=es2015)",
@@ -92749,7 +92716,7 @@
       "testPath": "tests/cases/compiler/switchCasesExpressionTypeMismatch.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "switchComparableCompatForBrands",
@@ -93288,7 +93255,7 @@
       "testPath": "tests/cases/conformance/es6/Symbols/symbolProperty47.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "symbolProperty48",
@@ -93664,7 +93631,7 @@
       "testPath": "tests/cases/compiler/systemDefaultImportCallable.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "systemExportAssignment(target=es2015)",
@@ -93673,7 +93640,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+7/-2 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "systemExportAssignment(target=es5)",
@@ -93843,7 +93810,7 @@
       "testPath": "tests/cases/compiler/systemModule3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "systemModule4",
@@ -93884,7 +93851,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+17/-17 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "systemModule9",
@@ -93919,7 +93886,7 @@
       "testPath": "tests/cases/compiler/systemModuleConstEnumsSeparateCompilation.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "systemModuleDeclarationMerging",
@@ -94089,7 +94056,7 @@
       "testPath": "tests/cases/conformance/es6/templates/taggedTemplateStringsTypeArgumentInferenceES6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "taggedTemplateStringsWithCurriedFunction(target=es2015)",
@@ -94250,7 +94217,7 @@
       "testPath": "tests/cases/conformance/es6/templates/taggedTemplateStringsWithTypeErrorInFunctionExpressionsInSubstitutionExpressionES6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "taggedTemplateStringsWithTypedTags",
@@ -94523,7 +94490,7 @@
       "testPath": "tests/cases/compiler/targetTypeTest1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "targetTypeTest2",
@@ -94605,7 +94572,7 @@
       "testPath": "tests/cases/conformance/types/literal/templateLiteralTypes1.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "templateLiteralTypes2",
@@ -94831,7 +94798,7 @@
       "testPath": "tests/cases/conformance/es6/templates/templateStringInDeleteExpression.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "templateStringInDeleteExpressionES6",
@@ -94839,7 +94806,7 @@
       "testPath": "tests/cases/conformance/es6/templates/templateStringInDeleteExpressionES6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "templateStringInDivision",
@@ -95295,7 +95262,7 @@
       "testPath": "tests/cases/conformance/es6/templates/templateStringTermination1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "templateStringTermination1_ES6",
@@ -95407,7 +95374,7 @@
       "testPath": "tests/cases/conformance/es6/templates/templateStringUnterminated3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "templateStringUnterminated3_ES6",
@@ -95801,7 +95768,7 @@
       "testPath": "tests/cases/conformance/es6/templates/templateStringWithEmptyLiteralPortions.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "templateStringWithEmptyLiteralPortionsES6",
@@ -95938,7 +95905,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+31/-39 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "thisAndSuperInStaticMembers1(target=es2022)",
@@ -95963,7 +95930,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+26/-39 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "thisAndSuperInStaticMembers2(target=es2022)",
@@ -96093,7 +96060,7 @@
       "testPath": "tests/cases/compiler/thisInArrowFunctionInStaticInitializer1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "thisInClassBodyStaticESNext",
@@ -96109,7 +96076,7 @@
       "testPath": "tests/cases/compiler/thisInConstructorParameter1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "thisInConstructorParameter2",
@@ -96430,7 +96397,7 @@
       "testPath": "tests/cases/conformance/types/thisType/thisTypeInFunctions.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "thisTypeInFunctions2",
@@ -96463,7 +96430,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-6 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "thisTypeInInterfaces",
@@ -96497,7 +96464,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+21/-19 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "thisTypeInTaggedTemplateCall",
@@ -96569,7 +96536,7 @@
       "testPath": "tests/cases/conformance/statements/throwStatements/throwInEnclosingStatements.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "throwStatements",
@@ -96703,7 +96670,7 @@
       "testPath": "tests/cases/conformance/externalModules/topLevelAwait.2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "topLevelAwaitErrors.1(module=es2022)",
@@ -96743,9 +96710,8 @@
       "name": "topLevelAwaitErrors.11",
       "baselineFile": "topLevelAwaitErrors.11.js",
       "testPath": "tests/cases/conformance/externalModules/topLevelAwaitErrors.11.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+2/-1 lines",
       "elapsed": 0
     },
     {
@@ -96754,7 +96720,7 @@
       "testPath": "tests/cases/conformance/externalModules/topLevelAwaitErrors.12.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "topLevelAwaitErrors.12(module=esnext)",
@@ -97084,7 +97050,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+15/-27 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "transformParenthesizesConditionalSubexpression(target=es2015)",
@@ -97190,7 +97156,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-1 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "trivialSubtypeReductionNoStructuralCheck2(target=es2015)",
@@ -97320,7 +97286,7 @@
       "testPath": "tests/cases/conformance/jsdoc/tsNoCheckForTypescriptComments1.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "tsNoCheckForTypescriptComments2",
@@ -97377,9 +97343,8 @@
       "name": "tslibReExportHelpers2",
       "baselineFile": "tslibReExportHelpers2.js",
       "testPath": "tests/cases/compiler/tslibReExportHelpers2.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+2/-4 lines",
       "elapsed": 0
     },
     {
@@ -97461,7 +97426,7 @@
       "testPath": "tests/cases/conformance/jsx/tsxAttributeResolution14.tsx",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "tsxAttributeResolution15",
@@ -97886,7 +97851,7 @@
       "testPath": "tests/cases/conformance/jsx/tsxEmitSpreadAttribute.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "tsxErrorRecovery1",
@@ -98315,7 +98280,7 @@
       "testPath": "tests/cases/conformance/jsx/tsxReactEmitNesting.tsx",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "tsxReactEmitSpreadAttribute(target=es2015)",
@@ -98897,7 +98862,7 @@
       "testPath": "tests/cases/compiler/tupleTypeInference2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "tupleTypes",
@@ -98986,7 +98951,7 @@
       "testPath": "tests/cases/conformance/interfaces/declarationMerging/twoInterfacesDifferentRootModule2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "twoMergedInterfacesWithDifferingOverloads",
@@ -99372,7 +99337,7 @@
       "testPath": "tests/cases/compiler/typeCheckObjectLiteralMethodBody.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typeCheckReturnExpression",
@@ -99436,8 +99401,8 @@
       "testPath": "tests/cases/conformance/salsa/typeFromPropertyAssignment29.ts",
       "jsStatus": "pass",
       "dtsStatus": "fail",
-      "dtsError": "+19/-20 lines",
-      "elapsed": 1
+      "dtsError": "+17/-18 lines",
+      "elapsed": 0
     },
     {
       "name": "typeFromPropertyAssignment30",
@@ -99583,7 +99548,7 @@
       "testPath": "tests/cases/conformance/expressions/typeGuards/typeGuardInClass.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typeGuardIntersectionTypes",
@@ -99639,7 +99604,7 @@
       "testPath": "tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty12.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "typeGuardNarrowsIndexedAccessOfKnownProperty2",
@@ -99818,7 +99783,7 @@
       "dtsStatus": "fail",
       "jsError": "+28/-20 lines",
       "dtsError": "+23/-5 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typeGuardOfFormThisMemberErrors(target=es2015)",
@@ -99837,7 +99802,7 @@
       "dtsStatus": "fail",
       "jsError": "+2/-1 lines",
       "dtsError": "+1/-1 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "typeGuardOfFormTypeOfBoolean",
@@ -99949,7 +99914,7 @@
       "testPath": "tests/cases/conformance/expressions/typeGuards/typeGuardTypeOfUndefined.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typeGuardsAsAssertions",
@@ -100029,7 +99994,7 @@
       "testPath": "tests/cases/conformance/expressions/typeGuards/typeGuardsInFunction.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "typeGuardsInFunctionAndModuleBlock",
@@ -100054,7 +100019,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+7/-7 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typeGuardsInModule",
@@ -100198,7 +100163,7 @@
       "testPath": "tests/cases/compiler/typeInferenceCacheInvalidation.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "typeInferenceConflictingCandidates",
@@ -100270,7 +100235,7 @@
       "testPath": "tests/cases/conformance/types/tuple/typeInferenceWithTupleType.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typeInferenceWithTypeAnnotation",
@@ -100764,7 +100729,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+19/-14 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typeOfThisInStaticMembers9(target=es6)",
@@ -100780,7 +100745,7 @@
       "testPath": "tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers9.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "typeOfThisInStatics",
@@ -101188,7 +101153,7 @@
       "testPath": "tests/cases/compiler/typeParameterFixingWithContextSensitiveArguments3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typeParameterFixingWithContextSensitiveArguments4",
@@ -101276,7 +101241,7 @@
       "testPath": "tests/cases/conformance/types/objectTypeLiteral/callSignatures/typeParameterUsedAsTypeParameterConstraint2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "typeParameterUsedAsTypeParameterConstraint3",
@@ -101621,7 +101586,7 @@
       "testPath": "tests/cases/compiler/typeReferenceDirectives4.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typeReferenceDirectives5",
@@ -102000,7 +101965,7 @@
       "testPath": "tests/cases/conformance/jsdoc/typedefScope1.ts",
       "jsStatus": "pass",
       "dtsStatus": "pass",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typeofANonExportedType",
@@ -102176,7 +102141,7 @@
       "testPath": "tests/cases/conformance/expressions/unaryOperators/typeofOperator/typeofOperatorWithStringType.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "typeofProperty",
@@ -102442,7 +102407,7 @@
       "testPath": "tests/cases/conformance/typings/typingsSuggestionBun1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "typingsSuggestionBun2",
@@ -102642,7 +102607,7 @@
       "testPath": "tests/cases/compiler/unaryPlus.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "uncalledFunctionChecksInConditional",
@@ -102866,7 +102831,7 @@
       "testPath": "tests/cases/compiler/underscoreTest1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "underscoreThisInDerivedClass01",
@@ -103028,7 +102993,7 @@
       "testPath": "tests/cases/conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInRegularExpressions05.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "unicodeExtendedEscapesInRegularExpressions05(target=es6)",
@@ -103244,7 +103209,7 @@
       "testPath": "tests/cases/conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInRegularExpressions18.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "unicodeExtendedEscapesInRegularExpressions19(target=es5)",
@@ -103596,7 +103561,7 @@
       "testPath": "tests/cases/conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings21.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "unicodeExtendedEscapesInStrings22(target=es5)",
@@ -103765,7 +103730,7 @@
       "testPath": "tests/cases/conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInTemplates07.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "unicodeExtendedEscapesInTemplates07(target=es6)",
@@ -104141,7 +104106,7 @@
       "testPath": "tests/cases/compiler/unionSubtypeReductionErrors.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 2
     },
     {
       "name": "unionThisTypeInFunctions",
@@ -104389,7 +104354,7 @@
       "testPath": "tests/cases/compiler/unionWithIndexSignature.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "unionsOfTupleTypes1",
@@ -104439,7 +104404,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-1 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "uniqueSymbolsDeclarations",
@@ -104459,7 +104424,7 @@
       "dtsStatus": "fail",
       "jsError": "+1/-1 lines",
       "dtsError": "+3/-3 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "uniqueSymbolsErrors",
@@ -104467,7 +104432,7 @@
       "testPath": "tests/cases/conformance/types/uniqueSymbol/uniqueSymbolsErrors.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "uniqueSymbolsPropertyNames",
@@ -104708,7 +104673,7 @@
       "testPath": "tests/cases/conformance/moduleResolution/untypedModuleImport_allowJs.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "untypedModuleImport_noImplicitAny",
@@ -104764,7 +104729,7 @@
       "testPath": "tests/cases/compiler/untypedModuleImport_withAugmentation2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "unusedClassesinModule1",
@@ -105133,7 +105098,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-2 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "unusedLocalsAndParametersDeferred",
@@ -105165,7 +105130,7 @@
       "testPath": "tests/cases/compiler/unusedLocalsAndParametersTypeAliases2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "unusedLocalsInMethod1",
@@ -105494,7 +105459,7 @@
       "testPath": "tests/cases/compiler/unusedPrivateMembers.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "unusedPrivateMethodInClass1",
@@ -105950,7 +105915,7 @@
       "testPath": "tests/cases/compiler/unusedVariablesinNamespaces1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "unusedVariablesinNamespaces2",
@@ -106199,7 +106164,7 @@
       "testPath": "tests/cases/compiler/useUnknownInCatchVariables01.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "usedImportNotElidedInJs",
@@ -106216,7 +106181,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+242/-303 lines",
-      "elapsed": 11
+      "elapsed": 14
     },
     {
       "name": "usingDeclarations.1(target=es2017)",
@@ -106251,7 +106216,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarations.1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarations.10",
@@ -106529,7 +106494,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+11/-11 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsInForAwaitOf(target=es2017)",
@@ -106538,7 +106503,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+12/-11 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "usingDeclarationsInForAwaitOf(target=es2022)",
@@ -106587,7 +106552,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsInForOf.1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsInForOf.1(target=es2022)",
@@ -106620,7 +106585,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsInForOf.2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "usingDeclarationsInForOf.3",
@@ -106709,7 +106674,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsTopLevelOfModule.3.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsTopLevelOfModule.3(module=esnext)",
@@ -106774,7 +106739,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsWithESClassDecorators.1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "usingDeclarationsWithESClassDecorators.1(module=system,target=es2015)",
@@ -106854,7 +106819,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsWithESClassDecorators.10.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsWithESClassDecorators.10(module=system,target=es5)",
@@ -106966,7 +106931,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsWithESClassDecorators.12.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "usingDeclarationsWithESClassDecorators.12(module=esnext,target=es2015)",
@@ -107078,7 +107043,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsWithESClassDecorators.2.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsWithESClassDecorators.2(module=system,target=esnext)",
@@ -107104,7 +107069,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-4 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "usingDeclarationsWithESClassDecorators.3(module=commonjs,target=esnext)",
@@ -107155,7 +107120,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+2/-3 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsWithESClassDecorators.3(module=system,target=esnext)",
@@ -107207,7 +107172,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+1/-23 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "usingDeclarationsWithESClassDecorators.4(module=esnext,target=esnext)",
@@ -107248,7 +107213,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsWithESClassDecorators.5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsWithESClassDecorators.5(module=commonjs,target=es5)",
@@ -107306,7 +107271,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-2 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "usingDeclarationsWithESClassDecorators.5(module=system,target=esnext)",
@@ -107356,7 +107321,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsWithESClassDecorators.6.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsWithESClassDecorators.6(module=esnext,target=esnext)",
@@ -107828,7 +107793,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsWithLegacyClassDecorators.11.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsWithLegacyClassDecorators.11(module=system,target=esnext)",
@@ -107908,7 +107873,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsWithLegacyClassDecorators.12.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "usingDeclarationsWithLegacyClassDecorators.2(module=commonjs,target=es2015)",
@@ -108024,7 +107989,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+5/-6 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsWithLegacyClassDecorators.3(module=esnext,target=esnext)",
@@ -108119,7 +108084,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+1/-1 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "usingDeclarationsWithLegacyClassDecorators.4(module=system,target=es5)",
@@ -108128,7 +108093,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-3 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsWithLegacyClassDecorators.4(module=system,target=esnext)",
@@ -108312,7 +108277,7 @@
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsWithLegacyClassDecorators.7.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsWithLegacyClassDecorators.7(module=esnext,target=es2015)",
@@ -108500,7 +108465,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+3/-3 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "usingDeclarationsWithLegacyClassDecorators.9(module=system,target=esnext)",
@@ -108604,7 +108569,7 @@
       "testPath": "tests/cases/conformance/types/primitives/void/validVoidAssignments.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "validVoidValues",
@@ -108765,7 +108730,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+24/-24 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "variadicTuples2",
@@ -108774,7 +108739,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+5/-5 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "variance",
@@ -108867,7 +108832,7 @@
       "jsStatus": "pass",
       "dtsStatus": "fail",
       "dtsError": "+3/-3 lines",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "verbatimModuleSyntaxConstEnum",
@@ -109035,7 +109000,7 @@
       "testPath": "tests/cases/compiler/voidOperator1.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "voidOperatorInvalidOperations",
@@ -109252,7 +109217,7 @@
       "testPath": "tests/cases/conformance/types/tuple/wideningTuples5.ts",
       "jsStatus": "pass",
       "dtsStatus": "skip",
-      "elapsed": 0
+      "elapsed": 1
     },
     {
       "name": "wideningTuples6",
@@ -109429,7 +109394,7 @@
       "jsStatus": "fail",
       "dtsStatus": "skip",
       "jsError": "+8/-23 lines",
-      "elapsed": 1
+      "elapsed": 0
     },
     {
       "name": "yieldStatementNoAsiAfterTransform(target=es5)",
@@ -109461,9 +109426,9 @@
       "testPath": "tests/cases/compiler/pathsValidation5.ts",
       "jsStatus": "fail",
       "dtsStatus": "fail",
-      "jsError": "Command failed: /tmp/tsz-snap-refresh/.target/dist-fast/tsz --noCheck --noLib --alwaysStrict true --esModuleInterop --target es2015 --module commonjs /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-eFGw40/test_1/src/main.ts",
-      "dtsError": "Command failed: /tmp/tsz-snap-refresh/.target/dist-fast/tsz --noCheck --noLib --alwaysStrict true --esModuleInterop --target es2015 --module commonjs /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-eFGw40/test_1/src/main.ts",
-      "elapsed": 194
+      "jsError": "Command failed: /tmp/tsz-snap-refresh/.target/dist-fast/tsz --noCheck --noLib --alwaysStrict true --esModuleInterop --target es2015 --module commonjs /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-sggoOc/test_2/src/main.ts",
+      "dtsError": "Command failed: /tmp/tsz-snap-refresh/.target/dist-fast/tsz --noCheck --noLib --alwaysStrict true --esModuleInterop --target es2015 --module commonjs /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-sggoOc/test_2/src/main.ts",
+      "elapsed": 214
     },
     {
       "name": "nodeAllowJsPackageSelfName2",
@@ -109471,9 +109436,17 @@
       "testPath": "tests/cases/conformance/node/allowJs/nodeAllowJsPackageSelfName2.ts",
       "jsStatus": "fail",
       "dtsStatus": "fail",
-      "jsError": "Command failed: /tmp/tsz-snap-refresh/.target/dist-fast/tsz --declaration --allowJs --alwaysStrict true --esModuleInterop --rootDir . --target es2015 --module nodenext /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-eFGw40/test_0/types/src/foo.d.ts /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-eFGw40/test_0/types/test/foo.d.ts /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-eFGw40/test_0/src/foo.js /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-eFGw40/test_0/test/foo.js",
-      "dtsError": "Command failed: /tmp/tsz-snap-refresh/.target/dist-fast/tsz --declaration --allowJs --alwaysStrict true --esModuleInterop --rootDir . --target es2015 --module nodenext /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-eFGw40/test_0/types/src/foo.d.ts /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-eFGw40/test_0/types/test/foo.d.ts /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-eFGw40/test_0/src/foo.js /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-eFGw40/test_0/test/foo.js",
-      "elapsed": 254
+      "jsError": "Command failed: /tmp/tsz-snap-refresh/.target/dist-fast/tsz --declaration --allowJs --alwaysStrict true --esModuleInterop --rootDir . --target es2015 --module nodenext /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-sggoOc/test_1/types/src/foo.d.ts /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-sggoOc/test_1/types/test/foo.d.ts /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-sggoOc/test_1/src/foo.js /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-sggoOc/test_1/test/foo.js",
+      "dtsError": "Command failed: /tmp/tsz-snap-refresh/.target/dist-fast/tsz --declaration --allowJs --alwaysStrict true --esModuleInterop --rootDir . --target es2015 --module nodenext /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-sggoOc/test_1/types/src/foo.d.ts /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-sggoOc/test_1/types/test/foo.d.ts /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-sggoOc/test_1/src/foo.js /var/folders/_t/6c_523rj0yd4skx88kw302r40000gq/T/tsz-emit-sggoOc/test_1/test/foo.js",
+      "elapsed": 280
+    },
+    {
+      "name": "contextuallyTypedParametersWithInitializers1",
+      "baselineFile": "contextuallyTypedParametersWithInitializers1.js",
+      "testPath": "tests/cases/compiler/contextuallyTypedParametersWithInitializers1.ts",
+      "jsStatus": "pass",
+      "dtsStatus": "pass",
+      "elapsed": 13971
     }
   ]
 }
