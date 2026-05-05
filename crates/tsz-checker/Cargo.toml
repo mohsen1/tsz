@@ -753,5 +753,9 @@ path = "tests/template_literal_bigint_placeholder_tests.rs"
 name = "template_literal_empty_placeholder_tests"
 path = "tests/template_literal_empty_placeholder_tests.rs"
 
+[[test]]
+name = "object_element_access_diagnostics_tests"
+path = "tests/object_element_access_diagnostics_tests.rs"
+
 [lints]
 workspace = true
