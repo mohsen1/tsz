@@ -12890,6 +12890,60 @@ f;
 }
 
 #[test]
+fn checked_js_external_module_typedef_does_not_suppress_generic_arg_ts2304() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "module": "esnext",
+    "typeRoots": ["./empty-types"]
+  },
+  "files": ["a.js", "b.js"]
+}"#,
+    );
+    write_file(&base.join("empty-types/.keep"), "");
+    write_file(
+        &base.join("a.js"),
+        r#"// @ts-check
+/** @typedef {Array<Missing>} A */
+export {};
+"#,
+    );
+    write_file(
+        &base.join("b.js"),
+        r#"// @ts-check
+/** @typedef {number} Missing */
+export {};
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let missing_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == diagnostic_codes::CANNOT_FIND_NAME
+                && diagnostic.message_text.contains("'Missing'")
+        })
+        .collect();
+
+    assert_eq!(
+        missing_diags.len(),
+        1,
+        "Expected TS2304 for unimported JSDoc typedef in another external module, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn checked_js_jsdoc_import_backtick_reports_ts1141_in_project_mode() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
