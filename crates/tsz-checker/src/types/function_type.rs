@@ -1685,11 +1685,13 @@ impl<'a> CheckerState<'a> {
 
                 // TS 5.5+ inferred type predicates: when a function expression
                 // or arrow has no explicit predicate, no return-type annotation,
-                // and an inferred boolean return type, see whether its body is a
-                // single guard expression that narrows one of its parameters.
+                // and an inferred boolean-like return type, see whether its body
+                // is a guard expression that narrows one of its parameters. A
+                // guard over an `unknown` parameter may currently infer `unknown`
+                // as the expression type, so let the guard recognizer prove it.
                 if type_predicate.is_none()
                     && !has_type_annotation
-                    && return_type == TypeId::BOOLEAN
+                    && matches!(return_type, TypeId::BOOLEAN | TypeId::UNKNOWN)
                 {
                     let analyzer = self.flow_analyzer();
                     if let Some(pred) = analyzer.try_infer_type_predicate_from_body(

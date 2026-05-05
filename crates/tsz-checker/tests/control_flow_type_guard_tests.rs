@@ -1792,6 +1792,68 @@ if (isFooBlock(foobar)) {
 }
 
 #[test]
+fn inferred_type_predicate_handles_simple_statements_before_return() {
+    let source = r#"
+function isString(value: unknown) {
+  const ignored = 0;
+  ignored;
+  return typeof value === "string";
+}
+
+declare const flag: boolean;
+let input: unknown = flag ? "text" : 1;
+
+if (isString(input)) {
+  const asString: string = input;
+  const asNumber: number = input;
+
+  asString;
+  asNumber;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        !ts2322.iter().any(|(_, message)| {
+            message.contains("Type 'unknown' is not assignable to type 'string'")
+        }),
+        "Inferred predicate should allow assigning input to string; diags={diags:#?}"
+    );
+    assert!(
+        ts2322.len() == 1,
+        "Expected only the remaining number assignment to fail; diags={diags:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_rejects_non_final_return_path() {
+    let source = r#"
+function isString(value: unknown, flag: boolean) {
+  if (flag) {
+    return false;
+  }
+  return typeof value === "string";
+}
+
+declare const flag: boolean;
+let input: unknown = flag ? "text" : 1;
+
+if (isString(input, flag)) {
+  const asString: string = input;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'unknown' is not assignable to type 'string'")
+        }),
+        "A block with an alternate return path must not infer a predicate; diags={diags:#?}"
+    );
+}
+
+#[test]
 fn inferred_type_predicate_handles_typeof_guard() {
     // `(x) => typeof x === "string"` should infer `x is string`.
     let source = r#"
