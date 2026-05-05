@@ -126,6 +126,31 @@ fn test_interner_union_dedups_and_flattens() {
 }
 
 #[test]
+fn test_large_object_union_preserved_without_too_complex_flag() {
+    let interner = TypeInterner::new();
+
+    let mut members = Vec::new();
+    for i in 0..1100u32 {
+        let name = interner.intern_string("name");
+        let value = interner.literal_string(&i.to_string());
+        members.push(interner.object(vec![PropertyInfo::new(name, value)]));
+    }
+
+    let union = interner.union(members);
+
+    assert!(
+        !interner.take_union_too_complex(),
+        "large explicit object unions are representable; skipping subtype reduction must not set TS2590"
+    );
+    match interner.lookup(union) {
+        Some(TypeData::Union(list)) => {
+            assert_eq!(interner.type_list(list).len(), 1100);
+        }
+        other => panic!("expected preserved union, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_interner_intersection_normalization() {
     let interner = TypeInterner::new();
 

@@ -898,12 +898,10 @@ impl TypeInterner {
                 )
             });
             if has_object_types {
-                // TS2590: Check the same pairwise complexity threshold as
-                // reduce_union_subtypes. tsc bails at 1,000,000 pairwise iterations.
-                let len = flat.len() as u64;
-                if len.saturating_mul(len.saturating_sub(1)) >= 1_000_000 {
-                    self.set_union_too_complex();
-                }
+                // Skipping subtype reduction here is an internal representation
+                // choice, not a TS2590 condition. Explicit large discriminated
+                // unions such as `BigUnion` remain representable and are used by
+                // indexed access and conditional-type helpers downstream.
                 return self.normalize_union_literal_only(flat);
             }
         }
