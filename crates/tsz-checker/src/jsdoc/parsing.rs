@@ -867,14 +867,10 @@ impl<'a> CheckerState<'a> {
     pub(super) fn jsdoc_returns_type_predicate_from_type_expr(
         type_expr: &str,
     ) -> Option<(bool, String, Option<String>)> {
-        let (is_asserts, remainder) = if let Some(after) = type_expr.strip_prefix("asserts ") {
-            (true, after.trim())
-        } else {
-            (false, type_expr)
-        };
-        if let Some(is_pos) = remainder.find(" is ") {
+        let (is_asserts, remainder) = Self::split_jsdoc_asserts_prefix(type_expr);
+        if let Some((is_pos, is_end)) = Self::find_jsdoc_type_predicate_is(remainder) {
             let param_name = remainder[..is_pos].trim();
-            let type_str = remainder[is_pos + 4..].trim();
+            let type_str = remainder[is_end..].trim();
             if !param_name.is_empty()
                 && (param_name == "this"
                     || param_name
@@ -897,6 +893,43 @@ impl<'a> CheckerState<'a> {
                         .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
             {
                 return Some((true, param_name.to_string(), None));
+            }
+        }
+        None
+    }
+
+    pub(super) fn split_jsdoc_asserts_prefix(type_expr: &str) -> (bool, &str) {
+        let trimmed = type_expr.trim_start();
+        let Some(after_asserts) = trimmed.strip_prefix("asserts") else {
+            return (false, type_expr);
+        };
+        if after_asserts
+            .chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+        {
+            (true, after_asserts.trim_start())
+        } else {
+            (false, type_expr)
+        }
+    }
+
+    pub(super) fn find_jsdoc_type_predicate_is(type_expr: &str) -> Option<(usize, usize)> {
+        for (idx, ch) in type_expr.char_indices() {
+            if ch != 'i' || !type_expr[idx..].starts_with("is") {
+                continue;
+            }
+            let after = idx + "is".len();
+            let before_is_whitespace = type_expr[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace);
+            let after_is_whitespace = type_expr[after..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace);
+            if before_is_whitespace && after_is_whitespace {
+                return Some((idx, after));
             }
         }
         None
