@@ -18,10 +18,28 @@ impl<'a> CheckerState<'a> {
         sym_id: tsz_binder::SymbolId,
     ) -> bool {
         self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-            symbol.declarations.iter().any(|&decl_idx| {
-                self.ctx.arena.get(decl_idx).is_some()
-                    && !self.ctx.arena.is_in_ambient_context(decl_idx)
-            })
+            let current_file_idx = self.ctx.current_file_idx as u32;
+            symbol
+                .declarations
+                .iter()
+                .enumerate()
+                .any(|(idx, &decl_idx)| {
+                    let declaration_is_in_current_file = if let Some(stable) =
+                        symbol.stable_declarations.get(idx)
+                        && stable.is_known()
+                        && stable.has_file_idx()
+                    {
+                        stable.file_idx == current_file_idx
+                    } else if symbol.decl_file_idx != u32::MAX {
+                        symbol.decl_file_idx == current_file_idx
+                    } else {
+                        true
+                    };
+
+                    declaration_is_in_current_file
+                        && self.ctx.arena.get(decl_idx).is_some()
+                        && !self.ctx.arena.is_in_ambient_context(decl_idx)
+                })
         })
     }
 

@@ -14346,6 +14346,71 @@ module.exports = B;
 }
 
 #[test]
+fn compile_commonjs_export_property_overlap_with_ambient_module_reports_ts2323() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["requires.d.ts", "mod1.js", "a.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("requires.d.ts"),
+        r#"declare var module: { exports: any };
+declare function require(name: string): any;
+"#,
+    );
+    write_file(
+        &base.join("mod1.js"),
+        r#"/// <reference path='./requires.d.ts' />
+module.exports.bothBefore = 'string'
+A.justExport = 4
+A.bothBefore = 2
+A.bothAfter = 3
+module.exports = A
+function A() {
+    this.p = 1
+}
+module.exports.bothAfter = 'string'
+module.exports.justProperty = 'string'
+"#,
+    );
+    write_file(
+        &base.join("a.js"),
+        r#"/// <reference path='./requires.d.ts' />
+var mod1 = require('./mod1')
+mod1.justExport.toFixed()
+mod1.bothBefore.toFixed()
+mod1.bothAfter.toFixed()
+mod1.justProperty.length
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2323: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE)
+        .collect();
+    assert_eq!(
+        ts2323.len(),
+        4,
+        "Expected TS2323 on both overlapping CommonJS export properties, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_define_property_commonjs_exports_make_js_files_module_scoped() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
