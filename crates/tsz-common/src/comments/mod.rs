@@ -423,6 +423,64 @@ pub fn format_multi_line_comment(text: &str, indent: &str) -> String {
     result
 }
 
+/// True when the source text contains a `// @ts-nocheck` (or `/* @ts-nocheck */`)
+/// directive at the start of any comment. Substrings inside string/regex/code
+/// are ignored — only comment-scoped tokens count, matching tsc's
+/// `commentDirectiveRegEx`.
+#[must_use]
+pub fn source_has_ts_nocheck_directive(source: &str) -> bool {
+    source_has_directive(source, "@ts-nocheck")
+}
+
+/// True when the source text contains a `// @ts-check` (or `/* @ts-check */`)
+/// directive at the start of any comment. Mirrors
+/// [`source_has_ts_nocheck_directive`] for the opt-in form used by JS files.
+#[must_use]
+pub fn source_has_ts_check_directive(source: &str) -> bool {
+    source_has_directive(source, "@ts-check")
+}
+
+fn source_has_directive(source: &str, directive: &str) -> bool {
+    get_comment_ranges(source)
+        .iter()
+        .any(|c| comment_starts_with_directive(c.get_text(source), directive))
+}
+
+fn comment_starts_with_directive(comment_text: &str, directive: &str) -> bool {
+    let inner = if let Some(rest) = comment_text.strip_prefix("//") {
+        // For line comments tsc only matches the directive at the start of
+        // the comment text; tolerate leading whitespace.
+        rest
+    } else if let Some(rest) = comment_text.strip_prefix("/*") {
+        rest.strip_suffix("*/").unwrap_or(rest)
+    } else {
+        return false;
+    };
+
+    // Block comments may span multiple lines; tsc treats each line of the
+    // block comment as a candidate (with the `*` continuation marker
+    // stripped). Single-line comments produce a single line trivially.
+    inner.lines().any(|raw_line| {
+        let trimmed = raw_line.trim_start();
+        // Strip the leading `*` continuation marker that block comments
+        // commonly use, so `/** \n * @ts-nocheck */` still matches.
+        let after_star = trimmed.strip_prefix('*').unwrap_or(trimmed).trim_start();
+        if !after_star.starts_with(directive) {
+            return false;
+        }
+        let rest = &after_star[directive.len()..];
+        // Directive must end at a word boundary so `@ts-checkfoo` doesn't
+        // match `@ts-check`.
+        rest.chars()
+            .next()
+            .is_none_or(|c| !is_directive_word_char(c))
+    })
+}
+
+const fn is_directive_word_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
 /// Check if a comment is a `JSDoc` comment.
 #[must_use]
 pub fn is_jsdoc_comment(comment: &CommentRange, source: &str) -> bool {

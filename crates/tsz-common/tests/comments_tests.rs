@@ -730,3 +730,61 @@ fn ambient_module_specifier_mismatch_does_not_match() {
     let src = "declare module \"ext/other\" { export const y: number; }\n";
     assert!(!source_declares_ambient_module(src, "ext/different"));
 }
+
+// =============================================================================
+// `@ts-check` / `@ts-nocheck` comment directive scoping (regression for #2821)
+// =============================================================================
+
+#[test]
+fn nocheck_in_line_comment_is_directive() {
+    let src = "// @ts-nocheck\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_in_block_comment_is_directive() {
+    let src = "/* @ts-nocheck */\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_in_jsdoc_continuation_is_directive() {
+    let src = "/**\n * @ts-nocheck\n */\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_in_string_literal_is_not_directive() {
+    let src = "const marker = \"@ts-nocheck\";\nconst n: number = 1;\n";
+    assert!(!source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_in_template_literal_is_not_directive() {
+    let src = "const m = `@ts-nocheck`;\nconst n: number = 1;\n";
+    assert!(!source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_after_other_text_in_comment_is_not_directive() {
+    let src = "// pre-checked @ts-nocheck\nconst n: number = 1;\n";
+    assert!(!source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheckfoo_does_not_match_nocheck() {
+    let src = "// @ts-nocheckfoo\nconst n: number = 1;\n";
+    assert!(!source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn check_in_line_comment_is_directive() {
+    let src = "// @ts-check\nconst n = 1;\n";
+    assert!(source_has_ts_check_directive(src));
+}
+
+#[test]
+fn check_in_string_literal_is_not_directive() {
+    let src = "const marker = \"@ts-check\";\nconst n = 1;\n";
+    assert!(!source_has_ts_check_directive(src));
+}
