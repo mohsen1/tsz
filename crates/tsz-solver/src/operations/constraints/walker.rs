@@ -680,7 +680,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 var_map,
                                 names_union,
                                 mapped.constraint,
-                                priority,
+                                crate::types::InferencePriority::MappedType,
                             );
 
                             // Infer template (T) from property value types.

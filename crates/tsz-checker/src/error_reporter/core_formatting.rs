@@ -16,10 +16,10 @@ impl<'a> CheckerState<'a> {
             .ctx
             .create_diagnostic_type_formatter()
             .with_display_properties()
+            .with_expand_scalar_mapped_alias_applications()
             .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()
     }
-
     fn format_type_diagnostic_widened_for_assignability_display(
         &mut self,
         type_id: TypeId,
@@ -27,6 +27,7 @@ impl<'a> CheckerState<'a> {
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()
+            .with_expand_scalar_mapped_alias_applications()
             .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()
     }
