@@ -18,6 +18,14 @@ const x = 1;
 }
 
 #[test]
+fn test_extract_reference_paths_accepts_exact_tag_without_space() {
+    let source = "///<reference path=\"types.d.ts\" />\n";
+    let refs = extract_reference_paths(source);
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].0, "types.d.ts");
+}
+
+#[test]
 fn test_extract_reference_paths_offset() {
     // Column positions should point at the value after the opening quote
     let source =
@@ -138,6 +146,37 @@ class Foo {}
     let amd_modules = extract_amd_module_names(source);
     assert_eq!(amd_modules.len(), 1);
     assert_eq!(amd_modules[0].0, "ModuleName");
+}
+
+#[test]
+fn triple_slash_prefix_tag_names_are_ignored() {
+    let reference_path = r#"/// <referencex path="./missing-file" />"#;
+    assert!(
+        extract_reference_paths(reference_path).is_empty(),
+        "prefix tag <referencex> must not be parsed as <reference>"
+    );
+
+    let reference_types = r#"/// <referencex types="missing-prefix-types" />"#;
+    assert!(
+        extract_reference_types(reference_types).is_empty(),
+        "prefix tag <referencex> must not be parsed as <reference>"
+    );
+
+    let malformed_reference = r#"/// <referencex path=./missing-file />"#;
+    assert!(
+        find_malformed_reference_directives(malformed_reference).is_empty(),
+        "prefix tag <referencex> must not be reported as malformed <reference>"
+    );
+
+    let amd_module = r#"/// <amd-modulex name="ShouldBeIgnored" />
+/// <amd-module name="RealModule" />
+"#;
+    let amd = extract_amd_module_names(amd_module);
+    assert_eq!(
+        amd,
+        vec![("RealModule".to_string(), 1)],
+        "prefix tag <amd-modulex> must not be parsed as <amd-module>"
+    );
 }
 
 #[test]

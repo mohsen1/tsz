@@ -129,6 +129,70 @@ export = Foo;
 }
 
 #[test]
+fn compile_triple_slash_prefix_tags_are_comments() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("reference-path-prefix.ts"),
+        r#"/// <referencex path="./missing-file" />
+
+export const pathCase = 1;
+"#,
+    );
+    write_file(
+        &base.join("reference-types-prefix.ts"),
+        r#"/// <referencex types="missing-prefix-types" />
+
+export const typesCase = 1;
+"#,
+    );
+    write_file(
+        &base.join("malformed-reference-prefix.ts"),
+        r#"/// <referencex path=./missing-file />
+
+export const malformedCase = 1;
+"#,
+    );
+    write_file(
+        &base.join("amd-module-prefix.ts"),
+        r#"/// <amd-modulex name="first" />
+/// <amd-module name="second" />
+
+export const amdCase = 1;
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true
+          },
+          "files": [
+            "reference-path-prefix.ts",
+            "reference-types-prefix.ts",
+            "malformed-reference-prefix.ts",
+            "amd-module-prefix.ts"
+          ]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    for unexpected in [1084, 2458, 2688, 6231] {
+        assert!(
+            !codes.contains(&unexpected),
+            "prefix triple-slash tags should be comments; got diagnostics: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn compile_amd_dependency_comment_name_fixture_keeps_ts2792_under_ts5107() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
