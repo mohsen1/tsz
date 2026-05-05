@@ -33,9 +33,12 @@ fn static_field_lowering_preserves_trailing_comment() {
 
     let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
 
-    // The lowered static field should preserve the trailing comment
+    // The lowered static field should preserve the trailing comment even if
+    // the initializer is rewritten to use a class-value alias.
     assert!(
-        output.contains("C3.intance = new C3(); // ok"),
+        output
+            .lines()
+            .any(|line| line.starts_with("C3.intance = ") && line.ends_with(" // ok")),
         "Trailing comment '// ok' should be preserved on lowered static field.\nOutput:\n{output}"
     );
 }
