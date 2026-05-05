@@ -20,9 +20,19 @@ impl<'a> CheckerState<'a> {
     pub(super) fn infer_result_satisfies_via_check_constraint(
         &mut self,
         type_arg: TypeId,
-        cond_check: TypeId,
+        cond_components: (TypeId, TypeId, TypeId),
         inst_constraint: TypeId,
     ) -> bool {
+        let (cond_check, cond_extends, cond_true) = cond_components;
+        if self.infer_result_satisfies_via_mapped_key_subset(
+            cond_check,
+            cond_extends,
+            cond_true,
+            inst_constraint,
+        ) {
+            return true;
+        }
+
         let db = self.ctx.types.as_type_database();
         let Some(check_name) = query::type_parameter_name(db, cond_check) else {
             return false;
@@ -47,6 +57,41 @@ impl<'a> CheckerState<'a> {
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
         self.is_assignable_to(restricted_evaluated, inst_constraint)
             || self.is_assignable_to(restricted, inst_constraint)
+    }
+
+    fn infer_result_satisfies_via_mapped_key_subset(
+        &mut self,
+        cond_check: TypeId,
+        cond_extends: TypeId,
+        cond_true: TypeId,
+        inst_constraint: TypeId,
+    ) -> bool {
+        let db = self.ctx.types.as_type_database();
+        if !query::is_infer_type(db, cond_true) {
+            return false;
+        }
+        let inst_constraint = self.resolve_lazy_type(inst_constraint);
+        let Some(constraint_source) = query::keyof_operand(db, inst_constraint) else {
+            return false;
+        };
+        let Some(check_mapped) = crate::query_boundaries::common::mapped_type_info(db, cond_check)
+        else {
+            return false;
+        };
+        let Some(extends_mapped) =
+            crate::query_boundaries::common::mapped_type_info(db, cond_extends)
+        else {
+            return false;
+        };
+        if query::keyof_operand(db, check_mapped.constraint) != Some(constraint_source)
+            || query::keyof_operand(db, extends_mapped.constraint) != Some(constraint_source)
+        {
+            return false;
+        }
+        if extends_mapped.template != cond_true {
+            return false;
+        }
+        self.type_is_mapped_key_or_never(check_mapped.template, check_mapped.type_param.name)
     }
 
     pub(super) fn infer_result_satisfies_via_application_arg_constraints(
@@ -105,6 +150,25 @@ impl<'a> CheckerState<'a> {
         }
 
         self.infer_type_appears_as_tuple_rest(cond_extends, cond_true)
+    }
+
+    fn type_is_mapped_key_or_never(&self, type_id: TypeId, key_name: tsz_common::Atom) -> bool {
+        if type_id == TypeId::NEVER {
+            return true;
+        }
+
+        let db = self.ctx.types.as_type_database();
+        if query::type_parameter_name(db, type_id) == Some(key_name) {
+            return true;
+        }
+
+        query::full_conditional_type_components(db, type_id).is_some_and(
+            |(_check, _extends, true_type, false_type)| {
+                self.type_is_mapped_key_or_never(true_type, key_name)
+                    && self.type_is_mapped_key_or_never(false_type, key_name)
+                    && (true_type != TypeId::NEVER || false_type != TypeId::NEVER)
+            },
+        )
     }
 
     fn type_is_infer_result_conditional(&self, type_id: TypeId) -> bool {
