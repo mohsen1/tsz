@@ -264,3 +264,33 @@ interface foo {
         ts2411.1
     );
 }
+
+// =========================================================================
+// Issue #2871: a local object named `Symbol` must not be treated as the lib
+// global `Symbol` when classifying `[Symbol.tag]` as a symbol-keyed property.
+// With a `[s: symbol]: number` index signature present, the buggy
+// classification routes the `[Symbol.tag]: string` member into the symbol
+// index check and emits TS2411 ("string not assignable to 'symbol' index
+// type 'number'"). After the fix the local `Symbol` is recognized as a
+// shadow, the member is not symbol-keyed, and that diagnostic must not fire.
+// =========================================================================
+
+#[test]
+fn ts2411_shadowed_symbol_computed_property_is_not_symbol_keyed() {
+    let source = r#"
+const Symbol = { tag: "name" } as const;
+
+interface Bag {
+    [s: symbol]: number;
+    [Symbol.tag]: string;
+}
+"#;
+    let ts2411_against_symbol = get_diagnostics(source)
+        .into_iter()
+        .filter(|d| d.0 == 2411 && d.1.contains("'symbol'"))
+        .count();
+    assert_eq!(
+        ts2411_against_symbol, 0,
+        "Expected no symbol-index TS2411 when local Symbol shadows the global, got: {ts2411_against_symbol}"
+    );
+}

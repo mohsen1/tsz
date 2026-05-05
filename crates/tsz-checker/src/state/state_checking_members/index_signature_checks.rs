@@ -1300,11 +1300,18 @@ impl<'a> CheckerState<'a> {
                 let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
                     return false;
                 };
-                self.ctx
-                    .arena
-                    .get_identifier_at(access.expression)
-                    .is_some_and(|ident| ident.escaped_text.as_str() == "Symbol")
-                    && self.is_identifier_reference_to_global_symbol(access.expression)
+                let Some(obj_node) = self.ctx.arena.get(access.expression) else {
+                    return false;
+                };
+                if let Some(ident) = self.ctx.arena.get_identifier(obj_node) {
+                    ident.escaped_text.as_str() == "Symbol"
+                        && self.known_global_identifier_resolves_to_lib_value(
+                            access.expression,
+                            "Symbol",
+                        )
+                } else {
+                    false
+                }
             }
             ek if ek == tsz_scanner::SyntaxKind::Identifier as u16 => {
                 let expr_type = self.get_type_of_node(computed.expression);
