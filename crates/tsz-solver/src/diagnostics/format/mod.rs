@@ -1617,18 +1617,22 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             TypeData::KeyOf(operand) => {
-                // `keyof null`, `keyof undefined`, `keyof void`, `keyof never`
-                // all evaluate to `never`. tsc displays the reduced form, so
+                // `keyof null`, `keyof undefined`, and `keyof void` all
+                // evaluate to `never`. tsc displays the reduced form, so
                 // collapse to `never` whenever the operand evaluates there.
                 // This catches both the direct intrinsic case and substituted
                 // forms where a type parameter was bound to a nullish type.
-                if matches!(
-                    *operand,
-                    TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID | TypeId::NEVER
-                ) || crate::evaluation::evaluate::evaluate_keyof(self.interner, *operand)
-                    == TypeId::NEVER
+                if matches!(*operand, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID)
+                    || crate::evaluation::evaluate::evaluate_keyof(self.interner, *operand)
+                        == TypeId::NEVER
                 {
                     return self.format(TypeId::NEVER);
+                }
+                if *operand == TypeId::NEVER {
+                    return self.format(crate::evaluation::evaluate::evaluate_keyof(
+                        self.interner,
+                        *operand,
+                    ));
                 }
                 // For anonymous concrete object operands, evaluate `keyof` eagerly
                 // so diagnostics show the literal key union (e.g. `"x"`) instead

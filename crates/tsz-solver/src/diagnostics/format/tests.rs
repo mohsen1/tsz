@@ -1834,7 +1834,7 @@ fn format_keyof_intersection_distributes() {
 
 #[test]
 fn format_keyof_nullish_collapses_to_never() {
-    // tsc reduces `keyof null`, `keyof undefined`, `keyof void`, `keyof never`
+    // tsc reduces `keyof null`, `keyof undefined`, and `keyof void`
     // to `never` in error messages. The evaluator already maps these to
     // TypeId::NEVER; the formatter must not bypass that reduction.
     let db = TypeInterner::new();
@@ -1843,7 +1843,10 @@ fn format_keyof_nullish_collapses_to_never() {
     assert_eq!(fmt.format(db.keyof(TypeId::NULL)), "never");
     assert_eq!(fmt.format(db.keyof(TypeId::UNDEFINED)), "never");
     assert_eq!(fmt.format(db.keyof(TypeId::VOID)), "never");
-    assert_eq!(fmt.format(db.keyof(TypeId::NEVER)), "never");
+    assert_eq!(
+        fmt.format(db.keyof(TypeId::NEVER)),
+        "string | number | symbol"
+    );
 }
 
 #[test]

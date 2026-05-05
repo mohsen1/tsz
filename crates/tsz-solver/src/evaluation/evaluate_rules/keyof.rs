@@ -450,8 +450,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // keyof unknown = never
                         TypeId::NEVER
                     }
-                    IntrinsicKind::Never
-                    | IntrinsicKind::Void
+                    IntrinsicKind::Never => {
+                        // keyof never = string | number | symbol
+                        self.interner()
+                            .union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL)
+                    }
+                    IntrinsicKind::Void
                     | IntrinsicKind::Null
                     | IntrinsicKind::Undefined
                     | IntrinsicKind::Object
