@@ -648,19 +648,31 @@ impl<'a> CheckerState<'a> {
         let mut expando_props: FxHashSet<String> = FxHashSet::default();
 
         if let Some(props) = self.ctx.binder.expando_properties.get(root_name) {
-            expando_props.extend(props.iter().cloned());
+            expando_props.extend(
+                props
+                    .iter()
+                    .map(|prop| self.canonical_expando_property_name(prop)),
+            );
         }
 
         // Use the pre-built global expando index (O(1) lookup) when available,
         // falling back to O(N) all_binders scan only if the index wasn't built.
         if let Some(expando_idx) = &self.ctx.global_expando_index {
             if let Some(props) = expando_idx.get(root_name) {
-                expando_props.extend(props.iter().cloned());
+                expando_props.extend(
+                    props
+                        .iter()
+                        .map(|prop| self.canonical_expando_property_name(prop)),
+                );
             }
         } else if let Some(all_binders) = &self.ctx.all_binders {
             for binder in all_binders.iter() {
                 if let Some(props) = binder.expando_properties.get(root_name) {
-                    expando_props.extend(props.iter().cloned());
+                    expando_props.extend(
+                        props
+                            .iter()
+                            .map(|prop| self.canonical_expando_property_name(prop)),
+                    );
                 }
             }
         }

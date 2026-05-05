@@ -412,13 +412,6 @@ impl<'a> CheckerState<'a> {
 
             for root_key in root_keys {
                 let expected_key = format!("{root_key}.{property_name}");
-                if !self.js_file_has_expando_assignment_for_keys(
-                    file_idx,
-                    std::slice::from_ref(root_key),
-                    property_name,
-                ) {
-                    continue;
-                }
                 if let Some(ty) =
                     self.cross_file_expando_property_read_type(file_idx, &expected_key)
                 {
@@ -1676,7 +1669,7 @@ impl<'a> CheckerState<'a> {
         idx
     }
 
-    fn expando_assignment_access_key(&self, idx: NodeIndex) -> Option<String> {
+    fn expando_assignment_access_key(&mut self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => self
@@ -1693,10 +1686,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
                 let left = self.expando_assignment_access_key(access.expression)?;
-                let right = static_element_access_key_text_in_arena(
-                    self.ctx.arena,
-                    access.name_or_argument,
-                )?;
+                let right = self.expando_element_key_name(access.name_or_argument)?;
                 Some(format!("{left}.{right}"))
             }
             _ => None,
