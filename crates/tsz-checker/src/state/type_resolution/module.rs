@@ -2004,8 +2004,8 @@ impl<'a> CheckerState<'a> {
 
         use crate::diagnostics::{diagnostic_messages, format_message};
 
-        let target_has_esm_syntax =
-            resolved_import_target.is_some_and(|idx| self.source_file_idx_has_esm_syntax(idx));
+        let target_is_js_with_esm_syntax = resolved_import_target
+            .is_some_and(|idx| self.source_file_idx_is_js_with_esm_syntax(idx));
 
         let has_export_equals = self.module_has_export_equals(module_specifier)
             || self.module_has_export_assignment_declaration(module_specifier);
@@ -2015,7 +2015,7 @@ impl<'a> CheckerState<'a> {
         // through to TS1192 so the default-import side is also diagnosed.
         let export_equals_provides_default = has_export_equals
             && !self.module_has_explicit_esm_extension(module_specifier)
-            && !target_has_esm_syntax;
+            && !target_is_js_with_esm_syntax;
 
         if export_equals_provides_default {
             // TS1259: "Module X can only be default-imported using the 'allowSyntheticDefaultImports' flag"
@@ -2082,7 +2082,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
             .or_else(|| self.ctx.resolve_import_target(module_specifier));
-        if target_idx.is_some_and(|idx| self.source_file_idx_has_esm_syntax(idx)) {
+        if target_idx.is_some_and(|idx| self.source_file_idx_is_js_with_esm_syntax(idx)) {
             return false;
         }
 
