@@ -1541,14 +1541,16 @@ impl<'a> CheckerState<'a> {
                 if trimmed.is_empty() {
                     result.push_str("{}");
                 } else {
+                    let normalized_inner =
+                        super::annotation_text::normalize_inline_object_member_separators(trimmed);
                     // Ensure `{ ... }` spacing
                     let needs_space_start =
                         !trimmed.is_empty() && (i + 1 >= len || chars[i + 1] != ' ');
-                    let needs_semicolon = !trimmed.ends_with(';')
-                        && !trimmed.ends_with("};")
-                        && trimmed.contains(':');
+                    let needs_semicolon = !normalized_inner.ends_with(';')
+                        && !normalized_inner.ends_with("};")
+                        && normalized_inner.contains(':');
                     result.push_str("{ ");
-                    result.push_str(trimmed);
+                    result.push_str(&normalized_inner);
                     if needs_semicolon {
                         result.push(';');
                     }

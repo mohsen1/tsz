@@ -12,6 +12,7 @@ use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 // Re-export for backwards compatibility with existing imports
@@ -60,6 +61,60 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         false
     }
+
+    fn typed_array_length_constructor_return_type(
+        &mut self,
+        callee_expr: NodeIndex,
+        arg_types: &[TypeId],
+        return_type: TypeId,
+    ) -> Option<TypeId> {
+        let callee_name = self.ctx.arena.get_identifier_text(callee_expr)?;
+        if !matches!(
+            callee_name,
+            "Int8Array"
+                | "Uint8Array"
+                | "Uint8ClampedArray"
+                | "Int16Array"
+                | "Uint16Array"
+                | "Int32Array"
+                | "Uint32Array"
+                | "Float32Array"
+                | "Float64Array"
+                | "BigInt64Array"
+                | "BigUint64Array"
+        ) {
+            return None;
+        }
+
+        let length_like_constructor = arg_types.is_empty()
+            || arg_types.first().is_some_and(|&arg_type| {
+                tsz_solver::operations::widening::widen_literal_type(self.ctx.types, arg_type)
+                    == TypeId::NUMBER
+            });
+        if !length_like_constructor {
+            return None;
+        }
+
+        let (base, args) =
+            query::get_application_info(self.ctx.types, return_type).or_else(|| {
+                self.ctx
+                    .types
+                    .get_display_alias(return_type)
+                    .and_then(|alias| query::get_application_info(self.ctx.types, alias))
+            })?;
+        if args.len() != 1 {
+            return None;
+        }
+
+        let array_buffer = self.resolve_lib_type_by_name("ArrayBuffer")?;
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .application(base, vec![array_buffer]),
+        )
+    }
+
     ///
     /// This keeps general alias typing unchanged (important for type-position behavior)
     /// while ensuring constructor resolution sees the direct constructable type.
@@ -1224,6 +1279,14 @@ impl<'a> CheckerState<'a> {
 
         match result {
             CallResult::Success(mut return_type) => {
+                if let Some(fixed_return) = self.typed_array_length_constructor_return_type(
+                    new_expr.expression,
+                    &arg_types,
+                    return_type,
+                ) {
+                    return_type = fixed_return;
+                }
+
                 if let Some(contextual_type) = contextual_type {
                     let result_app = query::get_application_info(self.ctx.types, return_type)
                         .or_else(|| {

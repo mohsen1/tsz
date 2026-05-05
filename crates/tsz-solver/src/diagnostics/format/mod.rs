@@ -1410,10 +1410,11 @@ impl<'a> TypeFormatter<'a> {
                     let mut n = display_args.len();
                     while n > 0 {
                         let idx = n - 1;
-                        let Some(default) = params[idx].default else {
-                            break;
-                        };
-                        if display_args[idx] != default {
+                        if let Some(default) = params[idx].default {
+                            if display_args[idx] != default {
+                                break;
+                            }
+                        } else if display_args[idx] != TypeId::ANY {
                             break;
                         }
                         n -= 1;
@@ -1428,7 +1429,13 @@ impl<'a> TypeFormatter<'a> {
                     .take(visible_arg_count)
                     .map(|&arg| self.format(self.resolve_concrete_index_access_for_display(arg)))
                     .collect();
-                let result = if args.is_empty() {
+                let result = if args.is_empty()
+                    && matches!(
+                        base_str.as_ref(),
+                        "Iterable" | "IterableIterator" | "AsyncIterable" | "AsyncIterableIterator"
+                    ) {
+                    format!("{base_str}<any>")
+                } else if args.is_empty() {
                     base_str.to_string()
                 } else {
                     format!("{}<{}>", base_str, args.join(", "))

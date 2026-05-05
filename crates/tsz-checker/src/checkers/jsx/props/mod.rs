@@ -3,8 +3,6 @@
 //!
 //! Props extraction lives in `extraction.rs`, overload resolution in `overloads.rs`.
 
-<<<<<<< HEAD
-mod contextual_retry;
 mod generic_spread;
 mod resolution;
 mod validation;

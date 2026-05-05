@@ -648,9 +648,6 @@ impl<'a> DeclarationEmitter<'a> {
                         .get_node_type(assign.expression)
                         .filter(|_| !has_safe_nameable_surface_type || is_object_assign_call)
                         .is_some_and(|type_id| {
-                            if is_object_assign_call {
-                                return false;
-                            }
                             self.emit_non_portable_type_diagnostic(
                                 type_id,
                                 "default",

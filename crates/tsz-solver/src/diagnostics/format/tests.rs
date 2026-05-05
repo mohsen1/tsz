@@ -2248,6 +2248,45 @@ fn format_application_pads_missing_args_with_param_defaults() {
 }
 
 #[test]
+fn format_iterable_iterator_elides_trailing_any_without_recorded_default() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let info = crate::def::DefinitionInfo::interface(
+        db.intern_string("IterableIterator"),
+        vec![
+            TypeParamInfo {
+                name: db.intern_string("T"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: db.intern_string("TReturn"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: db.intern_string("TNext"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+        ],
+        vec![],
+    );
+    let def_id = def_store.register(info);
+    let app = db.application(
+        db.lazy(def_id),
+        vec![TypeId::STRING, TypeId::VOID, TypeId::ANY],
+    );
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(app), "IterableIterator<string, void>");
+}
+
+#[test]
 fn format_application_two_args() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);

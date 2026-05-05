@@ -1037,7 +1037,10 @@ impl<'a> CheckerState<'a> {
                                 )
                                 .is_some_and(|sigs| !sigs.is_empty());
                         if !has_function_context {
-                            self.retry_jsx_attr(value_node_idx, request, &mut provided_attrs);
+                            let actual_type = self.compute_type_of_node(value_node_idx);
+                            if let Some(entry) = provided_attrs.last_mut() {
+                                entry.1 = actual_type;
+                            }
                             continue;
                         }
                         self.ctx

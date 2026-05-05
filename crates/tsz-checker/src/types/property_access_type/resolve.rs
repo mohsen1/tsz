@@ -15,35 +15,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn partial_object_literal_initializer_property_type(
-        &self,
-        expression: NodeIndex,
-        name_or_argument: NodeIndex,
-    ) -> Option<TypeId> {
-        let expr_node = self.ctx.arena.get(expression)?;
-        if expr_node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-        let property_name = self
-            .ctx
-            .arena
-            .get_identifier_at(name_or_argument)
-            .map(|ident| ident.escaped_text.as_str())?;
-        let variable_symbol = self.resolve_identifier_symbol_without_tracking(expression)?;
-        let property_atom = self.ctx.types.intern_string(property_name);
-        self.ctx
-            .object_literal_tracking
-            .partial_initializers
-            .iter()
-            .rev()
-            .find(|active| {
-                active.variable_symbol == variable_symbol
-                    && active.properties.contains_key(&property_atom)
-            })
-            .and_then(|active| active.properties.get(&property_atom))
-            .map(|prop| prop.type_id)
-    }
-
     /// Inner implementation of property access type resolution.
     pub(crate) fn get_type_of_property_access_inner(
         &mut self,
@@ -2418,11 +2389,17 @@ impl<'a> CheckerState<'a> {
                     let in_circular_computed_property =
                         self.ctx.checking_computed_property_name.is_some()
                             && !self.ctx.class_instance_resolution_set.is_empty();
+                    let in_current_class_construction = self
+                        .property_access_is_current_class_construction_recovery(
+                            access.expression,
+                            display_object_type,
+                        );
                     if !property_name.starts_with('#')
                         && !accessibility_error_emitted
                         && !self.is_super_expression(access.expression)
                         && !self.is_property_access_on_unresolved_import(access.expression)
                         && !in_circular_computed_property
+                        && !in_current_class_construction
                     {
                         if self.is_js_file()
                             && self.is_current_file_commonjs_export_base(access.expression)
@@ -2549,6 +2526,9 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         }
+                    }
+                    if in_current_class_construction {
+                        return TypeId::ANY;
                     }
                     if receiver_has_daa_error {
                         return self.finalize_property_access_result(

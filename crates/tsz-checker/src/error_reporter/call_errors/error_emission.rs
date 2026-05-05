@@ -38,35 +38,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Suppress TS2345 when either type contains unresolved inference placeholders
-        // (`__infer_*`). These arise when generic call inference didn't fully resolve
-        // type parameters. tsc would have resolved them or used their constraints;
-        // comparing against raw placeholders produces false mismatches.
-        if crate::query_boundaries::common::contains_infer_types(
-            self.ctx.types.as_type_database(),
-            arg_type,
-        ) || crate::query_boundaries::common::contains_infer_types(
-            self.ctx.types.as_type_database(),
-            param_type,
-        ) {
-            let evaluated_arg_type = self.evaluate_type_with_env(arg_type);
-            let evaluated_param_type = self.evaluate_type_with_env(param_type);
-            if crate::query_boundaries::common::contains_infer_types(
-                self.ctx.types.as_type_database(),
-                evaluated_arg_type,
-            ) || crate::query_boundaries::common::contains_infer_types(
-                self.ctx.types.as_type_database(),
-                evaluated_param_type,
-            ) || crate::query_boundaries::common::contains_type_parameters(
-                self.ctx.types,
-                evaluated_arg_type,
-            ) || crate::query_boundaries::common::contains_type_parameters(
-                self.ctx.types,
-                evaluated_param_type,
-            ) {
-                return;
-            }
-        }
         if self.should_suppress_partial_self_argument_mismatch(arg_type, param_type) {
             return;
         }

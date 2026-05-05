@@ -1397,6 +1397,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         prop_name: Atom,
         optional: bool,
     ) -> Option<TypeId> {
+        if source == TypeId::OBJECT {
+            return optional.then_some(TypeId::UNDEFINED);
+        }
+
         if let Some(query_db) = self.query_db() {
             let prop_name_str = self.interner().resolve_atom_ref(prop_name);
             return match query_db.resolve_property_access(source, &prop_name_str) {
