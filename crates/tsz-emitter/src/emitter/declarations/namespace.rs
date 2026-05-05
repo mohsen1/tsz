@@ -62,6 +62,24 @@ pub(in crate::emitter) fn rewrite_enum_iife_for_namespace_export(
     };
 }
 
+fn find_unescaped_template_end(source: &str, template_start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut pos = template_start.checked_add(1)?;
+    let mut escaped = false;
+    while pos < bytes.len() {
+        let byte = bytes[pos];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == b'`' {
+            return Some(pos);
+        }
+        pos += 1;
+    }
+    None
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Namespace / Module Declarations
@@ -176,6 +194,78 @@ impl<'a> Printer<'a> {
             None
         };
         self.emit_namespace_iife(&module, parent_name.as_deref());
+    }
+
+    pub(in crate::emitter) fn emit_recovered_template_module_declaration(
+        &mut self,
+        node: &Node,
+        scan_end: u32,
+    ) -> bool {
+        let Some(module) = self.arena.get_module(node) else {
+            return false;
+        };
+        if !self
+            .arena
+            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let scan_end = (scan_end as usize).min(text.len());
+        let Ok(source) = crate::safe_slice::slice(text, start, scan_end) else {
+            return false;
+        };
+
+        let mut cursor = 0;
+        let mut wrote = false;
+        while let Some(relative_module_pos) = source[cursor..].find("module") {
+            let module_pos = cursor + relative_module_pos;
+            let after_module = module_pos + "module".len();
+            let rest = &source[after_module..];
+            let Some(template_start_in_rest) = rest.find('`') else {
+                cursor = after_module;
+                continue;
+            };
+            let template_start = after_module + template_start_in_rest;
+            let Some(template_end) = find_unescaped_template_end(source, template_start) else {
+                break;
+            };
+            let after_template = template_end + '`'.len_utf8();
+            let Ok(template_text) =
+                crate::safe_slice::slice(source, template_start, after_template)
+            else {
+                cursor = after_template;
+                continue;
+            };
+            let body_starts_after_template = source[after_template..]
+                .trim_start_matches(|ch: char| ch.is_whitespace())
+                .starts_with('{');
+            if !body_starts_after_template {
+                cursor = after_template;
+                continue;
+            }
+
+            self.write("declare;");
+            self.write_line();
+            self.write("module ");
+            self.write(template_text);
+            self.write(";");
+            self.write_line();
+            self.write("{");
+            self.write_line();
+            self.write("}");
+            self.write_line();
+            wrote = true;
+            cursor = after_template;
+        }
+
+        if wrote {
+            self.skip_comments_for_erased_node(node);
+        }
+        wrote
     }
 
     fn emit_recovered_anonymous_module_declaration(

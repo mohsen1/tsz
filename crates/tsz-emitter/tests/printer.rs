@@ -124,6 +124,17 @@ fn recovered_template_object_property_name_emits_as_recovered_statements() {
 }
 
 #[test]
+fn recovered_template_module_names_emit_as_recovered_statements() {
+    let source = "declare module `M1` {\n}\n\ndeclare module `M${2}` {\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert_eq!(
+        output,
+        "declare;\nmodule `M1`;\n{\n}\ndeclare;\nmodule `M${2}`;\n{\n}\n"
+    );
+}
+
+#[test]
 fn test_optional_catch_binding_downlevel_to_param() {
     let source = "try {\n} catch {\n}\n";
     let output = parse_lower_print(
