@@ -3275,6 +3275,42 @@ fn test_package_imports_exact_mapping_marks_ts_extension_usage_when_key_ends_wit
 }
 
 #[test]
+fn test_package_imports_array_falls_back_after_missing_target() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_test_package_imports_array_fallback");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("package.json"),
+        r##"{
+            "name": "pkg",
+            "type": "module",
+            "imports": {
+                "#x": ["./missing.d.ts", "./ok.d.ts"]
+            }
+        }"##,
+    )
+    .unwrap();
+    fs::write(dir.join("ok.d.ts"), "export declare const value: 1;").unwrap();
+    fs::write(dir.join("main.ts"), "import { value } from '#x'; value;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver
+        .resolve("#x", &dir.join("main.ts"), Span::new(0, 3))
+        .unwrap();
+
+    assert_eq!(result.resolved_path, dir.join("ok.d.ts"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_package_imports_pattern_does_not_mark_ts_extension_when_key_lacks_ts_suffix() {
     use std::fs;
 
