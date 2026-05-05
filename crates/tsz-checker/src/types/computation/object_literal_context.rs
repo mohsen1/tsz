@@ -1371,6 +1371,7 @@ impl<'a> CheckerState<'a> {
         else {
             return ctx_type;
         };
+        let raw_members = crate::query_boundaries::common::union_members(self.ctx.types, ctx_type);
 
         if members.len() < 2 {
             return ctx_type;
@@ -1474,7 +1475,7 @@ impl<'a> CheckerState<'a> {
         // For each union member, check if all discriminant values are compatible
         // AND no present property maps to `never` in that member.
         let mut matching_members: Vec<TypeId> = Vec::new();
-        for &member in &members {
+        for (member_index, &member) in members.iter().enumerate() {
             let lazy_member = self.resolve_lazy_type(member);
             let resolved_member = self.resolve_type_for_property_access(lazy_member);
             let evaluated_member = self.evaluate_contextual_type(resolved_member);
@@ -1647,7 +1648,12 @@ impl<'a> CheckerState<'a> {
             };
 
             if unit_match && never_match && absent_required_match {
-                matching_members.push(member);
+                let raw_member = raw_members
+                    .as_ref()
+                    .and_then(|members| members.get(member_index))
+                    .copied()
+                    .unwrap_or(member);
+                matching_members.push(raw_member);
             }
         }
 

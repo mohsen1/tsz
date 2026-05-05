@@ -402,42 +402,6 @@ impl<'a> CheckerState<'a> {
         let mut prop_order: u32 = 1;
         let mut spread_display_order_base = SPREAD_DISPLAY_ORDER_OFFSET;
 
-        // Check for ThisType<T> marker in contextual type (Vue 2 / Options API pattern)
-        // We need to extract this BEFORE the for loop so it's available for the pop at the end
-        let marker_this_type: Option<TypeId> = if let Some(ctx_type) = contextual_type {
-            use crate::query_boundaries::common::ContextualTypeContext;
-            let ctx_helper = ContextualTypeContext::with_expected_and_options(
-                self.ctx.types,
-                ctx_type,
-                self.ctx.compiler_options.no_implicit_any,
-            );
-            let env = self.ctx.type_env.borrow();
-            ctx_helper.get_this_type_from_marker_with_resolver(&*env)
-        } else {
-            None
-        };
-
-        // Push this type onto stack if found (methods will pick it up)
-        if let Some(mut this_type) = marker_this_type {
-            // The ThisType<T> marker may contain unresolved type parameters
-            // (e.g., `Data & Readonly<Props> & Instance` before inference completes)
-            // or unresolved Lazy references to generic interfaces that need their
-            // default type arguments applied (e.g., `ThisType<T & Comp>` where
-            // `Comp<U = any>` appears as bare `Lazy(DefId)` without an Application
-            // wrapper). Evaluate through the type environment to resolve both
-            // cases, ensuring property access on `this` inside method bodies
-            // works correctly.
-            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, this_type)
-                || crate::query_boundaries::common::contains_lazy_or_recursive(
-                    self.ctx.types,
-                    this_type,
-                )
-            {
-                this_type = self.evaluate_type_with_env(this_type);
-            }
-            self.ctx.this_type_stack.push(this_type);
-        }
-
         // Pre-scan: collect ALL method names from the object literal so that
         // the synthetic `this` type includes placeholders for all methods,
         // enabling mutually-recursive methods to resolve `this.otherMethod`.
@@ -519,6 +483,42 @@ impl<'a> CheckerState<'a> {
             if narrowed != ctx_type {
                 contextual_type = Some(narrowed);
             }
+        }
+        // Check for ThisType<T> marker in contextual type (Vue 2 / Options API
+        // pattern) after union narrowing so discriminated object literals choose
+        // the matching union member's marker.
+        let marker_this_type: Option<TypeId> = if let Some(ctx_type) = contextual_type {
+            use crate::query_boundaries::common::ContextualTypeContext;
+            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                ctx_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            let env = self.ctx.type_env.borrow();
+            ctx_helper.get_this_type_from_marker_with_resolver(&*env)
+        } else {
+            None
+        };
+
+        // Push this type onto stack if found (methods will pick it up)
+        if let Some(mut this_type) = marker_this_type {
+            // The ThisType<T> marker may contain unresolved type parameters
+            // (e.g., `Data & Readonly<Props> & Instance` before inference completes)
+            // or unresolved Lazy references to generic interfaces that need their
+            // default type arguments applied (e.g., `ThisType<T & Comp>` where
+            // `Comp<U = any>` appears as bare `Lazy(DefId)` without an Application
+            // wrapper). Evaluate through the type environment to resolve both
+            // cases, ensuring property access on `this` inside method bodies
+            // works correctly.
+            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, this_type)
+                || crate::query_boundaries::common::contains_lazy_or_recursive(
+                    self.ctx.types,
+                    this_type,
+                )
+            {
+                this_type = self.evaluate_type_with_env(this_type);
+            }
+            self.ctx.this_type_stack.push(this_type);
         }
         let prototype_owner_this_type = if self.is_js_file() {
             self.js_prototype_owner_expression_for_node(idx)

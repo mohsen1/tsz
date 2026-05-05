@@ -8,10 +8,17 @@
 //! The fix pushes `TypeId::ANY` as the return type context when the return type
 //! is purely inferred, so `check_return_statement` skips the circular check.
 
+use std::path::Path;
+use std::sync::Arc;
+use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::context::LibContext;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::test_utils::check_source;
 use tsz_common::common::ScriptTarget;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
 
 fn check_default(source: &str) -> Vec<Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
@@ -19,6 +26,77 @@ fn check_default(source: &str) -> Vec<Diagnostic> {
 
 fn check_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
     check_source(source, "test.ts", options)
+}
+
+fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_roots = [
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
+        manifest_dir.join("../../TypeScript/src/lib"),
+    ];
+    let lib_names = [
+        "es5.d.ts",
+        "es2015.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.promise.d.ts",
+    ];
+
+    let mut lib_files = Vec::new();
+    for file_name in lib_names {
+        for root in &lib_roots {
+            let lib_path = root.join(file_name);
+            if lib_path.exists()
+                && let Ok(content) = std::fs::read_to_string(&lib_path)
+            {
+                lib_files.push(Arc::new(LibFile::from_source(
+                    file_name.to_string(),
+                    content,
+                )));
+                break;
+            }
+        }
+    }
+    lib_files
+}
+
+fn check_with_libs(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let lib_files = load_lib_files_for_test();
+
+    let mut binder = BinderState::new();
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
+
+    let types = TypeInterner::new();
+    let mut checker = tsz_checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.clone()
 }
 
 /// Function returning nested array literals with different object shapes should
@@ -776,6 +854,89 @@ let obj: HasGreet = {
     assert!(
         !ts2339,
         "Expected no TS2339 for 'this.name' with contextual type, got diagnostics={diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_literal_method_this_type_from_variable_marker() {
+    let source = r#"
+type B = {
+    kind: "b";
+    m(): void;
+} & ThisType<{ b: number }>;
+
+const value: B = {
+    kind: "b",
+    m() {
+        this.b.toFixed();
+        this.a.toUpperCase();
+    },
+};
+"#;
+    let diagnostics = check_with_libs(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    let has_b_error = diagnostics
+        .iter()
+        .any(|d| d.code == 2339 && d.message_text.contains("'b'"));
+    let has_a_error = diagnostics
+        .iter()
+        .any(|d| d.code == 2339 && d.message_text.contains("'a'"));
+    assert!(
+        !has_b_error,
+        "Expected ThisType payload to allow this.b, got diagnostics={diagnostics:?}"
+    );
+    assert!(
+        has_a_error,
+        "Expected TS2339 for this.a against ThisType payload, got diagnostics={diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_literal_method_this_type_from_discriminated_union_marker() {
+    let source = r#"
+type A = {
+    kind: "a";
+    m(): void;
+} & ThisType<{ a: string }>;
+
+type B = {
+    kind: "b";
+    m(): void;
+} & ThisType<{ b: number }>;
+
+const value: A | B = {
+    kind: "b",
+    m() {
+        this.b.toFixed();
+        this.a.toUpperCase();
+    },
+};
+"#;
+    let diagnostics = check_with_libs(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    let has_b_error = diagnostics
+        .iter()
+        .any(|d| d.code == 2339 && d.message_text.contains("'b'"));
+    let has_a_error = diagnostics
+        .iter()
+        .any(|d| d.code == 2339 && d.message_text.contains("'a'"));
+    assert!(
+        !has_b_error,
+        "Expected narrowed ThisType payload to allow this.b, got diagnostics={diagnostics:?}"
+    );
+    assert!(
+        has_a_error,
+        "Expected TS2339 for this.a against narrowed ThisType payload, got diagnostics={diagnostics:?}"
     );
 }
 
