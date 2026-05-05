@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `conformance/quick-pick-regex-annexb-20260505`
-- **PR**: TBD
+- **PR**: #3392
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
