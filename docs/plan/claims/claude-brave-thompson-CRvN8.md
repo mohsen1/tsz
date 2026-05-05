@@ -2,19 +2,19 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `claude/brave-thompson-CRvN8`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #2758
+- **Status**: implemented
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
 
-Reproduce, root-cause, and document the work needed to land
+Reproduce, root-cause, and land
 `conformance/types/typeRelationships/assignmentCompatibility/covariantCallbacks.ts`.
-The test is a `fingerprint-only` failure (codes match, positions/counts
-diverge): tsc emits 8 `TS2322` diagnostics, tsz currently emits 3. Closing
-the gap requires implementing tsc's `SignatureCheckMode.BivariantCallback`
-semantics plus an equivalent of `isInstantiatedGenericParameter`. Both are
-non-trivial solver work that this claim documents but does not yet ship.
+The test was a `fingerprint-only` failure (codes match, positions/counts
+diverge): tsc emits 8 `TS2322` diagnostics, while tsz emitted 3. This PR
+implements the missing `SignatureCheckMode.BivariantCallback` behavior and
+the needed `isInstantiatedGenericParameter`-style guard for generic method
+parameter slots.
 
 ## Root cause
 
@@ -49,33 +49,34 @@ accepts both directions.
     --target es2015 --strict --noEmit
 ```
 
-Currently emits 3 diagnostics (lines 15, 20, 101). Tsc expects 8
-(adds lines 33, 46, 59, 72, 109).
+Now emits the same 8 `TS2322` diagnostics as tsc: lines 15, 20, 33, 46, 59,
+72, 101, and 109.
 
-## What needs to ship
+## What shipped
 
 1. **`is_instantiated_generic_parameter` equivalent in `tsz-solver`.**
-   Requires either (a) preserving an `Option<FunctionShape>` "target" pointer
-   on instantiated `FunctionShape` instances, or (b) recording per-`ParamInfo`
-   which params originated as `TypeData::TypeParam`/`TypeData::Lazy(DefId)`
-   pre-substitution. (a) is closer to tsc's design.
+   During method-property comparison, the checker records generic application
+   receiver args. Callable method parameters that are exactly one of those args
+   keep normal method bivariance, which preserves the `Bivar<T>` behavior.
 
 2. **Callback-pair recognition in `are_parameters_compatible_impl`.**
-   Detect `s_has_call && t_has_call`, gated on (1) above so it does not fire
-   for instantiated generic-parameter slots.
+   Detects `s_has_call && t_has_call` for method-bivariant outer slots, gated
+   by (1) so instantiated generic-parameter slots do not take callback mode.
 
-3. **`BivariantCallback` mode plumbing.** Add a flag (extending
-   `IN_CALLBACK_PARAM_CHECK` or a new `IN_BIVARIANT_CALLBACK_RETURN`) that
-   propagates exactly one level into the recursive
-   `check_function_subtype_impl`. Inside that recursion, `check_return_compat`
-   must allow either direction of subtype to satisfy the return relation.
+3. **`BivariantCallback` mode plumbing.** The callback-mode flag propagates
+   exactly one signature comparison. Callback params are strict for that
+   immediate comparison, while returned function types start fresh.
 
-4. **Cache key partitioning.** New mode flags must be encoded in
+4. **Return handling.** Callback return bivariance uses the reverse raw subtype
+   relation rather than `void`-target return compatibility, so `f12` still
+   errors while `f14` keeps the accepted direction.
+
+5. **Cache key partitioning.** New callback-mode flags are encoded in
    `make_cache_key` (`crates/tsz-solver/src/relations/subtype/helpers.rs:156`)
    and `RelationFlags` (`crates/tsz-solver/src/types.rs:285`) so callback-mode
    results don't poison non-callback slots.
 
-5. **Suppress at the outer level.** When a callback-pair param is detected,
+6. **Suppress at the outer level.** When a callback-pair param is detected,
    skip the existing bivariant covariant-retry — the recursion's swapped
    `compareSignaturesRelated(targetSig, sourceSig)` call is the only
    direction that should run.
@@ -90,22 +91,36 @@ must achieve. Confirmed against `_tsc.js` from the pinned submodule
 | --- | --- | --- | --- | --- |
 | f1 (P<A>/P<B>) | b=a | error | error | already works (variance shortcut) |
 | f2 (Promise) | b=a | error | error | already works |
-| f11 (AList1) | b=a | error | **silent** | (2)+(5): callback-pair detection + outer suppression |
-| f12 (AList2) | b=a | error | **silent** | (2)+(5): return-type mismatch surfaces under strict contravariant |
-| f13 (AList3) | b=a | error | **silent** | (2)+(5): arity mismatch surfaces |
-| f14 (AList4) | b=a only | error | **silent** | (2)+(3)+(5): needs `BivariantCallback` return so a=b stays accepted |
-| Bivar1/Bivar2 | both ok | ok | ok | (1) is required: without it, naive (5) emits two false positives |
+| f11 (AList1) | b=a | error | error | callback-pair detection + outer suppression |
+| f12 (AList2) | b=a | error | error | reverse callback return check avoids `void` shortcut |
+| f13 (AList3) | b=a | error | error | callback-mode arity mismatch surfaces |
+| f14 (AList4) | b=a only | error | error | `BivariantCallback` return keeps a=b accepted |
+| Bivar1/Bivar2 | both ok | ok | ok | generic-arg guard avoids false positives |
 | sx=sy (same SetLike1) | error | error | error | already works (alias-variance shortcut) |
-| s1=s2 (different aliases) | error | **silent** | (2)+(5): get() return contravariance surfaces |
-| s2=s1 | ok | ok | (1)+(2)+(5): without (1), naive fix emits a false positive |
+| s1=s2 (different aliases) | error | error | method return comparison stays strict |
+| s2=s1 | ok | ok | generic-arg guard avoids false positive |
 
 ## Files Touched
 
 - `docs/plan/claims/claude-brave-thompson-CRvN8.md` (this file)
+- `crates/tsz-solver/src/relations/subtype/rules/functions/mod.rs`
+- `crates/tsz-solver/src/relations/subtype/rules/functions/checking.rs`
+- `crates/tsz-solver/src/relations/subtype/rules/objects.rs`
+- `crates/tsz-solver/src/relations/subtype/rules/unions.rs`
+- `crates/tsz-solver/src/relations/subtype/core.rs`
+- `crates/tsz-checker/Cargo.toml`
+- `crates/tsz-checker/tests/covariant_callbacks_tests.rs`
 
 ## Verification
 
-- Manual reproducer above confirms 3-vs-8 gap.
+- Manual reproducer above emits the 8 expected diagnostics.
+- `cargo fmt --all --check`
+- `cargo check -p tsz-solver`
+- `cargo test -p tsz-solver test_variance_`
+- `cargo test -p tsz-solver relation_cache_config_tests`
+- `cargo test -p tsz-checker strict_callback_param_method_tests::callback_parameter_check_is_strict_even_when_inner_signature_is_method_like -- --nocapture`
+- `cargo test -p tsz-checker --test covariant_callbacks_tests`
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter covariantCallbacks --verbose`
 - Submodule initialized via `scripts/session/quick-pick.sh`'s
   `init_typescript_submodule` path (auto-fallback from shallow to full
   clone, see `scripts/session/pick.py:91-117`).
