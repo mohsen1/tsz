@@ -493,6 +493,10 @@ impl<'a> CheckerState<'a> {
         if name_ident.escaped_text != "concat" {
             return false;
         }
+        let receiver_type = self.get_type_of_node(access.expression);
+        if array_element_type_for_type(self.ctx.types, receiver_type).is_none() {
+            return false;
+        }
 
         let Some(args) = &call.arguments else {
             return false;
