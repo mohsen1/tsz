@@ -58,4 +58,4 @@ regression test for the invariant.
 - `cargo nextest run --package tsz-checker --lib architecture_contract_tests_src::test_no_push_diagnostic_outside_error_reporter architecture_contract_tests_src::test_solver_imports_go_through_query_boundaries architecture_contract_tests_src::test_no_inline_type_queries_in_cleaned_modules`
 - `./scripts/conformance/conformance.sh run --filter "mappedTypeConstraints2" --verbose` -> `FINAL RESULTS: 1/1 passed (100.0%)`
 - `./scripts/conformance/conformance.sh run --max 200` -> `FINAL RESULTS: 200/200 passed (100.0%)`
-- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep FINAL` -> `FINAL RESULTS: 12451/12582 passed (99.0%)`
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep FINAL` -> `FINAL RESULTS: 12453/12582 passed (99.0%)`
