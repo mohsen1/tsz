@@ -1883,6 +1883,14 @@ impl<'a> CheckerState<'a> {
         if identifier.escaped_text != "Partial" {
             return false;
         }
+        let TypeSymbolResolution::Type(partial_sym) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return false;
+        };
+        if !self.ctx.symbol_is_from_actual_lib(partial_sym) {
+            return false;
+        }
         let Some(type_args) = &type_ref.type_arguments else {
             return false;
         };
