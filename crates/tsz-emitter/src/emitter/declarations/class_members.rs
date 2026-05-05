@@ -1082,9 +1082,13 @@ impl<'a> Printer<'a> {
                 self.write("writable: true,");
                 self.write_line();
                 self.write("value: ");
-                self.with_scoped_static_initializer_context_cleared(|this| {
-                    this.emit_expression(*init_idx);
-                });
+                if init_idx.is_none() {
+                    self.write("void 0");
+                } else {
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_expression(*init_idx);
+                    });
+                }
                 self.write_line();
                 self.decrease_indent();
                 self.write("});");
@@ -1098,9 +1102,13 @@ impl<'a> Printer<'a> {
                     self.write(name);
                 }
                 self.write(" = ");
-                self.with_scoped_static_initializer_context_cleared(|this| {
-                    this.emit_expression(*init_idx);
-                });
+                if init_idx.is_none() {
+                    self.write("void 0");
+                } else {
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_expression(*init_idx);
+                    });
+                }
                 self.write(";");
                 // Emit trailing comments from the original class field.
                 // If pre-collected (field appeared before constructor in source), use them.
