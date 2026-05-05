@@ -180,3 +180,37 @@ fn automatic_inline_spread_es2018() {
         "ES2018+ automatic mode should NOT use Object.assign, got: {output}"
     );
 }
+
+/// Regression: a JSX spread child whose argument is wrapped in parens for
+/// an erased type cast (`(x as any)`) must emit as `...x`, not `...(x)`.
+/// tsc strips the parens because they only existed to delimit the cast.
+#[test]
+fn classic_spread_child_unwraps_erased_type_cast_parens() {
+    let source = "declare const Todo: any;\nconst el = <div>{...(<Todo /> as any)}</div>;";
+    let output = emit_jsx(source, JsxEmit::React, ScriptTarget::ES2015);
+    assert!(
+        output.contains("...React.createElement(Todo,"),
+        "Spread JSX child must unwrap parens around erased type cast.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("...(React.createElement(Todo,"),
+        "Spread JSX child must not keep the now-unnecessary outer parens.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: a spread of a plain parenthesized expression (without a
+/// cast) also unwraps. `...(expr)` is equivalent to `...expr`, and tsc
+/// emits the unparenthesized form.
+#[test]
+fn classic_spread_child_unwraps_plain_parentheses() {
+    let source = "declare const arr: any[];\nconst el = <div>{...(arr)}</div>;";
+    let output = emit_jsx(source, JsxEmit::React, ScriptTarget::ES2015);
+    assert!(
+        output.contains("...arr"),
+        "Spread JSX child should unwrap redundant outer parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("...(arr)"),
+        "Redundant outer parens must not survive.\nOutput:\n{output}"
+    );
+}
