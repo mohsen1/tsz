@@ -746,7 +746,7 @@ impl<'a> CheckerState<'a> {
             )
         });
         if needs_downgrade {
-            let src_str = self.format_type_for_assignability_message(source);
+            let src_str = "this".to_string();
             let tgt_str = self.format_type_for_assignability_message(target);
             let (src_str, tgt_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);

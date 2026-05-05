@@ -1,6 +1,7 @@
 //! Helpers for the expression type computation dispatcher.
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -9,6 +10,93 @@ use tsz_solver::TypeId;
 use super::dispatch::ExpressionDispatcher;
 
 impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
+    fn property_name_matches_atom(&self, name_idx: NodeIndex, target: Atom) -> bool {
+        let Some(name_node) = self.checker.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        let resolved = self.checker.ctx.types.resolve_atom_ref(target);
+        let target_str: &str = &resolved;
+        if let Some(ident) = self.checker.ctx.arena.get_identifier(name_node) {
+            return ident.escaped_text.as_str() == target_str;
+        }
+        if let Some(literal) = self.checker.ctx.arena.get_literal(name_node) {
+            return literal.text.as_str() == target_str;
+        }
+        false
+    }
+
+    pub(crate) fn object_literal_this_property_blocks_assertion_overlap(
+        &mut self,
+        expr_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> bool {
+        let expr_idx = self
+            .checker
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(expr_idx);
+        let Some(expr_node) = self.checker.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let target_type = self.checker.evaluate_type_for_assignability(target_type);
+        let Some(target_shape) = crate::query_boundaries::common::object_shape_for_type(
+            self.checker.ctx.types,
+            target_type,
+        ) else {
+            return false;
+        };
+        let Some(lit_data) = self.checker.ctx.arena.get_literal_expr(expr_node) else {
+            return false;
+        };
+
+        let mut has_incompatible_this_property = false;
+        let mut has_other_compatible_common_property = false;
+        for &elem_idx in &lit_data.elements.nodes {
+            let Some(elem_node) = self.checker.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let Some(prop) = self.checker.ctx.arena.get_property_assignment(elem_node) else {
+                continue;
+            };
+            let Some(target_prop) = target_shape
+                .properties
+                .iter()
+                .find(|target_prop| self.property_name_matches_atom(prop.name, target_prop.name))
+            else {
+                continue;
+            };
+
+            let prop_type = self.checker.get_type_of_node(prop.initializer);
+            let prop_compatible = self
+                .checker
+                .is_assignable_for_type_assertion_overlap(prop_type, target_prop.type_id)
+                || self
+                    .checker
+                    .is_assignable_for_type_assertion_overlap(target_prop.type_id, prop_type);
+
+            let value_is_this_keyword = self
+                .checker
+                .ctx
+                .arena
+                .get(prop.initializer)
+                .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16);
+            if value_is_this_keyword && !prop_compatible {
+                has_incompatible_this_property = true;
+            } else if prop_compatible {
+                has_other_compatible_common_property = true;
+            }
+        }
+
+        has_incompatible_this_property && !has_other_compatible_common_property
+    }
+
     /// TS1355: Check that an expression is a valid target for `as const`.
     pub(crate) fn check_const_assertion_expression(&mut self, expr_idx: NodeIndex) {
         if self.is_valid_const_assertion_arg(expr_idx) {

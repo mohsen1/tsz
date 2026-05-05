@@ -51,6 +51,51 @@ class C5 {
 }
 
 #[test]
+fn ts2352_object_literal_this_property_assertion_uses_class_instance_overlap() {
+    let diags = check_source_diagnostics(
+        r#"
+namespace M {
+    export interface I {
+        works: () => R;
+        alsoWorks: () => R;
+        doesntWork: () => R;
+    }
+
+    export interface R {
+        anything: number;
+        oneI: I;
+    }
+
+    export class C implements I {
+        constructor(public x: number) {}
+        works(): R {
+            return <R>({ anything: 1 });
+        }
+        doesntWork(): R {
+            return { anything: 1, oneI: this };
+        }
+        worksToo(): R {
+            return <R>({ oneI: this });
+        }
+    }
+}
+"#,
+    );
+    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "Expected one TS2352 for object-literal assertion with non-overlapping `this` property, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        matching[0].message_text.contains("to type 'R'"),
+        "Expected TS2352 target display to preserve `R`, got: {:?}",
+        matching[0].message_text
+    );
+}
+
+#[test]
 fn ts2352_angle_bracket_type_display_no_trailing_gt() {
     // For `<T>expr`, the type node span may include `>` — verify it's stripped
     let diags = check_source_diagnostics(

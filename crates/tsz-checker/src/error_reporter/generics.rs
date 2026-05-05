@@ -379,6 +379,16 @@ impl<'a> CheckerState<'a> {
         Some((source, target))
     }
 
+    fn assertion_object_literal_source_display(
+        &mut self,
+        idx: NodeIndex,
+        target_type: TypeId,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        let assertion = self.ctx.arena.get_type_assertion(node)?;
+        self.object_literal_source_type_display(assertion.expression, Some(target_type))
+    }
+
     // =========================================================================
     // Generic Type Errors
     // =========================================================================
@@ -586,7 +596,9 @@ impl<'a> CheckerState<'a> {
             self.try_format_type_assertion_overlap_special_display(source_type, true);
         let target_special =
             self.try_format_type_assertion_overlap_special_display(target_type, false);
-        let source_str = self.format_type_assertion_overlap_display(source_type, true);
+        let source_str = self
+            .assertion_object_literal_source_display(idx, target_type)
+            .unwrap_or_else(|| self.format_type_assertion_overlap_display(source_type, true));
         let target_str = self.format_type_assertion_overlap_display(target_type, false);
         let (source_str, target_str) = if source_special.is_some()
             || target_special.is_some()
