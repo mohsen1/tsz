@@ -810,6 +810,10 @@ impl<'a> CheckerState<'a> {
     ) {
         let ts1262_code =
             crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE;
+        // Text fallback only runs when the AST path emitted nothing. After the
+        // break removal above, the AST path emits for every qualifying binding,
+        // so this early-return is still correct: if any TS1262 was produced by
+        // the AST path, there is nothing more for the text scan to add.
         if self
             .ctx
             .diagnostics
