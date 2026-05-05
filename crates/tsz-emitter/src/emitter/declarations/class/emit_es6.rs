@@ -4,8 +4,10 @@ use super::replace_identifier;
 use super::{AutoAccessorInfo, StaticFieldInit};
 use crate::emitter::core::PrivateMemberInfo;
 use crate::transforms::private_fields_es5::{
-    PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo, collect_private_accessors,
-    collect_private_fields, collect_private_methods, get_private_field_name, is_private_identifier,
+    PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo,
+    collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
+    collect_private_fields_with_reserved, collect_private_methods_with_reserved,
+    get_private_field_name, is_private_identifier, make_unique_private_name,
 };
 use std::sync::Arc;
 use tsz_parser::parser::node::{Node, NodeAccess};
@@ -281,18 +283,38 @@ impl<'a> Printer<'a> {
         // Private field lowering: when target < ES2022, transform #fields to WeakMap pattern
         let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
             && self.ctx.options.target != ScriptTarget::ESNext;
+        let mut used_private_names = if needs_private_field_lowering {
+            collect_enclosing_source_binding_names(self.arena, _idx)
+        } else {
+            rustc_hash::FxHashSet::default()
+        };
         let private_fields: Vec<PrivateFieldInfo> = if needs_private_field_lowering {
-            collect_private_fields(self.arena, _idx, &class_name)
+            collect_private_fields_with_reserved(
+                self.arena,
+                _idx,
+                &class_name,
+                &mut used_private_names,
+            )
         } else {
             Vec::new()
         };
         let private_methods: Vec<PrivateMethodInfo> = if needs_private_field_lowering {
-            collect_private_methods(self.arena, _idx, &class_name)
+            collect_private_methods_with_reserved(
+                self.arena,
+                _idx,
+                &class_name,
+                &mut used_private_names,
+            )
         } else {
             Vec::new()
         };
         let private_accessors: Vec<PrivateAccessorInfo> = if needs_private_field_lowering {
-            collect_private_accessors(self.arena, _idx, &class_name)
+            collect_private_accessors_with_reserved(
+                self.arena,
+                _idx,
+                &class_name,
+                &mut used_private_names,
+            )
         } else {
             Vec::new()
         };
@@ -301,7 +323,10 @@ impl<'a> Printer<'a> {
         let has_instance_methods_or_accessors = private_methods.iter().any(|m| !m.is_static)
             || private_accessors.iter().any(|a| !a.is_static);
         let instances_weakset_name = if has_instance_methods_or_accessors {
-            Some(format!("_{class_name}_instances"))
+            Some(make_unique_private_name(
+                &format!("_{class_name}_instances"),
+                &mut used_private_names,
+            ))
         } else {
             None
         };
