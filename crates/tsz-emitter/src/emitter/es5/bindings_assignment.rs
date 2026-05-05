@@ -1020,10 +1020,26 @@ impl<'a> Printer<'a> {
         // Also check if the RHS is a destructuring assignment with an empty pattern,
         // which reduces to just the inner RHS (e.g., `{} = a` evaluates to `a`).
         let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
-        let is_simple = self
+        let mut is_simple = self
             .arena
             .get(effective_right_idx)
             .is_some_and(|n| n.is_identifier());
+
+        // `({ foo, bar } = foo)` — when the LHS reassigns the same identifier
+        // we'd be reading from on the RHS, the second access (`bar = foo.bar`)
+        // sees the clobbered value. Force a temp so `_a = foo, foo = _a.foo,
+        // bar = _a.bar` captures the original RHS first.
+        if is_simple {
+            let rhs_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                effective_right_idx,
+            );
+            if !rhs_name.is_empty()
+                && self.assignment_lhs_reassigns_identifier(left_node, &rhs_name)
+            {
+                is_simple = false;
+            }
+        }
 
         // Count elements to determine if we need a temp for complex sources.
         // TypeScript creates a temp for non-identifier sources when there are 2+ elements
@@ -1125,6 +1141,74 @@ impl<'a> Printer<'a> {
                 self.emit_node_default(left_node, right_idx);
             }
         }
+    }
+
+    /// Walk the LHS of a destructuring assignment and return true if any
+    /// assignment target is the identifier `name`. Used to detect cases like
+    /// `({ foo, bar } = foo)` where reading `foo.bar` after assigning to
+    /// `foo` would observe the clobbered value.
+    fn assignment_lhs_reassigns_identifier(&self, lhs: &Node, name: &str) -> bool {
+        // Object literal: `{ foo, bar }` or `{ x: foo }`
+        if lhs.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(lhs) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                match elem_node.kind {
+                    k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                        .arena
+                        .get_shorthand_property(elem_node)
+                        .is_some_and(|sp| {
+                            crate::transforms::emit_utils::identifier_text_or_empty(
+                                self.arena, sp.name,
+                            ) == name
+                        }),
+                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                        .arena
+                        .get_property_assignment(elem_node)
+                        .is_some_and(|prop| {
+                            self.arena.get(prop.initializer).is_some_and(|init| {
+                                self.assignment_lhs_reassigns_identifier(init, name)
+                            })
+                        }),
+                    k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                        self.arena.get_spread(elem_node).is_some_and(|sp| {
+                            crate::transforms::emit_utils::identifier_text_or_empty(
+                                self.arena,
+                                sp.expression,
+                            ) == name
+                        })
+                    }
+                    _ => false,
+                }
+            });
+        }
+        // Array literal: `[a, b]` or `[a = init, ...rest]`
+        if lhs.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(lhs) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                if elem_node.is_identifier() {
+                    return crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena, elem_idx,
+                    ) == name;
+                }
+                self.assignment_lhs_reassigns_identifier(elem_node, name)
+            });
+        }
+        // Bare identifier target (rare in destructuring pattern position
+        // but exhaustively covered).
+        if lhs.is_identifier() {
+            return false; // handled by parent walks
+        }
+        false
     }
 
     pub(in crate::emitter) fn assignment_pattern_has_object_rest(&self, idx: NodeIndex) -> bool {
