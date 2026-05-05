@@ -27,3 +27,4 @@ layer, and add a focused Rust regression test for the invariant.
 
 - Passed: `CARGO_TARGET_DIR=target-3399 CARGO_BUILD_JOBS=1 cargo nextest run -p tsz-checker --test conditional_infer_tests recursive_conditional_index_access_does_not_report_property_missing nested_tuple_rest_infer_result_satisfies_array_constraint`
 - Blocked: target conformance runner build was interrupted by local build-output cleanup/SIGTERM before a stable `tsz` binary could be produced for `recursiveConditionalTypes`; PR remains draft WIP until the target conformance check is rerun successfully.
+- Additional blocked attempt: `cargo build -j 1 --target-dir /var/tmp/tsz-target-3399-one --profile dist-fast -p tsz-cli --bin tsz` exited without a Rust diagnostic while compiling `tsz-binder`, and `/var/tmp/tsz-target-3399-one` was removed before a `tsz` binary was produced.
