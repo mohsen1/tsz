@@ -8,7 +8,7 @@ use super::duplicate_identifiers::{DuplicateDeclarationOrigin, OuterDeclResult};
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
-use tsz_binder::symbol_flags;
+use tsz_binder::{ContainerKind, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -1019,6 +1019,28 @@ impl<'a> CheckerState<'a> {
         }
 
         declarations
+    }
+
+    pub(super) fn symbol_is_current_file_top_level_script_declaration(
+        &self,
+        name: &str,
+        sym_id: SymbolId,
+    ) -> bool {
+        if self.ctx.binder.is_external_module() {
+            return false;
+        }
+
+        if let Some(root_scope) = self.ctx.binder.scopes.first()
+            && root_scope.kind == ContainerKind::SourceFile
+        {
+            return root_scope.table.get(name).is_some_and(|id| id == sym_id);
+        }
+
+        self.ctx
+            .binder
+            .file_locals
+            .get(name)
+            .is_some_and(|id| id == sym_id)
     }
 
     /// Detect conflicts between a global script's block-scoped variable declaration

@@ -144,3 +144,23 @@ fn cross_file_let_vs_remote_const_uses_ts2451() {
         "let-vs-remote-const conflict at script scope must emit TS2451; got: {bar_diags:?}"
     );
 }
+
+#[test]
+fn namespace_variable_members_do_not_conflict_with_cross_file_globals() {
+    let globals = "const exportedName = 1;\nconst localName = 2;\n";
+    let members = "namespace Box {\n  export const exportedName = \"x\";\n  const localName = \"y\";\n  const exportedUse: string = exportedName;\n  const localUse: string = localName;\n}\n\nconst globalUse: number = 1;\n";
+
+    let diags = compile_script_files(&[("globals.ts", globals), ("members.ts", members)], 1);
+    let false_redecls: Vec<_> = diags
+        .iter()
+        .filter(|(code, msg, _)| {
+            matches!(*code, 2300 | 2451)
+                && (msg.contains("'exportedName'") || msg.contains("'localName'"))
+        })
+        .collect();
+
+    assert!(
+        false_redecls.is_empty(),
+        "namespace members must not be compared against remote script globals; got: {false_redecls:?}. All diagnostics: {diags:?}"
+    );
+}

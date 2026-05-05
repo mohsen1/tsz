@@ -171,8 +171,13 @@ impl<'a> CheckerState<'a> {
             };
             let module_augmentation_declarations = self
                 .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let script_scope_declarations =
-                self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let script_scope_declarations = if self
+                .symbol_is_current_file_top_level_script_declaration(&symbol.escaped_name, sym_id)
+            {
+                self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name)
+            } else {
+                Vec::new()
+            };
             let global_scope_declarations =
                 self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
             let jsx_runtime_conflict_declarations =
@@ -320,8 +325,13 @@ impl<'a> CheckerState<'a> {
             };
             let module_augmentation_declarations = self
                 .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let script_scope_declarations =
-                self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let script_scope_declarations = if self
+                .symbol_is_current_file_top_level_script_declaration(&symbol.escaped_name, sym_id)
+            {
+                self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name)
+            } else {
+                Vec::new()
+            };
             let global_scope_declarations =
                 self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
             let jsx_runtime_conflict_declarations =
