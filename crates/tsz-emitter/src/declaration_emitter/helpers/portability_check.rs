@@ -315,8 +315,10 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(from_path) =
                             self.check_nested_transitive_import(type_sym_id, binder)
                     {
+                        let type_name =
+                            Self::canonical_import_alias_reference_name(binder, type_sym_id, ident);
                         self.emit_non_portable_named_reference_diagnostic(
-                            decl_name, file, pos, length, &from_path, ident,
+                            decl_name, file, pos, length, &from_path, type_name,
                         );
                         return;
                     }
@@ -330,8 +332,14 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(from_path) =
                             self.transitive_dependency_from_import(source_path, &import_module)
                     {
+                        let type_name = self
+                            .find_symbol_in_arena_by_name(source_arena, ident)
+                            .map(|sym_id| {
+                                Self::canonical_import_alias_reference_name(binder, sym_id, ident)
+                            })
+                            .unwrap_or(ident);
                         self.emit_non_portable_named_reference_diagnostic(
-                            decl_name, file, pos, length, &from_path, ident,
+                            decl_name, file, pos, length, &from_path, type_name,
                         );
                         return;
                     }
@@ -425,13 +433,13 @@ impl<'a> DeclarationEmitter<'a> {
                         &mut visited_declaration_symbols,
                         &mut visited_nodes,
                     ) {
-                        self.emit_non_portable_named_reference_diagnostic(
-                            decl_name,
-                            file,
-                            pos,
-                            length,
-                            &from_path,
+                        let type_name = Self::canonical_import_alias_reference_name(
+                            binder,
+                            type_sym_id,
                             &type_name_text,
+                        );
+                        self.emit_non_portable_named_reference_diagnostic(
+                            decl_name, file, pos, length, &from_path, type_name,
                         );
                         return;
                     }
@@ -445,13 +453,13 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(from_path) =
                         self.check_nested_transitive_import(type_sym_id, binder)
                     {
-                        self.emit_non_portable_named_reference_diagnostic(
-                            decl_name,
-                            file,
-                            pos,
-                            length,
-                            &from_path,
+                        let type_name = Self::canonical_import_alias_reference_name(
+                            binder,
+                            type_sym_id,
                             &type_name_text,
+                        );
+                        self.emit_non_portable_named_reference_diagnostic(
+                            decl_name, file, pos, length, &from_path, type_name,
                         );
                         return;
                     }
@@ -673,6 +681,18 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn canonical_import_alias_reference_name<'b>(
+        binder: &'b BinderState,
+        sym_id: SymbolId,
+        fallback: &'b str,
+    ) -> &'b str {
+        binder
+            .symbols
+            .get(sym_id)
+            .and_then(|symbol| symbol.import_name.as_deref())
+            .unwrap_or(fallback)
     }
 
     pub(in crate::declaration_emitter) fn matching_module_export_paths<'b>(

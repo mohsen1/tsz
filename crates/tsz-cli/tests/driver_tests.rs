@@ -659,6 +659,74 @@ export const y = bar();
 }
 
 #[test]
+fn declaration_emit_aliased_transitive_import_reports_single_canonical_ts2883() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("r/node_modules/foo/node_modules/nested/index.d.ts"),
+        "export interface NestedProps {}\n",
+    );
+    write_file(
+        &base.join("r/node_modules/foo/index.d.ts"),
+        r#"import { NestedProps as NP } from "nested";
+export function foo(): [NP];
+"#,
+    );
+    write_file(
+        &base.join("r/entry.ts"),
+        r#"import { foo } from "foo";
+export const x = foo();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "declaration": true
+  },
+  "files": ["r/entry.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2883_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2883)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert_eq!(
+        ts2883_messages.len(),
+        1,
+        "expected one TS2883 diagnostic for aliased nested tuple return reference, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages[0].contains("NestedProps"),
+        "expected TS2883 to name canonical NestedProps, got: {}",
+        ts2883_messages[0]
+    );
+    assert!(
+        !ts2883_messages[0].contains("'NP'"),
+        "did not expect TS2883 to name local alias NP, got: {}",
+        ts2883_messages[0]
+    );
+
+    if let Ok(dts) = fs::read_to_string(base.join("r/entry.d.ts")) {
+        assert!(
+            !dts.contains("[NP]"),
+            "did not expect declaration output to reference unbound alias NP: {dts}"
+        );
+    }
+}
+
+#[test]
 fn declaration_emit_reports_non_serializable_foreign_unique_symbol_property() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
