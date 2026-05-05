@@ -377,6 +377,18 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.import_clause_is_empty_named_import(clause) {
+            if !(self.ctx.options.verbatim_module_syntax || self.source_is_js_file) {
+                return;
+            }
+
+            self.write("import {} from ");
+            self.emit_module_specifier(import.module_specifier);
+            self.emit_import_attributes(import.attributes);
+            self.write_semicolon();
+            return;
+        }
+
         let mut has_default = false;
         let mut namespace_name = None;
         let mut value_specs = Vec::new();
