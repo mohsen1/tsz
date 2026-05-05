@@ -54,7 +54,7 @@ pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
         }
 
         // Check if it is an exact <reference> tag with a path attribute.
-        if !is_triple_slash_directive_tag(trimmed, "reference") || !trimmed.contains("path=") {
+        if !is_triple_slash_directive_tag(trimmed, "reference") {
             continue;
         }
 
@@ -111,7 +111,6 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
 
         if !past_prologue
             && is_triple_slash_directive_tag(trimmed, "reference")
-            && trimmed.contains("types=")
             && let Some((name, value_offset_in_line)) =
                 extract_quoted_attr_with_offset(line, "types")
         {
@@ -166,7 +165,7 @@ pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
         }
 
         // Check if it is an exact <amd-module> tag with a name attribute.
-        if !is_triple_slash_directive_tag(trimmed, "amd-module") || !trimmed.contains("name=") {
+        if !is_triple_slash_directive_tag(trimmed, "amd-module") {
             continue;
         }
 
@@ -226,8 +225,7 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
             let has_valid_path = extract_quoted_attr(trimmed, "path").is_some();
             let has_valid_types = extract_quoted_attr(trimmed, "types").is_some();
             let has_valid_lib = extract_quoted_attr(trimmed, "lib").is_some();
-            let has_valid_no_default = trimmed.contains("no-default-lib=")
-                && extract_quoted_attr(trimmed, "no-default-lib").is_some();
+            let has_valid_no_default = extract_quoted_attr(trimmed, "no-default-lib").is_some();
 
             if !has_valid_path && !has_valid_types && !has_valid_lib && !has_valid_no_default {
                 // It looks like a reference directive but has invalid syntax
@@ -272,7 +270,7 @@ fn is_triple_slash_directive_tag(trimmed: &str, tag: &str) -> bool {
 
 /// Extract the value of a named attribute from a reference directive line.
 fn extract_quoted_attr(line: &str, attr: &str) -> Option<String> {
-    let idx = line.find(attr)?;
+    let idx = find_directive_attr_assignment(line, attr)?;
     let after_attr = &line[idx + attr.len()..];
 
     let eq_idx = after_attr.find('=')?;
@@ -297,7 +295,7 @@ fn extract_quoted_path_with_offset(line: &str) -> Option<(String, usize)> {
 
 /// Extract the value and byte offset of the value start (after the opening quote).
 fn extract_quoted_attr_with_offset(line: &str, attr: &str) -> Option<(String, usize)> {
-    let attr_idx = line.find(attr)?;
+    let attr_idx = find_directive_attr_assignment(line, attr)?;
     let after_attr = &line[attr_idx + attr.len()..];
 
     let eq_idx = after_attr.find('=')?;
@@ -316,6 +314,29 @@ fn extract_quoted_attr_with_offset(line: &str, attr: &str) -> Option<(String, us
     let after_open_quote = &trimmed[1..];
     let end_pos = after_open_quote.find(first_char)?;
     Some((after_open_quote[..end_pos].to_string(), value_offset))
+}
+
+fn find_directive_attr_assignment(line: &str, attr: &str) -> Option<usize> {
+    for (idx, _) in line.match_indices(attr) {
+        let prev_is_attr_name = line[..idx]
+            .chars()
+            .next_back()
+            .is_some_and(is_directive_attr_name_char);
+        if prev_is_attr_name {
+            continue;
+        }
+
+        let after_attr = &line[idx + attr.len()..];
+        let leading_ws = after_attr.len() - after_attr.trim_start().len();
+        if after_attr[leading_ws..].starts_with('=') {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+fn is_directive_attr_name_char(ch: char) -> bool {
+    ch == '-' || ch == '_' || ch.is_ascii_alphanumeric()
 }
 
 /// Check if a referenced file exists relative to the source file

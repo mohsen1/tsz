@@ -369,6 +369,44 @@ export const amdCase = 1;
 }
 
 #[test]
+fn compile_triple_slash_reference_rejects_prefixed_path_attribute() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("extra.d.ts"),
+        r#"declare const extraGlobal: number;
+"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"/// <reference notpath="./extra.d.ts" />
+extraGlobal.toFixed();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 1084),
+        "Expected TS1084 for invalid reference directive syntax, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_import_elision_ignores_string_and_block_comment_text() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
