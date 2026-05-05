@@ -1,8 +1,8 @@
 # [WIP] fix(checker): preserve TS union display order for constructor guard errors
 
 - **Date**: 2026-05-05
-- **Branch**: `conformance/quick-pick-20260505-next11`
-- **PR**: #2911
+- **Branch**: `conformance/quick-pick-20260505-next12`
+- **PR**: TBD (follow-up to #2911)
 - **Status**: claimed
 - **Workstream**: 1 (Diagnostic conformance)
 
