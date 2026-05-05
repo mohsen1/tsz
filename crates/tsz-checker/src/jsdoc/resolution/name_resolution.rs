@@ -1312,6 +1312,9 @@ impl<'a> CheckerState<'a> {
             if file_idx == self.ctx.current_file_idx {
                 continue;
             }
+            if binder.is_external_module() {
+                continue;
+            }
             if let Some(sym_id) = binder.file_locals.get(root_name) {
                 return Some((sym_id, file_idx));
             }

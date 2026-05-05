@@ -530,6 +530,10 @@ name = "jsdoc_class_template_cross_comment_tests"
 path = "tests/jsdoc_class_template_cross_comment_tests.rs"
 
 [[test]]
+name = "jsdoc_cross_file_typedef_tests"
+path = "tests/jsdoc_cross_file_typedef_tests.rs"
+
+[[test]]
 name = "override_intersection_display_tests"
 path = "tests/override_intersection_display_tests.rs"
 
