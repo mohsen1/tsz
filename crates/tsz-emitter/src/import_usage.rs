@@ -52,11 +52,11 @@ fn skip_ascii_ws(bytes: &[u8], mut i: usize) -> usize {
     i
 }
 
-fn is_ident_start(byte: u8) -> bool {
+const fn is_ident_start(byte: u8) -> bool {
     byte == b'_' || byte == b'$' || byte.is_ascii_alphabetic()
 }
 
-fn is_ident_continue(byte: u8) -> bool {
+const fn is_ident_continue(byte: u8) -> bool {
     is_ident_start(byte) || byte.is_ascii_digit()
 }
 
