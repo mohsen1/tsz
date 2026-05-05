@@ -122,11 +122,11 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16
-            || !self
+            || self
                 .ctx
                 .arena
                 .get_identifier(node)
-                .is_some_and(|ident| ident.escaped_text == "NaN")
+                .is_none_or(|ident| ident.escaped_text != "NaN")
         {
             return false;
         }
