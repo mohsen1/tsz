@@ -1,3 +1,4 @@
+mod anonymous_default;
 mod export_default_parens;
 
 use super::super::{ModuleKind, Printer, ScriptTarget};
@@ -288,8 +289,7 @@ impl<'a> Printer<'a> {
         // `exportDefaultInterfaceAndTwoFunctions`) but tsc still emits each
         // with its own counter rather than colliding on a single name.
         let is_function = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
-        self.next_anonymous_default_index += 1;
-        let synthetic_name = format!("default_{}", self.next_anonymous_default_index);
+        let synthetic_name = self.next_anonymous_default_export_name();
         let prev = self.anonymous_default_export_name.take();
         self.anonymous_default_export_name = Some(synthetic_name.clone());
         if is_function {
@@ -356,19 +356,19 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let temp_name = self.next_anonymous_default_export_name();
         if let Some(output) =
-            self.render_simple_tc39_decorated_class_es5(node, class_node, "default_1", "default")
+            self.render_simple_tc39_decorated_class_es5(node, class_node, &temp_name, "default")
         {
             self.write(&output);
             self.write_line();
             self.write_export_binding_start("default");
-            self.write("default_1");
+            self.write(&temp_name);
             self.write_export_binding_end();
             self.write_line();
             return;
         }
 
-        let temp_name = "default_1".to_string();
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter.set_indent_level(self.writer.indent_level());

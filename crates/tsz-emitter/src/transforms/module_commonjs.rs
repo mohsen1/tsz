@@ -1019,6 +1019,11 @@ pub fn collect_export_names_categorized(
     let mut anonymous_default_counter: u32 = 0;
     let all =
         collect_export_names_with_options(arena, statements, preserve_const_enums, type_only_nodes);
+    let mut reserved_default_names: FxHashSet<String> = arena
+        .identifiers
+        .iter()
+        .map(|ident| ident.escaped_text.clone())
+        .collect();
 
     // First pass: collect all function declaration names in the file (including
     // non-exported ones and `declare function` names) so we can resolve
@@ -1113,8 +1118,13 @@ pub fn collect_export_names_categorized(
                     !name.is_empty() && name != "function" && is_valid_identifier_name(name)
                 })
                 .unwrap_or_else(|| {
-                    anonymous_default_counter += 1;
-                    format!("default_{anonymous_default_counter}")
+                    loop {
+                        anonymous_default_counter += 1;
+                        let candidate = format!("default_{anonymous_default_counter}");
+                        if reserved_default_names.insert(candidate.clone()) {
+                            break candidate;
+                        }
+                    }
                 });
             default_func_exports.push(name);
         }
