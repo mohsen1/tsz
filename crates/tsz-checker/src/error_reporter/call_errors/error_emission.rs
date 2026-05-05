@@ -156,13 +156,16 @@ impl<'a> CheckerState<'a> {
                 argument_idx: idx,
             },
         );
-        let param_str = self.format_type_for_diagnostic_role(
+        let mut param_str = self.format_type_for_diagnostic_role(
             param_type,
             DiagnosticTypeDisplayRole::CallParameter {
                 argument: arg_type,
                 argument_idx: idx,
             },
         );
+        if arg_str.starts_with('{') && param_str.contains("<{") {
+            param_str = Self::widen_object_member_literals_inside_generic_display(&param_str);
+        }
         let (arg_str, param_str) =
             self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
         let message = format_message(
@@ -188,6 +191,81 @@ impl<'a> CheckerState<'a> {
         };
 
         self.emit_render_request(idx, request);
+    }
+
+    fn widen_object_member_literals_inside_generic_display(display: &str) -> String {
+        let bytes = display.as_bytes();
+        let mut out = String::with_capacity(display.len());
+        let mut i = 0;
+        let mut angle_depth = 0usize;
+        let mut object_depth = 0usize;
+
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            match ch {
+                '<' => {
+                    angle_depth += 1;
+                    out.push(ch);
+                    i += 1;
+                }
+                '>' => {
+                    angle_depth = angle_depth.saturating_sub(1);
+                    out.push(ch);
+                    i += 1;
+                }
+                '{' if angle_depth > 0 => {
+                    object_depth += 1;
+                    out.push(ch);
+                    i += 1;
+                }
+                '}' if object_depth > 0 => {
+                    object_depth -= 1;
+                    out.push(ch);
+                    i += 1;
+                }
+                ':' if angle_depth > 0 && object_depth > 0 => {
+                    out.push(ch);
+                    i += 1;
+                    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                        out.push(bytes[i] as char);
+                        i += 1;
+                    }
+                    if i >= bytes.len() {
+                        continue;
+                    }
+                    if bytes[i] == b'"' {
+                        i += 1;
+                        while i < bytes.len() {
+                            if bytes[i] == b'\\' {
+                                i = (i + 2).min(bytes.len());
+                                continue;
+                            }
+                            if bytes[i] == b'"' {
+                                i += 1;
+                                break;
+                            }
+                            i += 1;
+                        }
+                        out.push_str("string");
+                    } else if display[i..].starts_with("true") {
+                        i += 4;
+                        out.push_str("boolean");
+                    } else if display[i..].starts_with("false") {
+                        i += 5;
+                        out.push_str("boolean");
+                    } else {
+                        out.push(bytes[i] as char);
+                        i += 1;
+                    }
+                }
+                _ => {
+                    out.push(ch);
+                    i += 1;
+                }
+            }
+        }
+
+        out
     }
 
     /// Report an argument count mismatch error using solver diagnostics with source tracking.

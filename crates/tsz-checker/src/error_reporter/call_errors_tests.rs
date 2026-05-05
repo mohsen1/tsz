@@ -1102,6 +1102,40 @@ foo({ e: 1, m: 1 });
 }
 
 #[test]
+fn ts2345_missing_property_keeps_literal_key_but_widens_object_type_arg() {
+    let source = r#"
+interface ListProps<T, K extends keyof T> {
+    items: T[];
+    itemKey: K;
+    prop: number;
+}
+declare const Component: <T, K extends keyof T>(x: ListProps<T, K>) => void;
+Component({ items: [{ name: ' string' }], itemKey: 'name' });
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected exactly one TS2345, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "missing required property should suppress per-property TS2322, got: {diagnostics:?}"
+    );
+    let message = &ts2345[0].message_text;
+    assert!(
+        message.contains("Argument of type '{ items: { name: string; }[]; itemKey: \"name\"; }'"),
+        "TS2345 source display should widen nested object literals but preserve literal key, got: {message}"
+    );
+    assert!(
+        message.contains("parameter of type 'ListProps<{ name: string; }, \"name\">'"),
+        "TS2345 target display should widen the inferred object type argument, got: {message}"
+    );
+}
+
+#[test]
 fn ts2345_explicit_type_args_display_uses_correct_overload() {
     // When calling an overloaded method with explicit type arguments, the error
     // message should display the parameter type from the overload whose type
