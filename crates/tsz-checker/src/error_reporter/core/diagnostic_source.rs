@@ -124,6 +124,12 @@ impl<'a> CheckerState<'a> {
         // not the inner `{}` expression.
         let expr_idx = self.ctx.arena.skip_parenthesized(anchor_idx);
         let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind == syntax_kind_ext::RETURN_STATEMENT
+            && let Some(return_stmt) = self.ctx.arena.get_return_statement(node)
+            && return_stmt.expression.is_some()
+        {
+            return Some(return_stmt.expression);
+        }
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(binary) = self.ctx.arena.get_binary_expr(node)
             && self.is_assignment_operator(binary.operator_token)
@@ -973,7 +979,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    pub(in crate::error_reporter) fn object_literal_source_type_display(
+    pub(crate) fn object_literal_source_type_display(
         &mut self,
         expr_idx: NodeIndex,
         target: Option<TypeId>,
@@ -985,6 +991,12 @@ impl<'a> CheckerState<'a> {
         // the asserted type.
         let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind == syntax_kind_ext::RETURN_STATEMENT
+            && let Some(return_stmt) = self.ctx.arena.get_return_statement(node)
+            && return_stmt.expression.is_some()
+        {
+            return self.object_literal_source_type_display(return_stmt.expression, target);
+        }
         if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             return None;
         }
@@ -997,8 +1009,16 @@ impl<'a> CheckerState<'a> {
         let mut parts = Vec::new();
         for child_idx in literal.elements.nodes.iter().copied() {
             let child = self.ctx.arena.get(child_idx)?;
-            let prop = self.ctx.arena.get_property_assignment(child)?;
-            let name_node = self.ctx.arena.get(prop.name)?;
+            let (name_idx, value_idx) = if child.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                let prop = self.ctx.arena.get_property_assignment(child)?;
+                (prop.name, prop.initializer)
+            } else if child.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                let prop = self.ctx.arena.get_shorthand_property(child)?;
+                (prop.name, prop.name)
+            } else {
+                return None;
+            };
+            let name_node = self.ctx.arena.get(name_idx)?;
             let display_name = match name_node.kind {
                 k if k == tsz_scanner::SyntaxKind::Identifier as u16 => self
                     .ctx
@@ -1018,18 +1038,18 @@ impl<'a> CheckerState<'a> {
                 _ => return None,
             };
             let property_name = self
-                .get_property_name(prop.name)
+                .get_property_name(name_idx)
                 .map(|name| self.ctx.types.intern_string(&name));
             if self
                 .ctx
                 .arena
-                .get(prop.initializer)
+                .get(value_idx)
                 .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16)
             {
                 parts.push(format!("{display_name}: this"));
                 continue;
             }
-            let value_type = self.get_type_of_node(prop.initializer);
+            let value_type = self.get_type_of_node(value_idx);
             if value_type == TypeId::ERROR {
                 return None;
             }
@@ -1073,16 +1093,14 @@ impl<'a> CheckerState<'a> {
                     self.type_contains_string_literal(target_prop_type)
                 });
             if target_accepts_literal
-                && let Some(literal_display) = self.literal_expression_display(prop.initializer)
+                && let Some(literal_display) = self.literal_expression_display(value_idx)
             {
                 parts.push(format!("{display_name}: {literal_display}"));
                 continue;
             }
 
             // For nested object literals, recurse
-            if let Some(nested_display) =
-                self.object_literal_source_type_display(prop.initializer, None)
-            {
+            if let Some(nested_display) = self.object_literal_source_type_display(value_idx, None) {
                 parts.push(format!("{display_name}: {nested_display}"));
                 continue;
             }
@@ -1141,6 +1159,22 @@ impl<'a> CheckerState<'a> {
                     Some(merged)
                 })
                 .unwrap_or(value_type);
+            let value_display_type = if target_accepts_literal {
+                value_display_type
+            } else {
+                let widened = self.widen_type_for_display(value_display_type);
+                if crate::query_boundaries::common::is_template_literal_type(
+                    self.ctx.types,
+                    widened,
+                ) || crate::query_boundaries::common::is_string_intrinsic_type(
+                    self.ctx.types,
+                    widened,
+                ) {
+                    TypeId::STRING
+                } else {
+                    widened
+                }
+            };
             let widened_value_display_type =
                 self.widen_function_like_display_type(value_display_type);
             let value_display =
