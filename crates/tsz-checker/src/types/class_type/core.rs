@@ -346,7 +346,28 @@ impl<'a> CheckerState<'a> {
                         {
                             dt
                         } else if prop.initializer.is_some() {
-                            TypeId::ANY
+                            let init_node = self.ctx.arena.get(prop.initializer);
+                            if init_node.is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16) {
+                                self.ctx.types.this_type()
+                            } else if let (Some(current_sym), Some(init_node)) =
+                                (current_sym, init_node)
+                                && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                                && self
+                                    .ctx
+                                    .arena
+                                    .get_call_expr(init_node)
+                                    .and_then(|call| {
+                                        self.ctx.arena.get_identifier_at(call.expression)
+                                    })
+                                    .is_some_and(|ident| {
+                                        ident.escaped_text
+                                            == self.get_class_name_from_decl(class_idx)
+                                    })
+                            {
+                                self.ctx.create_lazy_type_ref(current_sym)
+                            } else {
+                                TypeId::ANY
+                            }
                         } else {
                             continue;
                         };
@@ -498,7 +519,11 @@ impl<'a> CheckerState<'a> {
 
             if !prescan_props.is_empty() || base_prescan_type.is_some() {
                 let own_prescan_type = if !prescan_props.is_empty() {
-                    Some(factory.object(prescan_props))
+                    Some(factory.object_with_index(ObjectShape {
+                        properties: prescan_props,
+                        symbol: current_sym,
+                        ..ObjectShape::default()
+                    }))
                 } else {
                     None
                 };

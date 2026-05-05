@@ -602,6 +602,17 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(access) = self.ctx.arena.get_access_expr(node) {
+            if self.is_this_expression(access.expression)
+                && self.ctx.enclosing_class.is_some()
+                && !self.is_this_in_nested_function_inside_class(call_expression)
+                && !self.is_this_in_static_class_member(call_expression)
+            {
+                return crate::query_boundaries::common::substitute_this_type_at_return_position(
+                    self.ctx.types,
+                    return_type,
+                    self.ctx.types.this_type(),
+                );
+            }
             let receiver_type = self.get_type_of_node(access.expression);
             if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
                 return crate::query_boundaries::common::substitute_this_type_at_return_position(

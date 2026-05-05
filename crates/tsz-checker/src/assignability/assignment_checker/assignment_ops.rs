@@ -1208,7 +1208,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // The RHS is not this-typed — emit TS2322
-        let source_display = self.format_type_for_assignability_message(right_type);
+        let mut source_display = self.format_type_for_assignability_message(right_type);
+        if source_display.contains(" & ")
+            && let Some((head, _)) = source_display.split_once(" & ")
+            && !head.contains('{')
+            && !head.contains('<')
+        {
+            source_display = head.to_string();
+        }
         self.error_at_node_msg(
             left_idx,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,

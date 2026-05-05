@@ -783,6 +783,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_of_node_with_request(elem_idx, &elem_request)
             };
+            if !self.ctx.in_destructuring_target
+                && elem_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+                && self.ctx.enclosing_class.is_some()
+                && !self.is_this_in_nested_function_inside_class(elem_idx)
+                && !self.is_this_in_static_class_member(elem_idx)
+            {
+                elem_type = self.ctx.types.this_type();
+            }
 
             if !self.ctx.in_destructuring_target
                 && (self.ctx.in_const_assertion || self.ctx.preserve_literal_types)
