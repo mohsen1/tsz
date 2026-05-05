@@ -203,6 +203,8 @@ impl<'a> Printer<'a> {
             self.write_line();
             self.decrease_indent();
             self.write("}");
+        } else if !body_is_block && self.arrow_concise_body_needs_temp_prologue(func.body) {
+            self.emit_arrow_concise_body_with_temp_prologue(func.body);
         } else if !body_is_block && self.concise_body_needs_parens(func.body) {
             // Emit comments between => and the body expression (e.g. triple-slash comments)
             if let Some(body_node) = self.arena.get(func.body) {
@@ -230,6 +232,44 @@ impl<'a> Printer<'a> {
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.pop_temp_scope();
+    }
+
+    fn arrow_concise_body_needs_temp_prologue(&self, body: NodeIndex) -> bool {
+        !self.ctx.options.target.supports_es2020()
+            && self.param_initializer_generates_hoisted_temp(body)
+    }
+
+    fn emit_arrow_concise_body_with_temp_prologue(&mut self, body: NodeIndex) {
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+        let hoist_offset = self.writer.len();
+        let hoist_line = self.writer.current_line();
+
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
+        self.function_scope_depth += 1;
+        self.write("return ");
+        self.emit(body);
+        self.write(";");
+        self.function_scope_depth -= 1;
+        self.emitting_function_body_block = prev_emitting_function_body_block;
+
+        if !self.hoisted_assignment_temps.is_empty() {
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let var_decl = format!(
+                "{}var {};",
+                indent,
+                self.hoisted_assignment_temps.join(", ")
+            );
+            self.writer
+                .insert_line_at(hoist_offset, hoist_line, &var_decl);
+            self.hoisted_assignment_temps.clear();
+        }
+
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
     }
 
     fn emit_arrow_function_native_with_default_prologue(
