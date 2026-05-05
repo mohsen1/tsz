@@ -762,6 +762,9 @@ impl<'a> FlowAnalyzer<'a> {
         if obj_text != "Array" {
             return None;
         }
+        if !self.is_builtin_global_reference(access.expression) {
+            return None;
+        }
 
         // Check if the property name is "isArray"
         let prop_text = self
@@ -804,6 +807,9 @@ impl<'a> FlowAnalyzer<'a> {
             .and_then(|node| self.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.as_str())?;
         if obj_text != "ArrayBuffer" {
+            return None;
+        }
+        if !self.is_builtin_global_reference(access.expression) {
             return None;
         }
 
@@ -869,6 +875,12 @@ impl<'a> FlowAnalyzer<'a> {
             },
             arg,
         ))
+    }
+
+    fn is_builtin_global_reference(&self, reference: NodeIndex) -> bool {
+        self.binder
+            .resolve_identifier(self.arena, reference)
+            .is_none_or(|symbol_id| self.binder.lib_symbol_ids.contains(&symbol_id))
     }
 
     /// Check if a call is `array.every(predicate)` where predicate has a type predicate.
