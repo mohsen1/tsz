@@ -666,6 +666,22 @@ impl<'a> CheckerState<'a> {
         Some(symbol.escaped_name.to_string())
     }
 
+    fn annotation_uses_module_local_array_type(&self, annotation: &str) -> bool {
+        let trimmed = annotation.trim_start();
+        if !trimmed.starts_with("Array<") || !self.ctx.binder.is_external_module() {
+            return false;
+        }
+
+        self.ctx
+            .binder
+            .file_locals
+            .get("Array")
+            .is_some_and(|sym_id| {
+                !self.ctx.symbol_is_from_actual_lib(sym_id)
+                    && self.symbol_has_declared_type_meaning(sym_id)
+            })
+    }
+
     fn property_receiver_display_for_node(&mut self, type_id: TypeId, idx: NodeIndex) -> String {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
@@ -733,6 +749,9 @@ impl<'a> CheckerState<'a> {
             // Skip annotations that contain inline object literal types
             // (`Required<{ a?: 1; x: 1 }>`) — those need the proper type
             // formatter to add `| undefined` for optional properties.
+            if self.annotation_uses_module_local_array_type(&annotation) {
+                return annotation.trim().to_string();
+            }
             return self.format_annotation_like_type(&annotation);
         }
         // When the receiver is a type alias whose body resolves to an Enum

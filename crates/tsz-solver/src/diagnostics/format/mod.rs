@@ -1347,7 +1347,12 @@ impl<'a> TypeFormatter<'a> {
                 // Skipped in constraint context (preserve_array_generic_form).
                 if app.args.len() == 1 && !self.preserve_array_generic_form {
                     let single_arg = app.args[0];
-                    if base_str == "Array" {
+                    if base_str == "Array"
+                        && self
+                            .interner
+                            .get_array_base_type()
+                            .is_some_and(|array_base| app.base == array_base)
+                    {
                         // Array<T> -> T[]
                         let elem_formatted = self.format(single_arg);
                         let needs_parens = matches!(
