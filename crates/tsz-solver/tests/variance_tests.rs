@@ -922,6 +922,10 @@ fn test_variance_template_literal_covariant() {
         variance.is_covariant(),
         "Template literal type span should be covariant"
     );
+    assert!(
+        variance.rejection_unreliable(),
+        "Template literal stringification can make failed argument variance checks structurally valid"
+    );
 }
 
 // =============================================================================
