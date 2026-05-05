@@ -44,6 +44,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
 
+        if self.contextual_type.is_some_and(|contextual_type| {
+            self.is_contextually_sensitive(arg_types[0])
+                && Self::get_contextual_signature_cached(self.interner, contextual_type).is_some()
+        }) {
+            return None;
+        }
+
         // Bail out for self-referential constraints like `T extends Test<keyof T>`.
         // The fast path cannot properly instantiate the constraint with the inferred
         // type (it checks the raw constraint), and it uses `widen_type` which

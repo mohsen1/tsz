@@ -4470,6 +4470,46 @@ var p = new Proxy(obj, {
 }
 
 #[test]
+fn test_proxy_handler_identity_wrapper_uses_contextual_callback_target() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+function deprecate<T extends Function>(fn: T, msg: string, code: string): T {
+    return fn;
+}
+
+function soonFrozenObjectDeprecation<T extends object>(obj: T) {
+    return new Proxy(obj, {
+        defineProperty: deprecate(
+            (target, property, descriptor) => Reflect.defineProperty(target, property, descriptor),
+            "msg",
+            "code"
+        ),
+        deleteProperty: deprecate(
+            (target, property) => Reflect.deleteProperty(target, property),
+            "msg",
+            "code"
+        ),
+        setPrototypeOf: deprecate(
+            (target, proto) => Reflect.setPrototypeOf(target, proto),
+            "msg",
+            "code"
+        ),
+    });
+}
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected identity-wrapped Proxy handler callbacks to use contextual targets, got: {ts2322:#?}"
+    );
+}
+
+#[test]
 fn test_builtin_iterator_constructor_uses_scoped_abstract_typeof_alias() {
     let lib_files = load_lib_files_with_es2015_sublibs();
     if lib_files.is_empty() {
