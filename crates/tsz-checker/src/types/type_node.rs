@@ -70,7 +70,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // For now, recompute to ensure correctness
             // TODO: Add cache key based on type param hash for smarter caching
         }
-
         // Compute and cache
         let result = self.compute_type(idx);
         // Don't cache TYPE_REFERENCE results here — CheckerState's
@@ -256,7 +255,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // Recursively resolve each member type
                 member_types.push(self.check(type_idx));
             }
-
             if member_types.is_empty() {
                 return TypeId::UNKNOWN; // Empty intersection is unknown
             }

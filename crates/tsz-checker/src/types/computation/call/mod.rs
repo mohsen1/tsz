@@ -263,7 +263,8 @@ impl<'a> CheckerState<'a> {
             return prop.type_annotation.is_some();
         }
         if let Some(method) = self.ctx.arena.get_method_decl(decl_node) {
-            return method.type_annotation.is_some();
+            return method.type_annotation.is_some()
+                || self.declaration_has_jsdoc_assertion_annotation(decl_idx);
         }
         if let Some(accessor) = self.ctx.arena.get_accessor(decl_node) {
             return accessor.type_annotation.is_some();
@@ -280,6 +281,27 @@ impl<'a> CheckerState<'a> {
             return sig.type_annotation.is_some();
         }
         true
+    }
+
+    fn declaration_has_jsdoc_assertion_annotation(&self, decl_idx: NodeIndex) -> bool {
+        let Some(sf) = self.source_file_data_for_node(decl_idx) else {
+            return false;
+        };
+        if sf.comments.is_empty() || !sf.comments.iter().any(|c| c.is_multi_line) {
+            return false;
+        }
+
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let Some(jsdoc) = self.try_jsdoc_with_ancestor_walk(decl_idx, &comments, &source_text)
+        else {
+            return false;
+        };
+
+        if Self::extract_jsdoc_type_expression(&jsdoc).is_some() {
+            return true;
+        }
+        Self::jsdoc_returns_type_predicate(&jsdoc).is_some_and(|(asserts, _, _)| asserts)
     }
 
     fn first_unannotated_callback_param_name_in_call(&self, idx: NodeIndex) -> Option<NodeIndex> {
