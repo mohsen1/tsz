@@ -1648,7 +1648,12 @@ impl ParserState {
             // Keep the spread payload token for JSX attribute-list recovery. In
             // `<X a={...a} />`, tsc emits the malformed `a:` initializer and
             // then recovers the payload `a` as the following shorthand prop.
-            self.error_identifier_expected();
+            self.parse_error_at(
+                self.token_end(),
+                0,
+                "Identifier expected.",
+                tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+            );
             NodeIndex::NONE
         } else {
             self.parse_jsx_embedded_expression()
