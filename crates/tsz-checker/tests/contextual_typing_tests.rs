@@ -1957,6 +1957,36 @@ function reversed<T>(array: T[]) {
 }
 
 #[test]
+fn function_type_return_type_query_resolves_parameter_type() {
+    let source = r#"
+type FuncType = (x: <T>(p: T) => T) => typeof x;
+let z: FuncType = x => undefined;
+"#;
+
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2322
+                && d.message_text
+                    .contains("Type '(x: <T>(p: T) => T) => undefined'")
+                && d.related_information.iter().any(|related| {
+                    related
+                        .message_text
+                        .contains("Type 'undefined' is not assignable to type '<T>(p: T) => T'")
+                })
+        }),
+        "`typeof x` in a function type return should resolve to the parameter type, got diagnostics={diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_parenthesized_conditional_callbacks_preserve_contextual_typing() {
     let source = r#"
 type FuncType = (x: <T>(p: T) => T) => typeof x;
@@ -1976,13 +2006,44 @@ var k = fun((coin < 0.5 ? (x => { x<number>(undefined); return x; }) : (x => und
         source,
         CheckerOptions {
             no_implicit_any: true,
+            strict_null_checks: true,
             ..Default::default()
         },
     );
     let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let outer_conditional_mismatches = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == 2345
+                && d.message_text.contains(
+                    "((x: <T>(p: T) => T) => <T>(p: T) => T) | ((x: <T>(p: T) => T) => undefined)",
+                )
+        })
+        .count();
+    assert_eq!(
+        outer_conditional_mismatches, 2,
+        "Expected TS2345 for each conditional argument with expanded callable union display, got diagnostics={diagnostics:?}"
+    );
+    let contextual_branch_mismatches = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == 2345
+                && d.message_text.contains(
+                    "Argument of type 'undefined' is not assignable to parameter of type 'number'",
+                )
+        })
+        .count();
+    assert!(
+        contextual_branch_mismatches >= 2,
+        "Expected contextual true-branch callbacks to keep TS2345, got diagnostics={diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&7006),
+        "Expected TS7006 from the later callback after the earlier overload argument mismatch, got diagnostics={diagnostics:?}"
+    );
     assert!(
         codes.contains(&2347),
-        "Expected TS2347 from the uncontextualized conditional branch callback, got diagnostics={diagnostics:?}"
+        "Expected TS2347 from the later callback after the earlier overload argument mismatch, got diagnostics={diagnostics:?}"
     );
     assert!(
         !codes.contains(&2769),

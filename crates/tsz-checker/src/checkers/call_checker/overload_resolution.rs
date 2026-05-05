@@ -14,6 +14,11 @@ use tsz_solver::TypeId;
 use super::{CallableContext, OverloadResolution, SelectedTypePredicate};
 
 type NoReturnContextFallback = (Vec<TypeId>, TypeId, SelectedTypePredicate, FullSnapshot);
+type BestTypeMismatch = (
+    OverloadResolution,
+    crate::context::NodeTypeCache,
+    Vec<crate::diagnostics::Diagnostic>,
+);
 
 impl<'a> CheckerState<'a> {
     fn selected_overload_type_predicate(
@@ -56,6 +61,16 @@ impl<'a> CheckerState<'a> {
         if signatures.is_empty() {
             return None;
         }
+
+        let arity_compatible_signature_count = signatures
+            .iter()
+            .filter(|sig| {
+                let required = sig.params.iter().filter(|param| !param.optional).count();
+                let has_rest = sig.params.iter().any(|param| param.rest);
+                args.len() >= required && (has_rest || args.len() <= sig.params.len())
+            })
+            .count();
+        let has_multiple_arity_compatible_signatures = arity_compatible_signature_count > 1;
 
         // Overload contextual typing baseline.
         // First pass collects argument types once using a union of overload signatures.
@@ -182,6 +197,8 @@ impl<'a> CheckerState<'a> {
         // like `reduce<U>`). This post-collection snapshot ensures only diagnostics
         // from the current overload attempt are checked.
         let post_union_arg_diag_snap = self.ctx.snapshot_diagnostics();
+        let union_arg_collection_has_callback_body_errors =
+            self.overload_candidate_has_callback_body_errors(args, &overload_snap.diag);
 
         // First pass: try each signature with union-contextual argument types.
         // When an overload succeeds but its return context substitution is empty
@@ -248,11 +265,12 @@ impl<'a> CheckerState<'a> {
                     // leaving inline callback bodies typed under a lossy contextual union.
                     // Defer those candidates to the signature-specific pass, which can
                     // re-evaluate callbacks with per-overload parameter types.
-                    if signatures.len() > 1
-                        && self.overload_candidate_has_callback_body_errors(
-                            args,
-                            &post_union_arg_diag_snap,
-                        )
+                    if has_multiple_arity_compatible_signatures
+                        && (union_arg_collection_has_callback_body_errors
+                            || self.overload_candidate_has_callback_body_errors(
+                                args,
+                                &post_union_arg_diag_snap,
+                            ))
                     {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
@@ -492,7 +510,7 @@ impl<'a> CheckerState<'a> {
                         (arg_types.clone(), return_type)
                     };
 
-                    if signatures.len() > 1
+                    if has_multiple_arity_compatible_signatures
                         && did_instantiated_retry
                         && self
                             .overload_candidate_has_callback_body_errors(args, &overload_snap.diag)
@@ -562,7 +580,7 @@ impl<'a> CheckerState<'a> {
                     // only while later validating the selected candidate. Re-check
                     // before accepting the first-pass match so an inner failing call
                     // like `accu.concat(el)` cannot be hidden by `U = never[]`.
-                    if signatures.len() > 1
+                    if has_multiple_arity_compatible_signatures
                         && self.overload_candidate_has_callback_body_errors(
                             args,
                             &post_union_arg_diag_snap,
@@ -641,8 +659,7 @@ impl<'a> CheckerState<'a> {
         let mut max_expected = 0usize;
         let mut type_mismatch_count = 0usize;
         let mut has_non_count_non_type_failure = false;
-        let mut best_type_mismatch: Option<(OverloadResolution, crate::context::NodeTypeCache)> =
-            None;
+        let mut best_type_mismatch: Option<BestTypeMismatch> = None;
         let mut mismatch_recovery_return: Option<TypeId> = None;
         let mut callback_body_failure_return: Option<TypeId> = None;
         let mut callback_body_overload_diagnostics = Vec::new();
@@ -1057,6 +1074,7 @@ impl<'a> CheckerState<'a> {
                                     selected_type_predicate: None,
                                 },
                                 std::mem::take(&mut self.ctx.node_types),
+                                Vec::new(),
                             ));
                         }
                         failures.push(PendingDiagnosticBuilder::argument_not_assignable(
@@ -1082,7 +1100,7 @@ impl<'a> CheckerState<'a> {
                         let request = TypingRequest::with_contextual_type(param_type);
                         let _ = self.get_type_of_node_with_request(arg_idx, &request);
                     }
-                    if signatures.len() > 1
+                    if has_multiple_arity_compatible_signatures
                         && self.overload_candidate_has_callback_body_errors(args, &candidate_snap)
                     {
                         all_arg_count_mismatches = false;
@@ -1130,6 +1148,12 @@ impl<'a> CheckerState<'a> {
                                     selected_type_predicate: None,
                                 },
                                 std::mem::take(&mut self.ctx.node_types),
+                                self.diagnostics_for_overload_mismatch_argument_between(
+                                    args,
+                                    index,
+                                    &candidate_snap,
+                                    &self.ctx.snapshot_diagnostics(),
+                                ),
                             ));
                         }
                         self.ctx
@@ -1258,6 +1282,12 @@ impl<'a> CheckerState<'a> {
                                     selected_type_predicate: None,
                                 },
                                 std::mem::take(&mut self.ctx.node_types),
+                                self.diagnostics_for_overload_mismatch_argument_between(
+                                    args,
+                                    index,
+                                    &candidate_snap,
+                                    &self.ctx.snapshot_diagnostics(),
+                                ),
                             ));
                         }
                         failures.push(PendingDiagnosticBuilder::argument_not_assignable(
@@ -1333,7 +1363,8 @@ impl<'a> CheckerState<'a> {
 
         if !has_non_count_non_type_failure
             && type_mismatch_count == 1
-            && let Some((best_type_mismatch, sig_node_types)) = best_type_mismatch
+            && let Some((best_type_mismatch, sig_node_types, preserved_arg_diags)) =
+                best_type_mismatch
         {
             self.ctx
                 .rollback_diagnostics_filtered(&overload_snap.diag, |diag| {
@@ -1341,6 +1372,15 @@ impl<'a> CheckerState<'a> {
                 });
             self.ctx
                 .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
+            if !preserved_arg_diags.is_empty() {
+                let mut diagnostics = std::mem::take(&mut self.ctx.diagnostics);
+                self.extend_unique_diagnostics(&mut diagnostics, preserved_arg_diags);
+                self.ctx.diagnostics = diagnostics;
+                self.ctx.rebuild_emitted_diagnostics_from_current();
+            }
+            if let CallResult::ArgumentTypeMismatch { index, .. } = &best_type_mismatch.result {
+                self.recheck_overload_args_after_mismatch_without_context(args, *index);
+            }
             self.ctx.node_types = std::mem::take(&mut original_node_types);
             self.ctx.node_types.merge_owned(sig_node_types);
             return Some(best_type_mismatch);
@@ -1448,5 +1488,48 @@ impl<'a> CheckerState<'a> {
             },
             selected_type_predicate: None,
         })
+    }
+
+    fn diagnostics_for_overload_mismatch_argument_between(
+        &self,
+        args: &[NodeIndex],
+        index: usize,
+        from_snap: &crate::context::speculation::DiagnosticSnapshot,
+        to_snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        let Some(&arg_idx) = args.get(index) else {
+            return Vec::new();
+        };
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return Vec::new();
+        };
+
+        self.ctx
+            .diagnostics_between(from_snap, to_snap)
+            .iter()
+            .filter(|diag| diag.start >= arg_node.pos && diag.start < arg_node.end)
+            .cloned()
+            .collect()
+    }
+
+    fn recheck_overload_args_after_mismatch_without_context(
+        &mut self,
+        args: &[NodeIndex],
+        mismatch_index: usize,
+    ) {
+        for &arg_idx in args.iter().skip(mismatch_index.saturating_add(1)) {
+            if !self.is_callback_like_argument(arg_idx) {
+                continue;
+            }
+
+            for callback_idx in self.callback_function_indices(arg_idx) {
+                self.ctx
+                    .implicit_any_contextual_closures
+                    .remove(&callback_idx);
+                self.ctx.implicit_any_checked_closures.remove(&callback_idx);
+            }
+            self.invalidate_expression_for_contextual_retry(arg_idx);
+            let _ = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
+        }
     }
 }

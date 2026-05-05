@@ -1809,6 +1809,16 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if self
+            .ctx
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
+            && let Some(display) = self.conditional_callable_union_argument_display(arg_type)
+        {
+            return display;
+        }
+
         if let Some(display) =
             self.contextual_function_argument_display(arg_type, param_type, arg_idx)
         {
@@ -1883,6 +1893,36 @@ impl<'a> CheckerState<'a> {
         self.rewrite_source_display_for_non_literal_target_assignability(
             arg_type, param_type, display,
         )
+    }
+
+    fn conditional_callable_union_argument_display(&mut self, arg_type: TypeId) -> Option<String> {
+        let members = query_common::union_members(self.ctx.types, arg_type)?;
+        let mut parts = Vec::with_capacity(members.len());
+        for member in members {
+            if let Some(shape) = query_common::function_shape_for_type(self.ctx.types, member) {
+                let params = shape
+                    .params
+                    .iter()
+                    .map(|param| {
+                        let name = param
+                            .name
+                            .map(|name| self.ctx.types.resolve_atom(name))
+                            .unwrap_or_else(|| "_".to_string());
+                        let optional = if param.optional { "?" } else { "" };
+                        let rest = if param.rest { "..." } else { "" };
+                        let ty = self.format_type_for_assignability_message(param.type_id);
+                        format!("{rest}{name}{optional}: {ty}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let return_type = self.format_type_for_assignability_message(shape.return_type);
+                parts.push(format!("(({params}) => {return_type})"));
+            } else {
+                parts.push(self.format_type_for_assignability_message(member));
+            }
+        }
+
+        Some(parts.join(" | "))
     }
 
     fn call_target_preserves_literal_argument_surface(

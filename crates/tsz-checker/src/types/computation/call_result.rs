@@ -612,7 +612,9 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ERROR;
                 }
-                let arg_idx = self.map_expanded_arg_index_to_original(args, index);
+                let arg_idx = self
+                    .map_expanded_arg_index_to_original(args, index)
+                    .map(|arg_idx| self.ctx.arena.skip_parenthesized(arg_idx));
                 let mismatch_is_spread_arg = arg_idx.is_some_and(|arg_idx| {
                     self.ctx
                         .arena

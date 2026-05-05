@@ -708,20 +708,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             })
             .collect();
 
-        if source_params_unpacked.len() == target_params_unpacked.len()
-            && source_params_unpacked
-                .iter()
-                .zip(target_params_unpacked.iter())
-                .all(|(source_param, target_param)| {
-                    source_param.type_id == target_param.type_id
-                        && source_param.optional == target_param.optional
-                        && source_param.rest == target_param.rest
-                })
-        {
-            self.type_param_equivalences.truncate(equiv_start);
-            return SubtypeResult::True;
-        }
-
         // Handle union-of-tuple rest parameters in target.
         // When target has `...args: [A] | [B, C] | [D]`, try each union member separately.
         // Source matches if its params are compatible with ANY of the union member tuple shapes.
