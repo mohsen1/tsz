@@ -624,7 +624,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if non_unknown_members.len() <= 64 {
             let pruned_union = crate::type_queries::prune_impossible_object_union_members(
                 self.interner(),
-                self.interner().union_from_slice(&non_unknown_members),
+                self.interner()
+                    .union_preserve_members(non_unknown_members.clone()),
             );
             // Intrinsics are never Union — skip the dyn lookup.
             if pruned_union.is_intrinsic() {
@@ -647,7 +648,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let mut obj_type_for_error = || {
             *obj_type_cache.get_or_insert_with(|| {
                 self.interner()
-                    .union_from_slice(&self.interner().type_list(TypeListId(list_id)))
+                    .union_preserve_members(self.interner().type_list(TypeListId(list_id)).to_vec())
             })
         };
 

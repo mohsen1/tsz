@@ -959,7 +959,6 @@ if (!(result instanceof RegExp)) {
 }
 
 #[test]
-#[ignore = "CFA flow merge after instanceof doesn't preserve the class type in the union - separate issue from instanceof narrowing"]
 fn test_instanceof_class_narrows_union_at_merge_point() {
     // From conformance/expressions/typeGuards/typeGuardsWithInstanceOf.ts (#31155 repro)
     // After `if (v instanceof C) { ... }`, the type of `v` should be
@@ -968,6 +967,15 @@ fn test_instanceof_class_narrows_union_at_merge_point() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "test.ts",
         r#"
+interface I { global: string; }
+var result!: I;
+var result2!: I;
+
+if (!(result instanceof RegExp)) {
+    result = result2;
+} else if (!result.global) {
+}
+
 interface OnChanges {
     onChanges(changes: Record<string, unknown>): void
 }
@@ -1002,7 +1010,7 @@ function foo() {
     // tsc expects: two TS2339 errors for v.onChanges on lines accessing it
     let ts2339_msgs: Vec<_> = diagnostics
         .iter()
-        .filter(|(c, _)| *c == 2339)
+        .filter(|(c, m)| *c == 2339 && m.contains("onChanges"))
         .map(|(_, m)| m.as_str())
         .collect();
     assert!(

@@ -1142,9 +1142,11 @@ fn property_truthiness_narrows_union() {
     let member2 = interner.object(vec![PropertyInfo::new(age, TypeId::NUMBER)]);
     let union = interner.union(vec![member1, member2]);
 
-    // x.name is truthy (only member1 has "name")
+    // x.name is an invalid access for member2, not useful truthiness
+    // evidence. Keep member2 so downstream diagnostics can still report
+    // the missing property branch.
     let narrowed = ctx.narrow_by_property_truthiness(union, &[name], true);
-    assert_eq!(narrowed, member1);
+    assert_eq!(narrowed, union);
 }
 
 #[test]

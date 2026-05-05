@@ -15,7 +15,7 @@ use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::{InstanceTypeKind, classify_for_instance_type};
 use crate::types::TypeId;
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
-use crate::visitor::{application_id, lazy_def_id, union_list_id};
+use crate::visitor::{application_id, intersection_list_id, lazy_def_id, union_list_id};
 use tracing::{Level, span, trace};
 
 impl<'a> NarrowingContext<'a> {
@@ -572,6 +572,12 @@ impl<'a> NarrowingContext<'a> {
             if !self.are_instanceof_types_overlapping(resolved_source, instance_type) {
                 trace!("Types have conflicting properties, returning NEVER");
                 return TypeId::NEVER;
+            }
+            if (intersection_list_id(self.db, source_type).is_some()
+                || intersection_list_id(self.db, resolved_source).is_some())
+                && target_is_class
+            {
+                return instance_type;
             }
             return self.db.intersection2(source_type, instance_type);
         }

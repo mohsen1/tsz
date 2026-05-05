@@ -1832,12 +1832,10 @@ impl<'a> FlowAnalyzer<'a> {
                 };
                 let ant_types = self.simplify_flow_merge_types(ant_types);
 
-                if ant_types.len() == 1 {
-                    ant_types[0]
-                } else if !ant_types.is_empty() {
-                    query::union_types(self.interner, ant_types)
-                } else {
-                    result_type
+                match ant_types.len() {
+                    0 => result_type,
+                    1 => ant_types[0],
+                    _ => self.interner.union_preserve_members(ant_types),
                 }
             } else {
                 result_type
