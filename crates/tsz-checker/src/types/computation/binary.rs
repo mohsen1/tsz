@@ -803,12 +803,10 @@ impl<'a> CheckerState<'a> {
                         } else {
                             TypingRequest::NONE
                         }
+                    } else if right_accepts_context {
+                        request.read()
                     } else {
-                        if right_accepts_context {
-                            request.read()
-                        } else {
-                            TypingRequest::NONE
-                        }
+                        TypingRequest::NONE
                     };
                     let right_type = self.get_type_of_node_with_request(right_idx, &right_request);
 
