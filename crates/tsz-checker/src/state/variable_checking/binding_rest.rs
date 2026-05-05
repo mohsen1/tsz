@@ -7,6 +7,7 @@ use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::{SyntaxKind, keyword_to_text_static};
 use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
@@ -119,8 +120,11 @@ impl<'a> CheckerState<'a> {
             // Extract the property name (same logic as the main property_name extraction).
             let prop_name = if element_data.property_name.is_some() {
                 if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
-                    // Try identifier first
-                    if let Some(ident) = self.ctx.arena.get_identifier(prop_node) {
+                    if let Some(keyword) =
+                        SyntaxKind::try_from_u16(prop_node.kind).and_then(keyword_to_text_static)
+                    {
+                        Some(keyword.to_string())
+                    } else if let Some(ident) = self.ctx.arena.get_identifier(prop_node) {
                         Some(ident.escaped_text.clone())
                     } else if let Some(lit) = self.ctx.arena.get_literal(prop_node) {
                         // String literal property name: { 'b': renamed }

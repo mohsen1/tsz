@@ -1607,9 +1607,18 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             }
             // Check if this property is erased
+            // `declare` fields have no runtime effect even when an
+            // initializer is present, so the computed expression must
+            // emit only as a side-effect statement (no temp). Mirrors
+            // the ES2015+ path in `emit_es6.rs`. Without this, ES5
+            // emission allocated `var _a; _a = field3;` for ambient
+            // declared static decorated fields.
             let is_erased = if self
                 .arena
                 .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
             {
                 true
             } else {

@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::args::{CliArgs, Module, ModuleDetection};
+use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, Target};
 use crate::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
-    load_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
-    resolve_lib_files, resolve_lib_files_with_options, resolve_lib_files_with_options_transitive,
+    load_tsconfig_with_diagnostics, parse_tsconfig_with_diagnostics, resolve_compiler_options,
+    resolve_default_lib_files, resolve_lib_files, resolve_lib_files_with_options,
+    resolve_lib_files_with_options_transitive,
 };
 use tsz::binder::BinderOptions;
 use tsz::binder::BinderState;
@@ -831,6 +832,10 @@ const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
         || matches!(code, 2458 | 2754)
 }
 
+fn remove_deprecation_diagnostics(diagnostics: &mut Vec<Diagnostic>) {
+    diagnostics.retain(|d| !is_deprecation_diagnostic_code(d.code));
+}
+
 fn collect_parse_only_no_check_diagnostics(
     parse_results: &[parallel::ParseResult],
     options: &ResolvedCompilerOptions,
@@ -919,6 +924,13 @@ fn compile_inner(
     let loaded = load_config_with_diagnostics(tsconfig_path.as_deref())?;
     let config = loaded.config;
     let mut config_diagnostics = loaded.diagnostics;
+    if cli_ignore_deprecations_silences_6_0(args) {
+        config_diagnostics.retain(|d| !is_deprecation_diagnostic_code(d.code));
+    }
+    config_diagnostics.extend(validate_cli_compiler_option_diagnostics(
+        args,
+        config.as_ref(),
+    )?);
 
     // TS5103 (invalid ignoreDeprecations value) and TS5102 (removed option) are fatal
     // in tsc: they stop compilation and report only config-level errors.
@@ -928,6 +940,8 @@ fn compile_inner(
             || d.code == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
             || d.code
                 == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+            || d.code
+                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
     }) {
         return Ok(CompilationResult {
             diagnostics: config_diagnostics,
@@ -947,12 +961,9 @@ fn compile_inner(
     }
 
     // Track whether TS5107/TS5101 deprecation diagnostics exist for handling below.
-    let has_deprecation_diagnostics = config_diagnostics.iter().any(|d| {
-        d.code
-            == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
-            || d.code
-                == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
-    });
+    let has_deprecation_diagnostics = config_diagnostics
+        .iter()
+        .any(|d| is_deprecation_diagnostic_code(d.code));
 
     let mut resolved = match resolve_compiler_options(
         config
@@ -1365,12 +1376,7 @@ fn compile_inner(
                 .any(|d| is_grammar_error_for_deprecation_priority(d.code));
 
             if has_grammar_errors {
-                config_diagnostics.retain(|d| {
-                    d.code
-                    != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
-                    && d.code
-                        != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
-                });
+                remove_deprecation_diagnostics(&mut config_diagnostics);
             } else {
                 diagnostics.retain(|d| {
                     (d.code == 2318 && d.file.is_empty() && d.start == 0) || d.code == 2792
@@ -1540,12 +1546,7 @@ fn compile_inner(
 
         if has_grammar_errors {
             // Grammar errors take precedence - suppress TS5107/TS5101
-            config_diagnostics.retain(|d| {
-                d.code
-                    != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
-                    && d.code
-                        != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
-            });
+            remove_deprecation_diagnostics(&mut config_diagnostics);
         } else {
             // TS5107 takes priority (fatal) - suppress most file-level diagnostics.
             // Preserve only global-level TS2318 ("Cannot find global type") and
@@ -2661,6 +2662,11 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.checker.always_strict = val;
         options.printer.always_strict = val;
     }
+    if let Some(ref id) = args.ignore_deprecations
+        && (id == "5.0" || id == "6.0")
+    {
+        options.checker.ignore_deprecations = true;
+    }
     if let Some(val) = args.allow_unreachable_code {
         options.checker.allow_unreachable_code = Some(val);
     }
@@ -2873,6 +2879,140 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     Ok(())
 }
 
+fn validate_cli_compiler_option_diagnostics(
+    args: &CliArgs,
+    config: Option<&TsConfig>,
+) -> Result<Vec<Diagnostic>> {
+    let mut compiler_options = serde_json::Map::new();
+
+    if let Some(target) = args.target {
+        compiler_options.insert("target".to_string(), cli_target_value(target).into());
+    }
+    if let Some(module) = args.module {
+        compiler_options.insert("module".to_string(), cli_module_value(module).into());
+    }
+    if let Some(module_resolution) = args.module_resolution {
+        compiler_options.insert(
+            "moduleResolution".to_string(),
+            cli_module_resolution_value(module_resolution).into(),
+        );
+    }
+    if let Some(always_strict) = args.always_strict {
+        compiler_options.insert("alwaysStrict".to_string(), always_strict.into());
+    }
+    if let Some(allow_synthetic_default_imports) = args.allow_synthetic_default_imports {
+        compiler_options.insert(
+            "allowSyntheticDefaultImports".to_string(),
+            allow_synthetic_default_imports.into(),
+        );
+    }
+    if let Some(ignore_deprecations) =
+        effective_ignore_deprecations_for_cli_validation(args, config)
+    {
+        compiler_options.insert("ignoreDeprecations".to_string(), ignore_deprecations.into());
+    }
+    if let Some(base_url) = args.base_url.as_ref() {
+        compiler_options.insert(
+            "baseUrl".to_string(),
+            base_url.to_string_lossy().into_owned().into(),
+        );
+    }
+    if let Some(out_file) = args.out_file.as_ref() {
+        compiler_options.insert(
+            "outFile".to_string(),
+            out_file.to_string_lossy().into_owned().into(),
+        );
+    }
+    if args.downlevel_iteration {
+        compiler_options.insert("downlevelIteration".to_string(), true.into());
+    }
+
+    if compiler_options.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut root = serde_json::Map::new();
+    root.insert(
+        "compilerOptions".to_string(),
+        serde_json::Value::Object(compiler_options),
+    );
+    let source = serde_json::Value::Object(root).to_string();
+    let parsed = parse_tsconfig_with_diagnostics(&source, "")?;
+    Ok(parsed.diagnostics)
+}
+
+fn effective_ignore_deprecations_for_cli_validation<'a>(
+    args: &'a CliArgs,
+    config: Option<&'a TsConfig>,
+) -> Option<&'a str> {
+    if let Some(ignore_deprecations) = args.ignore_deprecations.as_deref() {
+        return Some(ignore_deprecations);
+    }
+
+    config
+        .and_then(|cfg| cfg.compiler_options.as_ref())
+        .and_then(|compiler_options| compiler_options.ignore_deprecations.as_deref())
+        .filter(|value| *value == "5.0" || *value == "6.0")
+}
+
+fn cli_ignore_deprecations_silences_6_0(args: &CliArgs) -> bool {
+    matches!(args.ignore_deprecations.as_deref(), Some("6.0"))
+}
+
+const fn is_deprecation_diagnostic_code(code: u32) -> bool {
+    code
+        == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+        || code
+            == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+}
+
+const fn cli_target_value(target: Target) -> &'static str {
+    match target {
+        Target::Es5 => "es5",
+        Target::Es2015 => "es2015",
+        Target::Es2016 => "es2016",
+        Target::Es2017 => "es2017",
+        Target::Es2018 => "es2018",
+        Target::Es2019 => "es2019",
+        Target::Es2020 => "es2020",
+        Target::Es2021 => "es2021",
+        Target::Es2022 => "es2022",
+        Target::Es2023 => "es2023",
+        Target::Es2024 => "es2024",
+        Target::Es2025 => "es2025",
+        Target::EsNext => "esnext",
+    }
+}
+
+const fn cli_module_value(module: Module) -> &'static str {
+    match module {
+        Module::None => "none",
+        Module::CommonJs => "commonjs",
+        Module::Amd => "amd",
+        Module::Umd => "umd",
+        Module::System => "system",
+        Module::Es2015 => "es2015",
+        Module::Es2020 => "es2020",
+        Module::Es2022 => "es2022",
+        Module::EsNext => "esnext",
+        Module::Node16 => "node16",
+        Module::Node18 => "node18",
+        Module::Node20 => "node20",
+        Module::NodeNext => "nodenext",
+        Module::Preserve => "preserve",
+    }
+}
+
+const fn cli_module_resolution_value(module_resolution: ModuleResolution) -> &'static str {
+    match module_resolution {
+        ModuleResolution::Classic => "classic",
+        ModuleResolution::Node10 => "node10",
+        ModuleResolution::Node16 => "node16",
+        ModuleResolution::NodeNext => "nodenext",
+        ModuleResolution::Bundler => "bundler",
+    }
+}
+
 /// Find the most recent .d.ts file from a list of emitted files
 /// Returns the relative path (from `base_dir`) as a String, or None if no .d.ts files were found
 fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<String> {
@@ -2908,7 +3048,7 @@ fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<St
 /// dot-separated identifier chain (e.g. `h`, `React.createElement`).
 /// Empty segments, leading/trailing dots, and any non-identifier
 /// character (digits leading a segment, dashes, whitespace) fail
-/// validation. Mirrors tsc's "EntityName + identifier check" used to
+/// validation. Mirrors tsc's "`EntityName` + identifier check" used to
 /// drive the TS5067 diagnostic and the runtime fallback.
 fn is_valid_jsx_factory_expression(s: &str) -> bool {
     if s.is_empty() {

@@ -267,9 +267,29 @@ impl BinderState {
             if node.kind == syntax_kind_ext::BLOCK {
                 // Always recurse into blocks for var hoisting (var is always
                 // function-scoped regardless of target).
-                // Function declarations in blocks are block-scoped in ES6+ modules.
+                // Function declarations directly in a function body are at the
+                // function scope; only nested blocks make them block-scoped.
                 if let Some(block) = arena.get_block(node) {
-                    self.collect_hoisted_declarations_impl(arena, &block.statements, true);
+                    let is_function_body = arena
+                        .get_extended(idx)
+                        .and_then(|ext| arena.get(ext.parent))
+                        .is_some_and(|parent_node| {
+                            matches!(
+                                parent_node.kind,
+                                syntax_kind_ext::FUNCTION_DECLARATION
+                                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                                    | syntax_kind_ext::ARROW_FUNCTION
+                                    | syntax_kind_ext::METHOD_DECLARATION
+                                    | syntax_kind_ext::CONSTRUCTOR
+                                    | syntax_kind_ext::GET_ACCESSOR
+                                    | syntax_kind_ext::SET_ACCESSOR
+                            )
+                        });
+                    self.collect_hoisted_declarations_impl(
+                        arena,
+                        &block.statements,
+                        !is_function_body,
+                    );
                 }
             } else {
                 // Handle single statement (not wrapped in a block)

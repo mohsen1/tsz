@@ -10,22 +10,8 @@
 //! those branches out.
 
 use crate::context::CheckerOptions;
+use crate::test_utils::check_source_strict_codes as check_strict;
 use crate::test_utils::check_with_options;
-
-fn check_strict(source: &str) -> Vec<u32> {
-    check_with_options(
-        source,
-        CheckerOptions {
-            strict: true,
-            strict_null_checks: true,
-            no_implicit_any: true,
-            ..Default::default()
-        },
-    )
-    .iter()
-    .map(|d| d.code)
-    .collect()
-}
 
 /// After `if (x === undefined) fail()`, x should be narrowed to exclude undefined.
 /// No TS18048 ('x' is possibly 'undefined') should be emitted on x.length.
@@ -96,6 +82,34 @@ function f(x: { a: string }) {
     assert!(
         !codes.contains(&2339),
         "Expected no TS2339 in unreachable code after never-returning call, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn this_method_returning_never_marks_following_code_unreachable() {
+    let source = r#"
+class C {
+    fail(): never {
+        throw "boom";
+    }
+    f() {
+        this.fail();
+        let x = 1;
+    }
+}
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            allow_unreachable_code: Some(false),
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&7027),
+        "Expected TS7027 after calling a this-method declared as never; got codes: {codes:?}"
     );
 }
 

@@ -59,11 +59,20 @@ impl<'a> CheckerState<'a> {
         let body_idx = func.body;
         let body_node = self.ctx.arena.get(body_idx)?;
         let block = self.ctx.arena.get_block(body_node)?;
-        let statements = block.statements.nodes.clone();
+        let statement_count = block.statements.nodes.len();
 
-        statements
-            .into_iter()
-            .find(|&stmt_idx| self.statement_always_throws(stmt_idx))
+        for statement_index in 0..statement_count {
+            let stmt_idx = {
+                let body_node = self.ctx.arena.get(body_idx)?;
+                let block = self.ctx.arena.get_block(body_node)?;
+                *block.statements.nodes.get(statement_index)?
+            };
+            if self.statement_always_throws(stmt_idx) {
+                return Some(stmt_idx);
+            }
+        }
+
+        None
     }
 
     /// Check if a callee expression explicitly returns `never` based on its
@@ -133,29 +142,28 @@ impl<'a> CheckerState<'a> {
         let Some(expr_node) = self.ctx.arena.get(access.expression) else {
             return false;
         };
-        if expr_node.kind == SyntaxKind::ThisKeyword as u16
-            && let Some(ref class_info) = self.ctx.enclosing_class.clone()
-        {
+        if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
             // Directly search class member nodes for a method with matching name
             // and check its return type annotation. This avoids reliance on the
             // binder's class symbol members map which may not be available in all
             // checking paths.
-            for &member_idx in &class_info.member_nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
-                    continue;
-                }
-                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
-                    continue;
-                };
-                let Some(method_name) = self.get_property_name(method.name) else {
-                    continue;
-                };
-                if method_name == *property_name {
-                    return self.declaration_explicitly_returns_never(member_idx, false);
-                }
+            let matching_member = self.ctx.enclosing_class.as_ref().and_then(|class_info| {
+                class_info.member_nodes.iter().copied().find(|&member_idx| {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        return false;
+                    };
+                    if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                        return false;
+                    }
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        return false;
+                    };
+                    self.get_property_name(method.name)
+                        .is_some_and(|method_name| method_name == *property_name)
+                })
+            });
+            if let Some(member_idx) = matching_member {
+                return self.declaration_explicitly_returns_never(member_idx, false);
             }
         }
 

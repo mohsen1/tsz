@@ -11,6 +11,12 @@ impl<'a> Printer<'a> {
     // Class Members
     // =========================================================================
 
+    fn emit_class_member_name_preserving_class_expression_name(&mut self, name: NodeIndex) {
+        let prev_alias = self.scoped_class_expression_self_alias.take();
+        self.emit(name);
+        self.scoped_class_expression_self_alias = prev_alias;
+    }
+
     /// Emit class member modifiers (static, public, private, etc.)
     pub(in crate::emitter) fn emit_class_member_modifiers(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
@@ -102,7 +108,7 @@ impl<'a> Printer<'a> {
         }
 
         if method.name.is_some() && !has_recovery_missing_name {
-            self.emit(method.name);
+            self.emit_class_member_name_preserving_class_expression_name(method.name);
         }
 
         // Map opening `(` to its source position
@@ -489,16 +495,18 @@ impl<'a> Printer<'a> {
                     if let Some(computed) =
                         name_node.and_then(|n| self.arena.get_computed_property(n))
                     {
-                        self.emit(computed.expression);
+                        self.emit_class_member_name_preserving_class_expression_name(
+                            computed.expression,
+                        );
                     }
                 } else {
-                    self.emit(prop.name);
+                    self.emit_class_member_name_preserving_class_expression_name(prop.name);
                 }
                 self.write("] = ");
             } else {
                 // `static { this.fieldName = value; }`
                 self.write("static { this.");
-                self.emit(prop.name);
+                self.emit_class_member_name_preserving_class_expression_name(prop.name);
                 self.write(" = ");
             }
             self.with_scoped_static_initializer_context_cleared(|this| {
@@ -511,7 +519,7 @@ impl<'a> Printer<'a> {
         // Emit modifiers (static and accessor for JavaScript)
         self.emit_class_member_modifiers_js(&prop.modifiers);
 
-        self.emit(prop.name);
+        self.emit_class_member_name_preserving_class_expression_name(prop.name);
 
         // Skip type annotations for JavaScript emit
 
@@ -1358,7 +1366,7 @@ impl<'a> Printer<'a> {
         self.emit_class_member_modifiers_js(&accessor.modifiers);
 
         self.write("get ");
-        self.emit(accessor.name);
+        self.emit_class_member_name_preserving_class_expression_name(accessor.name);
 
         // Emit type parameters for error recovery (e.g., `get foo<T>() {}`)
         // Getters cannot legally have type parameters, but tsc preserves them in JS output.
@@ -1389,7 +1397,7 @@ impl<'a> Printer<'a> {
         self.emit_class_member_modifiers_js(&accessor.modifiers);
 
         self.write("set ");
-        self.emit(accessor.name);
+        self.emit_class_member_name_preserving_class_expression_name(accessor.name);
 
         // Emit type parameters for error recovery (e.g., `set foo<T>(v) {}`)
         // Setters cannot legally have type parameters, but tsc preserves them in JS output.

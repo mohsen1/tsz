@@ -887,6 +887,18 @@ impl<'a> Printer<'a> {
 
         if let Some(expr) = self.arena.get_expr_type_args(node) {
             // ExpressionWithTypeArguments wrapper.
+            if self
+                .arena
+                .get(expr.expression)
+                .is_some_and(|inner| inner.is_identifier())
+                && self.get_identifier_text_idx(expr.expression) == "await"
+                && let Some(ref type_args) = expr.type_arguments
+                && let Some(&first_type_arg) = type_args.nodes.first()
+            {
+                self.emit(first_type_arg);
+                return;
+            }
+
             // When the inner expression is an optional chain (A?.B) and target < ES2020,
             // the chain is lowered to a conditional expression that needs parens in extends.
             let needs_parens = self.heritage_expr_needs_optional_chain_parens(expr.expression);

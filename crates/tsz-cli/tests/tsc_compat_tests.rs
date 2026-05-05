@@ -259,6 +259,95 @@ fn batch_mode_uses_project_cwd_for_jsdoc_required_constructor_types() {
     );
 }
 
+#[test]
+fn declaration_emit_keyword_destructuring_rest_omits_keyword_key() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("keyword_destructuring_rest_dts").expect("temp dir");
+    let base = temp.path.as_path();
+    let out_dir = base.join("out");
+
+    write_file(
+        &base.join("input.ts"),
+        r#"
+type P = {
+    enum: boolean;
+    function: boolean;
+    abstract: boolean;
+    async: boolean;
+    await: boolean;
+    one: boolean;
+};
+
+function f1({ enum: _enum, ...rest }: P) {
+    return rest;
+}
+
+function f2({ function: _function, ...rest }: P) {
+    return rest;
+}
+
+function f3({ abstract: _abstract, ...rest }: P) {
+    return rest;
+}
+
+function f4({ async: _async, ...rest }: P) {
+    return rest;
+}
+
+function f5({ await: _await, ...rest }: P) {
+    return rest;
+}
+"#,
+    );
+
+    let output = Command::new(&tsz_bin)
+        .args([
+            "--ignoreConfig",
+            "--declaration",
+            "--emitDeclarationOnly",
+            "--target",
+            "es2015",
+            "--outDir",
+            out_dir.to_str().expect("utf-8 temp path"),
+            "input.ts",
+        ])
+        .current_dir(base)
+        .output()
+        .expect("failed to run tsz");
+    assert!(
+        output.status.success(),
+        "tsz failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let dts = std::fs::read_to_string(out_dir.join("input.d.ts")).expect("declaration output");
+    for (function_name, omitted_key) in [
+        ("f1", "enum"),
+        ("f2", "function"),
+        ("f3", "abstract"),
+        ("f4", "async"),
+        ("f5", "await"),
+    ] {
+        let signature = format!("declare function {function_name}");
+        let start = dts
+            .find(&signature)
+            .unwrap_or_else(|| panic!("Expected {signature} in declaration output: {dts}"));
+        let end = dts[start..]
+            .find("};")
+            .map_or(dts.len(), |offset| start + offset);
+        let emitted_function = &dts[start..end];
+
+        assert!(
+            !emitted_function.contains(&format!("    {omitted_key}: boolean;")),
+            "Expected `{omitted_key}` to be omitted from {function_name} rest return type: {dts}"
+        );
+    }
+}
+
 /// Normalize output: strip ANSI codes, normalize line endings to \n.
 fn normalize_output(s: &str) -> String {
     // Strip ANSI escape codes
@@ -1356,6 +1445,77 @@ fn tsc_parity_no_input() {
     assert_tsc_tsz_match_with_exit_code(&temp.path, &[], "no input (no tsconfig, no files)");
 }
 
+#[test]
+fn tsc_parity_show_config_strict_stays_compact() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("show_config_strict_compact").expect("temp dir");
+    write_file(&temp.path.join("main.ts"), "const n: number = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2017",
+    "strict": true,
+    "noEmit": true
+  },
+  "files": ["main.ts"]
+}
+"#,
+    );
+
+    let tsc_output = run_tsc(&temp.path, &["--showConfig"]).expect("tsc should run");
+    let output = run_tsz(&temp.path, &["--showConfig"]).expect("tsz should run");
+    assert!(
+        !tsc_output.contains("\"strictNullChecks\""),
+        "tsc should keep strict sub-options compact: {tsc_output}"
+    );
+    assert!(
+        !output.contains("\"strictNullChecks\""),
+        "strict sub-options should not be expanded: {output}"
+    );
+}
+
+#[test]
+fn tsc_parity_show_config_node16_resolve_json_false() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("show_config_node16_resolve_json").expect("temp dir");
+    write_file(
+        &temp.path.join("main.ts"),
+        "import data from \"./data.json\";\nconst n: number = data.value;\n",
+    );
+    write_file(&temp.path.join("data.json"), "{\"value\":123}\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "node16",
+    "moduleResolution": "node16",
+    "target": "es2017",
+    "strict": true,
+    "noEmit": true
+  },
+  "files": ["main.ts", "data.json"]
+}
+"#,
+    );
+
+    let tsc_output = run_tsc(&temp.path, &["--showConfig"]).expect("tsc should run");
+    let output = run_tsz(&temp.path, &["--showConfig"]).expect("tsz should run");
+    assert!(
+        tsc_output.contains("\"resolveJsonModule\": false"),
+        "tsc should show node16 resolveJsonModule false: {tsc_output}"
+    );
+    assert!(
+        output.contains("\"resolveJsonModule\": false"),
+        "node16 showConfig should include resolveJsonModule false: {output}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // --init
 // ---------------------------------------------------------------------------
@@ -1776,10 +1936,8 @@ fn tsc_parity_found_n_errors_same_file_pretty() {
 // Deprecated option values: should still be accepted as input
 // ---------------------------------------------------------------------------
 
-// NOTE: tsc v6 emits TS5107 deprecation warnings for deprecated values like
-// --target es5, --module amd, etc. tsz does not yet implement TS5107.
-// These tests verify that deprecated values are at least accepted (not rejected)
-// by tsz, matching tsc's behavior of still compiling them.
+// Deprecated values can emit TS5107, but they should still be accepted as
+// option values rather than rejected with TS6046.
 
 #[test]
 fn deprecated_target_es5_accepted() {

@@ -73,6 +73,11 @@ impl<'a> CheckerState<'a> {
         if let Some(literal_type) = self.const_array_to_enum_member_literal_type_query(idx) {
             return literal_type;
         }
+        if let Some(literal_type) = self
+            .imported_array_to_enum_member_literal_type(access.expression, access.name_or_argument)
+        {
+            return literal_type;
+        }
 
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
@@ -1027,7 +1032,9 @@ impl<'a> CheckerState<'a> {
                 // The earlier blanket suppression hid the diagnostic for type-
                 // predicate / typeof narrowing chains that exhaust a union to
                 // never (e.g. `instanceofWithStructurallyIdenticalTypes`).
-                if !property_name.starts_with('#') {
+                let suppress_declared_intersection_access = self
+                    .declared_intersection_receiver_has_property(access.expression, property_name);
+                if !property_name.starts_with('#') && !suppress_declared_intersection_access {
                     self.error_property_not_exist_at(
                         property_name,
                         TypeId::NEVER,
@@ -2065,18 +2072,10 @@ impl<'a> CheckerState<'a> {
                             .enclosing_expression_statement(idx)
                             .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
                             .or_else(|| self.jsdoc_type_annotation_for_node_direct(idx))
-                            .or_else(|| {
-                                self.jsdoc_type_annotation_for_node_direct(access.expression)
-                            })
-                            .or_else(|| {
-                                let root = self.expression_root(idx);
-                                (root != idx)
-                                    .then(|| self.jsdoc_type_annotation_for_node_direct(root))?
-                            })
                     {
                         return jsdoc_type;
                     }
-                    let skip_js_write_assigned_value_fallback = skip_flow_narrowing
+                    let checked_js_write_has_non_expando_global_type = skip_flow_narrowing
                         && self.property_access_is_direct_write_target(idx)
                         && self.is_js_file()
                         && self.ctx.compiler_options.check_js
@@ -2108,7 +2107,7 @@ impl<'a> CheckerState<'a> {
                             });
                     if self.is_js_file()
                         && self.ctx.compiler_options.check_js
-                        && !skip_js_write_assigned_value_fallback
+                        && !checked_js_write_has_non_expando_global_type
                         && !self.property_access_root_is_imported_namespace(access.expression)
                         && let Some(expr_text) = self.expression_text(idx)
                         && let Some(jsdoc_type) = if skip_flow_narrowing
@@ -2116,12 +2115,23 @@ impl<'a> CheckerState<'a> {
                         {
                             self.resolve_jsdoc_assigned_value_type_for_write(&expr_text)
                         } else {
-                            self.resolve_jsdoc_assigned_value_type(&expr_text)
+                            self.resolve_jsdoc_declared_assigned_value_type(&expr_text)
                         }
                     {
                         return jsdoc_type;
                     }
-                    if js_expando_before_assignment {
+                    if js_expando_before_assignment && !checked_js_write_has_non_expando_global_type
+                    {
+                        return TypeId::ANY;
+                    }
+                    if skip_flow_narrowing
+                        && self.is_js_file()
+                        && self.ctx.compiler_options.check_js
+                        && self.property_access_is_direct_write_target(idx)
+                        && !checked_js_write_has_non_expando_global_type
+                        && !commonjs_named_props_disallowed
+                        && self.is_expando_property_read(access.expression, property_name)
+                    {
                         return TypeId::ANY;
                     }
                     // Check for expando property reads: X.prop where X.prop = value was assigned
@@ -2146,6 +2156,7 @@ impl<'a> CheckerState<'a> {
                             .is_some_and(|(_, is_static_access)| is_static_access);
                     if !commonjs_named_props_disallowed
                         && !static_class_this_write
+                        && !checked_js_write_has_non_expando_global_type
                         && self.is_expando_function_assignment(
                             idx,
                             access.expression,
@@ -2159,7 +2170,8 @@ impl<'a> CheckerState<'a> {
                         access.expression,
                         object_type_for_access,
                         property_name,
-                    ) {
+                    ) && !checked_js_write_has_non_expando_global_type
+                    {
                         return TypeId::ANY;
                     }
 

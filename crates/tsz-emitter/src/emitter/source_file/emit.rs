@@ -859,8 +859,15 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // For ESM with importHelpers, emit `import { __helper, ... } from "tslib";`
+        // For ESM with importHelpers, emit `import { __helper, ... } from "tslib";`.
+        // tsc places the `var _a, ...` hoist for class private fields BEFORE
+        // this import (see the `privateNameStaticEmitHelpers` baseline), so
+        // capture the writer position now and let the post-statement hoist
+        // insertion target it. Without this, vars would sort under the
+        // post-import `hoisted_var_byte_offset` and emit invalid-order ESM.
         let mut emitted_tslib_esm_import = false;
+        let pre_tslib_import_byte_offset = self.writer.len();
+        let pre_tslib_import_line = self.writer.current_line();
         if self.ctx.options.import_helpers && !self.ctx.is_commonjs() && helpers.any_needed() {
             let names = helpers.needed_names();
             if !names.is_empty() {
@@ -889,6 +896,13 @@ impl<'a> Printer<'a> {
                     self.ctx.options.preserve_const_enums,
                 );
             self.ctx.module_state.value_decl_names_computed = true;
+            self.ctx.module_state.runtime_declaration_names =
+                module_commonjs::build_runtime_declaration_names(
+                    self.arena,
+                    &source.statements.nodes,
+                    self.ctx.options.preserve_const_enums,
+                );
+            self.ctx.module_state.runtime_decl_names_computed = true;
         }
 
         let has_top_level_using = !self.ctx.options.target.supports_es2025()
@@ -1860,8 +1874,16 @@ impl<'a> Printer<'a> {
         // path captures the pre-preamble offset in `cjs_destr_hoist_byte_offset`; when set,
         // route hoisted temps through that position instead of the post-preamble
         // `hoisted_var_byte_offset`.
+        //
+        // For ESM with `--importHelpers` and at least one private-field class,
+        // tsc emits `var _a, ...` BEFORE the synthesized `import { ... } from "tslib";`
+        // (see the `privateNameStaticEmitHelpers` baseline). When the tslib
+        // import was actually emitted, route the hoist through the
+        // pre-import position so the ordering matches.
         let (hoist_byte_offset, hoist_line) = if self.ctx.is_commonjs() {
             (self.cjs_destr_hoist_byte_offset, self.cjs_destr_hoist_line)
+        } else if emitted_tslib_esm_import {
+            (pre_tslib_import_byte_offset, pre_tslib_import_line)
         } else {
             (hoisted_var_byte_offset, hoisted_var_line)
         };

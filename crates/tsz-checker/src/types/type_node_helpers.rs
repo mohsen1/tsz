@@ -64,8 +64,6 @@ pub(crate) fn is_type_query_in_non_flow_sensitive_signature_parameter(
     idx: NodeIndex,
 ) -> bool {
     let mut current = idx;
-    let mut saw_parameter = false;
-
     while let Some(ext) = arena.get_extended(current) {
         let parent = ext.parent;
         if parent.is_none() {
@@ -77,14 +75,13 @@ pub(crate) fn is_type_query_in_non_flow_sensitive_signature_parameter(
         };
 
         match parent_node.kind {
-            syntax_kind_ext::PARAMETER => saw_parameter = true,
             k if k == syntax_kind_ext::CALL_SIGNATURE
                 || k == syntax_kind_ext::CONSTRUCT_SIGNATURE
                 || k == syntax_kind_ext::METHOD_SIGNATURE
                 || k == syntax_kind_ext::FUNCTION_TYPE
                 || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
             {
-                return saw_parameter;
+                return true;
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION

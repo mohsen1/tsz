@@ -12212,6 +12212,82 @@ fn ts2307_emitted_for_commonjs_module() {
 }
 
 #[test]
+fn compile_resolves_commonjs_require_with_whitespace_before_paren() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true
+          },
+          "files": [
+            "main-space.js",
+            "main-tight-control.js"
+          ]
+        }"#,
+    );
+    write_file(
+        &base.join("main-space.js"),
+        r#"// @ts-check
+
+const depSpace = require ("./dep-space");
+
+depSpace.value.toUpperCase();
+"#,
+    );
+    write_file(
+        &base.join("dep-space.js"),
+        r#"// @ts-check
+
+exports.value = 1;
+"#,
+    );
+    write_file(
+        &base.join("main-tight-control.js"),
+        r#"// @ts-check
+
+const depTight = require("./dep-tight");
+
+depTight.value.toUpperCase();
+"#,
+    );
+    write_file(
+        &base.join("dep-tight.js"),
+        r#"// @ts-check
+
+exports.value = 1;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let missing_property_files: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+        .map(|diag| diag.file.as_str())
+        .collect();
+
+    assert!(
+        missing_property_files
+            .iter()
+            .any(|file| file.contains("main-space.js")),
+        "Expected spaced require dependency to produce TS2339 in main-space.js, got: {result:?}"
+    );
+    assert!(
+        missing_property_files
+            .iter()
+            .any(|file| file.contains("main-tight-control.js")),
+        "Expected tight require control to produce TS2339 in main-tight-control.js, got: {result:?}"
+    );
+}
+
+#[test]
 fn ts1079_emitted_for_declare_import_without_ts2304_on_declare() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -12471,6 +12547,245 @@ fn ts2303_not_emitted_for_import_equals_in_js_file() {
     assert!(
         has_ts8002,
         "TS8002 should still be emitted for `import = require()` in JS file"
+    );
+}
+
+#[test]
+fn cli_deprecated_target_value_emits_ts5107() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "const ok = 1;\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--target",
+        "es5",
+        "--typeRoots",
+        "./empty-types",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&5107),
+        "Expected TS5107 for direct --target es5, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn cli_deprecated_always_strict_false_emits_ts5107() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "const ok = 1;\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--alwaysStrict",
+        "false",
+        "--typeRoots",
+        "./empty-types",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&5107),
+        "Expected TS5107 for direct --alwaysStrict false, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn cli_deprecated_allow_synthetic_default_imports_false_emits_ts5107() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "const ok = 1;\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--allowSyntheticDefaultImports",
+        "false",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&5107),
+        "Expected TS5107 for direct --allowSyntheticDefaultImports false, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn cli_ignore_deprecations_suppresses_direct_ts5107() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "const ok = 1;\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--alwaysStrict",
+        "false",
+        "--ignoreDeprecations",
+        "6.0",
+        "--typeRoots",
+        "./empty-types",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&5107),
+        "Did not expect TS5107 with direct --ignoreDeprecations 6.0, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn config_ignore_deprecations_suppresses_direct_cli_ts5107() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "const ok = 1;\n");
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "ignoreDeprecations": "6.0",
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let args = CliArgs::try_parse_from(["tsz", "--pretty", "false", "--target", "es5"])
+        .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&5107),
+        "Did not expect TS5107 with config ignoreDeprecations 6.0, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn cli_ignore_deprecations_suppresses_config_ts5107() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "const ok = 1;\n");
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let args = CliArgs::try_parse_from(["tsz", "--pretty", "false", "--ignoreDeprecations", "6.0"])
+        .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&5107),
+        "Did not expect TS5107 with CLI --ignoreDeprecations 6.0, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn config_removed_target_es3_emits_ts5108() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "const ok = 1;\n");
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true,
+            "target": "es3",
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let args =
+        CliArgs::try_parse_from(["tsz", "--pretty", "false"]).expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2],
+        "Expected only TS5108 for removed target=ES3, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics[0]
+            .message_text
+            .contains("Option 'target=ES3' has been removed"),
+        "Unexpected TS5108 message: {}",
+        result.diagnostics[0].message_text
+    );
+}
+
+#[test]
+fn cli_invalid_ignore_deprecations_emits_ts5103() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "const ok = 1;\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--ignoreDeprecations",
+        "7.0",
+        "--typeRoots",
+        "./empty-types",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&5103),
+        "Expected TS5103 for direct invalid --ignoreDeprecations, got: {:#?}",
+        result.diagnostics
     );
 }
 
