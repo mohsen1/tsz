@@ -474,6 +474,148 @@ pub fn build_value_declaration_names(
     value_names
 }
 
+/// Build a set of local names whose declarations emit runtime bindings.
+///
+/// This is intentionally stricter than `build_value_declaration_names`: ambient
+/// declarations are value-space declarations for type checking and export
+/// initialization, but they do not emit local JavaScript bindings.
+pub fn build_runtime_declaration_names(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+    preserve_const_enums: bool,
+) -> rustc_hash::FxHashSet<String> {
+    let mut runtime_names = rustc_hash::FxHashSet::default();
+
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        let decl_node = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let Some(export_decl) = arena.get_export_decl(node) else {
+                continue;
+            };
+            if export_decl.is_type_only || export_decl.module_specifier.is_some() {
+                continue;
+            }
+            arena.get(export_decl.export_clause)
+        } else {
+            Some(node)
+        };
+        let Some(decl_node) = decl_node else {
+            continue;
+        };
+
+        match decl_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if let Some(var_stmt) = arena.get_variable(decl_node) {
+                    if arena.is_declare(&var_stmt.modifiers) {
+                        continue;
+                    }
+                    for &decl_idx in &var_stmt.declarations.nodes {
+                        let mut names = Vec::new();
+                        collect_declaration_names(arena, decl_idx, &mut names);
+                        runtime_names.extend(names);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = arena.get_function(decl_node)
+                    && !arena.is_declare(&func.modifiers)
+                    && func.body.is_some()
+                    && let Some(name) = get_identifier_text(arena, func.name)
+                {
+                    runtime_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = arena.get_class(decl_node)
+                    && !arena.is_declare(&class.modifiers)
+                    && let Some(name) = get_identifier_text(arena, class.name)
+                {
+                    runtime_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = arena.get_enum(decl_node)
+                    && !arena.is_declare(&enum_decl.modifiers)
+                    && (preserve_const_enums
+                        || !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword))
+                    && let Some(name) = get_identifier_text(arena, enum_decl.name)
+                {
+                    runtime_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = arena.get_module(decl_node)
+                    && !arena.is_declare(&module.modifiers)
+                    && super::emit_utils::is_instantiated_module_ext(
+                        arena,
+                        module.body,
+                        preserve_const_enums,
+                    )
+                    && let Some(name) = get_identifier_text(arena, module.name)
+                {
+                    runtime_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if let Some(import_decl) = arena.get_import_decl(decl_node)
+                    && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
+                    && !import_decl.is_type_only
+                    && let Some(ref_node) = arena.get(import_decl.module_specifier)
+                {
+                    if ref_node.kind == SyntaxKind::StringLiteral as u16
+                        || is_import_alias_referencing_value(
+                            arena,
+                            import_decl.module_specifier,
+                            statements,
+                            preserve_const_enums,
+                        )
+                    {
+                        runtime_names.insert(name);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => {
+                if let Some(import_decl) = arena.get_import_decl(decl_node)
+                    && !import_decl.is_type_only
+                    && let Some(clause_node) = arena.get(import_decl.import_clause)
+                    && let Some(clause) = arena.get_import_clause(clause_node)
+                    && !clause.is_type_only
+                {
+                    if let Some(name) = get_identifier_text(arena, clause.name) {
+                        runtime_names.insert(name);
+                    }
+                    if let Some(nb_node) = arena.get(clause.named_bindings) {
+                        if nb_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                            if let Some(ns) = arena.get_named_imports(nb_node)
+                                && let Some(name) = get_identifier_text(arena, ns.name)
+                            {
+                                runtime_names.insert(name);
+                            }
+                        } else if nb_node.kind == syntax_kind_ext::NAMED_IMPORTS
+                            && let Some(named) = arena.get_named_imports(nb_node)
+                        {
+                            for &spec_idx in &named.elements.nodes {
+                                if let Some(spec) = arena.get_specifier_at(spec_idx)
+                                    && !spec.is_type_only
+                                    && let Some(name) = get_identifier_text(arena, spec.name)
+                                {
+                                    runtime_names.insert(name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    runtime_names
+}
+
 /// Build a set of names that are only type-level declarations (interface, type alias)
 /// in the current file. Used to distinguish "confirmed type-only" from "cross-file
 /// reference" when deciding whether to skip `export { X }` from void 0 initialization.

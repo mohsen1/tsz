@@ -84,6 +84,23 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|sym_id| self.assignment_target_is_control_flow_typed_any_symbol(sym_id))
     }
 
+    fn is_evolving_array_element_assignment_target(&mut self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        if access.question_dot_token {
+            return false;
+        }
+        let receiver_ref = self.receiver_reference_for_evolving_array_mutation(access.expression);
+        self.reference_is_reachable_evolving_array_mutation_target(receiver_ref)
+    }
+
     // =========================================================================
     // Assignment Expression Checking
     // =========================================================================
@@ -781,6 +798,8 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_node(right_idx);
         }
 
+        let js_global_fallback =
+            self.is_checked_js_global_element_access_fallback_assignment(left_idx, right_idx);
         let contextual_request = if is_destructuring {
             self.destructuring_assignment_initializer_request(left_idx, right_idx)
         } else if left_type != TypeId::ANY
@@ -829,8 +848,16 @@ impl<'a> CheckerState<'a> {
             TypingRequest::NONE
         };
 
+        let diag_count_before_rhs = self.ctx.diagnostics.len();
         let right_raw = self.get_type_of_node_with_request(right_idx, &contextual_request);
         let right_type = self.resolve_type_query_type(right_raw);
+        if js_global_fallback {
+            self.relocate_js_global_element_access_fallback_diagnostics(
+                left_idx,
+                right_idx,
+                diag_count_before_rhs,
+            );
+        }
 
         // Ensure the RHS type is also available in node_types for flow analysis.
         // When clear_type_cache_recursive removes the RHS entry for contextual
@@ -864,6 +891,7 @@ impl<'a> CheckerState<'a> {
 
         if !has_explicit_jsdoc_left_type
             && (self.is_control_flow_typed_any_assignment_target(left_idx)
+                || self.is_evolving_array_element_assignment_target(left_idx)
                 || self.is_checked_js_implicit_any_member_assignment_target(left_idx))
         {
             return right_type;

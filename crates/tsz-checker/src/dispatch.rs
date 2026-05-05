@@ -1896,7 +1896,46 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             let _ = self.checker.get_type_from_type_node(type_arg);
                         }
                     }
-                    self.checker.get_type_of_node(data.expression)
+                    let expr_type = self.checker.get_type_of_node(data.expression);
+                    if self
+                        .checker
+                        .ctx
+                        .arena
+                        .parent_of(idx)
+                        .and_then(|parent| self.checker.ctx.arena.get(parent))
+                        .is_some_and(|parent| parent.kind == syntax_kind_ext::HERITAGE_CLAUSE)
+                    {
+                        return expr_type;
+                    }
+                    if let Some(type_arguments) = &data.type_arguments {
+                        for &type_arg in &type_arguments.nodes {
+                            let _ = self.checker.get_type_from_type_node(type_arg);
+                        }
+                        if let Some(error_type) = self
+                            .checker
+                            .instantiation_expression_applicability_error_type(
+                                expr_type,
+                                type_arguments.nodes.len(),
+                            )
+                        {
+                            if let Some(error_node) = type_arguments.nodes.first().copied() {
+                                self.checker
+                                    .error_no_applicable_signatures_for_type_args_with_base(
+                                        error_type,
+                                        error_node,
+                                        data.expression,
+                                    );
+                            }
+                            TypeId::ERROR
+                        } else {
+                            self.checker.apply_type_arguments_to_callable_type(
+                                expr_type,
+                                Some(type_arguments),
+                            )
+                        }
+                    } else {
+                        expr_type
+                    }
                 } else {
                     TypeId::ERROR
                 }

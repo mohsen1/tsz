@@ -595,10 +595,12 @@ impl<'a> CheckerState<'a> {
             );
         } else {
             // TS1064: For ES6+ targets, the return type must be Promise<T>
-            let inner_type = self
+            let type_name = self
                 .promise_like_return_type_argument(return_type)
-                .unwrap_or(TypeId::VOID);
-            let type_name = self.format_type(inner_type);
+                .map_or_else(
+                    || self.format_type(return_type),
+                    |inner| self.format_type(inner),
+                );
             self.error_at_node(
                 type_annotation,
                 &format_message(

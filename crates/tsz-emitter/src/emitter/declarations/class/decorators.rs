@@ -29,6 +29,54 @@ impl<'a> Printer<'a> {
             .collect()
     }
 
+    fn legacy_decorator_expression_is_elided(&self, expr_idx: NodeIndex) -> bool {
+        self.arena.get(expr_idx).is_some_and(|node| {
+            node.is_identifier() && self.get_identifier_text_idx(expr_idx) == "await"
+        })
+    }
+
+    fn emit_legacy_decorator_expression(&mut self, expr_idx: NodeIndex) {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+
+        if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.arena.get_call_expr(expr_node)
+            && self
+                .arena
+                .get(call.expression)
+                .is_some_and(|callee| callee.is_identifier())
+            && self.get_identifier_text_idx(call.expression) == "await"
+        {
+            self.write("(");
+            if let Some(args) = &call.arguments
+                && let Some(&first_arg) = args.nodes.first()
+            {
+                self.emit(first_arg);
+            }
+            self.write(")");
+            return;
+        }
+
+        if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(expr_node)
+            && self
+                .arena
+                .get(paren.expression)
+                .is_some_and(|inner| inner.is_identifier())
+            && self.get_identifier_text_idx(paren.expression) == "await"
+        {
+            self.write("(await )");
+            return;
+        }
+
+        if expr_node.is_identifier() && self.get_identifier_text_idx(expr_idx) == "await" {
+            return;
+        }
+
+        self.emit(expr_idx);
+    }
+
     pub(in crate::emitter) fn emit_class_expression_with_captured_computed_names(
         &mut self,
         node: &Node,
@@ -561,12 +609,25 @@ impl<'a> Printer<'a> {
         });
         let has_metadata = emit_metadata && has_ctor;
         let has_more_after_decs = has_param_decs || has_metadata;
-        for (i, &dec_idx) in decorators.iter().enumerate() {
+        let emitted_decorators: Vec<NodeIndex> = decorators
+            .iter()
+            .copied()
+            .filter(|&dec_idx| {
+                let Some(dec_node) = self.arena.get(dec_idx) else {
+                    return false;
+                };
+                let Some(dec) = self.arena.get_decorator(dec_node) else {
+                    return false;
+                };
+                !self.legacy_decorator_expression_is_elided(dec.expression)
+            })
+            .collect();
+        for (i, &dec_idx) in emitted_decorators.iter().enumerate() {
             if let Some(dec_node) = self.arena.get(dec_idx)
                 && let Some(dec) = self.arena.get_decorator(dec_node)
             {
-                self.emit(dec.expression);
-                if i + 1 != decorators.len() || has_more_after_decs {
+                self.emit_legacy_decorator_expression(dec.expression);
+                if i + 1 != emitted_decorators.len() || has_more_after_decs {
                     self.write(",");
                 }
                 self.write_line();
@@ -582,7 +643,7 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(&param_idx.to_string());
                     self.write(", ");
-                    self.emit(dec.expression);
+                    self.emit_legacy_decorator_expression(dec.expression);
                     self.write(")");
                     let is_last_dec = di + 1 >= param_decs.len();
                     let is_last_param = pi + 1 >= ctor_param_decorators.len();
@@ -723,12 +784,26 @@ impl<'a> Printer<'a> {
             let will_emit_metadata = emit_metadata && !matches!(metadata, MemberMetadata::Accessor);
             let has_more = will_emit_metadata || !param_decorators.is_empty();
 
-            for (i, &dec_idx) in decorators.iter().enumerate() {
+            let emitted_decorators: Vec<NodeIndex> = decorators
+                .iter()
+                .copied()
+                .filter(|&dec_idx| {
+                    let Some(dec_node) = self.arena.get(dec_idx) else {
+                        return false;
+                    };
+                    let Some(dec) = self.arena.get_decorator(dec_node) else {
+                        return false;
+                    };
+                    !self.legacy_decorator_expression_is_elided(dec.expression)
+                })
+                .collect();
+
+            for (i, &dec_idx) in emitted_decorators.iter().enumerate() {
                 if let Some(dec_node) = self.arena.get(dec_idx)
                     && let Some(dec) = self.arena.get_decorator(dec_node)
                 {
-                    self.emit(dec.expression);
-                    if i + 1 != decorators.len() || has_more {
+                    self.emit_legacy_decorator_expression(dec.expression);
+                    if i + 1 != emitted_decorators.len() || has_more {
                         self.write(",");
                     }
                     self.write_line();
@@ -745,7 +820,7 @@ impl<'a> Printer<'a> {
                         self.write("(");
                         self.write(&param_idx.to_string());
                         self.write(", ");
-                        self.emit(dec.expression);
+                        self.emit_legacy_decorator_expression(dec.expression);
                         self.write(")");
                         let is_last_dec = di + 1 >= param_decs.len();
                         let is_last_param = pi + 1 >= param_decorators.len();

@@ -142,6 +142,78 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn declared_intersection_receiver_has_property(
+        &mut self,
+        expression: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(expression) else {
+            return false;
+        };
+
+        let declared_type = self.get_type_of_symbol(sym_id);
+        if declared_type == TypeId::ANY
+            || declared_type == TypeId::ERROR
+            || declared_type == TypeId::UNKNOWN
+            || declared_type == TypeId::NEVER
+        {
+            return false;
+        }
+
+        let declared_from_intersection_annotation =
+            self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.declarations.iter().any(|&decl_idx| {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        return false;
+                    };
+                    let type_annotation =
+                        if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
+                            param.type_annotation
+                        } else if let Some(var_decl) =
+                            self.ctx.arena.get_variable_declaration(decl_node)
+                        {
+                            var_decl.type_annotation
+                        } else {
+                            NodeIndex::NONE
+                        };
+
+                    self.type_annotation_is_intersection(type_annotation)
+                })
+            });
+
+        if !declared_from_intersection_annotation {
+            return false;
+        }
+
+        let evaluated_declared = self.evaluate_application_type(declared_type);
+        let receiver = self.resolve_type_for_property_access(evaluated_declared);
+        receiver != TypeId::NEVER
+            && matches!(
+                self.resolve_property_access_with_env(receiver, property_name),
+                PropertyAccessResult::Success { .. }
+            )
+    }
+
+    fn type_annotation_is_intersection(&self, mut type_annotation: NodeIndex) -> bool {
+        while type_annotation.is_some() {
+            let Some(node) = self.ctx.arena.get(type_annotation) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::INTERSECTION_TYPE {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+                && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
+            {
+                type_annotation = paren.type_node;
+                continue;
+            }
+            break;
+        }
+
+        false
+    }
+
     pub(crate) fn current_file_commonjs_module_identifier_is_unshadowed(
         &self,
         idx: NodeIndex,

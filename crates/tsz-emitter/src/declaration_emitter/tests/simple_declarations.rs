@@ -24,6 +24,72 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn test_object_rest_with_keyword_property_names_omits_destructured_key() {
+    let source = r#"
+type P = {
+    enum: boolean;
+    function: boolean;
+    abstract: boolean;
+    async: boolean;
+    await: boolean;
+    one: boolean;
+};
+
+function f1({ enum: _enum, ...rest }: P) {
+    return rest;
+}
+
+function f2({ function: _function, ...rest }: P) {
+    return rest;
+}
+
+function f3({ abstract: _abstract, ...rest }: P) {
+    return rest;
+}
+
+function f4({ async: _async, ...rest }: P) {
+    return rest;
+}
+
+function f5({ await: _await, ...rest }: P) {
+    return rest;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    for (function_name, omitted_key) in [
+        ("f1", "enum"),
+        ("f2", "function"),
+        ("f3", "abstract"),
+        ("f4", "async"),
+        ("f5", "await"),
+    ] {
+        let signature = format!("declare function {function_name}");
+        let start = output
+            .find(&signature)
+            .unwrap_or_else(|| panic!("Expected {signature} in declaration output: {output}"));
+        let end = output[start..]
+            .find("};")
+            .map_or(output.len(), |offset| start + offset);
+        let emitted_function = &output[start..end];
+
+        assert!(
+            !emitted_function.contains(&format!("    {omitted_key}: boolean;")),
+            "Expected `{omitted_key}` to be omitted from {function_name} rest return type: {output}"
+        );
+    }
+
+    assert!(
+        output.contains("declare function f1({ enum: _enum, ...rest }: P):"),
+        "Expected keyword binding pattern to be preserved in f1: {output}"
+    );
+    assert!(
+        output.contains("declare function f5({ await: _await, ...rest }: P):"),
+        "Expected keyword binding pattern to be preserved in f5: {output}"
+    );
+}
+
+#[test]
 fn test_non_exported_function_declaration_emits_declare_function() {
     let source = "function helper(x: string): string { return x; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1127,6 +1193,44 @@ module.exports = a;
 }
 
 #[test]
+fn test_export_equals_namespace_keeps_local_type_dependencies() {
+    let source = r#"
+namespace X {
+    interface A {
+        kind: 'a';
+    }
+
+    interface B {
+        kind: 'b';
+    }
+
+    export type C = A | B;
+}
+
+export = X;
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("interface A {\n        kind: 'a';\n    }"),
+        "Expected local namespace interface A used by exported alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("interface B {\n        kind: 'b';\n    }"),
+        "Expected local namespace interface B used by exported alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("export type C = A | B;"),
+        "Expected exported namespace alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected mixed exported and local namespace members to emit a scope marker: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_emits_named_exports_and_filters_locals() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -1418,6 +1522,28 @@ export declare namespace foo {
 }
 
 #[test]
+fn test_export_default_function_with_late_bound_assignment_emits_default_alias() {
+    let source = r#"
+export default function someFunc() {
+    return "hello!";
+}
+
+someFunc.someProp = "yo";
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+    let expected = r#"declare function someFunc(): string;
+declare namespace someFunc {
+    var someProp: string;
+}
+export default someFunc;"#;
+    assert!(
+        output.contains(expected),
+        "Expected default function expandos to emit through a merged namespace alias: {output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_function_reserved_alias_avoids_existing_member_name() {
     let source = r#"
 export function foo() {}
@@ -1507,6 +1633,30 @@ export declare const arrow9: {
         output.trim(),
         expected,
         "Expected TS late-bound arrow assignments to preserve declaration key text and types: {output}"
+    );
+}
+
+#[test]
+fn test_callable_export_expando_function_property_emits_method_signature() {
+    let source = r#"
+export interface Point {
+    readonly x: number;
+    readonly y: number;
+}
+
+export const Point = (x: number, y: number): Point => ({ x, y });
+Point.zero = (): Point => Point(0, 0);
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("zero(): Point;"),
+        "Expected function-valued expando on callable export to use method syntax: {output}"
+    );
+    assert!(
+        !output.contains("zero: () => Point;"),
+        "Expected not to emit function-valued expando as property syntax: {output}"
     );
 }
 
@@ -2798,6 +2948,23 @@ class C {
     assert!(
         output.contains("readonly p3 = E.B;"),
         "Expected readonly enum property initializer form: {output}"
+    );
+}
+
+#[test]
+fn test_returned_local_conditional_annotation_uses_function_generic_scope() {
+    let output = emit_dts_with_binding(
+        r#"
+function g<T>(x: T) {
+    let y: typeof x extends (infer T)[] ? T : typeof x = null as any;
+    return y;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function g<T>(x: T): T extends (infer T_1)[] ? T_1 : T;"),
+        "Expected returned local annotation to substitute parameter type queries and rename shadowed infer type parameter: {output}"
     );
 }
 

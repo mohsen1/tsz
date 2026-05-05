@@ -443,14 +443,15 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return true;
         }
-        // Fall back to root scope table
-        let Some(root_scope) = binder.scopes.first() else {
-            return false;
-        };
-        let Some(scope_sym_id) = root_scope.table.get(&name_ident.escaped_text) else {
-            return false;
-        };
-        used.contains_key(&scope_sym_id)
+        // Fall back to scope tables. Namespace members can be declared outside
+        // file_locals, and UsageAnalyzer marks those symbols from exported
+        // namespace member types.
+        binder.scopes.iter().any(|scope| {
+            scope
+                .table
+                .get(&name_ident.escaped_text)
+                .is_some_and(|scope_sym_id| used.contains_key(&scope_sym_id))
+        })
     }
 
     /// Walk a binding pattern's leaf identifiers and return true if any one

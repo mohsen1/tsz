@@ -254,8 +254,11 @@ pub(crate) struct TemplateParts {
 // Printer
 // =============================================================================
 
-/// Maximum recursion depth for emit to prevent infinite loops
-const MAX_EMIT_RECURSION_DEPTH: u32 = 1000;
+/// Maximum recursion depth for emit to prevent infinite loops.
+///
+/// Valid TypeScript inputs include generated left-associative expression chains
+/// thousands of nodes deep, such as the binder binary expression stress case.
+const MAX_EMIT_RECURSION_DEPTH: u32 = 10_000;
 
 /// Printer that works with `NodeArena`.
 ///

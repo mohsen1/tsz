@@ -1000,6 +1000,24 @@ impl ParserState {
             NodeIndex::NONE
         };
 
+        if self.is_token(SyntaxKind::IsKeyword) {
+            // `[index: number]: p1 is C;` is not a valid index-signature type.
+            // TSC reports the missing separator at `is`, skips the invalid tail,
+            // and leaves the closing brace to surface as a stray declaration.
+            self.error_token_expected(";");
+            self.next_token();
+            while !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                self.next_token();
+            }
+            self.parse_optional(SyntaxKind::SemicolonToken);
+            self.deferred_type_member_close_braces = self
+                .deferred_type_member_close_braces
+                .max(self.type_member_container_depth);
+        }
+
         let param_node = self.arena.add_parameter(
             syntax_kind_ext::PARAMETER,
             param_start,

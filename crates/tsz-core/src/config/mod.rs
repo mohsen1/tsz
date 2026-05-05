@@ -1511,6 +1511,44 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // Check for removed compiler option values (TS5108)
+        // These are specific values for otherwise-valid options that tsc 6.0 removed entirely.
+        // Unlike TS5107 deprecations, TS5108 cannot be suppressed by ignoreDeprecations.
+        {
+            type RemovedValueCheck = (
+                &'static str,
+                &'static dyn Fn(&serde_json::Value) -> Option<&'static str>,
+            );
+            let removed_value_checks: &[RemovedValueCheck] = &[("target", &|v| match v {
+                serde_json::Value::String(s) => {
+                    let n = normalize_option(s);
+                    if n == "es3" { Some("ES3") } else { None }
+                }
+                _ => None,
+            })];
+            for (key, check_fn) in removed_value_checks {
+                let matched = compiler_opts
+                    .get(*key)
+                    .and_then(|v| check_fn(v).map(|dv| (dv, estimate_json_value_len(v))));
+                if let Some((display_value, value_len)) = matched {
+                    let start = find_value_offset_in_source(&stripped, key);
+                    let msg = format_message(
+                        diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2,
+                        &[key, display_value],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        value_len,
+                        msg,
+                        diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2,
+                    ));
+                    // Null out so validate_option_value and resolve_compiler_options skip it.
+                    compiler_opts.insert(key.to_string(), serde_json::Value::Null);
+                }
+            }
+        }
+
         // Check command-line-only options in tsconfig (TS6266)
         // Some options like `listFilesOnly` can only be specified on the command line,
         // not in tsconfig.json. tsc emits TS6266 for these.
@@ -5750,6 +5788,40 @@ mod tests {
         assert!(
             parsed.diagnostics.iter().any(|d| d.code == 5107),
             "target=ES5 should trigger TS5107; got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| d.code)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_ts5108_target_es3() {
+        // target=ES3 was removed in TS 6.0 (TS5108, not suppressible by ignoreDeprecations).
+        for value in &["ES3", "es3"] {
+            let source = format!(r#"{{"compilerOptions":{{"target":"{value}"}}}}"#);
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            assert!(
+                parsed.diagnostics.iter().any(|d| d.code == 5108),
+                "target={value} should trigger TS5108; got: {:?}",
+                parsed
+                    .diagnostics
+                    .iter()
+                    .map(|d| d.code)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn test_ts5108_target_es3_not_suppressed_by_ignore_deprecations() {
+        // TS5108 (removed value) must fire even when ignoreDeprecations="6.0" is set.
+        let source = r#"{"compilerOptions":{"target":"ES3","ignoreDeprecations":"6.0"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.code == 5108),
+            "ignoreDeprecations=6.0 must NOT suppress TS5108 (removed value); got: {:?}",
             parsed
                 .diagnostics
                 .iter()

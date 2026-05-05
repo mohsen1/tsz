@@ -201,8 +201,39 @@ impl<'a> Printer<'a> {
                 return;
             }
 
+            if let Some(converted) =
+                self.convert_decimal_separator_exponent_literal(&text, had_separators)
+            {
+                self.write(&converted);
+                return;
+            }
+
             self.write(&text);
         }
+    }
+
+    fn convert_decimal_separator_exponent_literal(
+        &self,
+        text: &str,
+        had_separators: bool,
+    ) -> Option<String> {
+        if !had_separators || self.ctx.options.target.supports_es2021() {
+            return None;
+        }
+        if !text.bytes().any(|b| b == b'e' || b == b'E') {
+            return None;
+        }
+        if text.starts_with("0b")
+            || text.starts_with("0B")
+            || text.starts_with("0o")
+            || text.starts_with("0O")
+            || text.starts_with("0x")
+            || text.starts_with("0X")
+        {
+            return None;
+        }
+
+        text.parse::<f64>().ok().map(format_js_number)
     }
 
     /// Convert numeric literals that need downleveling:
@@ -855,6 +886,29 @@ mod tests {
             assert!(
                 output.contains(expected),
                 "Hex with separators {source} at ES2015 should emit {expected}\nGot: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_separator_decimal_exponents_normalized_below_es2021() {
+        use tsz_common::ScriptTarget;
+        let source = "1e1_0\n1e+1_0\n1.1e10_0\n1_2.3_4e5_6\n1_2.3_4e-5_6";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        for expected in ["10000000000;", "1.1e+100;", "1.234e+57;", "1.234e-55;"] {
+            assert!(
+                output.contains(expected),
+                "Decimal numeric separator exponent should contain {expected}\nGot: {output}"
             );
         }
     }
