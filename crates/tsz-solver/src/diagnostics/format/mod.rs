@@ -16,7 +16,7 @@ mod tests;
 pub mod tracing_helpers;
 
 use crate::TypeDatabase;
-use crate::def::DefinitionStore;
+use crate::def::{DefId, DefinitionStore};
 use crate::diagnostics::{
     DiagnosticArg, PendingDiagnostic, RelatedInformation, SourceSpan, TypeDiagnostic,
     get_message_template,
@@ -115,6 +115,15 @@ pub struct TypeFormatter<'a> {
     /// Application (e.g., `type Foo = Id<{...}>`). In assignability error messages,
     /// tsc shows the Application form `Id<{...}>` rather than the outer alias `Foo`.
     skip_application_alias_names: bool,
+    /// Specific non-generic type aliases whose name should not be used for
+    /// diagnostic display. This is used for `typeof` aliases in assignability
+    /// messages where tsc prints the target's structural type rather than the
+    /// alias name.
+    skip_type_alias_def_ids: FxHashSet<DefId>,
+    /// Type aliases currently being expanded through `skip_type_alias_def_ids`.
+    /// This lets a recursive alias expand one structural layer before nested
+    /// self-references elide as `...`.
+    skipped_type_alias_expansion_visiting: FxHashSet<DefId>,
     /// When true, don't follow `display_alias` when it points to an Intersection
     /// type and the current type is an Object. Used for TS2741 messages where
     /// tsc shows the merged object form instead of the intersection form.
@@ -318,6 +327,8 @@ impl<'a> TypeFormatter<'a> {
             format_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
+            skip_type_alias_def_ids: FxHashSet::default(),
+            skipped_type_alias_expansion_visiting: FxHashSet::default(),
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
@@ -506,6 +517,8 @@ impl<'a> TypeFormatter<'a> {
             format_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
+            skip_type_alias_def_ids: FxHashSet::default(),
+            skipped_type_alias_expansion_visiting: FxHashSet::default(),
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
@@ -622,6 +635,12 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
+    /// Skip one specific type alias name and display its evaluated body instead.
+    pub fn with_skip_type_alias_def_id(mut self, def_id: DefId) -> Self {
+        self.skip_type_alias_def_ids.insert(def_id);
+        self
+    }
+
     /// Don't follow `display_alias` when it points to an Intersection type
     /// and the current type is an Object. tsc shows the merged object form
     /// in TS2741 messages, not the intersection form.
@@ -691,6 +710,38 @@ impl<'a> TypeFormatter<'a> {
     pub const fn with_expand_scalar_mapped_alias_applications(mut self) -> Self {
         self.expand_scalar_mapped_alias_applications = true;
         self
+    }
+
+    fn format_skipped_type_alias_body(&mut self, def_id: DefId, body: TypeId) -> Cow<'static, str> {
+        if !self.skipped_type_alias_expansion_visiting.insert(def_id) {
+            return Cow::Borrowed("...");
+        }
+
+        let body_was_visiting = self.format_visiting.remove(&body);
+        let formatted = self.format(body);
+        if body_was_visiting {
+            self.format_visiting.insert(body);
+        }
+
+        self.skipped_type_alias_expansion_visiting.remove(&def_id);
+        formatted
+    }
+
+    fn skipped_type_alias_body_by_name(&self, name: Atom) -> Option<(DefId, TypeId)> {
+        let def_store = self.def_store?;
+        def_store
+            .find_defs_by_name(name)?
+            .into_iter()
+            .find_map(|def_id| {
+                if !self.skip_type_alias_def_ids.contains(&def_id) {
+                    return None;
+                }
+                let def = def_store.get(def_id)?;
+                if def.kind != crate::def::DefKind::TypeAlias {
+                    return None;
+                }
+                Some((def_id, def.body?))
+            })
     }
 
     fn atom(&mut self, atom: Atom) -> Arc<str> {
@@ -887,7 +938,8 @@ impl<'a> TypeFormatter<'a> {
                 // form for these types, not the alias name.
                 use crate::def::DefKind;
                 let skip_alias = if def.kind == DefKind::TypeAlias {
-                    def.body.is_some_and(|b| def_store.is_computed_body(b))
+                    self.skip_type_alias_def_ids.contains(&def_id)
+                        || def.body.is_some_and(|b| def_store.is_computed_body(b))
                         || (!def.type_params.is_empty()
                             && def.body.is_some_and(|b| {
                                 matches!(
@@ -1237,8 +1289,23 @@ impl<'a> TypeFormatter<'a> {
                 self.format_callable(shape.as_ref()).into()
             }
             TypeData::TypeParameter(info) => Cow::Owned(self.atom(info.name).to_string()),
-            TypeData::UnresolvedTypeName(name) => Cow::Owned(self.atom(*name).to_string()),
-            TypeData::Lazy(def_id) => self.format_def_id_with_type_params(*def_id, "Lazy").into(),
+            TypeData::UnresolvedTypeName(name) => {
+                if let Some((def_id, body)) = self.skipped_type_alias_body_by_name(*name) {
+                    return self.format_skipped_type_alias_body(def_id, body);
+                }
+                Cow::Owned(self.atom(*name).to_string())
+            }
+            TypeData::Lazy(def_id) => {
+                if self.skip_type_alias_def_ids.contains(def_id)
+                    && let Some(def_store) = self.def_store
+                    && let Some(def) = def_store.get(*def_id)
+                    && def.kind == crate::def::DefKind::TypeAlias
+                    && let Some(body) = def.body
+                {
+                    return self.format_skipped_type_alias_body(*def_id, body);
+                }
+                self.format_def_id_with_type_params(*def_id, "Lazy").into()
+            }
             TypeData::Recursive(idx) => format!("Recursive({idx})").into(),
             TypeData::BoundParameter(idx) => format!("BoundParameter({idx})").into(),
             TypeData::Application(app) => {
