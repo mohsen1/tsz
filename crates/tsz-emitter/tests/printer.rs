@@ -491,6 +491,28 @@ fn test_commonjs_void_zero_exports_are_emitted_in_reverse_declaration_order() {
 }
 
 #[test]
+fn commonjs_local_undefined_export_skips_redundant_assignment() {
+    let source = "var undefined;\nexport { undefined };\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.undefined = void 0;\nvar undefined;"),
+        "expected undefined export preamble and local declaration:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.undefined = undefined;"),
+        "unexpected redundant undefined export assignment:\n{output}"
+    );
+}
+
+#[test]
 fn test_es_module_export_equals_erased_to_empty_export_marker() {
     let source = "var a = 10;\nexport = a;\n";
     let output = parse_lower_print(

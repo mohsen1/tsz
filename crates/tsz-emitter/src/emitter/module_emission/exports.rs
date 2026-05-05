@@ -790,6 +790,13 @@ impl<'a> Printer<'a> {
                                     continue;
                                 }
 
+                                // For `export { undefined }`, tsc relies on the
+                                // preamble `exports.undefined = void 0;` and does not
+                                // emit a trailing `exports.undefined = undefined;`.
+                                if export_name == "undefined" && local_name == "undefined" {
+                                    continue;
+                                }
+
                                 self.write_export_property_access(&export_name);
                                 self.write(" = ");
                                 // When the local name was inlined (no local var exists),
