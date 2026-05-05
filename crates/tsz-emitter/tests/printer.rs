@@ -92,6 +92,21 @@ fn optional_parameter_missing_initializer_skips_question_after_trivia() {
 }
 
 #[test]
+fn es5_param_destructuring_prologue_keeps_function_body_let_name() {
+    let source = "let foo = \"\";\nfunction f({ [foo]: bar }: any[]) {\n    let foo = 2;\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("var _b = foo, bar = _a[_b];\n    var foo = 2;"),
+        "Function-body let declarations should use the function scope opened by the ES5 parameter prologue.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var foo_1 = 2;"),
+        "Function-body let should not be renamed against the outer foo.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn decorated_anonymous_class_expression_sets_empty_function_name() {
     let source = "declare let dec: any;\n(@dec class {});";
     let output = parse_lower_print(
