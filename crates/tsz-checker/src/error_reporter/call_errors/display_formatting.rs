@@ -1814,9 +1814,10 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(expr_idx)
             .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
-            && let Some(display) = self.conditional_callable_union_argument_display(arg_type) {
-                return display;
-            }
+            && let Some(display) = self.conditional_callable_union_argument_display(arg_type)
+        {
+            return display;
+        }
 
         if let Some(display) =
             self.contextual_function_argument_display(arg_type, param_type, arg_idx)
