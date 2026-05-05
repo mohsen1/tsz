@@ -1003,7 +1003,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if let Some((imported_name, local_name)) =
-                            Self::parse_jsdoc_named_import_alias(part)
+                            Self::split_jsdoc_import_as_keyword(part)
                         {
                             results.push((
                                 local_name.to_string(),
@@ -1014,8 +1014,10 @@ impl<'a> CheckerState<'a> {
                             results.push((part.to_string(), specifier.clone(), part.to_string()));
                         }
                     }
-                } else if let Some(ns_name) = before_from.strip_prefix("* as ") {
-                    let ns_name = ns_name.trim().to_string();
+                } else if let Some(("*", ns_name)) =
+                    Self::split_jsdoc_import_as_keyword(before_from)
+                {
+                    let ns_name = ns_name.to_string();
                     if !ns_name.is_empty() {
                         results.push((ns_name, specifier, "*".to_string()));
                     }
@@ -1077,17 +1079,34 @@ impl<'a> CheckerState<'a> {
         ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
-    fn parse_jsdoc_named_import_alias(part: &str) -> Option<(&str, &str)> {
-        let mut pieces = part.split_whitespace();
-        let imported_name = pieces.next()?;
-        if pieces.next()? != "as" {
-            return None;
+    /// Split a JSDoc `@import` clause at the `as` keyword.
+    ///
+    /// Recognizes the keyword when it is bounded on both sides by any JS
+    /// whitespace, matching tsc's tokenization. Returns `None` if no
+    /// whitespace-bounded `as` appears, or if either side would be empty.
+    fn split_jsdoc_import_as_keyword(part: &str) -> Option<(&str, &str)> {
+        let mut search_start = 0;
+        while let Some(rel) = part[search_start..].find("as") {
+            let abs = search_start + rel;
+            let before_ok = part[..abs]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace);
+            let after_idx = abs + 2;
+            let after_ok = part[after_idx..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace);
+            if before_ok && after_ok {
+                let imported = part[..abs].trim();
+                let local = part[after_idx..].trim();
+                if !imported.is_empty() && !local.is_empty() {
+                    return Some((imported, local));
+                }
+            }
+            search_start = abs + 2;
         }
-        let local_name = pieces.next()?;
-        if pieces.next().is_some() {
-            return None;
-        }
-        Some((imported_name, local_name))
+        None
     }
 
     pub(super) fn parse_jsdoc_typedef_definition(line: &str) -> Option<(String, Option<String>)> {
@@ -1225,6 +1244,124 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod jsdoc_import_as_whitespace_tests {
+    use crate::state::CheckerState;
+
+    fn parse(rest: &str) -> Vec<(String, String, String)> {
+        CheckerState::parse_jsdoc_import_tag(rest)
+    }
+
+    #[test]
+    fn import_named_alias_with_space() {
+        let imports = parse("{ Foo as LocalFoo } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "LocalFoo".to_string(),
+                "./dep".to_string(),
+                "Foo".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn import_named_alias_with_tab() {
+        let imports = parse("{ Foo as\tLocalFoo } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "LocalFoo".to_string(),
+                "./dep".to_string(),
+                "Foo".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn import_named_alias_with_mixed_whitespace() {
+        let imports = parse("{ Foo \tas \tLocalFoo } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "LocalFoo".to_string(),
+                "./dep".to_string(),
+                "Foo".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn import_namespace_alias_with_tab() {
+        let imports = parse("*\tas\tNS from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![("NS".to_string(), "./dep".to_string(), "*".to_string())]
+        );
+    }
+
+    #[test]
+    fn import_namespace_alias_with_space() {
+        let imports = parse("* as NS from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![("NS".to_string(), "./dep".to_string(), "*".to_string())]
+        );
+    }
+
+    #[test]
+    fn import_named_no_alias_unchanged() {
+        let imports = parse("{ Foo, Bar } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![
+                ("Foo".to_string(), "./dep".to_string(), "Foo".to_string(),),
+                ("Bar".to_string(), "./dep".to_string(), "Bar".to_string(),),
+            ]
+        );
+    }
+
+    #[test]
+    fn import_named_alias_does_not_match_inside_identifier() {
+        // `Class` contains the substring "as" but is not a renaming.
+        let imports = parse("{ Class } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "Class".to_string(),
+                "./dep".to_string(),
+                "Class".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn import_named_alias_with_identifier_containing_as() {
+        let imports = parse("{ Class as Klass } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "Klass".to_string(),
+                "./dep".to_string(),
+                "Class".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn import_default_unchanged() {
+        let imports = parse("Foo from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "Foo".to_string(),
+                "./dep".to_string(),
+                "default".to_string(),
+            )]
+        );
     }
 }
 
