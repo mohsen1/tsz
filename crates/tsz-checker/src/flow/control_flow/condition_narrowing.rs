@@ -1090,7 +1090,10 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
-    const fn optional_chain_guard_can_be_satisfied_by_short_circuit(&self, guard: &TypeGuard) -> bool {
+    const fn optional_chain_guard_can_be_satisfied_by_short_circuit(
+        &self,
+        guard: &TypeGuard,
+    ) -> bool {
         matches!(
             guard,
             TypeGuard::NullishEquality
