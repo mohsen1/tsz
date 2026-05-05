@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-discriminated-union-types2-fingerprints`
 - **PR**: https://github.com/mohsen1/tsz/pull/2953
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -17,11 +17,14 @@ mismatch. The older claim for PR #1797 is stale and already merged.
 ## Files Touched
 
 - `docs/plan/claims/fix-checker-discriminated-union-types2-fingerprints.md`
-  (claim)
+- `crates/tsz-checker/src/types/property_access_type/helpers.rs`
+- `crates/tsz-checker/src/types/property_access_type/resolve.rs`
+- `crates/tsz-checker/tests/ts2339_union_narrow_display_tests.rs`
 
 ## Verification
 
-- owning-crate regression test
+- `cargo test -p tsz-checker --test ts2339_union_narrow_display_tests never_receiver -- --nocapture`
+- `cargo check -p tsz-checker`
 - `./scripts/conformance/conformance.sh run --filter "discriminatedUnionTypes2" --verbose`
 - `./scripts/conformance/conformance.sh run --max 200`
 - `scripts/githooks/pre-commit`
