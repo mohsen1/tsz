@@ -78,6 +78,126 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        self.call_expression_returned_local_class_constructor_text(expr_idx, true)
+    }
+
+    pub(in crate::declaration_emitter) fn call_expression_returned_local_class_constructor_text(
+        &self,
+        expr_idx: NodeIndex,
+        arrow_form: bool,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let source_arena = binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| arena.as_ref())
+            .unwrap_or(self.arena);
+        if !std::ptr::eq(source_arena, self.arena) {
+            return None;
+        }
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(func) = self.callable_function_from_symbol_decl(self.arena, decl_idx) else {
+                continue;
+            };
+            let (class_idx, base_param_index) =
+                self.function_returned_local_class_extends_parameter(func)?;
+            let args = call.arguments.as_ref()?;
+            let base_arg = args.nodes.get(base_param_index).copied()?;
+            let base_type_text =
+                self.direct_value_reference_typeof_text(base_arg)
+                    .or_else(|| {
+                        self.nameable_constructor_expression_text(base_arg)
+                            .map(|name| format!("typeof {name}"))
+                    })?;
+            return self.local_class_constructor_type_text_from_ast(
+                class_idx,
+                Some(&base_type_text),
+                arrow_form,
+            );
+        }
+
+        None
+    }
+
+    fn function_returned_local_class_extends_parameter(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<(NodeIndex, usize)> {
+        let body_node = self.arena.get(func.body)?;
+        let block = self.arena.get_block(body_node)?;
+
+        let returned = block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find_map(|stmt_idx| {
+                let stmt_node = self.arena.get(stmt_idx)?;
+                if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                    return None;
+                }
+                let ret = self.arena.get_return_statement(stmt_node)?;
+                if !ret.expression.is_some() {
+                    return None;
+                }
+                self.skip_parenthesized_expression(ret.expression)
+            })?;
+
+        let returned_node = self.arena.get(returned)?;
+        let class_idx = if returned_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            returned
+        } else if returned_node.kind == SyntaxKind::Identifier as u16 {
+            let returned_name = self.get_identifier_text(returned)?;
+            block.statements.nodes.iter().copied().find(|&stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                    return false;
+                }
+                self.arena
+                    .get_class(stmt_node)
+                    .and_then(|class| self.get_identifier_text(class.name))
+                    .as_deref()
+                    == Some(returned_name.as_str())
+            })?
+        } else {
+            return None;
+        };
+
+        let class_node = self.arena.get(class_idx)?;
+        let class = self.arena.get_class(class_node)?;
+        let heritage_clauses = class.heritage_clauses.as_ref()?;
+        for clause_idx in heritage_clauses.nodes.iter().copied() {
+            let heritage = self.arena.get_heritage_clause_at(clause_idx)?;
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            let base_idx = heritage.types.nodes.first().copied()?;
+            let base_node = self.arena.get(base_idx)?;
+            let base_expr = self
+                .arena
+                .get_expr_type_args(base_node)
+                .map(|expr| expr.expression)
+                .unwrap_or(base_idx);
+            let base_name = self.get_identifier_text(base_expr)?;
+            for (idx, param_idx) in func.parameters.nodes.iter().copied().enumerate() {
+                let param_node = self.arena.get(param_idx)?;
+                let param = self.arena.get_parameter(param_node)?;
+                if self.get_identifier_text(param.name).as_deref() == Some(base_name.as_str()) {
+                    return Some((class_idx, idx));
+                }
+            }
+        }
+
         None
     }
 
@@ -124,12 +244,21 @@ impl<'a> DeclarationEmitter<'a> {
             }
             let class = self.arena.get_class(stmt_node)?;
             (self.get_identifier_text(class.name).as_deref() == Some(returned_name.as_str()))
-                .then(|| self.class_constructor_object_type_text_from_ast(stmt_idx))
+                .then(|| self.local_class_constructor_type_text_from_ast(stmt_idx, None, false))
                 .flatten()
         })
     }
 
     fn class_constructor_object_type_text_from_ast(&self, class_idx: NodeIndex) -> Option<String> {
+        self.local_class_constructor_type_text_from_ast(class_idx, None, false)
+    }
+
+    fn local_class_constructor_type_text_from_ast(
+        &self,
+        class_idx: NodeIndex,
+        base_type_text: Option<&str>,
+        arrow_form: bool,
+    ) -> Option<String> {
         let class_node = self.arena.get(class_idx)?;
         let class = self.arena.get_class(class_node)?;
 
@@ -149,9 +278,16 @@ impl<'a> DeclarationEmitter<'a> {
             scratch.in_constructor_params = false;
             params_text = scratch.writer.take_output();
         }
+        if params_text.is_empty() && base_type_text.is_some() {
+            params_text = "...args: any[]".to_string();
+        }
 
         let mut member_scratch = self.scratch_declaration_emitter();
-        member_scratch.indent_level = self.indent_level + 2;
+        member_scratch.indent_level = if arrow_form {
+            self.indent_level + 1
+        } else {
+            self.indent_level + 2
+        };
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -162,15 +298,50 @@ impl<'a> DeclarationEmitter<'a> {
             member_scratch.emit_class_member(member_idx);
         }
         let members = member_scratch.writer.take_output();
-        let members = members.trim_end();
+        let members = Self::strip_abstract_member_modifiers(members.trim_end());
+        let members = members.as_str();
 
-        if members.is_empty() {
-            Some(format!("{{\n    new ({params_text}): {{}};\n}}"))
+        let constructor_type = if arrow_form {
+            let is_abstract = self
+                .arena
+                .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
+            let prefix = if is_abstract { "abstract new " } else { "new " };
+            if members.is_empty() {
+                format!("{prefix}({params_text}) => {{}}")
+            } else {
+                format!("{prefix}({params_text}) => {{\n{members}\n}}")
+            }
+        } else if members.is_empty() {
+            format!("{{\n    new ({params_text}): {{}};\n}}")
         } else {
-            Some(format!(
-                "{{\n    new ({params_text}): {{\n{members}\n    }};\n}}"
-            ))
+            format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n}}")
+        };
+
+        if let Some(base_type_text) = base_type_text {
+            if arrow_form {
+                Some(format!("({constructor_type}) & {base_type_text}"))
+            } else {
+                Some(format!("{constructor_type} & {base_type_text}"))
+            }
+        } else {
+            Some(constructor_type)
         }
+    }
+
+    fn strip_abstract_member_modifiers(members: &str) -> String {
+        members
+            .lines()
+            .map(|line| {
+                let trimmed = line.trim_start();
+                if let Some(rest) = trimmed.strip_prefix("abstract ") {
+                    let indent_len = line.len() - trimmed.len();
+                    format!("{}{}", &line[..indent_len], rest)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn type_annotation_text_from_arena_node(
@@ -1873,9 +2044,12 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 let reused_type_text = self
-                    .super_method_call_return_type_text(expr_idx)
-                    .or_else(|| self.call_expression_source_return_type_text(expr_idx))
-                    .or_else(|| self.call_expression_declared_return_type_text(expr_idx));
+                    .call_expression_returned_local_class_constructor_text(expr_idx, false)
+                    .or_else(|| {
+                        self.super_method_call_return_type_text(expr_idx)
+                            .or_else(|| self.call_expression_source_return_type_text(expr_idx))
+                            .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
+                    });
                 if reused_type_text.is_some()
                     && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
                     && type_id != tsz_solver::types::TypeId::ANY
