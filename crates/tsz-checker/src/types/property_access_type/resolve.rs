@@ -1993,7 +1993,6 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
                     }
-
                     if !access.question_dot_token
                         && is_this_access
                         && let Some((_, is_static_access)) = resolved_class_access
@@ -2021,8 +2020,6 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    // Check global interface augmentations for primitive wrappers
-                    // and other built-in types (e.g., `interface Boolean { doStuff() }`)
                     if let Some(augmented_type) = self.resolve_general_global_augmentation_property(
                         object_type_for_access,
                         property_name,
@@ -2034,8 +2031,6 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    // Check module augmentations (declare module "X" { interface Y { ... } })
-                    // for properties added by cross-file augmentation declarations.
                     if let Some(augmented_type) = self
                         .resolve_module_augmentation_property(object_type_for_access, property_name)
                     {
@@ -2046,8 +2041,6 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    // For callable/function types, check the Function interface
-                    // for augmented members (e.g., declare global { interface Function { ... } })
                     if crate::query_boundaries::property_access::is_function_type(
                         self.ctx.types,
                         object_type_for_access,
@@ -2074,13 +2067,23 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    // Check for optional chaining (?.) - suppress TS2339 error when using optional chaining
+                    if let Some(member_type) = self.recover_property_from_class_chain_summary(
+                        access.expression,
+                        object_type_for_access,
+                        resolved_class_access,
+                        class_chain_summary.as_deref(),
+                        property_name,
+                    ) {
+                        return self.finalize_property_access_result(
+                            idx,
+                            member_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
                     if access.question_dot_token {
-                        // With optional chaining, missing property results in undefined
                         return TypeId::UNDEFINED;
                     }
-                    // In JS checkJs mode, unresolved CommonJS `module.exports` accesses
-                    // should use the current file's export surface instead of `any`.
                     if property_name == "exports"
                         && self.is_js_file()
                         && let Some(obj_node) = self.ctx.arena.get(access.expression)
