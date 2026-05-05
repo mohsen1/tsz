@@ -641,6 +641,100 @@ if (Strs.A) {}
 }
 
 #[test]
+fn test_module_scoped_shadowed_nan_does_not_trigger_ts2845() {
+    // When a module re-declares `NaN` as a local variable, comparisons against
+    // that local should NOT emit TS2845. Only the lib-originated global `NaN`
+    // triggers the always-true/false diagnostic.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+const NaN = 0;
+
+if (NaN === 0) {
+    const ok: true = true;
+}
+
+if (NaN !== 0) {
+    const unreachable: never = "not actually unreachable";
+}
+
+export {};
+"#,
+    );
+
+    // Only the intentional `never` assignment should appear — no false TS2845.
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert!(
+        ts2845.is_empty(),
+        "Expected no TS2845 for shadowed module-level NaN, got: {ts2845:?}"
+    );
+    // The never assignment error IS expected.
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 (never assignment), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_function_local_shadowed_nan_does_not_trigger_ts2845() {
+    // Function-local `NaN` redeclarations must also be free of false TS2845.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+function f() {
+    const NaN = 0;
+    if (NaN === 0) {
+        return true;
+    }
+    return false;
+}
+
+f();
+
+export {};
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert!(
+        ts2845.is_empty(),
+        "Expected no TS2845 for function-local shadowed NaN, got: {ts2845:?}"
+    );
+}
+
+#[test]
+fn test_global_nan_still_triggers_ts2845() {
+    // The global (lib) NaN must still produce TS2845 so we don't regress
+    // the original behavior.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+declare let x: number;
+if (x === NaN) {}
+export {};
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert_eq!(
+        ts2845.len(),
+        1,
+        "Expected one TS2845 for global NaN comparison, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
