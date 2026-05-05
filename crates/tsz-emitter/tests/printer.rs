@@ -116,6 +116,14 @@ fn test_es6_generator_param_named_yield_keeps_identifier_text() {
 }
 
 #[test]
+fn recovered_template_object_property_name_emits_as_recovered_statements() {
+    let source = "var x = {\n    `abc${ 123 }def${ 456 }ghi`: 321\n}";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert_eq!(output, "var x = {} `abc${123}def${456}ghi`;\n321;\n");
+}
+
+#[test]
 fn test_optional_catch_binding_downlevel_to_param() {
     let source = "try {\n} catch {\n}\n";
     let output = parse_lower_print(
