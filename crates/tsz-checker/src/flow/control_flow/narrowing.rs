@@ -1,8 +1,4 @@
-//! Control flow narrowing: assignments, predicates, instanceof, in-operator,
-//! typeof, discriminants, and literal comparisons.
-//!
-//! Reference matching, literal parsing, and symbol resolution utilities are in
-//! `references.rs`.
+//! Control flow narrowing: assignments, predicates, discriminants, and literal comparisons.
 
 use tsz_binder::symbol_flags;
 use tsz_common::interner::Atom;
@@ -1217,6 +1213,23 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some((_sym_id, initializer)) = self.const_condition_initializer(idx)
         {
             return self.literal_type_from_node(initializer);
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+            && !access.question_dot_token
+            && let Some((_sym_id, initializer)) =
+                self.const_condition_initializer(access.expression)
+        {
+            if let Some(property_initializer) =
+                self.lookup_property_in_rhs(initializer, access.name_or_argument)
+            {
+                return self.literal_type_from_node(property_initializer);
+            }
+            if let Some(array_to_enum_literal) =
+                self.array_to_enum_member_literal_type(initializer, access.name_or_argument)
+            {
+                return Some(array_to_enum_literal);
+            }
         }
 
         match node.kind {

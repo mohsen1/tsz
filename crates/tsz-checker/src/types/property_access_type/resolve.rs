@@ -70,6 +70,10 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        if let Some(literal_type) = self.const_array_to_enum_member_literal_type_query(idx) {
+            return literal_type;
+        }
+
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
             && self.property_access_is_direct_write_target(idx)

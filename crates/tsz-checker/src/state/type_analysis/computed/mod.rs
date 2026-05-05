@@ -1089,6 +1089,17 @@ impl<'a> CheckerState<'a> {
                         .cloned()
                         .or_else(|| self.ctx.get_def_type_params(def_id))
                 };
+                let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+                    self.const_array_to_enum_object_type_query(expr_name_idx)
+                        .or_else(|| self.const_object_member_literal_type_query(expr_name_idx))
+                        .or_else(|| {
+                            self.ctx
+                                .node_types
+                                .get(&expr_name_idx.0)
+                                .copied()
+                                .filter(|&ty| ty != TypeId::ERROR)
+                        })
+                };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
                     namespace_prefix
                         .as_ref()
@@ -1112,7 +1123,8 @@ impl<'a> CheckerState<'a> {
                 .with_type_param_bindings(type_param_bindings)
                 .with_computed_name_resolver(&computed_name_resolver)
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
-                .with_name_def_id_resolver(&name_resolver);
+                .with_name_def_id_resolver(&name_resolver)
+                .with_type_query_override(&type_query_override);
                 let mut interface_type =
                     lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
 

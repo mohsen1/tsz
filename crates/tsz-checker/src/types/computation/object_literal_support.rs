@@ -391,6 +391,64 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<PropertyInfo> {
         let resolved = self.resolve_type_for_property_access(type_id);
         let resolved = self.resolve_lazy_type(resolved);
+        let resolved = self.evaluate_type_with_env(resolved);
+        if let Some(mapped_id) =
+            crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved)
+        {
+            let mapped = self.ctx.types.mapped_type(mapped_id);
+            let eval_constraint =
+                self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
+            let mapped_id = if eval_constraint != mapped.constraint {
+                let mapped_type = tsz_solver::MappedType {
+                    type_param: mapped.type_param,
+                    constraint: eval_constraint,
+                    name_type: mapped.name_type,
+                    template: mapped.template,
+                    readonly_modifier: mapped.readonly_modifier,
+                    optional_modifier: mapped.optional_modifier,
+                };
+                crate::query_boundaries::common::mapped_type_id(
+                    self.ctx.types,
+                    self.ctx.types.factory().mapped(mapped_type),
+                )
+                .unwrap_or(mapped_id)
+            } else {
+                mapped_id
+            };
+            if let Some(names) =
+                crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
+                    self.ctx.types,
+                    mapped_id,
+                )
+            {
+                return names
+                    .into_iter()
+                    .filter_map(|name| {
+                        let prop_name = self.ctx.types.resolve_atom_ref(name);
+                        let type_id =
+                            crate::query_boundaries::state::checking::get_finite_mapped_property_type(
+                                self.ctx.types,
+                                mapped_id,
+                                prop_name.as_ref(),
+                            )?;
+                        Some(PropertyInfo {
+                            name,
+                            type_id,
+                            optional: false,
+                            readonly: false,
+                            write_type: type_id,
+                            is_class_prototype: false,
+                            is_method: false,
+                            visibility: tsz_solver::Visibility::Public,
+                            parent_id: None,
+                            declaration_order: 0,
+                            is_string_named: false,
+                            single_quoted_name: false,
+                        })
+                    })
+                    .collect();
+            }
+        }
         self.ctx
             .types
             .collect_object_spread_properties(resolved)

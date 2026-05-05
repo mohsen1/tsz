@@ -1242,6 +1242,7 @@ impl<'a> FlowAnalyzer<'a> {
                             || (ant_flags & flow_flags::CALL) != 0
                             || (ant_flags & flow_flags::LOOP_LABEL) != 0
                             || (ant_flags & flow_flags::BRANCH_LABEL) != 0
+                            || (ant_flags & flow_flags::SWITCH_CLAUSE) != 0
                             || ant_is_targeting_assignment
                             || ant_is_passthrough_assignment;
                         if ant_needs_defer {

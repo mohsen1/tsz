@@ -881,11 +881,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // These were pre-computed by `precompute_type_query_flow_types` during
             // `check_type_alias_declaration` and stored in `node_types`.
             let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
-                self.ctx
-                    .node_types
-                    .get(&expr_name_idx.0)
-                    .copied()
-                    .filter(|&t| t != TypeId::ERROR)
+                self.const_array_to_enum_object_type_query(expr_name_idx)
+                    .or_else(|| self.const_object_member_literal_type_query(expr_name_idx))
+                    .or_else(|| {
+                        self.ctx
+                            .node_types
+                            .get(&expr_name_idx.0)
+                            .copied()
+                            .filter(|&t| t != TypeId::ERROR)
+                    })
             };
 
             let make_lowering = |bindings| {

@@ -356,7 +356,7 @@ impl<'a> CheckerState<'a> {
         // This ensures that when we have `fn<T>(x: T)` and call it as `fn<number>("string")`,
         // the parameter type becomes `number` (after substituting T=number), and we can
         // correctly check if `"string"` is assignable to `number`.
-        let callee_type_for_resolution = if call.type_arguments.is_some() {
+        let mut callee_type_for_resolution = if call.type_arguments.is_some() {
             self.apply_type_arguments_to_callable_type(callee_type, call.type_arguments.as_ref())
         } else {
             callee_type
@@ -366,11 +366,29 @@ impl<'a> CheckerState<'a> {
         // Interface-typed callees are stored as Lazy(DefId) which classify_for_call_signatures
         // doesn't handle, causing the overloaded path to be skipped and literal arguments
         // to be widened to `string` instead of matching specialized signatures.
-        let resolved_for_classification =
+        let mut resolved_for_classification =
             self.evaluate_application_type(callee_type_for_resolution);
-        let resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
-        let classification =
+        resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
+        let mut classification =
             query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
+        if matches!(classification, query::CallSignaturesKind::NoSignatures)
+            && let Some(annotated_callee_type) =
+                self.explicit_identifier_callee_annotation_type(call.expression)
+        {
+            callee_type_for_resolution = if call.type_arguments.is_some() {
+                self.apply_type_arguments_to_callable_type(
+                    annotated_callee_type,
+                    call.type_arguments.as_ref(),
+                )
+            } else {
+                annotated_callee_type
+            };
+            resolved_for_classification =
+                self.evaluate_application_type(callee_type_for_resolution);
+            resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
+            classification =
+                query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
+        }
         trace!(
             callee_type_for_resolution = ?callee_type_for_resolution,
             classification = ?classification,
@@ -2509,5 +2527,75 @@ impl<'a> CheckerState<'a> {
         let call_result = self.handle_call_result(result, call_context);
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
         call_result
+    }
+
+    fn explicit_identifier_callee_annotation_type(
+        &mut self,
+        callee_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let callee_node = self.ctx.arena.get(callee_expr)?;
+        if callee_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let initial_sym_id = self
+            .ctx
+            .binder
+            .node_symbols
+            .get(&callee_expr.0)
+            .copied()
+            .or_else(|| self.resolve_identifier_symbol(callee_expr))?;
+        let sym_id = self
+            .ctx
+            .alias_partner_for(self.ctx.binder, initial_sym_id)
+            .unwrap_or(initial_sym_id);
+        let value_declaration = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+            symbol
+                .value_declaration
+                .is_some()
+                .then_some(symbol.value_declaration)
+                .or_else(|| symbol.declarations.first().copied())
+        })?;
+        let declaration_node = self.ctx.arena.get(value_declaration)?;
+        if declaration_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(declaration_node)?;
+        if var_decl.type_annotation.is_none()
+            || self
+                .find_circular_reference_in_type_node(var_decl.type_annotation, sym_id, false)
+                .is_some()
+        {
+            return None;
+        }
+
+        let annotated_type_node = self.get_type_from_type_node(var_decl.type_annotation);
+        let annotated_type = self.resolve_ref_type(annotated_type_node);
+        if let Some(callable) = self.callable_callee_type_from_candidate(annotated_type) {
+            return Some(callable);
+        }
+
+        if var_decl.initializer.is_some() {
+            let initializer_type = self.get_type_of_node(var_decl.initializer);
+            return self.callable_callee_type_from_candidate(initializer_type);
+        }
+
+        None
+    }
+
+    fn callable_callee_type_from_candidate(&mut self, candidate: TypeId) -> Option<TypeId> {
+        if matches!(candidate, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+
+        let evaluated = self.evaluate_application_type(candidate);
+        let resolved = self.resolve_lazy_type(evaluated);
+        match query::classify_for_call_signatures(self.ctx.types, resolved) {
+            query::CallSignaturesKind::Callable(_)
+            | query::CallSignaturesKind::MultipleSignatures(_) => Some(candidate),
+            query::CallSignaturesKind::NoSignatures => None,
+        }
     }
 }
