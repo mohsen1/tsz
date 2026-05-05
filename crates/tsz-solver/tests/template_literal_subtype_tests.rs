@@ -804,3 +804,53 @@ fn test_invalid_hex_does_not_match_bigint_pattern() {
     let mut checker = SubtypeChecker::new(&interner);
     assert!(!checker.is_subtype_of(literal, pattern));
 }
+
+// ==========================================================================
+// Sign handling for ${bigint} vs ${number} — issue #3173
+// ==========================================================================
+
+#[test]
+fn test_plus_signed_string_does_not_match_bigint_pattern() {
+    // "+1" must NOT be assignable to `${bigint}` — TypeScript rejects it.
+    // (tsc: TS2322 Type '"+" is not assignable to type '`${bigint}`')
+    let interner = TypeInterner::new();
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for value in ["+1", "+0", "+123", "+999"] {
+        assert!(
+            !checker.is_subtype_of(interner.literal_string(value), pattern),
+            "{value:?} should not match `${{bigint}}`"
+        );
+    }
+}
+
+#[test]
+fn test_minus_signed_string_matches_bigint_pattern() {
+    // "-1" IS assignable to `${bigint}` — TypeScript accepts it.
+    let interner = TypeInterner::new();
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for value in ["-1", "-0", "-123"] {
+        assert!(
+            checker.is_subtype_of(interner.literal_string(value), pattern),
+            "{value:?} should match `${{bigint}}`"
+        );
+    }
+}
+
+#[test]
+fn test_plus_signed_string_matches_number_pattern() {
+    // "+1" IS assignable to `${number}` — TypeScript accepts it.
+    let interner = TypeInterner::new();
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for value in ["+1", "+0", "+123"] {
+        assert!(
+            checker.is_subtype_of(interner.literal_string(value), pattern),
+            "{value:?} should match `${{number}}`"
+        );
+    }
+}

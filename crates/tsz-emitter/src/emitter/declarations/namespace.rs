@@ -62,6 +62,24 @@ pub(in crate::emitter) fn rewrite_enum_iife_for_namespace_export(
     };
 }
 
+fn find_unescaped_template_end(source: &str, template_start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut pos = template_start.checked_add(1)?;
+    let mut escaped = false;
+    while pos < bytes.len() {
+        let byte = bytes[pos];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == b'`' {
+            return Some(pos);
+        }
+        pos += 1;
+    }
+    None
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Namespace / Module Declarations
@@ -176,6 +194,78 @@ impl<'a> Printer<'a> {
             None
         };
         self.emit_namespace_iife(&module, parent_name.as_deref());
+    }
+
+    pub(in crate::emitter) fn emit_recovered_template_module_declaration(
+        &mut self,
+        node: &Node,
+        scan_end: u32,
+    ) -> bool {
+        let Some(module) = self.arena.get_module(node) else {
+            return false;
+        };
+        if !self
+            .arena
+            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let scan_end = (scan_end as usize).min(text.len());
+        let Ok(source) = crate::safe_slice::slice(text, start, scan_end) else {
+            return false;
+        };
+
+        let mut cursor = 0;
+        let mut wrote = false;
+        while let Some(relative_module_pos) = source[cursor..].find("module") {
+            let module_pos = cursor + relative_module_pos;
+            let after_module = module_pos + "module".len();
+            let rest = &source[after_module..];
+            let Some(template_start_in_rest) = rest.find('`') else {
+                cursor = after_module;
+                continue;
+            };
+            let template_start = after_module + template_start_in_rest;
+            let Some(template_end) = find_unescaped_template_end(source, template_start) else {
+                break;
+            };
+            let after_template = template_end + '`'.len_utf8();
+            let Ok(template_text) =
+                crate::safe_slice::slice(source, template_start, after_template)
+            else {
+                cursor = after_template;
+                continue;
+            };
+            let body_starts_after_template = source[after_template..]
+                .trim_start_matches(|ch: char| ch.is_whitespace())
+                .starts_with('{');
+            if !body_starts_after_template {
+                cursor = after_template;
+                continue;
+            }
+
+            self.write("declare;");
+            self.write_line();
+            self.write("module ");
+            self.write(template_text);
+            self.write(";");
+            self.write_line();
+            self.write("{");
+            self.write_line();
+            self.write("}");
+            self.write_line();
+            wrote = true;
+            cursor = after_template;
+        }
+
+        if wrote {
+            self.skip_comments_for_erased_node(node);
+        }
+        wrote
     }
 
     fn emit_recovered_anonymous_module_declaration(
@@ -378,10 +468,16 @@ impl<'a> Printer<'a> {
                 // Save/restore declared_namespace_names so names from the outer scope
                 // don't suppress declarations inside the nested IIFE (each IIFE creates
                 // a new function scope), and names declared inside don't leak out.
+                //
+                // Pass `iife_param` (not `name`) as the inner's parent: inside this
+                // IIFE's body the outer namespace is bound under the renamed param
+                // (e.g., `Y` → `Y_1`), so the inner's `(N = parent.N || ...)` argument
+                // must reference that local binding to avoid shadowing by the
+                // `var N;` we just emitted for the inner namespace.
                 if let Some(inner_module) = self.arena.get_module(body_node) {
                     let inner_module = inner_module.clone();
                     let prev_declared = std::mem::take(&mut self.declared_namespace_names);
-                    self.emit_namespace_iife(&inner_module, Some(&name));
+                    self.emit_namespace_iife(&inner_module, Some(&iife_param));
                     self.declared_namespace_names = prev_declared;
                 }
             } else {
@@ -1064,12 +1160,15 @@ impl<'a> Printer<'a> {
             // Collect exported names for identifier qualification in emit_identifier
             let prev_exported = std::mem::take(&mut self.namespace_exported_names);
             let prev_parent_exported = std::mem::take(&mut self.namespace_parent_exported_names);
+            let prev_ancestor_qualifiers =
+                std::mem::take(&mut self.namespace_ancestor_export_qualifiers);
             let mut local_exports = self.collect_namespace_exported_names(module);
             let leaf_name = self.get_identifier_text_idx(module.name);
             if !leaf_name.is_empty() {
                 local_exports
                     .extend(self.collect_dotted_namespace_children_from_source(&leaf_name));
             }
+            let mut ancestor_qualifiers = prev_ancestor_qualifiers.clone();
             let mut parent_exports = self
                 .parent_namespace_name
                 .as_ref()
@@ -1081,6 +1180,13 @@ impl<'a> Printer<'a> {
                         .collect::<rustc_hash::FxHashSet<_>>()
                 })
                 .unwrap_or_default();
+            if let Some(parent) = self.parent_namespace_name.as_ref()
+                && let Some(exports) = self.namespace_prior_exports.get(parent)
+            {
+                for name in exports {
+                    ancestor_qualifiers.insert(name.clone(), parent.clone());
+                }
+            }
             // Also merge class/fn/enum names from PRIOR blocks of the parent
             // namespace. These names live on the parent namespace object once
             // the prior IIFE has exited, so a nested namespace inside a
@@ -1096,9 +1202,11 @@ impl<'a> Printer<'a> {
             {
                 for name in class_exports.iter() {
                     parent_exports.insert(name.clone());
+                    ancestor_qualifiers.insert(name.clone(), parent.clone());
                 }
             }
             parent_exports.remove(&leaf_name);
+            ancestor_qualifiers.remove(&leaf_name);
             // Collect class/function/enum names for future reopenings (before mutable borrow)
             let class_fn_enum_names = self.collect_namespace_class_fn_enum_names(module);
             // Merge in exports from prior blocks of the same namespace (cross-block sharing)
@@ -1163,13 +1271,16 @@ impl<'a> Printer<'a> {
             for name in &local_names {
                 local_exports.remove(name);
                 parent_exports.remove(name);
+                ancestor_qualifiers.remove(name);
             }
             for name in self.collect_namespace_local_module_names(body_node) {
                 local_exports.remove(&name);
                 parent_exports.remove(&name);
+                ancestor_qualifiers.remove(&name);
             }
             self.namespace_exported_names = local_exports;
             self.namespace_parent_exported_names = parent_exports;
+            self.namespace_ancestor_export_qualifiers = ancestor_qualifiers;
             let (destructuring_export_temps, destructuring_export_temp_names) =
                 self.reserve_namespace_destructuring_export_temps(module);
 
@@ -1443,6 +1554,7 @@ impl<'a> Printer<'a> {
             // Restore previous exported names
             self.namespace_exported_names = prev_exported;
             self.namespace_parent_exported_names = prev_parent_exported;
+            self.namespace_ancestor_export_qualifiers = prev_ancestor_qualifiers;
         }
     }
 
@@ -1745,6 +1857,33 @@ mod tests {
         assert!(
             output.contains("(function (M_1)"),
             "Namespace IIFE parameter should be renamed to M_1 when body has 'import M = ...'.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a dotted namespace `Y.Y` collides at every level (outer renamed to
+    /// `Y_1`, inner to `Y_2` because the body declares `enum Y`), the inner
+    /// IIFE's argument expression must reference the outer's renamed binding,
+    /// not the original name. The original name is shadowed inside the outer's
+    /// body by the `var Y;` we emit for the inner namespace.
+    #[test]
+    fn dotted_namespace_inner_iife_uses_outer_renamed_param_in_argument() {
+        let source = "namespace Y.Y {\n  export enum Y { Red, Blue }\n}";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("})(Y = Y_1.Y || (Y_1.Y = {}));"),
+            "Inner IIFE argument should reference the outer's renamed param Y_1.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("})(Y = Y.Y || (Y.Y = {}));"),
+            "Inner IIFE argument must not reference the shadowed original Y.\nOutput:\n{output}"
         );
     }
 

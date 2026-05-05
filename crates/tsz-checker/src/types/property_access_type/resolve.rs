@@ -466,6 +466,7 @@ impl<'a> CheckerState<'a> {
         let mut commonjs_namespace_override: Option<TypeId> = None;
         if object_type == TypeId::ANY
             && self.is_js_file()
+            && !self.current_source_file_has_esm_syntax()
             && self
                 .ctx
                 .arena

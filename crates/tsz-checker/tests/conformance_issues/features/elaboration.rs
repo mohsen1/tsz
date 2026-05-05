@@ -444,8 +444,12 @@ objAndPartial({ x: 0, y: 0 }, { x: 1, y: 1, z: 1 });
     );
 }
 
+/// `PassportStatic extends Passport`, so `let p: Passport = passport.use()` is
+/// a plain subtype assignment that tsc accepts without error. The polymorphic-this
+/// check must not override structural assignability for ordinary subtype receivers.
+/// See: <https://github.com/mohsen1/tsz/issues/3135>
 #[test]
-fn test_export_equals_named_import_preserves_polymorphic_this_ts2322() {
+fn test_export_equals_named_import_polymorphic_this_no_false_ts2322() {
     let passport_dts = r#"
 declare module 'passport' {
     namespace passport {
@@ -481,20 +485,47 @@ let p: Passport = passport.use();
         },
     );
     let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+    // PassportStatic extends Passport: the assignment is valid subtype assignability.
+    // tsc does not emit TS2322 here; tsz must not either.
     assert!(
-        has_error(&diagnostics, 2322),
-        "Expected TS2322 for `PassportStatic` assigned to polymorphic-this `Passport`. Got: {codes:?}\n{diagnostics:#?}"
-    );
-    let ts2322 = diagnostic_message(&diagnostics, 2322).unwrap_or_default();
-    assert!(
-        ts2322.contains("is not assignable to type 'Passport'"),
-        "TS2322 should use the named import's instance type as the target.\nActual: {diagnostics:#?}"
+        !has_error(&diagnostics, 2322),
+        "Must not emit TS2322 for PassportStatic → Passport (subtype assignment). Got: {codes:?}\n{diagnostics:#?}"
     );
     assert!(
         !has_error(&diagnostics, 2749)
             && !has_error(&diagnostics, 2300)
             && !has_error(&diagnostics, 2451),
-        "Should not regress into TS2749/TS2300/TS2451 for `Passport` imported from an ambient module via export=. Got: {codes:?}\n{diagnostics:#?}"
+        "Should not emit TS2749/TS2300/TS2451 for `Passport` imported from an ambient module via export=. Got: {codes:?}\n{diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_polymorphic_this_subtype_assignment_to_base_is_allowed() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class Base {
+  clone(): this {
+    return this;
+  }
+}
+
+class Derived extends Base {
+  derivedOnly = 1;
+}
+
+const derived = new Derived();
+const base: Base = derived.clone();
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Subtype assignment from inherited polymorphic-this call should not emit TS2322. Got: {diagnostics:#?}"
     );
 }
 

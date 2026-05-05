@@ -674,6 +674,23 @@ impl<'a> EnumES5Transformer<'a> {
                     IRNode::NumericLiteral("0".to_string().into())
                 }
             }
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                if let Some(assertion) = self.arena.get_type_assertion(node) {
+                    self.transform_expression(assertion.expression)
+                } else {
+                    IRNode::NumericLiteral("0".to_string().into())
+                }
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+                    self.transform_expression(unary.expression)
+                } else {
+                    IRNode::NumericLiteral("0".to_string().into())
+                }
+            }
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 // E.A reference inside enum
                 if let Some(access) = self.arena.get_access_expr(node) {
@@ -930,6 +947,17 @@ impl<'a> EnumES5Transformer<'a> {
                 let paren = self.arena.get_parenthesized(node)?;
                 self.evaluate_constant_float_expression(paren.expression)
             }
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                let assertion = self.arena.get_type_assertion(node)?;
+                self.evaluate_constant_float_expression(assertion.expression)
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                let unary = self.arena.get_unary_expr_ex(node)?;
+                self.evaluate_constant_float_expression(unary.expression)
+            }
             _ => None,
         }
     }
@@ -1171,6 +1199,17 @@ impl<'a> EnumES5Transformer<'a> {
                 let paren = self.arena.get_parenthesized(node)?;
                 self.evaluate_constant_expression(paren.expression)
             }
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                let assertion = self.arena.get_type_assertion(node)?;
+                self.evaluate_constant_expression(assertion.expression)
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                let unary = self.arena.get_unary_expr_ex(node)?;
+                self.evaluate_constant_expression(unary.expression)
+            }
             _ => None,
         }
     }
@@ -1231,6 +1270,17 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 let paren = self.arena.get_parenthesized(node)?;
                 self.evaluate_string_expression(paren.expression)
+            }
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                let assertion = self.arena.get_type_assertion(node)?;
+                self.evaluate_string_expression(assertion.expression)
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                let unary = self.arena.get_unary_expr_ex(node)?;
+                self.evaluate_string_expression(unary.expression)
             }
             k if k == SyntaxKind::Identifier as u16 => {
                 let id = self.arena.get_identifier(node)?;
@@ -1296,6 +1346,23 @@ impl<'a> EnumES5Transformer<'a> {
                 // Unwrap parens: (`${BAR}`) is still syntactically string
                 if let Some(paren) = self.arena.get_parenthesized(node) {
                     self.is_syntactically_string(paren.expression)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                if let Some(assertion) = self.arena.get_type_assertion(node) {
+                    self.is_syntactically_string(assertion.expression)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+                    self.is_syntactically_string(unary.expression)
                 } else {
                     false
                 }

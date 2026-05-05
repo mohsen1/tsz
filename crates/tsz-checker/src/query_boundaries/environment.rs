@@ -12,11 +12,11 @@
 //!
 //! Diagnostic families routed through this boundary:
 //! - TS2318: Cannot find global type (missing lib types)
-//! - TS2591: Cannot find name (Node.js globals)
+//! - TS2580/TS2591: Cannot find name (Node.js globals)
 //! - TS2583: Cannot find name (ES2015+ lib suggestion)
 //! - TS2584: Cannot find name (DOM lib suggestion)
-//! - TS2592: Cannot find name (jQuery globals)
-//! - TS2593: Cannot find name (test runner globals)
+//! - TS2581/TS2592: Cannot find name (jQuery globals)
+//! - TS2582/TS2593: Cannot find name (test runner globals)
 //! - TS2868: Cannot find name (Bun globals)
 //! - TS2823: Import attributes require specific module option
 //! - TS2854: Top-level await using requires specific module/target
@@ -47,13 +47,13 @@ pub(crate) enum CapabilityDiagnostic {
     /// TS2584: Cannot find name '{name}'. Change target library to include 'dom'.
     MissingDomGlobal { name: String },
 
-    /// TS2591: Cannot find name '{name}'. Need @types/node.
+    /// TS2580/TS2591: Cannot find name '{name}'. Need @types/node.
     MissingNodeGlobal { name: String },
 
-    /// TS2592: Cannot find name '{name}'. Need @types/jquery.
+    /// TS2581/TS2592: Cannot find name '{name}'. Need @types/jquery.
     MissingJQueryGlobal { name: String },
 
-    /// TS2593: Cannot find name '{name}'. Need test runner types.
+    /// TS2582/TS2593: Cannot find name '{name}'. Need test runner types.
     MissingTestRunnerGlobal { name: String },
 
     /// TS2868: Cannot find name '{name}'. Need @types/bun.

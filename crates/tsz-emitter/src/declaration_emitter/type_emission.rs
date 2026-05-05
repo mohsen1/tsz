@@ -484,6 +484,11 @@ impl<'a> DeclarationEmitter<'a> {
             //       [P in keyof T]: Type;
             //   }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
+                if let Some(expanded) = self.expand_mapped_type_to_portable_properties(type_idx) {
+                    self.write(&expanded);
+                    return;
+                }
+
                 if let Some(mapped_type) = self.arena.get_mapped_type(type_node) {
                     self.write("{");
                     self.write_line();
@@ -1115,6 +1120,19 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_type(type_idx);
+    }
+
+    fn expand_mapped_type_to_portable_properties(&self, type_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(type_idx)?;
+        let text = self.get_source_slice(node.pos, node.end)?;
+        let trimmed = text.trim().trim_end_matches(';').trim();
+        let inner = trimmed
+            .strip_prefix('{')
+            .and_then(|text| text.strip_suffix('}'))
+            .map(str::trim)
+            .unwrap_or(trimmed);
+
+        self.expand_portable_mapped_object_text(self.arena, inner)
     }
 
     fn emit_mapped_type_constraint(&mut self, constraint_idx: NodeIndex) {

@@ -833,8 +833,8 @@ impl<'a> CheckerState<'a> {
             if let Some(colon_idx) = Self::find_top_level_char(prop_str, ':') {
                 let mut raw_name = prop_str[..colon_idx].trim();
                 let type_str = prop_str[colon_idx + 1..].trim();
-                let readonly = if let Some(rest) = raw_name.strip_prefix("readonly ") {
-                    raw_name = rest.trim();
+                let readonly = if let Some(rest) = Self::strip_jsdoc_readonly_modifier(raw_name) {
+                    raw_name = rest;
                     true
                 } else {
                     false
@@ -897,8 +897,9 @@ impl<'a> CheckerState<'a> {
         raw_name: &str,
         type_str: &str,
     ) -> Option<IndexSignature> {
-        let (raw_name, readonly) = if let Some(rest) = raw_name.trim().strip_prefix("readonly ") {
-            (rest.trim(), true)
+        let (raw_name, readonly) = if let Some(rest) = Self::strip_jsdoc_readonly_modifier(raw_name)
+        {
+            (rest, true)
         } else {
             (raw_name.trim(), false)
         };
@@ -917,6 +918,16 @@ impl<'a> CheckerState<'a> {
             readonly,
             param_name: (!param_name.is_empty()).then(|| self.ctx.types.intern_string(param_name)),
         })
+    }
+
+    fn strip_jsdoc_readonly_modifier(raw_name: &str) -> Option<&str> {
+        let raw_name = raw_name.trim();
+        let rest = raw_name.strip_prefix("readonly")?;
+        rest.chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+            .then(|| rest.trim())
+            .filter(|name| !name.is_empty())
     }
 
     fn parse_jsdoc_mapped_type(&mut self, type_expr: &str) -> Option<TypeId> {
@@ -954,15 +965,16 @@ impl<'a> CheckerState<'a> {
         };
         let template_str = after_bracket.strip_prefix(':')?.trim();
 
-        let in_idx = header.find(" in ")?;
+        let in_idx = Self::find_jsdoc_mapped_in_keyword(header)?;
         let type_param_name = header[..in_idx].trim();
-        let constraint_str = header[in_idx + 4..].trim();
+        let constraint_str = header[in_idx + 2..].trim();
         if type_param_name.is_empty() || constraint_str.is_empty() || template_str.is_empty() {
             return None;
         }
 
-        let constraint = if let Some(rest) = constraint_str.strip_prefix("keyof") {
-            let operand = self.resolve_jsdoc_type_str(rest.trim())?;
+        let constraint = if let Some(operand_str) = Self::strip_jsdoc_keyof_keyword(constraint_str)
+        {
+            let operand = self.resolve_jsdoc_type_str(operand_str)?;
             self.ctx.types.factory().keyof(operand)
         } else {
             self.resolve_jsdoc_type_str(constraint_str)?
@@ -1000,6 +1012,26 @@ impl<'a> CheckerState<'a> {
                 optional_modifier,
             })
         })
+    }
+
+    fn find_jsdoc_mapped_in_keyword(header: &str) -> Option<usize> {
+        for (idx, _) in header.match_indices("in") {
+            let before = header[..idx].chars().next_back();
+            let after = header[idx + 2..].chars().next();
+            if before.is_some_and(char::is_whitespace) && after.is_some_and(char::is_whitespace) {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    fn strip_jsdoc_keyof_keyword(type_expr: &str) -> Option<&str> {
+        let rest = type_expr.strip_prefix("keyof")?;
+        rest.chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+            .then(|| rest.trim())
+            .filter(|operand| !operand.is_empty())
     }
 
     pub(in crate::jsdoc::resolution) fn parse_jsdoc_conditional_type(

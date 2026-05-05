@@ -10,6 +10,38 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn current_source_file_has_esm_syntax(&self) -> bool {
+        self.source_file_idx_has_esm_syntax(self.ctx.current_file_idx)
+    }
+
+    pub(crate) fn source_file_idx_has_esm_syntax(&self, file_idx: usize) -> bool {
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        Self::source_file_arena_has_esm_syntax(arena)
+    }
+
+    fn source_file_arena_has_esm_syntax(arena: &tsz_parser::parser::NodeArena) -> bool {
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            if stmt_idx.is_none() {
+                continue;
+            }
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt.kind {
+                syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
     pub(super) fn commonjs_static_member_name_in_arena(
         arena: &tsz_parser::parser::NodeArena,
         idx: NodeIndex,
@@ -49,7 +81,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn check_commonjs_export_property_redeclarations(&mut self) {
-        if !self.is_js_file() {
+        if !self.is_js_file() || self.current_source_file_has_esm_syntax() {
             return;
         }
 
@@ -368,6 +400,15 @@ impl<'a> CheckerState<'a> {
         &mut self,
         preserve_js_extension: bool,
     ) -> TypeId {
+        if self.current_source_file_has_esm_syntax() {
+            let empty_namespace = self.ctx.types.factory().object(Vec::new());
+            self.ctx.namespace_module_names.insert(
+                empty_namespace,
+                self.current_file_commonjs_module_name(preserve_js_extension),
+            );
+            return empty_namespace;
+        }
+
         // Use the cached JsExportSurface for typed exports instead of
         // re-scanning the AST with augment_namespace_props_with_commonjs_exports_for_file.
         let current_file_idx = self.ctx.current_file_idx;
@@ -755,6 +796,10 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_current_file_commonjs_export_base(&self, idx: NodeIndex) -> bool {
+        if self.current_source_file_has_esm_syntax() {
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };

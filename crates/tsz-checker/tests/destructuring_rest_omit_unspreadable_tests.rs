@@ -152,3 +152,43 @@ function destructure<T extends I>(x: T) {
         "No TS2339 expected when constraint has no prototype members. Got: {msgs:?}"
     );
 }
+
+#[test]
+fn rest_from_class_this_uses_omit_display_for_missing_rest_properties() {
+    let source = r#"
+class A {
+    constructor(public publicProp: string) {}
+    get getter(): number { return 1; }
+    set setter(_v: number) {}
+    method(): void {}
+
+    test() {
+        const { publicProp: _, ...rest } = this;
+        rest.publicProp;
+        rest.method;
+    }
+}
+"#;
+    let diags = checker_diagnostics(source);
+    let msgs = ts2339_messages(&diags);
+    assert!(
+        msgs.iter().any(|m| {
+            m.contains("Property 'publicProp' does not exist on type 'Omit<this,")
+                && m.contains("\"method\"")
+                && m.contains("\"getter\"")
+                && m.contains("\"setter\"")
+                && m.contains("\"publicProp\"")
+        }),
+        "Expected direct-this rest diagnostic to use Omit<this, ...>. Got: {msgs:?}"
+    );
+    assert!(
+        msgs.iter().any(|m| {
+            m.contains("Property 'method' does not exist on type 'Omit<this,")
+                && m.contains("\"method\"")
+                && m.contains("\"getter\"")
+                && m.contains("\"setter\"")
+                && m.contains("\"publicProp\"")
+        }),
+        "Expected prototype-member diagnostic to use Omit<this, ...>. Got: {msgs:?}"
+    );
+}

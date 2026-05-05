@@ -452,24 +452,18 @@ impl<'a> CheckerState<'a> {
     /// Some missing lib names use TS2318/TS2583, while others still use the
     /// ordinary type-position "Cannot find name" path.
     pub(crate) fn report_missing_lib_type_name(&mut self, name: &str, idx: NodeIndex) {
-        // Under `--noLib`, tsc emits TS2318 only for the "core" global set
-        // (Array, Boolean, Function, …). For ES2015+ globals (Map, Set,
-        // Promise, …) it stays silent — the "change lib" suggestion
-        // (TS2583) is irrelevant when the user explicitly opted out of libs.
         let no_lib = self.ctx.compiler_options.no_lib;
-        if no_lib && tsz_binder::lib_loader::is_es2015_plus_type(name) {
-            return;
-        }
+        let is_es2015_plus = tsz_binder::lib_loader::is_es2015_plus_type(name);
 
         if self.has_special_missing_lib_type_diagnostic(name) {
+            // Under `--noLib`, tsc does not emit the TS2583 "change lib"
+            // suggestion for ES2015+ globals because the user explicitly
+            // opted out of libs. Non-special lib helper names still follow
+            // the ordinary unresolved-name path below.
+            if no_lib && is_es2015_plus {
+                return;
+            }
             self.error_cannot_find_global_type(name, idx);
-            return;
-        }
-
-        // Under `--noLib`, tsc suppresses TS2304 for well-known lib type
-        // names (PromiseLike, ArrayLike, Document, etc.) that aren't in the
-        // "core global" set reported via TS2318.
-        if no_lib && self.is_well_known_lib_type_name(name) {
             return;
         }
 

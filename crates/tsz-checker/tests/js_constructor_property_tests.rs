@@ -1814,9 +1814,10 @@ Installer.prototype.second = function () {
         },
     );
     let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
-    assert!(
-        codes.iter().filter(|&&code| code == 2322).count() >= 4,
-        "Expected string/bool/null assignment errors for closed constructor properties, got: {diagnostics:?}"
+    assert_eq!(
+        codes.iter().filter(|&&code| code == 2322).count(),
+        5,
+        "Expected closed constructor properties to report the same assignment mismatches as tsc, got: {diagnostics:?}"
     );
     let ts7008_messages: Vec<_> = diagnostics
         .iter()
@@ -1832,6 +1833,12 @@ Installer.prototype.second = function () {
     assert!(
         ts7008_messages
             .iter()
+            .all(|msg| !msg.contains("Member 'unknown' implicitly has an 'any' type.")),
+        "Expected prototype writes to suppress the stale constructor TS7008 for unknown, got: {diagnostics:?}"
+    );
+    assert!(
+        ts7008_messages
+            .iter()
             .all(|msg| !msg.contains("Member 'twice' implicitly has an 'any' type.")),
         "Expected no prototype-method TS7008 duplication for twice, got: {diagnostics:?}"
     );
@@ -1839,16 +1846,12 @@ Installer.prototype.second = function () {
         .iter()
         .filter(|(_, msg)| msg.contains("Property 'push' does not exist on type 'any[]'."))
         .collect();
-    // Two pushes (`this.twices.push(1)` and the narrowed-branch
-    // `this.twices.push('hi')`) each report `Property 'push' does not exist
-    // on type 'any[]'` in the no-lib harness. This PR's checked-JS implicit-
-    // any preservation changes the typing of `this.twices` so the two access
-    // sites no longer collapse into a single diagnostic — both call sites
-    // now report independently, matching tsc's per-site behavior.
+    // The no-lib harness still lacks Array.prototype.push, but null narrowing
+    // suppresses the narrowed-branch access error.
     assert_eq!(
         push_errors.len(),
-        2,
-        "Expected one TS2339 per push call site after JS implicit-any preservation, got: {diagnostics:?}"
+        1,
+        "Expected only the un-narrowed push access to fail in the no-lib harness, got: {diagnostics:?}"
     );
 }
 

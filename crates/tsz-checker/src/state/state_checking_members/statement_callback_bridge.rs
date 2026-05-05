@@ -211,6 +211,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // TS2322: Check export attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(export_decl.attributes);
 
+            self.check_import_attributes_commonjs_or_type_only(
+                export_decl.attributes,
+                export_decl.is_type_only,
+            );
+
             // Check module specifier for unresolved modules (TS2792)
             if export_decl.module_specifier.is_some() {
                 self.check_export_module_specifier(export_idx);

@@ -7,6 +7,7 @@ use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
+use tsz_common::comments::is_jsdoc_comment;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -733,59 +734,65 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let mut search_start = 0usize;
-        while let Some(rel) = source_text[search_start..].find("import(") {
-            let abs = search_start + rel + "import(".len();
-            // Skip optional whitespace
-            let bytes = source_text.as_bytes();
-            let mut cursor = abs;
-            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-                cursor += 1;
-            }
-            // Expect a quoted specifier; skip non-string forms (unsupported here).
-            if cursor >= bytes.len() {
-                break;
-            }
-            let quote = bytes[cursor];
-            if quote != b'"' && quote != b'\'' {
-                search_start = abs;
+        for comment in &sf.comments {
+            if !is_jsdoc_comment(comment, source_text) {
                 continue;
             }
-            cursor += 1;
-            let start = cursor;
-            while cursor < bytes.len() && bytes[cursor] != quote {
+            let comment_text = comment.get_text(source_text);
+            let mut search_start = 0usize;
+            while let Some(rel) = comment_text[search_start..].find("import(") {
+                let abs = search_start + rel + "import(".len();
+                // Skip optional whitespace
+                let bytes = comment_text.as_bytes();
+                let mut cursor = abs;
+                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                    cursor += 1;
+                }
+                // Expect a quoted specifier; skip non-string forms (unsupported here).
+                if cursor >= bytes.len() {
+                    break;
+                }
+                let quote = bytes[cursor];
+                if quote != b'"' && quote != b'\'' {
+                    search_start = abs;
+                    continue;
+                }
                 cursor += 1;
-            }
-            if cursor >= bytes.len() {
-                break;
-            }
-            let specifier = &source_text[start..cursor];
-            search_start = cursor + 1;
+                let start = cursor;
+                while cursor < bytes.len() && bytes[cursor] != quote {
+                    cursor += 1;
+                }
+                if cursor >= bytes.len() {
+                    break;
+                }
+                let specifier = &comment_text[start..cursor];
+                search_start = cursor + 1;
 
-            // Match the JSDoc TS2307 check: rooted specifiers (starting with
-            // `/`) are unresolvable per tsc unless an ambient module declares
-            // them. Plain relative/non-rooted forms are out of scope here —
-            // they go through the standard resolution-error pipeline.
-            if !specifier.starts_with('/') {
-                continue;
-            }
-            let has_ambient_module = self
-                .ctx
-                .declared_modules_contains(self.ctx.binder, specifier)
-                || self
+                // Match the JSDoc TS2307 check: rooted specifiers (starting with
+                // `/`) are unresolvable per tsc unless an ambient module declares
+                // them. Plain relative/non-rooted forms are out of scope here —
+                // they go through the standard resolution-error pipeline.
+                if !specifier.starts_with('/') {
+                    continue;
+                }
+                let has_ambient_module = self
                     .ctx
-                    .binder
-                    .shorthand_ambient_modules
-                    .contains(specifier);
-            if has_ambient_module {
-                continue;
-            }
-            let resolved = self
-                .ctx
-                .resolve_import_target_from_file(self.ctx.current_file_idx, specifier)
-                .or_else(|| self.ctx.resolve_import_target(specifier));
-            if resolved.map(|idx| idx as u32) == Some(target_file_idx) {
-                return true;
+                    .declared_modules_contains(self.ctx.binder, specifier)
+                    || self
+                        .ctx
+                        .binder
+                        .shorthand_ambient_modules
+                        .contains(specifier);
+                if has_ambient_module {
+                    continue;
+                }
+                let resolved = self
+                    .ctx
+                    .resolve_import_target_from_file(self.ctx.current_file_idx, specifier)
+                    .or_else(|| self.ctx.resolve_import_target(specifier));
+                if resolved.map(|idx| idx as u32) == Some(target_file_idx) {
+                    return true;
+                }
             }
         }
 

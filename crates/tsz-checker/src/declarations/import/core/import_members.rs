@@ -204,7 +204,11 @@ impl<'a> CheckerState<'a> {
                                     || !s.named_exports.is_empty()
                                     || !s.prototype_members.is_empty()
                             }));
-                if is_js_like && !has_export_surface && resolution_mode.is_none() {
+                if is_js_like
+                    && !has_export_surface
+                    && resolution_mode.is_none()
+                    && !(has_default_import && self.source_file_idx_has_esm_syntax(target_idx))
+                {
                     return;
                 }
             }
@@ -234,6 +238,8 @@ impl<'a> CheckerState<'a> {
                     || table.has("export=")
                     || (has_module_exports_binding && table.has("module.exports"))
             });
+        let resolved_target_has_js_esm_syntax = resolved_target
+            .is_some_and(|target_idx| self.source_file_idx_is_js_with_esm_syntax(target_idx));
         let named_imports_resolve_via_export_equals_target = self
             .named_imports_resolve_via_export_equals_target(
                 bindings_node,
@@ -358,6 +364,12 @@ impl<'a> CheckerState<'a> {
                 if !has_default_binding && !uses_system_namespace_default {
                     self.emit_no_default_export_error(module_name, clause.name, is_source_file);
                 }
+            } else if resolved_target_has_js_esm_syntax
+                && resolved_target.is_some()
+                && !uses_system_namespace_default
+                && !has_default_binding
+            {
+                self.emit_module_has_no_default_export_at(module_name, clause.name);
             } else if self.ctx.resolved_modules.as_ref().is_some_and(|resolved| {
                 crate::module_resolution::module_specifier_candidates(module_name)
                     .iter()
@@ -384,6 +396,14 @@ impl<'a> CheckerState<'a> {
                             is_source_file,
                         );
                     }
+                }
+            } else if resolved_target_has_js_esm_syntax
+                && resolved_target.is_some()
+                && !uses_system_namespace_default
+                && !has_default_binding
+            {
+                for &specifier_node in &named_default_binding_nodes {
+                    self.emit_module_has_no_default_export_at(module_name, specifier_node);
                 }
             } else if self.ctx.resolved_modules.as_ref().is_some_and(|resolved| {
                 crate::module_resolution::module_specifier_candidates(module_name)
@@ -1449,46 +1469,6 @@ impl<'a> CheckerState<'a> {
         }
 
         sym.has_any_flags(symbol_flags::ALIAS) && self.alias_resolves_to_type_only(sym_id)
-    }
-
-    fn should_report_js_type_only_import_diagnostic(
-        &self,
-        clause_is_type_only: bool,
-        specifier_is_type_only: bool,
-    ) -> bool {
-        self.is_js_file()
-            && self.ctx.should_resolve_jsdoc()
-            && !clause_is_type_only
-            && !specifier_is_type_only
-    }
-
-    fn emit_js_type_only_import_diagnostic(
-        &mut self,
-        report_at: NodeIndex,
-        import_name: &str,
-        module_name: &str,
-    ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
-        let clean_module = module_name.trim_matches('\'').trim_matches('"');
-        let quoted_import = format!("import(\"{clean_module}\").{import_name}");
-        let message = format_message(
-            diagnostic_messages::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
-            &[import_name, &quoted_import],
-        );
-        let start = self.ctx.arena.get(report_at).map_or(0, |n| n.pos);
-        if self.ctx.diagnostics.iter().any(|diag| {
-            diag.code
-                == diagnostic_codes::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT
-                && diag.start == start
-        }) {
-            return;
-        }
-        self.error_at_node(
-            report_at,
-            &message,
-            diagnostic_codes::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
-        );
     }
 
     fn module_has_default_binding_fast_path(

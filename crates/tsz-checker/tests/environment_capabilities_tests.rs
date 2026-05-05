@@ -3,7 +3,7 @@
 //! These tests verify that the `EnvironmentCapabilities` model correctly
 //! routes diagnostics for:
 //! - TS2318: Missing global types (lib availability)
-//! - TS2591: Node.js globals (known-global classification)
+//! - TS2580/TS2591: Node.js globals (known-global classification)
 //! - TS2583: ES2015+ type suggestions (known-global classification)
 //! - TS2584: DOM globals (known-global classification)
 //! - TS2823: Import attributes module option check (feature gate)
@@ -29,23 +29,23 @@ fn check_no_lib(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
 }
 
 // =============================================================================
-// TS2591: Node.js globals routed through capabilities
+// TS2580/TS2591: Node.js globals routed through capabilities
 // =============================================================================
 
 #[test]
-fn test_node_global_require_emits_ts2591() {
+fn test_node_global_require_without_types_emits_ts2580() {
     let diags = check_no_lib("const x = require('fs');");
-    let ts2591: Vec<_> = diags.iter().filter(|d| d.code == 2591).collect();
+    let ts2580: Vec<_> = diags.iter().filter(|d| d.code == 2580).collect();
     assert!(
-        !ts2591.is_empty(),
-        "Expected TS2591 for 'require' (Node global), got: {diags:?}"
+        !ts2580.is_empty(),
+        "Expected TS2580 for 'require' (Node global), got: {diags:?}"
     );
 }
 
 #[test]
 fn test_node_global_process_classified_correctly() {
     // Verify the capability boundary classifies 'process' as a Node global.
-    // Full checker integration (TS2591 emission) depends on the identifier reaching
+    // Full checker integration depends on the identifier reaching
     // the name resolution error path, which requires the identifier to be used
     // in a value expression context that doesn't short-circuit.
     use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, MissingGlobalKind};
@@ -436,7 +436,7 @@ fn test_capability_diagnostic_node_global_availability() {
 
     let caps = EnvironmentCapabilities::from_options(&CheckerOptions::default(), true);
 
-    // Node globals produce TS2591 via diagnose_missing_name
+    // Node globals produce the missing-node-global diagnostic via diagnose_missing_name.
     for name in &["require", "process", "Buffer", "__filename", "__dirname"] {
         let diag = caps.diagnose_missing_name(name);
         assert!(

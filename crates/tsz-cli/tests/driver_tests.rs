@@ -659,6 +659,74 @@ export const y = bar();
 }
 
 #[test]
+fn declaration_emit_aliased_transitive_import_reports_single_canonical_ts2883() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("r/node_modules/foo/node_modules/nested/index.d.ts"),
+        "export interface NestedProps {}\n",
+    );
+    write_file(
+        &base.join("r/node_modules/foo/index.d.ts"),
+        r#"import { NestedProps as NP } from "nested";
+export function foo(): [NP];
+"#,
+    );
+    write_file(
+        &base.join("r/entry.ts"),
+        r#"import { foo } from "foo";
+export const x = foo();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "declaration": true
+  },
+  "files": ["r/entry.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2883_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2883)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert_eq!(
+        ts2883_messages.len(),
+        1,
+        "expected one TS2883 diagnostic for aliased nested tuple return reference, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages[0].contains("NestedProps"),
+        "expected TS2883 to name canonical NestedProps, got: {}",
+        ts2883_messages[0]
+    );
+    assert!(
+        !ts2883_messages[0].contains("'NP'"),
+        "did not expect TS2883 to name local alias NP, got: {}",
+        ts2883_messages[0]
+    );
+
+    if let Ok(dts) = fs::read_to_string(base.join("r/entry.d.ts")) {
+        assert!(
+            !dts.contains("[NP]"),
+            "did not expect declaration output to reference unbound alias NP: {dts}"
+        );
+    }
+}
+
+#[test]
 fn declaration_emit_reports_non_serializable_foreign_unique_symbol_property() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -2859,6 +2927,44 @@ fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_oute
         ts2488[0].message_text.contains("Type '() => T'"),
         "Expected inner TS2488 diagnostic to preserve the non-generic function surface `() => T`, got: {:?}",
         ts2488[0]
+    );
+}
+
+#[test]
+fn compile_generic_call_at_yield_expression_in_generic_call2_fixture_has_no_ts2345() {
+    let Some(source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts",
+    ) else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("test.ts"), &source);
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::EsNext);
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("test.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2345: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .collect();
+
+    assert!(
+        ts2345.is_empty(),
+        "Expected fixture to avoid stale TS2345 diagnostics, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
     );
 }
 
@@ -12323,6 +12429,78 @@ fn bare_import_type_reports_ts1340() {
 }
 
 #[test]
+fn declaration_emit_raw_typeof_import_text_still_reports_ts9006() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+    let raw_specifier = base.join("some-mod").display().to_string();
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "module": "commonjs",
+    "target": "es2020",
+    "types": []
+  },
+  "files": ["some-mod.d.ts", "index.js", "index-comment.js"]
+}"#,
+    );
+    write_file(
+        &base.join("some-mod.d.ts"),
+        r#"
+interface Item {
+  x: string;
+}
+
+declare function getItems(): Item[];
+export = getItems;
+"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        &format!(
+            r#"// @ts-check
+const items = require("./some-mod")();
+const note = 'typeof import("{raw_specifier}")';
+
+module.exports = items;
+"#
+        ),
+    );
+    write_file(
+        &base.join("index-comment.js"),
+        &format!(
+            r#"// @ts-check
+// typeof import("{raw_specifier}")
+const items = require("./some-mod")();
+
+module.exports = items;
+"#
+        ),
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts9006: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 9006)
+        .collect();
+    assert_eq!(
+        ts9006.len(),
+        2,
+        "raw string/comment import text must not suppress TS9006, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn bare_import_type_export_equals_class_does_not_report_ts1340() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -12479,6 +12657,44 @@ namespace SomeOther.Thing {
             .iter()
             .any(|diag| diag.message_text.contains("always return 'false'")),
         "Expected TS2845 for namespace-imported const enum member condition, got: {result:?}"
+    );
+}
+
+#[test]
+fn global_nan_equality_condition_reports_ts2845_in_project_compile() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "noEmit": true
+  },
+  "files": ["test.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"declare const x: number;
+
+if (x === NaN) {}
+if (NaN !== x) {}
+
+function t1(value: number, NaN: number) {
+    return value === NaN;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2845_count = result.diagnostics.iter().filter(|d| d.code == 2845).count();
+
+    assert_eq!(
+        ts2845_count, 2,
+        "Expected global NaN conditions, but not the shadowed parameter, to report TS2845; got: {result:?}"
     );
 }
 
@@ -12866,7 +13082,7 @@ fn ts1079_emitted_for_declare_import_without_ts2304_on_declare() {
 }
 
 #[test]
-fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
+fn ts2581_emitted_for_unresolved_jquery_global_without_types_or_ts2304() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
 
@@ -12879,17 +13095,17 @@ fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    let ts2592_diags: Vec<_> = result
+    let ts2581_diags: Vec<_> = result
         .diagnostics
         .iter()
         .filter(|d| {
             d.code
-                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2
+                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA
         })
         .collect();
     assert!(
-        !ts2592_diags.is_empty(),
-        "Expected TS2592 for unresolved jQuery global `$`, got diagnostics: {:?}",
+        !ts2581_diags.is_empty(),
+        "Expected TS2581 for unresolved jQuery global `$`, got diagnostics: {:?}",
         result.diagnostics
     );
 
@@ -12901,6 +13117,188 @@ fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
     assert!(
         jquery_ts2304_diags.is_empty(),
         "Unexpected TS2304 on `$`: {jquery_ts2304_diags:?}"
+    );
+}
+
+#[test]
+fn missing_external_globals_without_types_use_install_only_diagnostics() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["test.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"process.cwd();
+$("body");
+describe("suite", () => {});
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    for code in [
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
+    ] {
+        assert!(
+            codes.contains(&code),
+            "Expected missing external global diagnostic {code}, got diagnostics: {:?}",
+            result.diagnostics
+        );
+    }
+    for code in [
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
+    ] {
+        assert!(
+            !codes.contains(&code),
+            "Did not expect types-field diagnostic {code}, got diagnostics: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn missing_external_globals_with_types_use_types_field_diagnostics() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "strict": true,
+            "noEmit": true,
+            "types": []
+          },
+          "files": ["test.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"process.cwd();
+$("body");
+describe("suite", () => {});
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    for code in [
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
+    ] {
+        assert!(
+            codes.contains(&code),
+            "Expected types-field diagnostic {code}, got diagnostics: {:?}",
+            result.diagnostics
+        );
+    }
+    for code in [
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
+    ] {
+        assert!(
+            !codes.contains(&code),
+            "Did not expect install-only diagnostic {code}, got diagnostics: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn checked_js_node_globals_match_tsc_scope() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "module": "commonjs",
+            "noEmit": true
+          },
+          "files": ["index.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"// @ts-check
+process.cwd();
+require("x");
+module.exports = {};
+__dirname.toUpperCase();
+__filename.toUpperCase();
+Buffer.from("x");
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    let ts2580 = diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE;
+    let ts2591 = diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2;
+
+    assert_eq!(
+        codes.iter().filter(|&&code| code == ts2580).count(),
+        2,
+        "Expected TS2580 for process and Buffer in checked JS, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected TS2307 for unresolved require(\"x\"), got diagnostics: {:?}",
+        result.diagnostics
+    );
+    for name in ["__dirname", "__filename"] {
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME
+                    && d.message_text.contains(name)),
+            "Expected TS2304 for {name}, got diagnostics: {:?}",
+            result.diagnostics
+        );
+    }
+    assert!(
+        !codes.contains(&ts2591),
+        "Did not expect TS2591 in checked JS without compilerOptions.types, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !(d.code == diagnostic_codes::CANNOT_FIND_NAME
+                && d.message_text.contains("'module'"))),
+        "Did not expect TS2304 for module.exports in checked JS, got diagnostics: {:?}",
+        result.diagnostics
     );
 }
 

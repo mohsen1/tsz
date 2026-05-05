@@ -890,7 +890,7 @@ impl<'a> CheckerState<'a> {
     pub(super) fn parse_jsdoc_import_tag(rest: &str) -> Vec<(String, String, String)> {
         let rest = rest.trim();
         let mut results = Vec::new();
-        if let Some(from_idx) = rest.rfind("from") {
+        if let Some(from_idx) = Self::find_jsdoc_import_from_keyword(rest) {
             let before_from = rest[..from_idx].trim();
             if matches!(
                 before_from.split_whitespace().next(),
@@ -914,12 +914,13 @@ impl<'a> CheckerState<'a> {
                         if part.is_empty() {
                             continue;
                         }
-                        let parts: Vec<&str> = part.split(" as ").collect();
-                        if parts.len() == 2 {
+                        if let Some((imported_name, local_name)) =
+                            Self::parse_jsdoc_named_import_alias(part)
+                        {
                             results.push((
-                                parts[1].trim().to_string(),
+                                local_name.to_string(),
                                 specifier.clone(),
-                                parts[0].trim().to_string(),
+                                imported_name.to_string(),
                             ));
                         } else {
                             results.push((part.to_string(), specifier.clone(), part.to_string()));
@@ -939,6 +940,66 @@ impl<'a> CheckerState<'a> {
             }
         }
         results
+    }
+
+    fn find_jsdoc_import_from_keyword(rest: &str) -> Option<usize> {
+        let mut quote = None;
+        let mut escaped = false;
+        let mut last_from = None;
+
+        for (idx, ch) in rest.char_indices() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+
+            if ch == '"' || ch == '\'' || ch == '`' {
+                quote = Some(ch);
+                continue;
+            }
+
+            if rest[idx..].starts_with("from")
+                && !rest[..idx]
+                    .chars()
+                    .next_back()
+                    .is_some_and(Self::is_jsdoc_import_keyword_part)
+                && !rest[idx + 4..]
+                    .chars()
+                    .next()
+                    .is_some_and(Self::is_jsdoc_import_keyword_part)
+            {
+                last_from = Some(idx);
+            }
+        }
+
+        last_from
+    }
+
+    const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
+        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+    }
+
+    fn parse_jsdoc_named_import_alias(part: &str) -> Option<(&str, &str)> {
+        let mut pieces = part.split_whitespace();
+        let imported_name = pieces.next()?;
+        if pieces.next()? != "as" {
+            return None;
+        }
+        let local_name = pieces.next()?;
+        if pieces.next().is_some() {
+            return None;
+        }
+        Some((imported_name, local_name))
     }
 
     pub(super) fn parse_jsdoc_typedef_definition(line: &str) -> Option<(String, Option<String>)> {

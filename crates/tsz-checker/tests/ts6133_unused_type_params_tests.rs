@@ -257,9 +257,8 @@ fn test_using_declaration_not_reported_unused() {
 }
 
 #[test]
-fn test_setter_only_private_member_not_reported_unused() {
-    // A setter without a getter is "used" by write accesses.
-    // TSC never flags setter-only private members as unused.
+fn test_written_setter_only_private_member_not_reported_unused() {
+    // A setter without a getter is used by actual write accesses.
     let source = r"
 class Employee {
     private set p(_: number) {}
@@ -284,6 +283,32 @@ class Employee {
         .collect();
     assert!(
         setter_errors.is_empty(),
-        "setter-only private member should not be flagged as unused, got: {setter_errors:?}"
+        "written setter-only private member should not be flagged as unused, got: {setter_errors:?}"
+    );
+}
+
+#[test]
+fn test_unwritten_setter_only_private_member_reported_unused() {
+    let source = r"
+export class C {
+    private set value(v: string) {}
+}
+";
+    let diags = tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            no_unused_locals: true,
+            strict: true,
+            ..Default::default()
+        },
+    );
+    let setter_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 6133 && d.message_text.contains("'value'"))
+        .collect();
+    assert!(
+        !setter_errors.is_empty(),
+        "unwritten setter-only private member should be flagged as unused, got: {diags:?}"
     );
 }

@@ -718,12 +718,51 @@ impl<'a> Printer<'a> {
                     // line before the next content) are file-level and go BEFORE
                     // the __esModule marker. "Attached" comments (no blank line
                     // after them) are deferred to AFTER the preamble.
+                    //
+                    // For triple-slash references, treat a contiguous run of
+                    // refs (no blank lines between them) as one group. If the
+                    // LAST ref in the group is detached (blank line before the
+                    // next non-ref content), the entire group is detached. tsc
+                    // emits all of them together before `__esModule` in that
+                    // case, instead of splitting the group around the preamble.
+                    let mut group_end_pos = c_end;
+                    let mut group_end_idx = self.comment_emit_idx;
+                    if is_triple_slash_reference {
+                        let mut probe_idx = self.comment_emit_idx;
+                        let mut probe_end = c_end;
+                        while probe_idx + 1 < self.all_comments.len() {
+                            let next_c = &self.all_comments[probe_idx + 1];
+                            if next_c.end > first_stmt_pos {
+                                break;
+                            }
+                            let gap = &text[probe_end as usize..next_c.pos as usize];
+                            if gap.contains("\n\n") || gap.contains("\r\n\r\n") {
+                                break;
+                            }
+                            let next_text = crate::safe_slice::slice(
+                                text,
+                                next_c.pos as usize,
+                                next_c.end as usize,
+                            )
+                            .unwrap_or("");
+                            let next_trimmed = next_text.trim_start();
+                            if !(next_trimmed.starts_with("///<reference")
+                                || next_trimmed.starts_with("/// <reference"))
+                            {
+                                break;
+                            }
+                            probe_idx += 1;
+                            probe_end = next_c.end;
+                        }
+                        group_end_idx = probe_idx;
+                        group_end_pos = probe_end;
+                    }
                     let next_content_pos = self
                         .all_comments
-                        .get(self.comment_emit_idx + 1)
+                        .get(group_end_idx + 1)
                         .filter(|next_c| next_c.end <= first_stmt_pos)
                         .map_or(first_stmt_pos, |next_c| next_c.pos);
-                    let between_after = &text[c_end as usize..next_content_pos as usize];
+                    let between_after = &text[group_end_pos as usize..next_content_pos as usize];
                     let is_detached =
                         between_after.contains("\n\n") || between_after.contains("\r\n\r\n");
                     let is_amd_dependency = trimmed_comment.contains("<amd-dependency");
@@ -1535,10 +1574,25 @@ impl<'a> Printer<'a> {
             // Previously we used skip_whitespace_forward which stopped at
             // comments, causing `c_end > actual_start` for the comment itself.
             let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+            let next_stmt_node = source
+                .statements
+                .nodes
+                .get(stmt_i + 1)
+                .and_then(|&next_idx| self.arena.get(next_idx));
 
             if is_erased {
                 if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
                     self.emit_recovered_interface_body_statements(stmt_node);
+                }
+                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    let scan_end = next_stmt_node.map_or_else(
+                        || {
+                            self.source_text
+                                .map_or(stmt_node.end, |text| text.len() as u32)
+                        },
+                        |n| n.pos,
+                    );
+                    self.emit_recovered_template_module_declaration(stmt_node, scan_end);
                 }
                 if let Some(recovered_tail) =
                     self.recovered_ambient_class_parenthesized_tail_text(stmt_node)
@@ -1555,11 +1609,6 @@ impl<'a> Printer<'a> {
                 //   - Comments on subsequent lines → keep for the next statement
                 // Cap the scan end at the next statement's pos to avoid scanning
                 // into subsequent statements (same fix as initialization phase).
-                let next_stmt_node = source
-                    .statements
-                    .nodes
-                    .get(stmt_i + 1)
-                    .and_then(|&next_idx| self.arena.get(next_idx));
                 let scan_end = next_stmt_node.map_or(stmt_node.end, |n| n.pos);
                 let stmt_token_end = self.find_token_end_before_trivia(stmt_node.pos, scan_end);
                 let mut line_end = if let Some(text) = self.source_text {

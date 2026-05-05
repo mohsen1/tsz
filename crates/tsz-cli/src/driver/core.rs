@@ -2583,6 +2583,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if let Some(types) = args.types.as_ref() {
         options.types = Some(types.clone());
+        options.checker.types_explicitly_set = true;
     }
     if let Some(type_roots) = args.type_roots.as_ref() {
         options.type_roots = Some(type_roots.clone());

@@ -1949,6 +1949,56 @@ const Hoc = <Tag extends Tags>(
 }
 
 #[test]
+fn jsx_library_managed_attributes_preserves_factory_named_prop_defaults() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface ElementClass { render(): Element; }
+    interface ElementAttributesProperty { props: {}; }
+    interface IntrinsicElements { div: {}; }
+
+    type Exclude<T, U> = T extends U ? never : T;
+    type Extract<T, U> = T extends U ? T : never;
+    type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+    type Partial<T> = { [P in keyof T]?: T[P] };
+    type Defaultize<Props, Defaults> =
+        Partial<Pick<Props, Extract<keyof Props, keyof Defaults>>> &
+        Pick<Props, Exclude<keyof Props, keyof Defaults>>;
+    type LibraryManagedAttributes<Component, Props> =
+        Component extends { defaultProps: infer Defaults }
+            ? Defaultize<Props, Defaults>
+            : Props;
+}
+
+interface Factory<T> {
+    create(): T;
+}
+
+interface Props {
+    value: Factory<string>;
+    other: number;
+}
+
+declare class Comp {
+    props: Props;
+    static defaultProps: { value: Factory<string> };
+    render(): JSX.Element;
+}
+
+let ok = <Comp other={1} />;
+"#;
+
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "LibraryManagedAttributes should preserve defaulted Factory<T> props, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_generic_jsx_props_conditional_component_props_with_ref_keeps_callback_context() {
     let lib_source = r#"
 declare namespace JSX {
@@ -4220,6 +4270,91 @@ declare const MockComponent: MockComponentInterface;
             .iter()
             .any(|(_, msg)| msg.contains("Type '{}' is not assignable to type")),
         "Custom ElementChildrenAttribute should format the synthesized JSX attrs object as '{{}}', got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_diagnostics_keep_declared_children_display_through_intrinsic_intersection() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Props {{
+    children: (x: number) => string;
+}}
+function Blah(props: Props) {{ return <div></div>; }}
+
+interface PropsArr {{
+    children: ((x: number) => string)[];
+}}
+function Blah2(props: PropsArr) {{ return <div></div>; }}
+
+type Cb = (x: number) => string;
+interface PropsMixed {{
+    children: Cb | Cb[];
+}}
+function Blah3(props: PropsMixed) {{ return <div></div>; }}
+
+let text = <Blah>Hello unexpected text!</Blah>;
+let multi = <Blah>{{x => "" + x}}{{x => "" + x}}</Blah>;
+let arraySingle = <Blah2>{{x => x}}</Blah2>;
+let mixed = <Blah3>{{x => x}}</Blah3>;
+let mixedText = <Blah3>Hello unexpected text!</Blah3>;
+"#
+    );
+
+    let diags = jsx_diagnostics_with_pos(&source);
+    assert!(
+        diags.iter().any(|(code, _, msg)| {
+            *code == diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
+                && msg.contains("expected type of 'children' is '(x: number) => string'")
+        }),
+        "Plain function children text diagnostic should use the declared function type, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _, msg)| {
+            *code == diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+                && msg.contains("single child of type '(x: number) => string'")
+        }),
+        "Plain function children arity diagnostic should use the declared function type, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _, msg)| {
+            *code == diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
+                && msg.contains("expects type '((x: number) => string)[]'")
+        }),
+        "Array children should keep the array target for single body children, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _, msg)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && msg
+                    .contains("Type '(x: number) => number' is not assignable to type 'Cb | Cb[]'")
+        }),
+        "Union children mismatch should report against the declared union surface, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _, msg)| {
+            *code == diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
+                && msg.contains("expected type of 'children' is 'Cb | Cb[]'")
+        }),
+        "Union children text diagnostic should keep the declared union surface, got: {diags:?}"
+    );
+
+    let mixed_start = source
+        .find("let mixed =")
+        .expect("test source should contain the mixed declaration");
+    let mixed_child_start = source[mixed_start..]
+        .find("{x => x}")
+        .map(|offset| mixed_start + offset)
+        .expect("test source should contain the mixed child expression")
+        as u32;
+    assert!(
+        diags.iter().any(|(code, start, msg)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && *start == mixed_child_start
+                && msg.contains("Cb | Cb[]")
+        }),
+        "Union child TS2322 should be anchored at the JSX expression wrapper, got: {diags:?}"
     );
 }
 

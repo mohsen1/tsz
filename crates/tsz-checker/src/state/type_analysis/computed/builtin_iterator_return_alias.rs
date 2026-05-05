@@ -33,7 +33,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
             return arenas.iter().any(|arena| {
-                self.arena_is_actual_lib(arena)
+                (self.arena_is_actual_lib(arena) || Self::arena_is_es2015_iterable_lib(arena))
                     && Self::type_alias_declaration_is_builtin_iterator_return_intrinsic(
                         arena, decl_idx,
                     )
@@ -45,7 +45,7 @@ impl<'a> CheckerState<'a> {
             .symbol_arenas
             .get(&sym_id)
             .is_some_and(|arena| {
-                self.arena_is_actual_lib(arena)
+                (self.arena_is_actual_lib(arena) || Self::arena_is_es2015_iterable_lib(arena))
                     && Self::type_alias_declaration_is_builtin_iterator_return_intrinsic(
                         arena, decl_idx,
                     )
@@ -58,6 +58,14 @@ impl<'a> CheckerState<'a> {
             .iter()
             .take(self.ctx.actual_lib_file_count)
             .any(|lib_ctx| std::ptr::eq(lib_ctx.arena.as_ref(), arena))
+    }
+
+    fn arena_is_es2015_iterable_lib(arena: &NodeArena) -> bool {
+        arena.source_files.first().is_some_and(|source_file| {
+            let normalized = source_file.file_name.replace('\\', "/");
+            let basename = normalized.rsplit('/').next().unwrap_or(&normalized);
+            basename == "lib.es2015.iterable.d.ts" || basename == "es2015.iterable.d.ts"
+        })
     }
 
     fn type_alias_declaration_is_builtin_iterator_return_intrinsic(

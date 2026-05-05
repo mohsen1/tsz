@@ -319,6 +319,22 @@ fn node18_cts_import_attributes_report_ts2856() {
 }
 
 #[test]
+fn node18_cts_export_attributes_report_ts2856() {
+    let diagnostics = check_resolution_mode(
+        "main.cts",
+        r#"export { value } from "pkg" with { type: "json" };"#,
+        1,
+        ModuleKind::Node18,
+        Some(false),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2856),
+        "Expected TS2856 for export attributes on a CJS-emitting export, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn node18_cts_type_only_import_from_esm_requires_resolution_mode() {
     let diagnostics = check_resolution_mode_with_targets(
         "main.cts",

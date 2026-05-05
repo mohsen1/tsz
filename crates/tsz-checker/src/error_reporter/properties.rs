@@ -477,6 +477,65 @@ impl<'a> CheckerState<'a> {
             .map(|_| init_type)
     }
 
+    fn object_rest_this_omit_display_for_receiver(&mut self, idx: NodeIndex) -> Option<String> {
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(receiver)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl_idx = symbol.value_declaration;
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let ext = self.ctx.arena.get_extended(decl_idx)?;
+            decl_idx = ext.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+            return None;
+        }
+        let binding_element = self.ctx.arena.get_binding_element(decl_node)?;
+        if !binding_element.dot_dot_dot_token {
+            return None;
+        }
+
+        let binding_ext = self.ctx.arena.get_extended(decl_idx)?;
+        let pattern_idx = binding_ext.parent;
+        let pattern_node = self.ctx.arena.get(pattern_idx)?;
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+
+        let pattern_ext = self.ctx.arena.get_extended(pattern_idx)?;
+        let var_decl_node = self.ctx.arena.get(pattern_ext.parent)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(var_decl_node)?;
+        let init_idx = self.ctx.arena.skip_parenthesized(var_decl.initializer);
+        let init_node = self.ctx.arena.get(init_idx)?;
+        if init_node.kind != SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+
+        let parent_type = self.get_type_of_node(init_idx);
+        let mut keys = self.collect_unspreadable_prototype_names_from(parent_type);
+        for name in self.collect_non_rest_property_names(pattern_idx) {
+            if !keys.iter().any(|k| k == &name) {
+                keys.push(name);
+            }
+        }
+        if keys.is_empty() {
+            return None;
+        }
+
+        let key_display = keys
+            .iter()
+            .map(|key| format!("\"{key}\""))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        Some(format!("Omit<this, {key_display}>"))
+    }
+
     fn js_constructor_receiver_display_for_node(&mut self, idx: NodeIndex) -> Option<String> {
         if !self.is_js_file() {
             return None;
@@ -685,6 +744,9 @@ impl<'a> CheckerState<'a> {
     fn property_receiver_display_for_node(&mut self, type_id: TypeId, idx: NodeIndex) -> String {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
+            return name;
+        }
+        if let Some(name) = self.object_rest_this_omit_display_for_receiver(idx) {
             return name;
         }
         if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)

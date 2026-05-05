@@ -412,6 +412,53 @@ var b = bar("one", 1, g);
 }
 
 #[test]
+fn generic_class_function_member_annotated_callback_keeps_outer_type_param_in_ts2345() {
+    let source = r#"
+namespace WithCandidates {
+    class C<T> {
+        foo2<T, U>(x: T, cb: (a: T) => U) {
+            return cb(x);
+        }
+    }
+    declare var c: C<number>;
+
+    class C3<T, U> {
+        foo3<T, U>(x: T, cb: (a: T) => U, y: U) {
+            return cb(x);
+        }
+    }
+    declare var c3: C3<number, string>;
+
+    function other<T, U>(t: T, u: U) {
+        var r10 = c.foo2(1, (x: T) => '');
+        var r11 = c3.foo3(1, (x: T) => '', '');
+        var r11b = c3.foo3(1, (x: T) => '', 1);
+    }
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345_messages: Vec<_> = diags
+        .iter()
+        .filter_map(|(code, msg)| (*code == 2345).then_some(msg.as_str()))
+        .collect();
+    assert_eq!(
+        ts2345_messages.len(),
+        3,
+        "Expected exactly three TS2345 diagnostics. Diagnostics: {diags:#?}"
+    );
+    for msg in &ts2345_messages {
+        assert!(
+            msg.contains("Argument of type 'number' is not assignable to parameter of type 'T'."),
+            "Expected the diagnostic to keep the annotated outer type parameter. Got: {msg:?}"
+        );
+        assert!(
+            !msg.contains("parameter of type '1'"),
+            "Fresh literal inference should not replace the annotated outer type parameter. Got: {msg:?}"
+        );
+    }
+}
+
+#[test]
 fn overloaded_function_argument_uses_last_signature_for_generic_callback_inference() {
     let source = r#"
 interface PromiseLike<T> {

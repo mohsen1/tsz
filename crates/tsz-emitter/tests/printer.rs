@@ -124,6 +124,17 @@ fn recovered_template_object_property_name_emits_as_recovered_statements() {
 }
 
 #[test]
+fn recovered_template_module_names_emit_as_recovered_statements() {
+    let source = "declare module `M1` {\n}\n\ndeclare module `M${2}` {\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert_eq!(
+        output,
+        "declare;\nmodule `M1`;\n{\n}\ndeclare;\nmodule `M${2}`;\n{\n}\n"
+    );
+}
+
+#[test]
 fn test_optional_catch_binding_downlevel_to_param() {
     let source = "try {\n} catch {\n}\n";
     let output = parse_lower_print(
@@ -443,6 +454,23 @@ fn namespace_reference_to_later_dotted_child_is_qualified() {
 }
 
 #[test]
+fn nested_namespace_qualifies_grandparent_export_when_name_collides() {
+    let source = "namespace M {\n    export var x = 3;\n    namespace m4 {\n        namespace M {\n            var p = x;\n        }\n    }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("var p = M_1.x;"),
+        "Nested colliding namespace should qualify grandparent export through \
+         the outer IIFE parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var p = x;"),
+        "Bare `x` would resolve against the nested namespace scope, not the \
+         exported grandparent value.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_module_temp_vars_do_not_collide() {
     let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\nconsole.log(x);\n";
     let output = parse_lower_print(
@@ -677,6 +705,46 @@ export const msg = "Hello!";
     assert!(
         !output.contains("/// <reference"),
         "Fallback bang-module detection should ignore non-module export declarations with string literals.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn consecutive_triple_slash_refs_emit_together_before_cjs_preamble() {
+    let source = r#"/// <reference path="O.d.ts" />
+/// <reference path="O2.d.ts" />
+
+import { x } from "M";
+export const y = x;
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    let o_idx = output
+        .find("/// <reference path=\"O.d.ts\" />")
+        .expect("O.d.ts ref should be emitted");
+    let o2_idx = output
+        .find("/// <reference path=\"O2.d.ts\" />")
+        .expect("O2.d.ts ref should be emitted");
+    let preamble_idx = output
+        .find("Object.defineProperty(exports")
+        .expect("CJS preamble should be emitted");
+
+    assert!(
+        o_idx < preamble_idx,
+        "First triple-slash ref must appear before __esModule preamble.\nOutput:\n{output}"
+    );
+    assert!(
+        o2_idx < preamble_idx,
+        "Second triple-slash ref must appear before __esModule preamble.\nOutput:\n{output}"
+    );
+    assert!(
+        o_idx < o2_idx,
+        "Triple-slash refs must preserve source order.\nOutput:\n{output}"
     );
 }
 
@@ -1975,6 +2043,39 @@ fn es5_var_destructuring_reassigning_rhs_uses_temp() {
     assert!(
         !output.contains("var foo = foo.foo, baz = foo.baz;"),
         "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: classes inside a namespace IIFE were missing
+/// `__metadata("design:type", T)` calls under `--emitDecoratorMetadata`.
+/// The namespace transformer instantiated an `ES5ClassTransformer` but
+/// never forwarded the metadata flag, so decorator arrays only contained
+/// the bare decorator without the type metadata.
+#[test]
+fn namespace_es5_class_emits_decorator_metadata() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "namespace M {\n    export function inject(t: any, k: string): void {}\n    export class Leg {}\n    export class Person {\n        @inject leftLeg: Leg;\n    }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("__metadata(\"design:type\", Leg)"),
+        "Decorator metadata for the property type must emit inside the namespace IIFE.\nOutput:\n{output}"
     );
 }
 

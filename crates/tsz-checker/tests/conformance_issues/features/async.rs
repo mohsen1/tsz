@@ -768,6 +768,35 @@ export {};
 }
 
 #[test]
+fn test_script_global_nan_comparisons_trigger_ts2845() {
+    // In script files, lib globals are merged into the file binder. Comparisons
+    // against that merged global `NaN` still need TS2845, while parameter
+    // shadows named `NaN` remain valid.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+declare const x: number;
+if (x === NaN) {}
+if (NaN == x) {}
+if (((NaN)) !== x) {}
+
+function ok(value: number, NaN: number) {
+    return value === NaN;
+}
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert_eq!(
+        ts2845.len(),
+        3,
+        "Expected three TS2845 diagnostics for global NaN comparisons only, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"

@@ -60,18 +60,37 @@ impl<'a> CheckerState<'a> {
             // In CommonJS module mode, `exports` is implicitly available as the module namespace.
             // Other node globals (module, require, __dirname, __filename) still need @types/node;
             // tsc emits TS2591 for them even in CommonJS mode when type definitions are absent.
-            if self.ctx.compiler_options.module.is_commonjs() && name == "exports" {
+            if self.ctx.compiler_options.module.is_commonjs()
+                && name == "exports"
+                && !self.current_source_file_has_esm_syntax()
+            {
                 return self.current_file_commonjs_namespace_type();
             }
-            // JS files implicitly have CommonJS globals (require, exports, module, etc.)
-            // tsc never emits TS2580 for JS files — they're treated as CommonJS by default
             if self.is_js_file() {
-                if name == "exports" {
-                    return self.current_file_commonjs_namespace_type();
+                match name {
+                    "exports" => {
+                        if self.current_source_file_has_esm_syntax() {
+                            self.error_at_node_msg(
+                                idx,
+                                crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                                &[name],
+                            );
+                            return TypeId::ERROR;
+                        }
+                        return self.current_file_commonjs_namespace_type();
+                    }
+                    "module" | "require" => return TypeId::ANY,
+                    "__dirname" | "__filename" => {
+                        self.error_at_node_msg(
+                            idx,
+                            crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                            &[name],
+                        );
+                        return TypeId::ERROR;
+                    }
+                    _ => {}
                 }
-                return TypeId::ANY;
             }
-            // Otherwise, emit TS2591 suggesting @types/node installation
             self.error_cannot_find_name_install_node_types(name, idx);
             return TypeId::ERROR;
         }

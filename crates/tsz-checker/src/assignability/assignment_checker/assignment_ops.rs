@@ -906,7 +906,10 @@ impl<'a> CheckerState<'a> {
         if !has_explicit_jsdoc_left_type
             && (self.is_control_flow_typed_any_assignment_target(left_idx)
                 || self.is_evolving_array_element_assignment_target(left_idx)
-                || self.is_checked_js_implicit_any_member_assignment_target(left_idx))
+                || self.is_checked_js_implicit_any_member_assignment_target(left_idx)
+                || self.is_checked_js_constructor_provisional_this_property_assignment(
+                    left_idx, right_idx,
+                ))
         {
             return right_type;
         }
@@ -1528,7 +1531,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn enclosing_statement_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn enclosing_statement_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
         while current.is_some() {
             let node = self.ctx.arena.get(current)?;

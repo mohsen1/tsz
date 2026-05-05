@@ -483,6 +483,29 @@ declare global {
 }
 
 #[test]
+fn test_returned_local_uses_source_function_return_annotation_with_type_args() {
+    let output = emit_dts_with_binding(
+        r#"
+export interface Box<T> {
+    current: T;
+}
+export function box<T>(current: T): Box<T> {
+    return { current };
+}
+export const useBox = () => {
+    const value = box<typeof import("pkg")>(null);
+    return value;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const useBox: () => Box<typeof import(\"pkg\")>;"),
+        "Expected local call return annotation to preserve explicit type arguments: {output}"
+    );
+}
+
+#[test]
 fn test_trailing_top_level_jsdoc_after_export_is_preserved() {
     let output = emit_dts(
         r#"
@@ -3059,6 +3082,74 @@ export const Baa = {
     assert!(
         !output.contains("[Foo.BANANA]: number;"),
         "Did not expect computed literal key syntax to leak into declaration output: {output}"
+    );
+}
+
+#[test]
+fn test_local_interface_computed_names_do_not_leak_public_dependencies() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const localStringKey = "local";
+const localNumberKey = 1;
+const publicSymbolKey = Symbol();
+
+interface LocalStringNamed {
+    [localStringKey]: number;
+}
+
+interface LocalNumberNamed {
+    [localNumberKey]: string;
+}
+
+export interface PublicNamed {
+    [publicSymbolKey]: number;
+}
+"#,
+    );
+
+    assert!(
+        !output.contains("localStringKey"),
+        "Did not expect local-only interface computed name dependencies to emit: {output}"
+    );
+    assert!(
+        !output.contains("localNumberKey"),
+        "Did not expect local-only interface computed name dependencies to emit: {output}"
+    );
+    assert!(
+        output.contains("declare const publicSymbolKey"),
+        "Expected exported interface computed name dependency to emit: {output}"
+    );
+    assert!(
+        output.contains("[publicSymbolKey]: number;"),
+        "Expected exported interface computed member to emit: {output}"
+    );
+}
+
+#[test]
+fn test_referenced_local_interface_computed_names_keep_dependencies() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const localSymbolKey = Symbol();
+
+interface LocalNamed {
+    [localSymbolKey]: number;
+}
+
+export interface PublicNamed extends LocalNamed {}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const localSymbolKey"),
+        "Expected local interface computed name dependency to emit when interface is public: {output}"
+    );
+    assert!(
+        output.contains("interface LocalNamed"),
+        "Expected referenced local interface to emit: {output}"
+    );
+    assert!(
+        output.contains("[localSymbolKey]: number;"),
+        "Expected referenced local interface computed member to emit: {output}"
     );
 }
 

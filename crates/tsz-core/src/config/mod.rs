@@ -734,6 +734,7 @@ pub fn resolve_compiler_options(
             })
             .collect();
         resolved.types = Some(list);
+        resolved.checker.types_explicitly_set = true;
     }
 
     if let Some(type_roots) = options.type_roots.as_ref() {
@@ -2613,7 +2614,7 @@ fn estimate_json_value_len(value: &serde_json::Value) -> u32 {
 }
 
 /// Matches TypeScript's `pathIsRelative` check: `/^\\.\\.?($|[\\\\/])/`.
-fn is_relative_path_mapping_substitution(specifier: &str) -> bool {
+const fn is_relative_path_mapping_substitution(specifier: &str) -> bool {
     matches!(
         specifier.as_bytes(),
         [b'.'] | [b'.', b'.'] | [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..]
@@ -2817,6 +2818,7 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "noimplicitthis" => Some("noImplicitThis"),
         "noimplicitusestrict" => Some("noImplicitUseStrict"),
         "nolib" => Some("noLib"),
+        "notypesandsymbols" => Some("noTypesAndSymbols"),
         "nopropertyaccessfromindexsignature" => Some("noPropertyAccessFromIndexSignature"),
         "noresolve" => Some("noResolve"),
         "nostrictgenericchecks" => Some("noStrictGenericChecks"),

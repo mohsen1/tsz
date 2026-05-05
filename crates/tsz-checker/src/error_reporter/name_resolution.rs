@@ -1059,16 +1059,34 @@ impl<'a> CheckerState<'a> {
         // checking, but our demand-driven type resolution can resolve many names
         // before any diagnostics are emitted. Counting eagerly here (via Cell)
         // ensures the cap of 10 is reached regardless of processing order.
-        let is_new_node = !self.ctx.name_resolution_reported_nodes.contains(&idx);
+        let is_new_node = !self
+            .ctx
+            .name_resolution_diagnostics
+            .reported_nodes
+            .contains(&idx);
         if is_new_node {
             self.ctx
+                .name_resolution_diagnostics
                 .spelling_suggestions_emitted
-                .set(self.ctx.spelling_suggestions_emitted.get() + 1);
+                .set(
+                    self.ctx
+                        .name_resolution_diagnostics
+                        .spelling_suggestions_emitted
+                        .get()
+                        + 1,
+                );
         }
 
         // Suppress suggestions when the cap is reached for a new node.
         // Already-counted nodes can still get suggestions (repeated resolution).
-        if self.ctx.spelling_suggestions_emitted.get() > 10 && is_new_node {
+        if self
+            .ctx
+            .name_resolution_diagnostics
+            .spelling_suggestions_emitted
+            .get()
+            > 10
+            && is_new_node
+        {
             return Vec::new();
         }
 
@@ -1187,35 +1205,38 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// Report TS2591: Cannot find name 'X' - suggest installing @types/node
-    /// and adding 'node' to the types field in tsconfig.
-    /// tsc 6.0 defaults to TS2591 (with tsconfig suggestion) in nearly all cases.
+    const fn use_types_field_missing_global_diagnostics(&self) -> bool {
+        self.ctx.capabilities.types_explicitly_set || self.ctx.compiler_options.no_types_and_symbols
+    }
+
+    /// Report TS2580/TS2591: Cannot find name 'X' - suggest installing @types/node.
     pub fn error_cannot_find_name_install_node_types(&mut self, name: &str, idx: NodeIndex) {
-        self.error_at_node_msg(
-            idx,
-            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-            &[name],
-        );
+        let code = if self.use_types_field_missing_global_diagnostics() {
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2
+        } else {
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE
+        };
+        self.error_at_node_msg(idx, code, &[name]);
     }
 
-    /// Report TS2592: Cannot find name 'X' - suggest installing @types/jquery
-    /// and adding 'jquery' to the types field in tsconfig.
+    /// Report TS2581/TS2592: Cannot find name 'X' - suggest installing @types/jquery.
     pub fn error_cannot_find_name_install_jquery_types(&mut self, name: &str, idx: NodeIndex) {
-        self.error_at_node_msg(
-            idx,
-            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
-            &[name],
-        );
+        let code = if self.use_types_field_missing_global_diagnostics() {
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2
+        } else {
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA
+        };
+        self.error_at_node_msg(idx, code, &[name]);
     }
 
-    /// Report TS2593: Cannot find name 'X' - suggest installing test runner types
-    /// and adding to the types field in tsconfig.
+    /// Report TS2582/TS2593: Cannot find name 'X' - suggest installing test runner types.
     pub fn error_cannot_find_name_install_test_types(&mut self, name: &str, idx: NodeIndex) {
-        self.error_at_node_msg(
-            idx,
-            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
-            &[name],
-        );
+        let code = if self.use_types_field_missing_global_diagnostics() {
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2
+        } else {
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N
+        };
+        self.error_at_node_msg(idx, code, &[name]);
     }
 
     /// Report TS2868: Cannot find name 'Bun' - suggest installing @types/bun
@@ -1247,7 +1268,10 @@ impl<'a> CheckerState<'a> {
         // The suggestion counter was already incremented eagerly in
         // `collect_spelling_suggestions`. Just mark the node as reported
         // to prevent future double-counting.
-        self.ctx.name_resolution_reported_nodes.insert(idx);
+        self.ctx
+            .name_resolution_diagnostics
+            .reported_nodes
+            .insert(idx);
 
         // Skip TS2304 for identifiers that are clearly not valid names.
         // These are likely parse errors that were added to the AST for error recovery.

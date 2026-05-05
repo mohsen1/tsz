@@ -417,6 +417,25 @@ impl<'a> BinaryOpEvaluator<'a> {
         Self { interner }
     }
 
+    fn non_nullable_type_parameter_result(&self, original: TypeId, narrowed: TypeId) -> TypeId {
+        if narrowed != original {
+            return narrowed;
+        }
+        if self.is_type_parameter_like(original) {
+            return self
+                .interner
+                .intersection2(original, self.interner.object(vec![]));
+        }
+        narrowed
+    }
+
+    fn is_type_parameter_like(&self, type_id: TypeId) -> bool {
+        matches!(
+            self.interner.lookup(type_id),
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+        )
+    }
+
     /// Check if a type is valid for the left side of an `instanceof` expression.
     /// TS2358: "The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter."
     pub fn is_valid_instanceof_left_operand(&self, type_id: TypeId) -> bool {
@@ -855,10 +874,11 @@ impl<'a> BinaryOpEvaluator<'a> {
             // left || right
             // tsc uses UnionReduction.Subtype for || result types, which removes
             // structural subtypes (e.g., never[] from number[] | never[] → number[]).
-            let truthy_left = ctx.narrow_by_truthiness(left);
+            let truthy_left =
+                self.non_nullable_type_parameter_result(left, ctx.narrow_by_truthiness(left));
             let falsy_left = ctx.narrow_to_falsy(left);
 
-            if falsy_left == TypeId::NEVER {
+            if falsy_left == TypeId::NEVER && !self.is_type_parameter_like(left) {
                 left
             } else if truthy_left == TypeId::NEVER {
                 right

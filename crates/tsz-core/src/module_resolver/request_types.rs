@@ -377,7 +377,7 @@ impl std::fmt::Display for ImportingModuleKind {
 /// A specifier is relative only when it starts with `./`, `../`, `.` alone,
 /// or `..` alone.  Notably, `.prisma/client` starts with `.` but is NOT a
 /// relative specifier -- it is a bare module name.
-pub fn is_path_relative(specifier: &str) -> bool {
+pub const fn is_path_relative(specifier: &str) -> bool {
     matches!(
         specifier.as_bytes(),
         [b'.'] | [b'.', b'.'] | [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..]

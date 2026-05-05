@@ -1,7 +1,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::BinderState;
-use tsz_checker::context::CheckerOptions;
+use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::ParserState;
@@ -241,6 +241,47 @@ class C {}
     assert!(
         codes.contains(&2420),
         "Expected TS2420 when @implements references a named JSDoc @import alias, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn jsdoc_named_import_alias_accepts_non_space_whitespace() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "dep.d.ts",
+        r#"
+export interface Foo {
+    value: string;
+}
+"#,
+        "index.js",
+        r#"
+// @ts-check
+
+/** @import { Foo as	LocalFoo } from "./dep" */
+
+/** @type {LocalFoo} */
+const item = { value: 123 };
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+
+    assert!(
+        !codes.contains(&2304),
+        "Expected LocalFoo to resolve with tab-separated `as` alias, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&2322),
+        "Expected resolved LocalFoo to report the property type mismatch, got diagnostics: {diagnostics:?}"
     );
 }
 

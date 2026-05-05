@@ -173,8 +173,12 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                 }
                 let type_text = self.qualify_current_namespace_self_type_text(&type_text);
+                let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
+                let type_text = self
+                    .expand_portable_mapped_object_text_in_current_context(&type_text)
+                    .unwrap_or(type_text);
                 self.write(": ");
-                self.write(&Self::strip_synthetic_anonymous_object_members(&type_text));
+                self.write(&type_text);
             } else if has_initializer
                 && (self.emit_ts_late_bound_function_initializer_type_annotation(
                     decl_name,
@@ -1246,6 +1250,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         self.function_parameter_type_text(func, identifier_idx)
             .or_else(|| {
+                if let Some(type_text) =
+                    self.returned_function_initializer_type_text(func, identifier_idx)
+                {
+                    return Some(type_text);
+                }
                 let type_text = self.reference_declared_type_annotation_text(identifier_idx)?;
                 if let Some(type_id) = self.reference_declared_type_id(identifier_idx)
                     && (self.printed_type_uses_non_emittable_local_alias_root(&type_text)

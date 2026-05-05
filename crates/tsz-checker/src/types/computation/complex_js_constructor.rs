@@ -408,6 +408,9 @@ impl<'a> CheckerState<'a> {
             // Non-generic: use standard property collection
             self.collect_js_constructor_this_properties(body_idx, &mut properties, sym_id, true);
         }
+        let constructor_property_names: rustc_hash::FxHashSet<_> =
+            properties.keys().copied().collect();
+        let mut prototype_concretized_implicit_any = rustc_hash::FxHashSet::default();
 
         for (name, previous) in scope_restore {
             if let Some(prev) = previous {
@@ -444,7 +447,24 @@ impl<'a> CheckerState<'a> {
                 let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
                 if let Some(existing) = properties.get_mut(&name) {
                     if existing.write_type == TypeId::ANY {
+                        if prop.type_id != TypeId::ANY
+                            && prop.type_id != TypeId::NULL
+                            && prop.type_id != TypeId::UNDEFINED
+                            && crate::query_boundaries::common::array_element_type(
+                                self.ctx.types,
+                                prop.type_id,
+                            ) != Some(TypeId::ANY)
+                        {
+                            let prop_name = self.ctx.types.resolve_atom(name);
+                            prototype_concretized_implicit_any.insert(format!(
+                                "Member '{prop_name}' implicitly has an 'any' type."
+                            ));
+                        }
                         existing.type_id = factory.union2(existing.type_id, widened_prop_type);
+                    } else if !constructor_property_names.contains(&name) {
+                        let merged = factory.union2(existing.type_id, widened_prop_type);
+                        existing.type_id = merged;
+                        existing.write_type = merged;
                     }
                 } else {
                     prop.type_id = widened_prop_type;
@@ -504,6 +524,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 synthesis_diag_snap.rollback_filtered(&mut self.ctx, |diag| {
                     diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                        && !prototype_concretized_implicit_any.contains(&diag.message_text)
                 });
                 return None;
             }
@@ -544,12 +565,14 @@ impl<'a> CheckerState<'a> {
             );
             synthesis_diag_snap.rollback_filtered(&mut self.ctx, |diag| {
                 diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                    && !prototype_concretized_implicit_any.contains(&diag.message_text)
             });
             return Some(instantiated);
         }
 
         synthesis_diag_snap.rollback_filtered(&mut self.ctx, |diag| {
             diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                && !prototype_concretized_implicit_any.contains(&diag.message_text)
         });
         if let Some(sym_id) = sym_id {
             let def_id = self.ctx.get_or_create_def_id(sym_id);

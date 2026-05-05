@@ -601,6 +601,20 @@ fn test_export_type_with_resolution_mode_attributes_is_preserved() {
 }
 
 #[test]
+fn test_export_json_attributes_are_stripped_from_declarations() {
+    let output = emit_dts(r#"export { default as data } from "./dep.json" with { type: "json" };"#);
+
+    assert!(
+        output.contains(r#"export { default as data } from "./dep.json";"#),
+        "Expected JSON export attribute to be stripped from declaration output: {output}"
+    );
+    assert!(
+        !output.contains("with {"),
+        "Did not expect non-resolution-mode attributes in declaration output: {output}"
+    );
+}
+
+#[test]
 fn test_inferred_printer_reduces_conditional_alias_applications() {
     use tsz_solver::types::{ConditionalType, TypeParamInfo};
 

@@ -191,6 +191,7 @@ mod js_exports;
 mod jsdoc;
 mod portability_check;
 mod portability_resolve;
+mod returned_function_initializer;
 mod type_inference;
 mod type_param_rewrite;
 mod type_printing;

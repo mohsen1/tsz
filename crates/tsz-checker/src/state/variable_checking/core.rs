@@ -813,6 +813,7 @@ impl<'a> CheckerState<'a> {
                     let suppress_initializer_context = evaluated_type != TypeId::ANY
                         && checker.suppress_initializer_contextual_type_for_generic_call(
                             var_decl.initializer,
+                            evaluated_type,
                         );
                     let suppress_identifier_context = checker
                         .should_suppress_identifier_initializer_context_for_index_access(
@@ -882,6 +883,14 @@ impl<'a> CheckerState<'a> {
                                 // diagnostics that need to be re-evaluated.
                                 || diag.code
                                     == crate::diagnostics::diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+                                // TS2348/TS2538: invalid calls and invalid
+                                // index expressions are structural initializer
+                                // diagnostics, not artifacts of contextual
+                                // typing from the variable annotation.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE
                                 // TS2339: "Property does not exist on type" is a structural
                                 // error (the object type and property name don't depend on
                                 // contextual typing). Preserve it so namespace/module

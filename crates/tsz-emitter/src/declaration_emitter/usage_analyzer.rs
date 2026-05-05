@@ -180,9 +180,14 @@ impl<'a> UsageAnalyzer<'a> {
                 }
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                // Interfaces are implicitly exported unless in a namespace
-                // For now, analyze all interfaces at module level
-                self.analyze_interface_declaration(stmt_idx);
+                if self.arena.get_interface(stmt_node).is_some_and(|iface| {
+                    !self.binder.is_external_module()
+                        || self
+                            .arena
+                            .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+                }) {
+                    self.analyze_interface_declaration(stmt_idx);
+                }
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 if let Some(alias) = self.arena.get_type_alias(stmt_node)
@@ -1958,18 +1963,14 @@ impl<'a> UsageAnalyzer<'a> {
             self.foreign_symbols.insert(sym_id);
         }
 
-        // For non-exported type-alias declarations referenced by an exported
-        // declaration, mark-as-used means the alias body must be walked too —
-        // its references (other aliases, imports) need to survive elision.
-        // Top-level non-exported aliases are otherwise only walked when they
-        // carry the export modifier. Matches
-        // declarationEmitMappedTypePreservesTypeParameterConstraint.
+        // Referenced local declarations need body walks so their dependencies
+        // survive top-level declaration elision.
         if is_new {
-            self.analyze_referenced_alias_body(sym_id);
+            self.analyze_referenced_declaration_body(sym_id);
         }
     }
 
-    fn analyze_referenced_alias_body(&mut self, sym_id: SymbolId) {
+    fn analyze_referenced_declaration_body(&mut self, sym_id: SymbolId) {
         let decls = self
             .binder
             .symbols
@@ -1980,8 +1981,14 @@ impl<'a> UsageAnalyzer<'a> {
             let Some(decl_node) = self.arena.get(decl_idx) else {
                 continue;
             };
-            if decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                self.analyze_type_alias_declaration(decl_idx);
+            match decl_node.kind {
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    self.analyze_type_alias_declaration(decl_idx)
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    self.analyze_interface_declaration(decl_idx)
+                }
+                _ => {}
             }
         }
     }

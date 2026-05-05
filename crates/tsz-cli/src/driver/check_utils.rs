@@ -1538,6 +1538,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1110 // Type expected
         | 1111 // Private field must be declared in an enclosing class
         | 1139 // Can not use 'JSDoc' type in TS
+        | 1192 // Module has no default export
         | 1196 // Catch clause variable type annotation
         | 1206 // Decorators are not valid here
         | 8038 // Decorators may not appear after 'export' if they also appear before 'export'
