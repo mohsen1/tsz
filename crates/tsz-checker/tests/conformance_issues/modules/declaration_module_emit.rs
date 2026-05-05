@@ -2094,6 +2094,12 @@ declare class MyArray<T> implements Array<T> {
         "Expected TS2416 for 'every' property incompatibility. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
+        ts2416.iter().any(|(_, message)| {
+            message.contains("Property 'every'") && message.contains("base type 'T[]'")
+        }),
+        "Expected TS2416 to display the global Array<T> target as 'T[]'. Actual diagnostics: {ts2416:#?}"
+    );
+    assert!(
         ts2420.is_empty(),
         "Should NOT emit TS2420 for this case. Only TS2416 expected. Got TS2420: {ts2420:#?}"
     );
