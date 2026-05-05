@@ -198,6 +198,11 @@ impl<'a> Printer<'a> {
         let Some(prop) = self.arena.get_property_decl(node) else {
             return;
         };
+        let computed_name_temp = if lower_auto_accessor_to_private_fields {
+            self.auto_accessor_computed_name_temp(prop.name)
+        } else {
+            None
+        };
 
         if lower_auto_accessor_to_private_fields {
             if is_static {
@@ -224,7 +229,7 @@ impl<'a> Printer<'a> {
                 self.write("static ");
             }
             self.write("get ");
-            self.emit(prop.name);
+            self.emit_auto_accessor_name(prop.name, computed_name_temp.as_deref(), true);
             self.write("() { return ");
             if is_static {
                 self.write(if class_name.is_empty() {
@@ -238,7 +243,7 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.write("static ");
                 self.write("set ");
-                self.emit(prop.name);
+                self.emit_auto_accessor_name(prop.name, computed_name_temp.as_deref(), false);
                 self.write("(value) { ");
                 self.write(if class_name.is_empty() {
                     "this"
@@ -255,7 +260,7 @@ impl<'a> Printer<'a> {
                 self.write("; }");
                 self.write_line();
                 self.write("set ");
-                self.emit(prop.name);
+                self.emit_auto_accessor_name(prop.name, computed_name_temp.as_deref(), false);
                 self.write("(value) { this.");
                 self.write("#");
                 self.write(storage_name.trim_start_matches('#'));
@@ -311,6 +316,46 @@ impl<'a> Printer<'a> {
             self.write(storage_name);
             self.write(", value, \"f\"); }");
         }
+    }
+
+    fn auto_accessor_computed_name_temp(&mut self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let computed = self.arena.get_computed_property(name_node)?;
+        if self.is_computed_name_expr_side_effect_free(computed.expression) {
+            return None;
+        }
+        Some(self.make_unique_name_hoisted())
+    }
+
+    fn emit_auto_accessor_name(
+        &mut self,
+        name_idx: NodeIndex,
+        computed_temp: Option<&str>,
+        initialize_temp: bool,
+    ) {
+        let Some(temp) = computed_temp else {
+            self.emit(name_idx);
+            return;
+        };
+        let Some(name_node) = self.arena.get(name_idx) else {
+            self.emit(name_idx);
+            return;
+        };
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            self.emit(name_idx);
+            return;
+        };
+
+        self.write("[");
+        self.write(temp);
+        if initialize_temp {
+            self.write(" = ");
+            self.emit_expression(computed.expression);
+        }
+        self.write("]");
     }
 
     /// Parser recovery parity for malformed class members like:
