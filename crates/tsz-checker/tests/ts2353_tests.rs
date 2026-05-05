@@ -702,6 +702,46 @@ function test<T extends IFoo>() {
 }
 
 #[test]
+fn union_with_generic_intersection_member_reports_concrete_member_display() {
+    let source = r#"
+function test<T extends IFoo>() {
+    const value: T & { prop: boolean } | { name: string } = { name: "test", prop: true };
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'{ name: string; }'"),
+        "Expected TS2353 against the concrete union member, got: {}",
+        ts2353.1
+    );
+    assert!(
+        !ts2353.1.contains("|"),
+        "Expected TS2353 display to omit the generic intersection union member, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
+fn non_generic_union_excess_property_keeps_union_display() {
+    let source = r#"
+interface Cover {
+    color?: string;
+}
+const value: Cover | Cover[] = { couleur: "non" };
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'Cover | Cover[]'"),
+        "Expected TS2353 to keep the full union target, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
 fn overlapping_discriminant_optionals_report_later_excess_property() {
     let source = r#"
 interface Common {

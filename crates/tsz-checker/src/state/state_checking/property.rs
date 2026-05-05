@@ -122,6 +122,41 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn track_earliest_excess_with_target(
+        &self,
+        current: &mut Option<(Atom, NodeIndex, u32, TypeId)>,
+        name: Atom,
+        report_idx: NodeIndex,
+        target: TypeId,
+    ) {
+        let pos = self.ctx.arena.get(report_idx).map_or(u32::MAX, |n| n.pos);
+        if current.is_none_or(|(_, _, best, _)| pos < best) {
+            *current = Some((name, report_idx, pos, target));
+        }
+    }
+
+    fn emit_tracked_excess_property_with_target(
+        &mut self,
+        tracked: Option<(Atom, NodeIndex, u32, TypeId)>,
+    ) {
+        if let Some((prop_atom, report_idx, _, target)) = tracked {
+            let prop_name = self.object_literal_property_display_name(
+                report_idx,
+                self.ctx.types.resolve_atom(prop_atom).as_ref(),
+            );
+            self.error_excess_property_at(&prop_name, target, report_idx);
+            self.check_excess_property_initializer_implicit_any(report_idx, target);
+        }
+    }
+
+    fn union_member_has_type_parameter_for_excess_display(&self, member: TypeId) -> bool {
+        query::is_type_parameter_like(self.ctx.types, member)
+            || crate::query_boundaries::common::contains_generic_type_parameters(
+                self.ctx.types,
+                member,
+            )
+    }
+
     pub(crate) fn check_object_literal_excess_properties(
         &mut self,
         source: TypeId,
@@ -225,7 +260,7 @@ impl<'a> CheckerState<'a> {
         // EPC needs the alias body before property-access resolution collapses
         // redundant union members (for example `Common | Common & A`).
         if let Some(members) = query::union_members(self.ctx.types, union_check_target) {
-            let mut target_shapes = Vec::new();
+            let mut target_members = Vec::new();
             let mut any_member_has_string_index = false;
             let mut any_member_has_number_index = false;
             let mut has_unresolved_member = false;
@@ -244,9 +279,20 @@ impl<'a> CheckerState<'a> {
                     if resolved_member == TypeId::OBJECT {
                         return;
                     }
+                    // Unresolved generic union arms can collapse to `any` during
+                    // property-access resolution; keep checking concrete arms, but
+                    // let the diagnostic display use the concrete arm if it is the
+                    // only EPC-relevant member.
+                    if resolved_member == TypeId::ANY
+                        && !self.format_type_diagnostic(target).contains("any")
+                    {
+                        has_unresolved_member = true;
+                        continue;
+                    }
                     // TypeScript still applies excess property checking to the
                     // concrete members of unions like `T | { prop: boolean }`.
-                    if query::is_type_parameter_like(self.ctx.types, resolved_member) {
+                    if self.union_member_has_type_parameter_for_excess_display(resolved_member) {
+                        has_unresolved_member = true;
                         continue;
                     }
                     continue;
@@ -288,12 +334,17 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                target_shapes.push(shape.clone());
+                target_members.push((resolved_member, shape.clone()));
             }
 
-            if target_shapes.is_empty() {
+            if target_members.is_empty() {
                 return;
             }
+
+            let target_shapes = target_members
+                .iter()
+                .map(|(_, shape)| shape.clone())
+                .collect::<Vec<_>>();
 
             if self.try_union_index_signature_value_check(
                 source_props,
@@ -336,14 +387,14 @@ impl<'a> CheckerState<'a> {
                 )
                 .unwrap_or_default()
                 .into_iter()
-                .map(|i| target_shapes[i].clone())
+                .map(|i| target_members[i].clone())
                 .collect::<Vec<_>>();
             let had_discriminant_narrowing = !discriminant_shapes.is_empty();
-            let effective_shapes = if !had_discriminant_narrowing {
+            let effective_members = if !had_discriminant_narrowing {
                 if has_unresolved_member {
-                    let matching_shapes = target_shapes
+                    let matching_members = target_members
                         .iter()
-                        .filter(|shape| {
+                        .filter(|(_, shape)| {
                             shape.properties.iter().all(|target_prop| {
                                 if target_prop.optional {
                                     return true;
@@ -359,19 +410,24 @@ impl<'a> CheckerState<'a> {
                         })
                         .cloned()
                         .collect::<Vec<_>>();
-                    if matching_shapes.is_empty() {
+                    if matching_members.is_empty() {
                         return;
                     }
-                    matching_shapes
+                    matching_members
                 } else {
-                    target_shapes
+                    target_members
                 }
             } else {
                 discriminant_shapes
             };
 
+            let effective_shapes = effective_members
+                .iter()
+                .map(|(_, shape)| shape.clone())
+                .collect::<Vec<_>>();
+
             // First excess by source order (see `track_earliest_excess`).
-            let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
+            let mut first_excess: Option<(Atom, NodeIndex, u32, TypeId)> = None;
             for source_prop in source_props {
                 if explicit_property_names.is_some()
                     && !explicit_property_names
@@ -404,7 +460,29 @@ impl<'a> CheckerState<'a> {
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
-                    self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
+                    let concrete_diagnostic_members = effective_members
+                        .iter()
+                        .filter(|(member, _)| {
+                            !self.union_member_has_type_parameter_for_excess_display(*member)
+                        })
+                        .collect::<Vec<_>>();
+                    let diagnostic_target = if concrete_diagnostic_members.len() == 1
+                        && (has_unresolved_member
+                            || concrete_diagnostic_members.len() != effective_members.len()
+                            || crate::query_boundaries::common::contains_generic_type_parameters(
+                                self.ctx.types,
+                                target,
+                            )) {
+                        concrete_diagnostic_members[0].0
+                    } else {
+                        target
+                    };
+                    self.track_earliest_excess_with_target(
+                        &mut first_excess,
+                        source_prop.name,
+                        report_idx,
+                        diagnostic_target,
+                    );
                 } else {
                     // =============================================================
                     // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
@@ -453,7 +531,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            self.emit_tracked_excess_property(first_excess, target);
+            self.emit_tracked_excess_property_with_target(first_excess);
             return;
         }
 
