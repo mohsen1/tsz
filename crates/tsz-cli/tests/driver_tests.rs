@@ -13747,6 +13747,92 @@ module.exports = B;
 }
 
 #[test]
+fn compile_define_property_commonjs_exports_make_js_files_module_scoped() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true,
+            "module": "commonjs",
+            "target": "es2020",
+            "types": []
+          },
+          "files": ["exporter.js", "importer.ts", "exporter-module.js", "importer-module.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("exporter.js"),
+        r#"// @ts-check
+const URL = 1;
+
+Object.defineProperty(exports, "value", {
+  value: URL,
+});
+"#,
+    );
+    write_file(
+        &base.join("importer.ts"),
+        r#"import { value } from "./exporter";
+
+const n: number = value;
+const s: string = value;
+n;
+s;
+"#,
+    );
+    write_file(
+        &base.join("exporter-module.js"),
+        r#"// @ts-check
+const Headers = 1;
+
+Object.defineProperty(module.exports, "value", {
+  value: Headers,
+});
+"#,
+    );
+    write_file(
+        &base.join("importer-module.ts"),
+        r#"import { value } from "./exporter-module";
+
+const n: number = value;
+const s: string = value;
+n;
+s;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE),
+        "Object.defineProperty CommonJS exporters should be module-scoped, got diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected only importer assignment errors, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_js_static_expando_members_from_assignments_across_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
