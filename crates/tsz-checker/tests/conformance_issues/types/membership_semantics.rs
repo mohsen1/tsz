@@ -835,6 +835,70 @@ m.zzz.toFixed();        // ERROR — index-signature access
 }
 
 #[test]
+fn test_branded_string_index_key_mismatch_reports_ts7053_not_ts2538() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type Tag1 = { __tag1__: void };
+type Tag2 = { __tag2__: void };
+
+type TaggedString1 = string & Tag1;
+type TaggedString2 = string & Tag2;
+
+interface I1 { [key: TaggedString1]: string }
+
+declare let i1: I1;
+declare let s1: TaggedString1;
+declare let s2: TaggedString2;
+
+i1[s1];
+i1[s2];
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2538),
+        "Branded string index expressions should not be rejected as invalid index types. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7053),
+        "Expected TS7053 for the incompatible branded string key. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_intersected_template_index_signatures_accept_template_string_reads() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+declare let combo: { [x: `foo-${string}`]: "a" | "b" } & { [x: `${string}-bar`]: "b" | "c" };
+declare var str: string;
+
+combo[`foo-${str}`];
+combo[`${str}-bar`];
+combo[`foo-${str}-bar`];
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7053),
+        "Intersected template-pattern index signatures should accept compatible template string reads. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_extends_inherits_instance_members_via_symbol_path() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

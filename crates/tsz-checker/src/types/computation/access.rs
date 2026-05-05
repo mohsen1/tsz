@@ -1486,7 +1486,6 @@ impl<'a> CheckerState<'a> {
         // "a" | "b" — known keys). The split_nullish_type guard in the solver
         // prevents double-counting. We do NOT add `| undefined` here because
         // doing so would incorrectly penalize accesses through known properties.
-
         if result_type == TypeId::ERROR
             && let Some(index) = literal_index
         {
@@ -1619,6 +1618,23 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
             }
+        }
+
+        if !report_no_index
+            && use_index_signature_check
+            && (result_type == TypeId::UNDEFINED
+                || crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    result_type,
+                ))
+            && crate::query_boundaries::common::intersection_members(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
+            .is_none()
+            && self.narrow_string_index_signature_rejects_index(object_type_for_access, index_type)
+        {
+            report_no_index = true;
         }
 
         if !report_no_index

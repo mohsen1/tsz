@@ -23,6 +23,7 @@ use super::super::evaluate::{
     ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID, TypeEvaluator,
 };
 use super::apparent::make_apparent_method_type;
+use super::string_index_helpers::string_index_signature_applies;
 use crate::objects::apparent::is_member;
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
@@ -1705,7 +1706,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.add_undefined_if_unchecked(symbol_index.value_type);
             }
             // Symbol-keyed properties must not fall through to string index signatures.
-            if !is_symbol_key && let Some(string_index) = string_index {
+            if !is_symbol_key
+                && let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
@@ -1716,14 +1720,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if let Some(number_index) = shape.number_index.as_ref() {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
-            if let Some(string_index) = string_index {
+            if let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
         }
 
         if index_type == TypeId::STRING {
-            let result = if let Some(string_index) = string_index {
+            let result = if let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 string_index.value_type
             } else {
                 self.union_property_types(&shape.properties)
@@ -1754,7 +1762,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // these index types should resolve to the string index signature's value type,
         // just like TypeId::STRING does.
         if let Some(string_index) = string_index
-            && self.is_string_like_index(index_type)
+            && string_index_signature_applies(self, string_index, index_type)
         {
             return self.add_undefined_if_unchecked(string_index.value_type);
         }
@@ -1818,7 +1826,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.add_undefined_if_unchecked(symbol_index.value_type);
             }
             // Symbol-keyed properties must NOT fall through to string index signatures
-            if !is_symbol_key && let Some(string_index) = string_index {
+            if !is_symbol_key
+                && let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
@@ -1829,14 +1840,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if let Some(number_index) = shape.number_index.as_ref() {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
-            if let Some(string_index) = string_index {
+            if let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
         }
 
         if index_type == TypeId::STRING {
-            let result = if let Some(string_index) = string_index {
+            let result = if let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 string_index.value_type
             } else {
                 self.union_property_types(&shape.properties)
@@ -1864,50 +1879,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // String-like index types (template literals, string intrinsics, branded strings)
         // should use the string index signature when available.
         if let Some(string_index) = string_index
-            && self.is_string_like_index(index_type)
+            && string_index_signature_applies(self, string_index, index_type)
         {
             return self.add_undefined_if_unchecked(string_index.value_type);
         }
 
         TypeId::UNDEFINED
-    }
-
-    /// Check if an index type is a subtype of string for index signature resolution.
-    ///
-    /// Template literal types, string intrinsic types (Lowercase, Uppercase, etc.),
-    /// and intersections that contain string or a string literal are all subtypes
-    /// of string. When used as an index on an object with a string index signature,
-    /// they should resolve to the string index signature's value type.
-    fn is_string_like_index(&self, index_type: TypeId) -> bool {
-        if index_type.is_intrinsic() {
-            return false;
-        }
-        match self.interner().lookup(index_type) {
-            Some(TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. }) => true,
-            Some(TypeData::Intersection(list_id)) => {
-                // An intersection is string-like if any member is string or a string literal
-                let members = self.interner().type_list(list_id);
-                members.iter().any(|&m| {
-                    if m == TypeId::STRING {
-                        return true;
-                    }
-                    // Other intrinsics (NUMBER, BOOLEAN_TRUE/FALSE, ...) never match
-                    // Literal(String)/TemplateLiteral/StringIntrinsic — skip lookup.
-                    if m.is_intrinsic() {
-                        return false;
-                    }
-                    matches!(
-                        self.interner().lookup(m),
-                        Some(
-                            TypeData::Literal(LiteralValue::String(_))
-                                | TypeData::TemplateLiteral(_)
-                                | TypeData::StringIntrinsic { .. }
-                        )
-                    )
-                })
-            }
-            _ => false,
-        }
     }
 
     pub(crate) fn union_property_types(&self, props: &[PropertyInfo]) -> TypeId {

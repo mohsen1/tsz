@@ -221,6 +221,26 @@ impl<'a> CheckerState<'a> {
         has_any_tuple
     }
 
+    pub(crate) fn narrow_string_index_signature_rejects_index(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+        let Some(string_index) = shape.string_index.as_ref() else {
+            return false;
+        };
+        if matches!(string_index.key_type, TypeId::STRING | TypeId::SYMBOL) {
+            return false;
+        }
+
+        !self.is_assignable_to(index_type, string_index.key_type)
+    }
+
     /// Check if an index type is "generic" — i.e., it cannot be resolved to a
     /// concrete property key and must remain deferred in an `IndexAccess` type.
     ///
