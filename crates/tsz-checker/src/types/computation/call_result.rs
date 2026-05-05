@@ -1194,6 +1194,23 @@ impl<'a> CheckerState<'a> {
                 if !actual_has_holes {
                     return true;
                 }
+                let actual_type_params: rustc_hash::FxHashSet<_> =
+                    common::collect_referenced_types(self.ctx.types, refined_actual)
+                        .into_iter()
+                        .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
+                        .collect();
+                let expected_type_params: rustc_hash::FxHashSet<_> =
+                    common::collect_referenced_types(self.ctx.types, refined_expected)
+                        .into_iter()
+                        .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
+                        .collect();
+                if !actual_type_params.is_empty()
+                    && actual_type_params
+                        .iter()
+                        .all(|ty| expected_type_params.contains(ty))
+                {
+                    return true;
+                }
             }
         }
         // Defer callable mismatches only when the actual or expected has its own generic

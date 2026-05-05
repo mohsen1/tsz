@@ -1967,6 +1967,42 @@ const x = pipe(es, filter(exists((n) => n > 0)));
     );
 }
 
+#[test]
+fn overloaded_pipe_return_context_types_chained_callback_params() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function pipe<A extends any[], B, C, D>(ab: (...args: A) => B, bc: (b: B) => C, cd: (c: C) => D): (...args: A) => D;
+type Fn = (n: number) => number;
+const fn30: Fn = pipe(
+    x => x + 1,
+    x => x * 2,
+);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2362),
+        "pipe return context should type chained callback parameters before checking arithmetic. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn curried_map_identity_preserves_array_element_type() {
+    let source = r#"
+interface Array<T> { map<U>(cb: (value: T) => U): U[]; }
+declare const identity: <T>(value: T) => T;
+declare function map<T, U>(transform: (t: T) => U): (arr: T[]) => U[];
+const arr1: string[] = map(identity)(['a']);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, msg)| *code == 2322 && msg.contains("string[]")),
+        "map(identity)(['a']) should preserve string[] assignability. Got: {diags:#?}"
+    );
+}
+
 // ─── Const type parameter inference ─────────────────────────────────
 
 #[test]
