@@ -8129,6 +8129,85 @@ export function greet(name: string): string {
 }
 
 #[test]
+fn compile_declaration_mapped_type_as_literals_are_preserved() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "outDir": "dist"
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"
+export type ConstraintStringAs<T> = {
+  [K in Extract<keyof T, "as"> as K]: T[K];
+};
+
+export type ConstraintTemplateAs<T> = {
+  [K in Extract<keyof T, `as`> as K]: T[K];
+};
+
+export type NameStringAs<T> = {
+  [K in keyof T as K extends 'as' ? K : never]: T[K];
+};
+
+export type NameIdentifierHasAs<T> = {
+  [K in keyof T as K extends "has" ? K : never]: T[K];
+};
+
+export type NamePropertyAs<T> = {
+  [K in keyof T as K extends { as: unknown } ? K : never]: T[K];
+};
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+
+    let dts = std::fs::read_to_string(base.join("dist/index.d.ts")).expect("read d.ts");
+    for expected in [
+        r#"[K in Extract<keyof T, "as"> as K]: T[K];"#,
+        r#"[K in Extract<keyof T, `as`> as K]: T[K];"#,
+        "[K in keyof T as K extends 'as' ? K : never]: T[K];",
+        r#"[K in keyof T as K extends "has" ? K : never]: T[K];"#,
+    ] {
+        assert!(
+            dts.contains(expected),
+            "Expected declaration to contain `{expected}`: {dts}"
+        );
+    }
+    assert!(
+        dts.contains("K extends {") && dts.contains("as: unknown") && dts.contains("} ? K : never"),
+        "Expected object type with `as` property to remain intact: {dts}"
+    );
+    for corrupted in [
+        r#"Extract<keyof T, " as K"#,
+        "Extract<keyof T, ` as K",
+        "as ' ?",
+        "as : unknown",
+    ] {
+        assert!(
+            !dts.contains(corrupted),
+            "Declaration should not contain corrupted mapped type text `{corrupted}`: {dts}"
+        );
+    }
+}
+
+#[test]
 fn compile_strip_internal_omits_exported_declarations() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
