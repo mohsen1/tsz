@@ -624,7 +624,18 @@ impl<'a> CheckerState<'a> {
                     });
                 let should_refine_generic_arg = expected_shape.is_some_and(|shape| {
                     !shape.is_constructor
-                        && !shape.params.iter().any(|param| param.rest)
+                        && shape.params.iter().all(|param| {
+                            if param.rest {
+                                return false;
+                            }
+                            !crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                param.type_id,
+                            ) || crate::query_boundaries::common::is_type_parameter_like(
+                                self.ctx.types,
+                                param.type_id,
+                            )
+                        })
                         && crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             shape.return_type,
