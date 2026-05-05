@@ -1360,6 +1360,8 @@ impl ParserState {
                     },
                 )
             } else {
+                self.scanner.scan_jsx_identifier();
+                self.check_no_unicode_escape_in_jsx_identifier();
                 self.parse_identifier()
             };
             let end_pos = self.token_end();

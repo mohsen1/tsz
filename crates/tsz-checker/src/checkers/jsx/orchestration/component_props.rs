@@ -762,6 +762,10 @@ impl<'a> CheckerState<'a> {
         tag: &str,
         report_missing: bool,
     ) -> Option<TypeId> {
+        if self.file_has_jsx_unicode_escape_parse_error() {
+            return Some(TypeId::ANY);
+        }
+
         let intrinsic_elements_type = self.get_intrinsic_elements_type()?;
         let evaluated_ie = self.evaluate_type_with_env(intrinsic_elements_type);
         let tag_atom = self.ctx.types.intern_string(tag);
