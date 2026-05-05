@@ -1254,6 +1254,29 @@ fn test_commonjs_class_export_before_static_block_iife() {
 }
 
 #[test]
+fn erased_computed_class_fields_emit_native_static_block_side_effects() {
+    let source = r#"declare const s: unique symbol;
+declare namespace N { const s: unique symbol; }
+class C {
+    static [s]: "a";
+    static [N.s]: "b";
+    [s]: "a";
+    [N.s]: "b";
+}
+"#;
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("class C {\n    static { N.s, N.s; }\n}"),
+        "Erased computed class field side effects should stay inside a native static block.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("}\nN.s;"),
+        "Erased computed class field side effects should not be emitted after the class.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_lowered_static_block_recovered_await_emits_yield() {
     let source = "class C {\n    static {\n        await 1;\n        yield 1;\n    }\n}\n";
     let output = parse_lower_print(
