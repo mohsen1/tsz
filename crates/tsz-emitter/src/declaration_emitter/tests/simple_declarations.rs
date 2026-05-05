@@ -24,6 +24,72 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn test_object_rest_with_keyword_property_names_omits_destructured_key() {
+    let source = r#"
+type P = {
+    enum: boolean;
+    function: boolean;
+    abstract: boolean;
+    async: boolean;
+    await: boolean;
+    one: boolean;
+};
+
+function f1({ enum: _enum, ...rest }: P) {
+    return rest;
+}
+
+function f2({ function: _function, ...rest }: P) {
+    return rest;
+}
+
+function f3({ abstract: _abstract, ...rest }: P) {
+    return rest;
+}
+
+function f4({ async: _async, ...rest }: P) {
+    return rest;
+}
+
+function f5({ await: _await, ...rest }: P) {
+    return rest;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    for (function_name, omitted_key) in [
+        ("f1", "enum"),
+        ("f2", "function"),
+        ("f3", "abstract"),
+        ("f4", "async"),
+        ("f5", "await"),
+    ] {
+        let signature = format!("declare function {function_name}");
+        let start = output
+            .find(&signature)
+            .unwrap_or_else(|| panic!("Expected {signature} in declaration output: {output}"));
+        let end = output[start..]
+            .find("};")
+            .map_or(output.len(), |offset| start + offset);
+        let emitted_function = &output[start..end];
+
+        assert!(
+            !emitted_function.contains(&format!("    {omitted_key}: boolean;")),
+            "Expected `{omitted_key}` to be omitted from {function_name} rest return type: {output}"
+        );
+    }
+
+    assert!(
+        output.contains("declare function f1({ enum: _enum, ...rest }: P):"),
+        "Expected keyword binding pattern to be preserved in f1: {output}"
+    );
+    assert!(
+        output.contains("declare function f5({ await: _await, ...rest }: P):"),
+        "Expected keyword binding pattern to be preserved in f5: {output}"
+    );
+}
+
+#[test]
 fn test_non_exported_function_declaration_emits_declare_function() {
     let source = "function helper(x: string): string { return x; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2882,6 +2948,23 @@ class C {
     assert!(
         output.contains("readonly p3 = E.B;"),
         "Expected readonly enum property initializer form: {output}"
+    );
+}
+
+#[test]
+fn test_returned_local_conditional_annotation_uses_function_generic_scope() {
+    let output = emit_dts_with_binding(
+        r#"
+function g<T>(x: T) {
+    let y: typeof x extends (infer T)[] ? T : typeof x = null as any;
+    return y;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function g<T>(x: T): T extends (infer T_1)[] ? T_1 : T;"),
+        "Expected returned local annotation to substitute parameter type queries and rename shadowed infer type parameter: {output}"
     );
 }
 

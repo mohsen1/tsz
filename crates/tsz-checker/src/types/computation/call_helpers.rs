@@ -10,6 +10,77 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn recover_declared_type_for_tdz_callee(
+        &mut self,
+        callee_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(callee_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(callee_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+            || symbol
+                .has_any_flags(tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::ENUM)
+        {
+            return None;
+        }
+
+        if !self.is_class_or_enum_used_before_declaration(sym_id, callee_idx) {
+            return None;
+        }
+
+        let value_decl = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(value_decl)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        if var_decl.type_annotation.is_none() {
+            return None;
+        }
+        if self.type_annotation_is_direct_typeof_symbol(var_decl.type_annotation, sym_id) {
+            return None;
+        }
+
+        let declared_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+        if declared_type == TypeId::ERROR || declared_type == TypeId::ANY {
+            return None;
+        }
+
+        Some(declared_type)
+    }
+
+    fn type_annotation_is_direct_typeof_symbol(
+        &self,
+        annotation_idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(annotation_node) = self.ctx.arena.get(annotation_idx) else {
+            return false;
+        };
+        if annotation_node.kind != syntax_kind_ext::TYPE_QUERY {
+            return false;
+        }
+        let Some(type_query) = self.ctx.arena.get_type_query(annotation_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) else {
+            return false;
+        };
+        if expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        self.ctx
+            .binder
+            .get_node_symbol(type_query.expr_name)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, type_query.expr_name)
+            })
+            == Some(sym_id)
+    }
+
     fn current_arena_value_declaration_belongs_to_symbol(
         &self,
         sym_id: SymbolId,

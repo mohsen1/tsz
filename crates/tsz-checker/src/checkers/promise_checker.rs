@@ -51,6 +51,12 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.escaped_name.as_str() == "Awaited"
+        {
+            return true;
+        }
         match query::classify_promise_type(self.ctx.types, base) {
             query::PromiseTypeKind::Lazy(def_id) => {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
@@ -1597,6 +1603,41 @@ impl<'a> CheckerState<'a> {
     fn evaluate_awaited_application(&mut self, type_id: TypeId) -> TypeId {
         if self.is_awaited_application(type_id) {
             self.evaluate_application_type(type_id)
+        } else {
+            type_id
+        }
+    }
+
+    pub(crate) fn evaluate_awaited_application_for_assignability(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
+        if !self.is_awaited_application(type_id) {
+            return type_id;
+        }
+
+        let evaluated = self.evaluate_application_type(type_id);
+        if evaluated != type_id {
+            return evaluated;
+        }
+
+        let Some((_base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        let Some(&arg) = args.first() else {
+            return type_id;
+        };
+
+        // Awaited<T> is transparent for non-thenables. If the conditional
+        // evaluator preserved the raw alias application, keep assignability in
+        // step with tsc's getAwaitedType without incorrectly treating
+        // Awaited<Promise<T>> as Promise<T>.
+        if self.unwrap_promise_type(arg).is_none()
+            && self.extract_awaited_type_from_thenable(arg).is_none()
+        {
+            arg
         } else {
             type_id
         }

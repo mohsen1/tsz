@@ -79,10 +79,14 @@ impl<'a> CheckerState<'a> {
         // Get the expected return type from the function context
         let expected_type = self.current_return_type().unwrap_or(TypeId::UNKNOWN);
 
+        let mut return_mismatch_already_reported = false;
+
         // Get the type of the return expression (if any)
         let return_type = if return_data.expression.is_some() {
             // TS1359: Check for await expressions outside async function
             self.check_await_expression(return_data.expression);
+            let return_expr_diag_snap =
+                crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
 
             let contextual_expected_type = if expected_type != TypeId::ANY
                 && expected_type != TypeId::UNKNOWN
@@ -164,6 +168,33 @@ impl<'a> CheckerState<'a> {
                 // Each Promise member must be unwrapped before checking against T.
                 return_type = self.unwrap_async_return_type_for_body(return_type);
             }
+            // A contextual async return can shape inline literals, but fixed call
+            // arguments like identifiers keep their declared widened type in tsc's
+            // TS2322 source display.
+            if request.contextual_type.is_some()
+                && self
+                    .async_contextual_return_call_has_only_fixed_arguments(return_data.expression)
+                && !self.is_assignable_to(return_type, expected_type)
+            {
+                self.invalidate_expression_for_contextual_retry(return_data.expression);
+                let mut raw_return_type = self
+                    .get_type_of_node_with_request(return_data.expression, &TypingRequest::NONE);
+                raw_return_type = self.unwrap_async_return_type_for_body(raw_return_type);
+                return_expr_diag_snap.rollback(&mut self.ctx);
+                let source_str = self.format_type_diagnostic_widened(raw_return_type);
+                let target_str = self.format_type_diagnostic(expected_type);
+                let message = crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                self.error_at_node(
+                    stmt_idx,
+                    &message,
+                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+                return_mismatch_already_reported = true;
+                return_type = raw_return_type;
+            }
             return_type
         } else {
             // `return;` without expression returns undefined
@@ -235,7 +266,9 @@ impl<'a> CheckerState<'a> {
             self.type_contains_error(expected_type) && !target_is_top_level_error;
         let allow_check_through_nested_error =
             return_is_nullish_literal && expected_contains_error_nested;
-        let assignability_ok = if !skip_assignability
+        let assignability_ok = if return_mismatch_already_reported {
+            false
+        } else if !skip_assignability
             && expected_type != TypeId::ANY
             && !target_is_top_level_error
             && (!expected_contains_error_nested || allow_check_through_nested_error)
@@ -320,6 +353,28 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    fn async_contextual_return_call_has_only_fixed_arguments(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION
+            && node.kind != syntax_kind_ext::NEW_EXPRESSION
+        {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        call.arguments.as_ref().is_some_and(|args| {
+            !args.nodes.is_empty()
+                && args
+                    .nodes
+                    .iter()
+                    .all(|&arg_idx| !self.argument_needs_contextual_type(arg_idx))
+        })
     }
 
     // --- Await Expression Validation ---

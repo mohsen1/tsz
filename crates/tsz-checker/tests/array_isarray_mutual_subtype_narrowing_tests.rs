@@ -21,23 +21,7 @@
 //! `Record<string, any>` spelling end-to-end (see
 //! `narrowingMutualSubtypes.ts`).
 
-use crate::context::CheckerOptions;
-use crate::test_utils::check_with_options;
-
-fn check_strict(source: &str) -> Vec<(u32, String)> {
-    check_with_options(
-        source,
-        CheckerOptions {
-            strict: true,
-            strict_null_checks: true,
-            no_implicit_any: true,
-            ..Default::default()
-        },
-    )
-    .into_iter()
-    .map(|d| (d.code, d.message_text))
-    .collect()
-}
+use crate::test_utils::check_source_strict_messages as check_strict;
 
 /// `Array.isArray(R | R[]) && obj.length` else-branch indexing emits
 /// TS7053 referencing `any[] | { [x: string]: any; }` — the tsc-faithful

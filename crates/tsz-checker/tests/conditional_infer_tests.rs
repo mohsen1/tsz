@@ -91,6 +91,41 @@ const bad: Result = [{ foo: 1 }, { bar: "x" }];
     );
 }
 
+#[test]
+fn test_distributive_conditional_identity_accepts_type_parameter_source() {
+    let source = r#"
+type ExtractWithDefault<T, U, D = never> = T extends U ? T : D;
+type TemplatedConditional<TCheck, TExtends, TTrue, TFalse> =
+    TCheck extends TExtends ? TTrue : TFalse;
+
+function extractBuiltin<T>(x: Extract<T, T>) {
+    const y: T = x;
+    x = y;
+}
+
+function extractWithDefault<T>(x: ExtractWithDefault<T, T>) {
+    const y: T = x;
+    x = y;
+}
+
+function templated<T>(x: TemplatedConditional<T, T, T, never>) {
+    const y: T = x;
+    x = y;
+}
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        0,
+        "`T extends T ? T : never` aliases must simplify to T in target position; got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Test that indexed access types in conditional contexts work correctly.
 #[test]
 fn test_indexed_access_in_conditional_context() {

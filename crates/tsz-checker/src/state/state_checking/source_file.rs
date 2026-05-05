@@ -558,10 +558,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
-        source
-            .lines()
-            .take(20)
-            .any(|line| line.contains("@ts-nocheck"))
+        tsz_common::comments::source_has_ts_nocheck_directive(source)
     }
 
     // =========================================================================

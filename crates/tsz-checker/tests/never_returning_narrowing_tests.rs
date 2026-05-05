@@ -10,22 +10,8 @@
 //! those branches out.
 
 use crate::context::CheckerOptions;
+use crate::test_utils::check_source_strict_codes as check_strict;
 use crate::test_utils::check_with_options;
-
-fn check_strict(source: &str) -> Vec<u32> {
-    check_with_options(
-        source,
-        CheckerOptions {
-            strict: true,
-            strict_null_checks: true,
-            no_implicit_any: true,
-            ..Default::default()
-        },
-    )
-    .iter()
-    .map(|d| d.code)
-    .collect()
-}
 
 /// After `if (x === undefined) fail()`, x should be narrowed to exclude undefined.
 /// No TS18048 ('x' is possibly 'undefined') should be emitted on x.length.

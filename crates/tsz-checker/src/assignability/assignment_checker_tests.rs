@@ -591,6 +591,84 @@ const foo: Union = {
 }
 
 #[test]
+fn nondiscriminated_union_object_literal_reports_whole_object_mismatch() {
+    let source = r#"
+declare var str: string;
+declare var num: number;
+var strOrNumber: string | number = str || num;
+
+const value: { prop: string; anotherP: string } | { prop: number } = {
+    prop: strOrNumber
+};
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected one whole-object TS2322, got: {diagnostics:?}"
+    );
+
+    let diag = ts2322[0];
+    let value_start = source.find("value").expect("expected variable name") as u32;
+    let prop_start = source.rfind("prop: strOrNumber").expect("expected prop") as u32;
+    assert_eq!(
+        diag.start, value_start,
+        "non-discriminated union failure should stay on the assignment target, got: {diag:?}"
+    );
+    assert_ne!(
+        diag.start, prop_start,
+        "non-discriminated union failure should not elaborate to the property"
+    );
+    assert!(
+        diag.message_text.contains("Type '{ prop: string | number; }' is not assignable to type '{ prop: string; anotherP: string; } | { prop: number; }'."),
+        "whole-object TS2322 should display the object literal against the union, got: {diag:?}"
+    );
+}
+
+#[test]
+fn nondiscriminated_union_function_property_elaborates_to_property_type() {
+    let source = r#"
+interface IString {
+    common(a: string, b: number): string;
+}
+interface INumber {
+    common(a: string, b: number): number;
+}
+declare var strOrNumber: string | number;
+
+const value: IString | INumber = {
+    common: (a, b) => strOrNumber,
+};
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected one property-level TS2322, got: {diagnostics:?}"
+    );
+
+    let diag = ts2322[0];
+    let common_start = source.rfind("common").expect("expected property name") as u32;
+    let value_start = source.rfind("value").expect("expected variable name") as u32;
+    assert_eq!(
+        diag.start, common_start,
+        "function-valued union property should elaborate to the property name, got: {diag:?}"
+    );
+    assert_ne!(
+        diag.start, value_start,
+        "function-valued union property should not stay on the whole assignment"
+    );
+    assert!(
+        diag.message_text.contains("Type '(a: string, b: number) => string | number' is not assignable to type '((a: string, b: number) => string) | ((a: string, b: number) => number)'."),
+        "property-level TS2322 should display the function against the unioned function property, got: {diag:?}"
+    );
+}
+
+#[test]
 fn numeric_property_assignment_reports_nested_value_mismatch() {
     let source = r#"
 interface A {

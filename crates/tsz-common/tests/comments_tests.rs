@@ -677,3 +677,154 @@ fn test_comment_range_debug() {
     assert!(debug.contains("pos"));
     assert!(debug.contains("end"));
 }
+
+// `source_declares_ambient_module` (regression coverage for #2834)
+// =============================================================================
+
+#[test]
+fn ambient_module_double_quoted_in_code_matches() {
+    let src = "export const x: number;\ndeclare module \"ext/other\" { export const y: number; }\n";
+    assert!(source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_single_quoted_in_code_matches() {
+    let src = "declare module 'ext/other' { export const y: number; }\n";
+    assert!(source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_in_line_comment_does_not_match() {
+    let src = r#"// Example docs might mention: declare module "ext/other" { ... }
+export const root: number;
+"#;
+    assert!(!source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_in_block_comment_does_not_match() {
+    let src = r#"/*
+ * declare module "ext/other" { ... }
+ */
+export const root: number;
+"#;
+    assert!(!source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_in_string_literal_does_not_match() {
+    let src = r#"const example = "declare module \"ext/other\" { ... }";
+"#;
+    assert!(!source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_in_template_literal_does_not_match() {
+    let src = "const example = `declare module \"ext/other\" { ... }`;\n";
+    assert!(!source_declares_ambient_module(src, "ext/other"));
+}
+
+#[test]
+fn ambient_module_specifier_mismatch_does_not_match() {
+    let src = "declare module \"ext/other\" { export const y: number; }\n";
+    assert!(!source_declares_ambient_module(src, "ext/different"));
+}
+
+// =============================================================================
+// `@ts-check` / `@ts-nocheck` comment directive scoping (regression for #2821)
+// =============================================================================
+
+#[test]
+fn nocheck_in_line_comment_is_directive() {
+    let src = "// @ts-nocheck\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_in_block_comment_is_directive() {
+    let src = "/* @ts-nocheck */\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_in_jsdoc_continuation_is_directive() {
+    let src = "/**\n * @ts-nocheck\n */\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_in_string_literal_is_not_directive() {
+    let src = "const marker = \"@ts-nocheck\";\nconst n: number = 1;\n";
+    assert!(!source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_in_template_literal_is_not_directive() {
+    let src = "const m = `@ts-nocheck`;\nconst n: number = 1;\n";
+    assert!(!source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_after_other_text_in_comment_is_not_directive() {
+    let src = "// pre-checked @ts-nocheck\nconst n: number = 1;\n";
+    assert!(!source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheckfoo_does_not_match_nocheck() {
+    let src = "// @ts-nocheckfoo\nconst n: number = 1;\n";
+    assert!(!source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn check_in_line_comment_is_directive() {
+    let src = "// @ts-check\nconst n = 1;\n";
+    assert!(source_has_ts_check_directive(src));
+}
+
+#[test]
+fn check_in_string_literal_is_not_directive() {
+    let src = "const marker = \"@ts-check\";\nconst n = 1;\n";
+    assert!(!source_has_ts_check_directive(src));
+}
+
+#[test]
+fn nocheck_after_code_is_not_directive() {
+    let src = "const x = 1;\n// @ts-nocheck\nconst n: number = 1;\n";
+    assert!(!source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_is_case_insensitive() {
+    let src = "// @TS-NOCHECK\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn nocheck_with_bom_prefix_is_directive() {
+    let src = "\u{FEFF}// @ts-nocheck\nconst n: number = 1;\n";
+    assert!(source_has_ts_nocheck_directive(src));
+}
+
+#[test]
+fn empty_and_whitespace_sources_do_not_have_directives() {
+    assert!(!has_ts_directive_in_leading_trivia("", "@ts-nocheck"));
+    assert!(!has_ts_directive_in_leading_trivia(
+        "   \n\t\n  ",
+        "@ts-check"
+    ));
+}
+
+#[test]
+fn last_directive_offset_only_considers_leading_trivia() {
+    let src = "// @ts-check\n// @ts-nocheck\nconst n = 1;\n";
+    let check = last_ts_directive_offset_in_leading_trivia(src, "@ts-check").unwrap();
+    let nocheck = last_ts_directive_offset_in_leading_trivia(src, "@ts-nocheck").unwrap();
+    assert!(check < nocheck);
+
+    let after_code = "const x = 1;\n// @ts-check\n";
+    assert_eq!(
+        last_ts_directive_offset_in_leading_trivia(after_code, "@ts-check"),
+        None
+    );
+}

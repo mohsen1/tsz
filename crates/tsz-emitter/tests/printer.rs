@@ -926,7 +926,10 @@ fn test_nested_for_await_of_targets_nested_return_temps() {
 
     assert!(output.contains("for (var"));
     assert!(output.contains("__asyncValues"));
-    assert!(output.contains("var e_1"));
+    // After ESM for-await alignment, hoisted catch temps are coalesced into a
+    // single `var` declaration alongside other top-of-function temps, matching
+    // TypeScript's emit. Verify both temps still appear in such a declaration.
+    assert!(output.contains("e_1"));
     assert!(output.contains("e_2"));
     assert!(output.contains("_a ="));
 }
@@ -1564,5 +1567,109 @@ fn private_field_logical_and_assign_lowers_to_set_get_and_rhs() {
     assert!(
         output.contains("__classPrivateFieldSet(this, _Cls_flag, __classPrivateFieldGet(this, _Cls_flag, \"f\") && false, \"f\")"),
         "Private-field `&&=` must lower to set(get() && rhs).\nOutput:\n{output}"
+    );
+}
+
+/// Regression: a same-named inner declaration that is `declare`-ambient is
+/// erased at emit, so it must not trigger renaming of the namespace IIFE
+/// parameter. tsc emits `(function (M) { ... })`, not `(function (M_1) { ... })`,
+/// for `namespace M { export declare namespace M { } }`.
+#[test]
+fn namespace_iife_param_not_renamed_when_inner_same_name_is_declare() {
+    let source = "namespace M {\n    export declare var x;\n    export declare function f();\n    export declare class C { }\n    export declare enum E { }\n    export declare namespace M { }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("(function (M) {"),
+        "Declare-only inner `M` must not trigger IIFE param renaming.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (M_1)"),
+        "IIFE param must not be renamed to `M_1` when the only same-name binding is ambient.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: a *concrete* inner declaration with the same name DOES
+/// require IIFE-param renaming (so the outer-name reference and inner-name
+/// reference don't collide).
+#[test]
+fn namespace_iife_param_renamed_when_inner_same_name_is_concrete() {
+    let source = "namespace M {\n    export class M { foo() {} }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("M_1") || !output.contains("(function (M) {"),
+        "Concrete same-name inner declaration must rename IIFE param.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: `export var [a, b] = init;` inside a namespace must lower
+/// to a temp + indexed comma assignments — `var _a; _a = init, M.a =
+/// _a[0], M.b = _a[1];`. The pre-fix emit was `M.a = init, M.b = init`
+/// which evaluates the initializer twice and assigns the whole array
+/// to each member.
+#[test]
+fn namespace_exported_array_destructuring_lowers_to_temp_and_indices() {
+    let source = "namespace M {\n    export var [a, b] = [1, 2];\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a;"),
+        "Destructuring lowering must declare a temp `_a`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = [1, 2], M.a = _a[0], M.b = _a[1];"),
+        "Array destructuring lowering must assign init once, then index.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("M.a = [1, 2], M.b = [1, 2];"),
+        "Pre-fix shape (initializer evaluated per binding) must not appear.\nOutput:\n{output}"
+    );
+}
+
+/// Object-pattern counterpart: keys are accessed by name, not index.
+#[test]
+fn namespace_exported_object_destructuring_lowers_to_temp_and_keys() {
+    let source = "function f() { return { a4: 1, b4: 2, c4: 3 }; }\nnamespace m {\n    export var { a4, b4, c4 } = f();\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a;"),
+        "Destructuring lowering must declare a temp `_a`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = f(), m.a4 = _a.a4, m.b4 = _a.b4, m.c4 = _a.c4;"),
+        "Object destructuring lowering must assign init once, then access by key.\nOutput:\n{output}"
+    );
+}
+
+/// Object-pattern with rename: `{ x: a }` → key `x`, target `M.a`.
+#[test]
+fn namespace_exported_object_destructuring_rename_uses_property_name() {
+    let source =
+        "function f() { return { x: 1 }; }\nnamespace m {\n    export var { x: a } = f();\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("_a = f(), m.a = _a.x;"),
+        "Renamed object binding must read source key but assign to renamed target.\nOutput:\n{output}"
     );
 }

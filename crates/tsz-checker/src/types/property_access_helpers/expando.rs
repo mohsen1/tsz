@@ -206,9 +206,31 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        if init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && self.variable_declaration_has_jsdoc_type_annotation(decl_idx)
+        {
+            return false;
+        }
+
         init_node.is_function_expression_or_arrow()
             || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+    }
+
+    fn variable_declaration_has_jsdoc_type_annotation(&self, decl_idx: NodeIndex) -> bool {
+        let Some(source_file) = self.source_file_data_for_node(decl_idx) else {
+            return false;
+        };
+        if source_file.comments.is_empty() || !source_file.comments.iter().any(|c| c.is_multi_line)
+        {
+            return false;
+        }
+        let source_text = source_file.text.to_string();
+        let comments = source_file.comments.clone();
+        self.try_jsdoc_with_ancestor_walk(decl_idx, &comments, &source_text)
+            .as_deref()
+            .and_then(Self::extract_jsdoc_type_expression)
+            .is_some()
     }
 
     fn expando_root_js_file_idx(&self, object_expr_idx: NodeIndex) -> Option<usize> {
@@ -1164,6 +1186,7 @@ impl<'a> CheckerState<'a> {
                 };
             let is_declared_function_or_class =
                 (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
+            let is_declared_class = (symbol.flags & symbol_flags::CLASS) != 0;
 
             let declaration_is_function_value_in_arena =
                 |arena: &tsz_parser::parser::node::NodeArena, decl_idx: NodeIndex| -> bool {
@@ -1284,6 +1307,7 @@ impl<'a> CheckerState<'a> {
                         || declaration_is_function_value(decl_idx)
                 });
             if has_callable_decl
+                && !is_declared_class
                 && (has_mixed_non_callable_declaration || !has_expando_declaration_pattern)
             {
                 return false;
@@ -1294,6 +1318,12 @@ impl<'a> CheckerState<'a> {
         // already declare in their semantic shape. Those writes should not opt the
         // property into the expando-forward-read path.
         if self.object_literal_root_declares_property(object_expr_idx, property_name) {
+            return false;
+        }
+
+        if let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx)
+            && !self.root_symbol_supports_js_expando_read(sym_id)
+        {
             return false;
         }
 

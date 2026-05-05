@@ -41,6 +41,32 @@ use crate::transforms::namespace_es5_ir::NamespaceES5Transformer;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
+fn strip_stray_export_lines(output: &str) -> String {
+    let lines: Vec<&str> = output.lines().collect();
+    let mut cleaned: Vec<&str> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim() == "export" {
+            if let (Some(prev), Some(next)) = (cleaned.last(), lines.get(i + 1))
+                && prev.trim() == next.trim()
+                && (next.trim_start().starts_with("//") || next.trim_start().starts_with("/*"))
+            {
+                cleaned.pop();
+            }
+            i += 1;
+            continue;
+        }
+        cleaned.push(lines[i]);
+        i += 1;
+    }
+
+    if output.ends_with('\n') {
+        format!("{}\n", cleaned.join("\n"))
+    } else {
+        cleaned.join("\n")
+    }
+}
+
 /// Namespace ES5 emitter
 ///
 /// This is a thin wrapper around `NamespaceES5Transformer` and `IRPrinter`
@@ -161,7 +187,7 @@ impl<'a> NamespaceES5Emitter<'a> {
         if let Some(ref transforms) = self.transforms {
             printer.set_transforms(transforms.clone());
         }
-        printer.emit(&ir).to_string()
+        strip_stray_export_lines(printer.emit(&ir))
     }
 
     /// Emit an exported namespace declaration (`CommonJS` attach-to-exports form).
@@ -185,7 +211,7 @@ impl<'a> NamespaceES5Emitter<'a> {
         if let Some(ref transforms) = self.transforms {
             printer.set_transforms(transforms.clone());
         }
-        printer.emit(&ir).to_string()
+        strip_stray_export_lines(printer.emit(&ir))
     }
 
     /// Set the indent level for output

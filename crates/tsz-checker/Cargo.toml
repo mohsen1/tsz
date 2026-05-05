@@ -701,5 +701,13 @@ path = "tests/mixin_base_no_member_no_ts2416_tests.rs"
 name = "optional_undefined_property_index_signature_tests"
 path = "tests/optional_undefined_property_index_signature_tests.rs"
 
+[[test]]
+name = "ts2403_enum_object_redeclaration_tests"
+path = "tests/ts2403_enum_object_redeclaration_tests.rs"
+
+[[test]]
+name = "ts1262_multiple_await_declarations_tests"
+path = "tests/ts1262_multiple_await_declarations_tests.rs"
+
 [lints]
 workspace = true

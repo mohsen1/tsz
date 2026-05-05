@@ -24,7 +24,10 @@ impl<'a> LoweringPass<'a> {
                     self.current_source_text = previous_source_text;
                 }
             }
-            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+            k if k == syntax_kind_ext::BLOCK
+                || k == syntax_kind_ext::CASE_BLOCK
+                || k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION =>
+            {
                 if let Some(block) = self.get_block_like(node) {
                     let statements = block.statements.nodes.clone();
                     for stmt in statements {
@@ -362,6 +365,9 @@ impl<'a> LoweringPass<'a> {
                         if needs_set_function_name || has_class_decorators {
                             helpers.set_function_name = true;
                         }
+                    }
+                    if self.class_expr_static_comma_needs_set_function_name(idx, class_data) {
+                        self.transforms.helpers_mut().set_function_name = true;
                     }
 
                     let needs_es5_transform = self.ctx.target_es5;

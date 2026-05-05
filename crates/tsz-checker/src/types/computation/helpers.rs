@@ -116,12 +116,11 @@ impl<'a> CheckerState<'a> {
             && ident.escaped_text == "NaN"
         {
             if let Some(sym_id) = self.resolve_identifier_symbol(current_idx) {
-                let is_global = self
-                    .ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_none_or(|s| s.parent.is_none());
-                return self.ctx.symbol_is_from_lib(sym_id) || is_global;
+                // Only treat this as the global NaN if it actually comes from a
+                // lib declaration file. User-declared locals (even at module
+                // scope) have `parent.is_none()` too, so checking `parent` is
+                // not a reliable discriminator — rely on the arena origin instead.
+                return self.ctx.symbol_is_from_lib(sym_id);
             }
             return true; // Unresolved NaN treated as global
         }
