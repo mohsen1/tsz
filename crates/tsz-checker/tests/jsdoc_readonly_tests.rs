@@ -253,6 +253,40 @@ Derived;
     );
 }
 
+#[test]
+fn invalid_template_prefix_on_constructor_does_not_emit_ts1092() {
+    let source = r#"
+// @ts-check
+class C {
+  /** @templateFoo */
+  constructor() {}
+}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1092),
+        "Expected no TS1092 for @templateFoo, got: {codes:?}",
+    );
+}
+
+#[test]
+fn jsdoc_template_on_constructor_still_emits_ts1092() {
+    let source = r#"
+// @ts-check
+class C {
+  /** @template T */
+  constructor() {}
+}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1092),
+        "Expected TS1092 for a real constructor @template tag, got: {codes:?}",
+    );
+}
+
 /// @typedef with type → no TS8021
 #[test]
 fn test_jsdoc_typedef_with_type_no_ts8021() {
