@@ -7793,6 +7793,42 @@ fn compile_declaration_with_declaration_dir() {
 }
 
 #[test]
+fn cli_declaration_dir_places_declarations_outside_out_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("src/index.ts"), "export const value = 42;\n");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--outDir",
+        "dist",
+        "--rootDir",
+        "src",
+        "--declaration",
+        "--declarationDir",
+        "types",
+        "src/index.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(result.diagnostics.is_empty());
+    assert!(
+        base.join("dist/index.js").is_file(),
+        "JS output should be in dist/"
+    );
+    assert!(
+        base.join("types/index.d.ts").is_file(),
+        "Declaration file should be in CLI declarationDir"
+    );
+    assert!(
+        !base.join("dist/index.d.ts").is_file(),
+        "Declaration file should not fall back to outDir"
+    );
+}
+
+#[test]
 fn compile_outdir_places_output_in_directory() {
     // Test that outDir places compiled files in the specified directory
     let temp = TempDir::new().expect("temp dir");
@@ -11411,6 +11447,65 @@ fn ts2688_unresolved_types_in_tsconfig() {
         ts2688_diags[0].message_text.contains("nonexistent-package"),
         "TS2688 message should mention the package name, got: {}",
         ts2688_diags[0].message_text
+    );
+}
+
+#[test]
+fn cli_types_reports_unresolved_type_package() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    std::fs::create_dir_all(base.join("node_modules/@types")).unwrap();
+    write_file(&base.join("index.ts"), "const x: number = 1;\n");
+
+    let args = CliArgs::try_parse_from(["tsz", "--types", "nonexistent-package", "index.ts"])
+        .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        !ts2688_diags.is_empty(),
+        "Expected TS2688 for unresolved CLI --types package, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn cli_type_roots_prevents_parent_at_types_discovery() {
+    let tmp = TempDir::new().unwrap();
+    let parent = &tmp.path;
+    let base = parent.join("app");
+
+    write_file(
+        &parent.join("node_modules/@types/leaky/index.d.ts"),
+        "declare const leakedGlobal: number;\n",
+    );
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+    write_file(&base.join("index.ts"), "leakedGlobal;\n");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--typeRoots",
+        "./empty-types",
+        "index.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, &base).expect("compile should succeed");
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert!(
+        !ts2304_diags.is_empty(),
+        "Expected CLI --typeRoots to hide parent @types globals, got: {:?}",
+        result.diagnostics
     );
 }
 

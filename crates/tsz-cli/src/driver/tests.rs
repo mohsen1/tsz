@@ -287,6 +287,38 @@ fn test_invalid_jsx_factory_preserved_verbatim() {
 }
 
 #[test]
+fn test_cli_overrides_apply_type_and_declaration_options() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--types",
+        "node,jest",
+        "--typeRoots",
+        "types,node_modules/@types",
+        "--declarationDir",
+        "declarations",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert_eq!(
+        options.types,
+        Some(vec!["node".to_string(), "jest".to_string()])
+    );
+    assert_eq!(
+        options.type_roots,
+        Some(vec![
+            Path::new("types").to_path_buf(),
+            Path::new("node_modules/@types").to_path_buf()
+        ])
+    );
+    assert_eq!(
+        options.declaration_dir.as_deref(),
+        Some(Path::new("declarations"))
+    );
+}
+
+#[test]
 fn test_compile_invalid_react_namespace_reports_config_error_without_jsx_cascade() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
