@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix-intersection-optional-display-20260505`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/2784
 - **Status**: claim
 - **Workstream**: conformance fingerprint parity
 
