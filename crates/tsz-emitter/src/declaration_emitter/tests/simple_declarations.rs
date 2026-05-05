@@ -24,6 +24,39 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn test_defaulted_boolean_param_false_narrowing_return_type() {
+    let source = r#"
+function removeUndefinedButNotFalse(x = true) {
+    if (x === false) {
+        return x;
+    }
+}
+
+declare const cond: boolean;
+function removeNothing(y = cond ? true : undefined) {
+    if (y !== undefined) {
+        if (y === false) {
+            return y;
+        }
+    }
+    return true;
+}
+"#;
+    let output = emit_dts(source);
+
+    assert!(
+        output.contains(
+            "declare function removeUndefinedButNotFalse(x?: boolean): false | undefined;"
+        ),
+        "Expected false narrowing plus fallthrough undefined to be preserved: {output}"
+    );
+    assert!(
+        output.contains("declare function removeNothing(y?: boolean | undefined): boolean;"),
+        "Expected false/true branches to widen to boolean: {output}"
+    );
+}
+
+#[test]
 fn test_object_rest_with_keyword_property_names_omits_destructured_key() {
     let source = r#"
 type P = {
