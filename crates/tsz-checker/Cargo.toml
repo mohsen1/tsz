@@ -677,5 +677,9 @@ path = "tests/js_exports_surface_fallback_for_named_imports_tests.rs"
 name = "jsx_pragma_factory_marks_imports_referenced_tests"
 path = "tests/jsx_pragma_factory_marks_imports_referenced_tests.rs"
 
+[[test]]
+name = "discriminant_narrow_function_lazy_preserved_tests"
+path = "tests/discriminant_narrow_function_lazy_preserved_tests.rs"
+
 [lints]
 workspace = true
