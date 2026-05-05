@@ -301,6 +301,10 @@ impl<'a> CheckerState<'a> {
         source_file_idx: Option<usize>,
     ) -> Option<TypeId> {
         let json_type = self.json_module_type_for_module(module_name, source_file_idx)?;
+        if !self.json_namespace_import_uses_default_export(source_file_idx) {
+            return Some(self.commonjs_json_namespace_type(json_type));
+        }
+
         let namespace_type = self.ctx.types.factory().object(vec![PropertyInfo {
             name: self.ctx.types.intern_string("default"),
             type_id: json_type,
@@ -317,6 +321,55 @@ impl<'a> CheckerState<'a> {
             single_quoted_name: false,
         }]);
         Some(namespace_type)
+    }
+
+    fn commonjs_json_namespace_type(&mut self, json_type: TypeId) -> TypeId {
+        let default_atom = self.ctx.types.intern_string("default");
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, json_type)
+        else {
+            return json_type;
+        };
+        if !shape
+            .properties
+            .iter()
+            .any(|property| property.name == default_atom)
+        {
+            return json_type;
+        }
+
+        let mut properties = shape.properties.clone();
+        for property in &mut properties {
+            if property.name == default_atom {
+                property.type_id = json_type;
+                property.write_type = json_type;
+                property.optional = false;
+                property.readonly = false;
+                property.declaration_order = 0;
+            }
+        }
+        self.ctx.types.factory().object(properties)
+    }
+
+    fn json_namespace_import_uses_default_export(&self, source_file_idx: Option<usize>) -> bool {
+        if !self.ctx.compiler_options.module.is_node_module() {
+            return false;
+        }
+
+        let file_idx = source_file_idx.unwrap_or(self.ctx.current_file_idx);
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        let file_name = source_file.file_name.as_str();
+        if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
+            return true;
+        }
+        if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
+            return false;
+        }
+
+        self.lookup_file_is_esm(file_name).unwrap_or(false)
     }
 
     fn is_undefined_like_commonjs_rhs(&self, idx: NodeIndex) -> bool {

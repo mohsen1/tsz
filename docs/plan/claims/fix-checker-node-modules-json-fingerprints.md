@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-node-modules-json-fingerprints`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #3201
+- **Status**: implemented
 - **Workstream**: 1 (Conformance - diagnostic fingerprints)
 
 ## Intent
@@ -20,12 +20,20 @@ regression test for the invariant.
 
 ## Files Touched
 
-- TBD after implementation.
+- `crates/tsz-checker/src/state/type_analysis/computed_commonjs/exports_detection.rs`
+- `crates/tsz-checker/tests/json_namespace_import_tests.rs`
+- `crates/tsz-checker/Cargo.toml`
+- `docs/plan/claims/fix-checker-node-modules-json-fingerprints.md`
 
 ## Verification
 
-- `cargo check --package tsz-checker`
-- focused Rust regression test in the owning crate
-- `./scripts/conformance/conformance.sh run --filter "nodeModulesJson" --verbose`
-- `./scripts/conformance/conformance.sh run --max 200`
-- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep FINAL`
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --test json_namespace_import_tests --no-fail-fast`
+- `cargo check --workspace`
+- `./scripts/conformance/conformance.sh run --filter "nodeModulesJson" --verbose` (1/1 passed)
+- `./scripts/conformance/conformance.sh run --filter "nodeModulesResolveJsonModule" --verbose` (1/1 passed)
+- `./scripts/conformance/conformance.sh run`:
+  - `FINAL RESULTS: 12468/12582 passed (99.1%)`
+  - `Crashed: 1`, `Timeout: 1`, `Fingerprint-only: 67`
+  - `Net: 12453 -> 12468 (+15)`
+  - `TypeScript/tests/cases/conformance/node/nodeModulesJson.ts` listed under improvements
