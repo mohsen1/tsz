@@ -86,6 +86,12 @@ pub struct DeclarationEmitter<'a> {
     pub(super) inside_declare_namespace: bool,
     /// Symbol of the innermost enclosing namespace (for context-relative type names)
     pub(super) enclosing_namespace_symbol: Option<SymbolId>,
+    /// Namespace-import alias for self-qualified inferred types inside a namespace.
+    pub(super) current_namespace_self_import_alias: Option<String>,
+    /// Top-level exported names that should be qualified through the self import.
+    pub(super) current_namespace_self_export_names: FxHashSet<String>,
+    /// Local name of a default export shadowed inside the current namespace.
+    pub(super) current_namespace_shadowed_default_name: Option<String>,
     /// Whether we're inside a non-ambient namespace (filter non-exported members)
     pub(super) inside_non_ambient_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)

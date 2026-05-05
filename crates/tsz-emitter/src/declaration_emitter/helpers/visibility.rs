@@ -865,7 +865,12 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(bindings) = self.arena.get_named_imports(bindings_node)
                 {
                     if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
-                        if self.imported_name_is_used(binder, used, bindings.name) {
+                        if self.imported_name_is_used(binder, used, bindings.name)
+                            || self.namespace_import_needed_for_shadowed_self_type(
+                                bindings.name,
+                                import.module_specifier,
+                            )
+                        {
                             named_count = 1;
                         }
                     } else {
