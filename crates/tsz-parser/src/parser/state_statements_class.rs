@@ -594,10 +594,14 @@ impl ParserState {
                 | SyntaxKind::WhileKeyword
                 | SyntaxKind::ForKeyword
         ) {
+            let keyword = self.token();
             let reserved_start = self.token_pos();
             let reserved_end = self.token_end();
             if dot_dot_dot_token {
                 self.error_reserved_word_identifier();
+                if matches!(keyword, SyntaxKind::WhileKeyword | SyntaxKind::ForKeyword) {
+                    self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+                }
             } else {
                 self.error_reserved_word_in_parameter_name();
             }
