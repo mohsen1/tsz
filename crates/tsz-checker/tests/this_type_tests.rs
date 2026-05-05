@@ -232,6 +232,61 @@ class Person extends Base {
     );
 }
 
+#[test]
+fn test_keyof_this_call_arguments_do_not_reuse_other_class_key_cache() {
+    let source = r#"
+function getProperty<T, K extends keyof T>(obj: T, key: K) {
+    return obj[key];
+}
+
+function setProperty<T, K extends keyof T>(obj: T, key: K, value: T[K]) {
+    obj[key] = value;
+}
+
+class C1 {
+    x: number;
+    get<K extends keyof this>(key: K) {
+        return this[key];
+    }
+    set<K extends keyof this>(key: K, value: this[K]) {
+        this[key] = value;
+    }
+    foo() {
+        this.get("x");
+        getProperty(this, "x");
+        this.set("x", 42);
+        setProperty(this, "x", 42);
+    }
+}
+
+class OtherPerson {
+    parts: number;
+    constructor(parts: number) {
+        setProperty(this, "parts", parts);
+    }
+    getParts() {
+        return getProperty(this, "parts");
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            emit_declarations: true,
+            strict_null_checks: true,
+            strict_property_initialization: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "`keyof this` evaluation must stay class-context-sensitive and not \
+         reuse another class's cached keys: {diagnostics:?}"
+    );
+}
+
 /// Regression: assigning a polymorphic-this call result to a base class variable
 /// must not emit TS2322. `derived.clone()` returns `Derived` (the polymorphic
 /// this), which IS assignable to `Base`. tsc accepts this without error.

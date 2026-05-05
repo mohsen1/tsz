@@ -1854,6 +1854,19 @@ impl<'a> CheckerState<'a> {
             // Substitute bare `ThisType` with the concrete class instance type so
             // that `return this` / `f(this)` assignability succeeds by identity check.
             instance_type
+        } else if crate::query_boundaries::common::index_access_types(self.ctx.types, type_id)
+            .is_some()
+        {
+            // A direct indexed access like `this["x"]` is still anchored in the
+            // current class context. Resolve it to the concrete property type for
+            // assignment/call-argument checks, while leaving more complex wrappers
+            // such as `Unwrap<this["x"]>` deferred below.
+            let substituted = crate::query_boundaries::common::substitute_this_type(
+                self.ctx.types,
+                type_id,
+                instance_type,
+            );
+            self.evaluate_type_with_env_uncached(substituted)
         } else {
             // Do NOT substitute complex types that merely contain `ThisType` in nested
             // positions (e.g. `Builder_instance` whose methods return `this`).  The
