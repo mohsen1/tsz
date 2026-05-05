@@ -1199,11 +1199,14 @@ pub(super) fn js_file_has_ts_check_pragma(file: &BoundFile) -> bool {
     let Some(source) = file.arena.get_source_file_at(file.source_file) else {
         return false;
     };
-    let text = source.text.as_ref().to_ascii_lowercase();
-    let ts_check = text.rfind("@ts-check");
-    let ts_no_check = text.rfind("@ts-nocheck");
-    match (ts_check, ts_no_check) {
-        (Some(check_idx), Some(no_check_idx)) => check_idx > no_check_idx,
+    let text: &str = source.text.as_ref();
+    // When both directives are present in leading trivia, the last one wins.
+    let ts_check_pos =
+        tsz_common::comments::last_ts_directive_offset_in_leading_trivia(text, "@ts-check");
+    let ts_nocheck_pos =
+        tsz_common::comments::last_ts_directive_offset_in_leading_trivia(text, "@ts-nocheck");
+    match (ts_check_pos, ts_nocheck_pos) {
+        (Some(check), Some(nocheck)) => check > nocheck,
         (Some(_), None) => true,
         _ => false,
     }
@@ -1213,11 +1216,8 @@ pub(super) fn js_file_has_ts_nocheck_pragma(file: &BoundFile) -> bool {
     let Some(source) = file.arena.get_source_file_at(file.source_file) else {
         return false;
     };
-    source
-        .text
-        .as_ref()
-        .to_ascii_lowercase()
-        .contains("@ts-nocheck")
+    let text: &str = source.text.as_ref();
+    tsz_common::comments::source_has_ts_nocheck_directive(text)
 }
 
 /// Convert specific parser diagnostics to `TS8xxx` equivalents for JS files.
@@ -2085,7 +2085,8 @@ pub(super) fn apply_ts_directive_suppression(
     let line_starts = build_line_starts(source_text);
 
     // Check for @ts-nocheck — suppresses TS2578 for unused directives.
-    let has_ts_nocheck = source_text.to_ascii_lowercase().contains("@ts-nocheck");
+    let has_ts_nocheck =
+        tsz_common::comments::has_ts_directive_in_leading_trivia(source_text, "@ts-nocheck");
 
     let mut directive_used = vec![false; directives.len()];
 

@@ -662,6 +662,43 @@ foo = new Foo();
 }
 
 #[test]
+fn test_jsdoc_constructor_overload_prefix_tag_does_not_emit_ts2394() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "overloadTagPrefix.js",
+        r#"
+// @checkJs: true
+// @allowJs: true
+// @target: esnext
+// @strict: true
+// @noEmit: true
+
+export class Foo {
+    /**
+     * @constructor
+     * @overloadx
+     * @param {string} a
+     * @param {number} b
+     */
+    /**
+     * @constructor
+     * @param {number | string} a
+     */
+    constructor(a, b) {
+        this.a = a;
+        this.b = b;
+    }
+}
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2394),
+        "Did not expect TS2394 for a non-overload JSDoc tag prefix. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 #[ignore = "lib-backed JS overload diagnostic is currently red in direct unit CI"]
 fn test_check_js_global_tostring_overload_reports_ts2394_with_libs() {
     if !lib_files_available() {

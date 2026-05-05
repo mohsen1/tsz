@@ -1458,8 +1458,22 @@ impl<'a> FlowAnalyzer<'a> {
                             && symbol_id
                                 .or_else(|| self.reference_symbol(reference))
                                 .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
-                        if self.assignment_reads_reference_before_write(flow.node, reference) {
-                            if let Some(&ant) = flow.antecedent.first() {
+                        let self_referential_assignment =
+                            self.assignment_reads_reference_before_write(flow.node, reference);
+                        if self_referential_assignment {
+                            // `x = len(x)` still writes the RHS result to `x`.
+                            // When the RHS can be resolved, let loop back-edges
+                            // contribute that result; otherwise fall back to the
+                            // antecedent type until expression checking catches up.
+                            let is_destructuring = self.is_destructuring_assignment(flow.node);
+                            let raw_assigned =
+                                self.get_assigned_type(flow.node, reference, is_destructuring);
+                            if let Some(assigned_type) =
+                                raw_assigned.filter(|&t| t != TypeId::ERROR)
+                            {
+                                cacheable_walk = false;
+                                assigned_type
+                            } else if let Some(&ant) = flow.antecedent.first() {
                                 if let Some(&ant_type) = results.get(&ant) {
                                     ant_type
                                 } else if !visited.contains(&ant) {
@@ -1958,6 +1972,12 @@ impl<'a> FlowAnalyzer<'a> {
                 match ant_types.len() {
                     0 => result_type,
                     1 => ant_types[0],
+                    _ if initial_type == TypeId::ANY
+                        && !control_flow_typed_any_symbol
+                        && ant_types.contains(&TypeId::ANY) =>
+                    {
+                        TypeId::ANY
+                    }
                     _ => self.interner.union_preserve_members(ant_types),
                 }
             } else {

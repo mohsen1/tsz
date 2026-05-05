@@ -664,6 +664,17 @@ fn test_collect_module_specifiers_finds_plain_require_calls() {
 }
 
 #[test]
+fn test_collect_module_specifiers_finds_require_with_whitespace_before_paren() {
+    let text = r#"const data = require ("./data.json");"#;
+    let path = Path::new("test.js");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./data.json".to_string()),
+        "Should find spaced require specifier './data.json', got: {specifiers:?}"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_require_has_correct_kind() {
     use tsz::module_resolver::ImportKind;
     let text = r#"const data = require("./data.json");"#;

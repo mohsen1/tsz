@@ -591,22 +591,20 @@ impl<'a> Printer<'a> {
                     self.decrease_indent();
                     self.write("})");
                 }
+            } else if has_object_rest_param_prologue {
+                self.write_line();
+                self.increase_indent();
+                self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
+                self.write("return ");
+                self.emit_expression(func.body);
+                self.write(";");
+                self.write_line();
+                self.decrease_indent();
+                self.write("})");
             } else {
-                if has_object_rest_param_prologue {
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
-                    self.write("return ");
-                    self.emit_expression(func.body);
-                    self.write(";");
-                    self.write_line();
-                    self.decrease_indent();
-                    self.write("})");
-                } else {
-                    self.write(" return ");
-                    self.emit_expression(func.body);
-                    self.write("; })");
-                }
+                self.write(" return ");
+                self.emit_expression(func.body);
+                self.write("; })");
             }
 
             self.ctx.emit_await_as_yield = saved_yield;
@@ -629,6 +627,7 @@ impl<'a> Printer<'a> {
             self.write(this_arg);
             self.write(", void 0, void 0, function* () {");
 
+            let saved_yield = self.ctx.emit_await_as_yield;
             self.ctx.emit_await_as_yield = true;
             if let Some(body_node) = self.arena.get(func.body)
                 && let Some(block) = self.arena.get_block(body_node)
@@ -638,7 +637,7 @@ impl<'a> Printer<'a> {
                     self.emit(stmt);
                 }
             }
-            self.ctx.emit_await_as_yield = false;
+            self.ctx.emit_await_as_yield = saved_yield;
             self.write(" })");
             return;
         }
@@ -651,6 +650,7 @@ impl<'a> Printer<'a> {
             self.write("(");
             self.write(this_arg);
             self.write(", void 0, void 0, function* () {");
+            let saved_yield = self.ctx.emit_await_as_yield;
             self.ctx.emit_await_as_yield = true;
             if has_object_rest_param_prologue {
                 self.write_line();
@@ -666,7 +666,7 @@ impl<'a> Printer<'a> {
                 self.emit_expression(func.body);
                 self.write(";");
             }
-            self.ctx.emit_await_as_yield = false;
+            self.ctx.emit_await_as_yield = saved_yield;
             self.write(" })");
             return;
         }
@@ -680,6 +680,7 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         // Emit body with await→yield substitution
+        let saved_yield = self.ctx.emit_await_as_yield;
         self.ctx.emit_await_as_yield = true;
         self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
 
@@ -693,7 +694,7 @@ impl<'a> Printer<'a> {
             }
         }
 
-        self.ctx.emit_await_as_yield = false;
+        self.ctx.emit_await_as_yield = saved_yield;
 
         self.decrease_indent();
         self.write("})");

@@ -240,6 +240,37 @@ declare global {
 }
 
 #[test]
+fn test_constructor_guard_negative_branch_ts2339_uses_tsc_union_order() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C1 {
+    property1!: string;
+}
+
+declare let var1: C1 | number;
+if (var1.constructor != C1) {
+    var1.property1;
+}
+        ",
+    );
+
+    let ts2339_messages: Vec<&String> = diagnostics
+        .iter()
+        .filter_map(|(code, message)| (*code == 2339).then_some(message))
+        .collect();
+
+    assert_eq!(
+        ts2339_messages.len(),
+        1,
+        "Expected one TS2339 diagnostic. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2339_messages[0],
+        "Property 'property1' does not exist on type 'number | C1'."
+    );
+}
+
+#[test]
 fn test_umd_namespace_with_global_const_value_does_not_emit_ts2708() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[

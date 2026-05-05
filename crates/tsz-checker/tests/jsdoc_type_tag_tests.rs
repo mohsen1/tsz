@@ -238,6 +238,39 @@ x(1);
     );
 }
 
+#[test]
+fn test_jsdoc_typedef_before_paren_does_not_suppress_implicit_any() {
+    let source = r#"
+/** @typedef {object} Alias */
+({ fn: x => x });
+"#;
+    let diagnostics = check_js(source);
+    let ts7006 = diagnostics.iter().filter(|d| d.code == 7006).count();
+    assert!(
+        ts7006 >= 1,
+        "Expected TS7006 for @typedef before parenthesized expression, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_inline_jsdoc_typedef_does_not_type_parameter() {
+    let source = r#"
+function f(/** @typedef {string} Alias */ value) {
+    return value;
+}
+
+f(1);
+"#;
+    let diagnostics = check_js(source);
+    let ts7006 = diagnostics.iter().filter(|d| d.code == 7006).count();
+    assert!(
+        ts7006 >= 1,
+        "Expected TS7006 for parameter with inline @typedef, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 /// JSDoc `@type {Object<K, V>}` is a record-shaped indexed type; it must not
 /// emit TS2315 ("Type 'Object' is not generic") in JS files even though the
 /// lib `interface Object` declaration has no type parameters.

@@ -129,10 +129,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
         allow_prototype_only_fallback: bool,
+        allow_rhs_assignment_fallback: bool,
     ) -> Option<TypeId> {
-        if let Some(ty) =
-            self.resolve_jsdoc_assigned_value_type_in_arena(name, allow_prototype_only_fallback)
-        {
+        if let Some(ty) = self.resolve_jsdoc_assigned_value_type_in_arena(
+            name,
+            allow_prototype_only_fallback,
+            allow_rhs_assignment_fallback,
+        ) {
             return Some(ty);
         }
 
@@ -170,9 +173,11 @@ impl<'a> CheckerState<'a> {
                     tsz_common::perf_counters::CheckerCreationReason::JsDocTypeConstruction,
                 );
 
-                if let Some(ty) = checker
-                    .resolve_jsdoc_assigned_value_type_in_arena(name, allow_prototype_only_fallback)
-                {
+                if let Some(ty) = checker.resolve_jsdoc_assigned_value_type_in_arena(
+                    name,
+                    allow_prototype_only_fallback,
+                    allow_rhs_assignment_fallback,
+                ) {
                     self.ctx.merge_symbol_file_targets_from(&checker.ctx);
                     return Some(ty);
                 }
@@ -186,6 +191,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
         allow_prototype_only_fallback: bool,
+        allow_rhs_assignment_fallback: bool,
     ) -> Option<TypeId> {
         let prototype_type = self.resolve_jsdoc_prototype_assignment_type(name);
 
@@ -252,7 +258,7 @@ impl<'a> CheckerState<'a> {
                     self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type);
                 return Some(self.relabel_jsdoc_assigned_value_type(name, combined));
             }
-            if let Some(instance_type) = right_type {
+            if allow_rhs_assignment_fallback && let Some(instance_type) = right_type {
                 let combined =
                     self.combine_jsdoc_instance_and_prototype_type(instance_type, prototype_type);
                 return Some(self.relabel_jsdoc_assigned_value_type(name, combined));
@@ -331,14 +337,21 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn resolve_jsdoc_assigned_value_type(&mut self, name: &str) -> Option<TypeId> {
-        self.resolve_jsdoc_assigned_value_type_inner(name, true)
+        self.resolve_jsdoc_assigned_value_type_inner(name, true, true)
+    }
+
+    pub(crate) fn resolve_jsdoc_declared_assigned_value_type(
+        &mut self,
+        name: &str,
+    ) -> Option<TypeId> {
+        self.resolve_jsdoc_assigned_value_type_inner(name, true, false)
     }
 
     pub(crate) fn resolve_jsdoc_assigned_value_type_for_write(
         &mut self,
         name: &str,
     ) -> Option<TypeId> {
-        self.resolve_jsdoc_assigned_value_type_inner(name, false)
+        self.resolve_jsdoc_assigned_value_type_inner(name, false, false)
     }
 
     /// Resolve an anonymous `@typedef {type}` attached to a declaration matching

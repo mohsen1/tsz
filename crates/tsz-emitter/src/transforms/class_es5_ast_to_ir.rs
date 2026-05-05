@@ -1443,6 +1443,10 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // FunctionExpression uses FunctionData
         if let Some(func) = self.arena.get_function(node) {
+            let hoisted_before = self.hoisted_temps.borrow().len();
+            let saved_temp_counter = self.temp_var_counter.get();
+            self.temp_var_counter.set(0);
+
             let name = if func.name.is_none() {
                 None
             } else {
@@ -1479,6 +1483,9 @@ impl<'a> AstToIr<'a> {
 
             // Restore previous alias
             self.current_this_substitution.set(prev_substitution);
+            self.temp_var_counter.set(saved_temp_counter);
+            let mut body = body;
+            self.prepend_function_hoisted_temps(&mut body, hoisted_before);
 
             IRNode::FunctionExpr {
                 name: name.map(Into::into),
@@ -1516,6 +1523,10 @@ impl<'a> AstToIr<'a> {
                 }
                 return IRNode::ASTRef(idx);
             }
+            let hoisted_before = self.hoisted_temps.borrow().len();
+            let saved_temp_counter = self.temp_var_counter.get();
+            self.temp_var_counter.set(0);
+
             // First check if there's a directive from LoweringPass
             let (captures_this, class_alias) = if let Some(ref transforms) = self.transforms {
                 if let Some(crate::context::transform::TransformDirective::ES5ArrowFunction {
@@ -1577,6 +1588,9 @@ impl<'a> AstToIr<'a> {
                 } else {
                     (vec![], false, None)
                 };
+            let mut body = body;
+            self.temp_var_counter.set(saved_temp_counter);
+            self.prepend_function_hoisted_temps(&mut body, hoisted_before);
 
             // Restore previous state
             self.this_captured.set(prev_captured);
@@ -1601,6 +1615,27 @@ impl<'a> AstToIr<'a> {
         } else {
             IRNode::ASTRef(idx)
         }
+    }
+
+    fn prepend_function_hoisted_temps(&self, body: &mut Vec<IRNode>, hoisted_before: usize) {
+        let hoisted_after = self.hoisted_temps.borrow().len();
+        if hoisted_after <= hoisted_before {
+            return;
+        }
+
+        let local_temps: Vec<String> = self
+            .hoisted_temps
+            .borrow_mut()
+            .drain(hoisted_before..)
+            .collect();
+        let var_decls = local_temps
+            .into_iter()
+            .map(|name| IRNode::VarDecl {
+                name: name.into(),
+                initializer: None,
+            })
+            .collect();
+        body.insert(0, IRNode::VarDeclList(var_decls));
     }
 
     fn convert_parameters(&self, params: &NodeList) -> Vec<IRParam> {

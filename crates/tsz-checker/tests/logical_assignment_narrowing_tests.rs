@@ -6,20 +6,7 @@
 //! 3. After `x &&= expr`, x is NOT narrowed to truthy (may still be falsy).
 //! 4. Condition narrowing works: `if (x ??= y)` narrows x in the true branch.
 
-use crate::context::CheckerOptions;
-
-fn check_strict(source: &str) -> Vec<u32> {
-    let options = CheckerOptions {
-        strict: true,
-        strict_null_checks: true,
-        no_implicit_any: true,
-        ..Default::default()
-    };
-    crate::test_utils::check_source(source, "test.ts", options)
-        .into_iter()
-        .map(|d| d.code)
-        .collect()
-}
+use crate::test_utils::check_source_strict_codes as check_strict;
 
 /// After `results ??= []`, results should be narrowed to number[] (not number[] | undefined).
 /// No TS2532 (Object is possibly undefined) should be emitted on `results.push()`.

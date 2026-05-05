@@ -123,6 +123,79 @@ if (obj4 instanceof B) {
 }
 
 #[test]
+fn typeof_primitive_checks_narrow_explicit_any_only_in_true_branch() {
+    let diagnostics = strict_diagnostics(
+        r#"
+var x: any = { p: 0 };
+
+if (x instanceof Object) {
+    x.p;
+} else {
+    x.p;
+}
+
+if (typeof x === "string") {
+    x.p;
+} else {
+    x.p;
+}
+
+if (typeof x === "number") {
+    x.p;
+} else {
+    x.p;
+}
+
+if (typeof x === "boolean") {
+    x.p;
+} else {
+    x.p;
+}
+
+if (typeof x === "object") {
+    x.p;
+} else {
+    x.p;
+}
+"#,
+    );
+
+    let ts2339 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2339.len(),
+        3,
+        "expected exactly the string/number/boolean true-branch TS2339 diagnostics, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|message| message.contains("type 'string'")),
+        "expected string true-branch TS2339, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|message| message.contains("type 'number'")),
+        "expected number true-branch TS2339, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|message| message.contains("type 'boolean'")),
+        "expected boolean true-branch TS2339, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339.iter().all(|message| !message.contains("never")),
+        "object/else branches must not narrow explicit any to never, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn homomorphic_mapped_type_preserves_null_in_primitive_union() {
     let source = r#"
 type Narrowable = string | number | bigint | boolean;
