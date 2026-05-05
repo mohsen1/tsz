@@ -1995,6 +1995,39 @@ fn es5_var_destructuring_reassigning_rhs_uses_temp() {
     );
 }
 
+/// Regression: classes inside a namespace IIFE were missing
+/// `__metadata("design:type", T)` calls under `--emitDecoratorMetadata`.
+/// The namespace transformer instantiated an `ES5ClassTransformer` but
+/// never forwarded the metadata flag, so decorator arrays only contained
+/// the bare decorator without the type metadata.
+#[test]
+fn namespace_es5_class_emits_decorator_metadata() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "namespace M {\n    export function inject(t: any, k: string): void {}\n    export class Leg {}\n    export class Person {\n        @inject leftLeg: Leg;\n    }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("__metadata(\"design:type\", Leg)"),
+        "Decorator metadata for the property type must emit inside the namespace IIFE.\nOutput:\n{output}"
+    );
+}
+
 /// Regression: ESM `--importHelpers` was not aliasing helper imports
 /// when the helper name collides with a local declaration. tsc emits
 /// `import { __decorate as __decorate_1 } from "tslib";` and uses
