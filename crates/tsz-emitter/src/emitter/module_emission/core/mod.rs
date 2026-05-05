@@ -47,7 +47,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Rewrite a module specifier if rewriteRelativeImportExtensions is enabled.
-    /// Transforms .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs for relative paths.
+    /// Transforms .ts→.js, .tsx→.jsx/.js, .mts→.mjs, .cts→.cjs for relative paths.
     pub(in crate::emitter) fn rewrite_module_spec(&self, spec: &str) -> String {
         if !self.ctx.options.rewrite_relative_import_extensions {
             return spec.to_string();
@@ -59,7 +59,12 @@ impl<'a> Printer<'a> {
             return format!("{base}.js");
         }
         if let Some(base) = spec.strip_suffix(".tsx") {
-            return format!("{base}.jsx");
+            let ext = if self.ctx.options.jsx_preserve_explicit {
+                ".jsx"
+            } else {
+                ".js"
+            };
+            return format!("{base}{ext}");
         }
         if let Some(base) = spec.strip_suffix(".mts") {
             return format!("{base}.mjs");
