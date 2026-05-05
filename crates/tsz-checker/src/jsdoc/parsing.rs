@@ -228,21 +228,25 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a JSDoc comment string contains a specific `@tag`.
     pub(crate) fn jsdoc_contains_tag(jsdoc: &str, tag_name: &str) -> bool {
+        Self::jsdoc_tag_offset(jsdoc, tag_name).is_some()
+    }
+
+    pub(crate) fn jsdoc_tag_offset(jsdoc: &str, tag_name: &str) -> Option<usize> {
         let needle = format!("@{tag_name}");
         for pos_match in jsdoc.match_indices(&needle) {
             let after = pos_match.0 + needle.len();
             if after >= jsdoc.len() {
-                return true;
+                return Some(pos_match.0);
             }
             let next_ch = jsdoc[after..]
                 .chars()
                 .next()
                 .expect("after < jsdoc.len() checked above");
             if !next_ch.is_ascii_alphanumeric() && next_ch != '_' {
-                return true;
+                return Some(pos_match.0);
             }
         }
-        false
+        None
     }
 
     pub(crate) fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
