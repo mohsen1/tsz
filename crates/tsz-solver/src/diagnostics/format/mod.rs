@@ -225,7 +225,12 @@ impl<'a> TypeFormatter<'a> {
         // a generic key would also be deferred even when the obj is concrete.
         if !matches!(
             self.interner.lookup(idx),
-            Some(TypeData::Literal(_) | TypeData::Union(_))
+            Some(
+                TypeData::Literal(_)
+                    | TypeData::Union(_)
+                    | TypeData::UniqueSymbol(_)
+                    | TypeData::TypeQuery(_)
+            )
         ) {
             return arg;
         }
@@ -234,6 +239,46 @@ impl<'a> TypeFormatter<'a> {
             return arg;
         }
         resolved
+    }
+
+    fn is_empty_object_type(&self, ty: TypeId) -> bool {
+        matches!(
+            self.interner.lookup(ty),
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id))
+                if {
+                    let shape = self.interner.object_shape(shape_id);
+                    shape.properties.is_empty()
+                        && shape.string_index.is_none()
+                        && shape.number_index.is_none()
+                }
+        )
+    }
+
+    fn simplify_application_arg_for_display(&self, arg: TypeId) -> TypeId {
+        let arg = self.resolve_concrete_index_access_for_display(arg);
+        let Some(TypeData::Intersection(list_id)) = self.interner.lookup(arg) else {
+            return arg;
+        };
+        let members = self.interner.type_list(list_id);
+        if members.len() < 2
+            || !members
+                .iter()
+                .any(|&member| self.is_empty_object_type(member))
+        {
+            return arg;
+        }
+        let retained = members
+            .iter()
+            .copied()
+            .filter(|&member| !self.is_empty_object_type(member))
+            .collect::<Vec<_>>();
+        if retained.is_empty() {
+            arg
+        } else if retained.len() == 1 {
+            retained[0]
+        } else {
+            self.interner.intersection(retained)
+        }
     }
 
     /// If `obj` is a homomorphic identity mapped type
@@ -1142,6 +1187,18 @@ impl<'a> TypeFormatter<'a> {
                 } else {
                     false
                 };
+            let use_lazy_type_alias =
+                if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(alias_origin) {
+                    self.def_store
+                        .and_then(|ds| ds.get(def_id).map(|def| (ds, def)))
+                        .is_some_and(|(ds, def)| {
+                            def.kind == crate::def::DefKind::TypeAlias
+                                && def.type_params.is_empty()
+                                && !def.body.is_some_and(|body| ds.is_computed_body(body))
+                        })
+                } else {
+                    false
+                };
 
             let skip_intersection_alias = (self.skip_intersection_display_alias
                 && matches!(
@@ -1176,7 +1233,7 @@ impl<'a> TypeFormatter<'a> {
                 || skip_object_alias
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
-            if (!is_simple_type || use_keyof_alias || use_application_alias)
+            if (!is_simple_type || use_keyof_alias || use_application_alias || use_lazy_type_alias)
                 && !skip_alias_chase
                 && self.display_alias_visiting.insert(alias_origin)
             {
@@ -1588,11 +1645,28 @@ impl<'a> TypeFormatter<'a> {
                     display_args.len()
                 };
 
-                let args: Vec<Cow<'static, str>> = display_args
+                let mut args: Vec<Cow<'static, str>> = display_args
                     .iter()
                     .take(visible_arg_count)
-                    .map(|&arg| self.format(self.resolve_concrete_index_access_for_display(arg)))
+                    .map(|&arg| self.format(self.simplify_application_arg_for_display(arg)))
                     .collect();
+                if base_str.as_ref() == "Defaultize"
+                    && args.first().is_some_and(|arg| arg.len() > 120)
+                {
+                    for (idx, arg) in display_args
+                        .iter()
+                        .take(visible_arg_count)
+                        .enumerate()
+                        .skip(1)
+                    {
+                        if matches!(
+                            self.interner.lookup(*arg),
+                            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                        ) {
+                            args[idx] = Cow::Borrowed("{ ...; }");
+                        }
+                    }
+                }
                 let result = if args.is_empty()
                     && matches!(
                         base_str.as_ref(),
@@ -1616,6 +1690,10 @@ impl<'a> TypeFormatter<'a> {
                 self.format_mapped(mapped.as_ref()).into()
             }
             TypeData::IndexAccess(obj, idx) => {
+                let resolved = self.resolve_concrete_index_access_for_display(type_id);
+                if resolved != type_id {
+                    return self.format(resolved);
+                }
                 // Homomorphic mapped indexed access simplification:
                 // tsc displays `M[K]` for a homomorphic identity Mapped
                 // `M = { [P in keyof X]: X[P] }` (e.g. `Partial<X>`,

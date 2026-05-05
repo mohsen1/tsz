@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-jsx-library-managed-attributes-fingerprint`
 - **PR**: #3132
-- **Status**: claim
+- **Status**: draft-progress
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -19,9 +19,27 @@ display drift.
 
 ## Files Touched
 
-- TBD after diagnosis.
+- `crates/tsz-checker/src/checkers/jsx/extraction.rs`
+- `crates/tsz-checker/src/checkers/jsx/props/resolution.rs`
+- `crates/tsz-checker/src/checkers/jsx/props/validation.rs`
+- `crates/tsz-solver/src/diagnostics/format/mod.rs`
+- `crates/tsz-solver/src/evaluation/evaluate_rules/index_access.rs`
+
+## Current Result
+
+Partial fingerprint progress only. The target still fails fingerprint-only:
+
+- Fixed concrete `PropTypeChecker<number, false>[typeof checkedType]` display
+  to `number` in JSX attribute mismatch output.
+- Fixed the `string & PropTypeChecker<string, false>[typeof checkedType]`
+  display drift for specified-generic `foo` attributes.
+- Fixed the first `Defaultize<InferredPropTypes<...>, { ...; }>` drift where
+  display previously retained an empty `{}` intersection member.
+- Remaining drift is alias-preservation for expanded `ReactNode`, `FooProps`
+  inside `Defaultize`, and several whole-object `Defaultize` displays.
 
 ## Verification
 
-- `./scripts/conformance/conformance.sh run --filter "tsxLibraryManagedAttributes" --verbose` (baseline captured; currently fingerprint-only)
-- Targeted unit tests and no-regression conformance runs will be added before marking ready.
+- `cargo fmt --all --check`
+- `cargo nextest run -p tsz-checker jsx_library_managed_attributes --hide-progress-bar`
+- `./scripts/conformance/conformance.sh run --filter "tsxLibraryManagedAttributes" --verbose` (still fingerprint-only; improved missing/extra set)
