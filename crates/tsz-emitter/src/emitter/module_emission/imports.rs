@@ -100,6 +100,10 @@ impl<'a> Printer<'a> {
         // appearing only in type positions (type annotations, declare lines,
         // other import/export type statements, etc.) don't count as value usages.
         let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
         names
             .iter()
             .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name))
@@ -226,6 +230,10 @@ impl<'a> Printer<'a> {
         };
         let haystack = Self::source_after_import(source_text, import_node, import_data, self.arena);
         let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
 
         specs
             .iter()

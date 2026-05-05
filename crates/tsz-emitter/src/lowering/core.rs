@@ -489,6 +489,10 @@ impl<'a> LoweringPass<'a> {
         // (type aliases, interfaces, type annotations, etc.) don't
         // cause unnecessary helper emission.
         let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
         names
             .iter()
             .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name))

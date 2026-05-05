@@ -5,14 +5,19 @@ use std::path::{Path, PathBuf};
 
 use super::resolution::{
     canonicalize_or_owned, canonicalize_with_missing_tail, implied_resolution_mode_for_file,
-    is_declaration_file,
+    is_declaration_file, normalize_path,
 };
 use crate::config::{JsxEmit, ResolvedCompilerOptions};
 use tsz::declaration_emitter::DeclarationEmitter;
 use tsz::emitter::{NewLineKind, Printer};
-use tsz::parallel::MergedProgram;
+use tsz::enums::evaluator::{EnumEvaluator, EnumValue};
+use tsz::parallel::{BoundFile, MergedProgram};
 use tsz_common::common::ModuleKind;
 use tsz_common::diagnostics::Diagnostic;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 #[derive(Debug, Clone)]
 pub(crate) struct OutputFile {
@@ -96,6 +101,7 @@ pub(crate) fn emit_outputs(
         .filter(|file| !file.module_augmentations.is_empty())
         .map(|file| file.file_name.clone())
         .collect();
+    let declaration_const_enum_exports = build_declaration_const_enum_exports(context.program);
 
     // Build the set of JS output paths produced by TypeScript source files
     // (.ts/.tsx/.mts/.cts). When --allowJs is set and a JS input file (e.g.
@@ -249,6 +255,12 @@ pub(crate) fn emit_outputs(
             if !printer_options.module_detection_force && (is_cts_or_cjs || is_mts_or_mjs) {
                 printer_options.module_detection_force = true;
             }
+            apply_external_const_enum_values(
+                &mut printer_options,
+                context.program,
+                file,
+                &declaration_const_enum_exports,
+            );
 
             // Run the lowering pass to generate transform directives
             let mut ctx = tsz::context::emit::EmitContext::with_options(printer_options.clone());
@@ -545,6 +557,452 @@ pub(crate) fn emit_outputs(
     }
 
     Ok((outputs, emit_diagnostics))
+}
+
+type ConstEnumValues = FxHashMap<String, EnumValue>;
+
+#[derive(Clone, Default, PartialEq)]
+struct DeclarationConstEnumExports {
+    named: FxHashMap<String, ConstEnumValues>,
+    default: Option<ConstEnumValues>,
+}
+
+fn build_declaration_const_enum_exports(
+    program: &MergedProgram,
+) -> FxHashMap<String, DeclarationConstEnumExports> {
+    let file_lookup = build_program_file_lookup(program);
+    let mut exports_by_file: FxHashMap<String, DeclarationConstEnumExports> = FxHashMap::default();
+
+    for file in &program.files {
+        let path = normalized_file_key(&file.file_name);
+        if !is_declaration_file(Path::new(&file.file_name)) {
+            continue;
+        }
+        let mut exports = DeclarationConstEnumExports::default();
+        collect_direct_const_enum_exports(file, &mut exports);
+        exports_by_file.insert(path, exports);
+    }
+
+    for _ in 0..4 {
+        let previous = exports_by_file.clone();
+        let mut changed = false;
+        for file in &program.files {
+            if !is_declaration_file(Path::new(&file.file_name)) {
+                continue;
+            }
+            let path = normalized_file_key(&file.file_name);
+            let mut exports = previous.get(&path).cloned().unwrap_or_default();
+            collect_aliased_const_enum_exports(file, &file_lookup, &previous, &mut exports);
+            if previous.get(&path) != Some(&exports) {
+                exports_by_file.insert(path, exports);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    exports_by_file
+}
+
+fn apply_external_const_enum_values(
+    options: &mut tsz::emitter::PrinterOptions,
+    program: &MergedProgram,
+    file: &BoundFile,
+    exports_by_file: &FxHashMap<String, DeclarationConstEnumExports>,
+) {
+    if options.no_const_enum_inlining || exports_by_file.is_empty() {
+        return;
+    }
+
+    let file_lookup = build_program_file_lookup(program);
+    let Some(statements) = source_statements(file) else {
+        return;
+    };
+    for &stmt_idx in &statements.nodes {
+        let Some(stmt_node) = file.arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+            continue;
+        }
+        let Some(import_data) = file.arena.get_import_decl(stmt_node) else {
+            continue;
+        };
+        let Some(module_spec) = literal_text(&file.arena, import_data.module_specifier) else {
+            continue;
+        };
+        let Some(target_path) =
+            resolve_relative_module_file(&file.file_name, &module_spec, &file_lookup)
+        else {
+            continue;
+        };
+        let Some(exports) = exports_by_file.get(&target_path) else {
+            continue;
+        };
+        let Some(clause_node) = file.arena.get(import_data.import_clause) else {
+            continue;
+        };
+        let Some(clause) = file.arena.get_import_clause(clause_node) else {
+            continue;
+        };
+
+        if clause.name.is_some()
+            && let Some(values) = &exports.default
+        {
+            let local_name = identifier_text(&file.arena, clause.name);
+            if !local_name.is_empty() {
+                options
+                    .external_const_enum_values
+                    .insert(local_name.clone(), values.clone());
+                options.external_const_enum_bindings.insert(local_name);
+            }
+        }
+
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = file.arena.get(clause.named_bindings)
+            && let Some(named_imports) = file.arena.get_named_imports(bindings_node)
+            && named_imports.name.is_none()
+        {
+            for &spec_idx in &named_imports.elements.nodes {
+                let Some(spec_node) = file.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = file.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                if spec.is_type_only {
+                    continue;
+                }
+                let imported_name = if spec.property_name.is_some() {
+                    identifier_text(&file.arena, spec.property_name)
+                } else {
+                    identifier_text(&file.arena, spec.name)
+                };
+                let local_name = identifier_text(&file.arena, spec.name);
+                if imported_name.is_empty() || local_name.is_empty() {
+                    continue;
+                }
+                if let Some(values) = exports.named.get(&imported_name) {
+                    options
+                        .external_const_enum_values
+                        .insert(local_name.clone(), values.clone());
+                    options.external_const_enum_bindings.insert(local_name);
+                }
+            }
+        }
+    }
+}
+
+fn collect_direct_const_enum_exports(file: &BoundFile, exports: &mut DeclarationConstEnumExports) {
+    let Some(statements) = source_statements(file) else {
+        return;
+    };
+    let mut evaluator = EnumEvaluator::new(&file.arena);
+    for &stmt_idx in &statements.nodes {
+        collect_direct_const_enum_export_from_node(
+            &file.arena,
+            &mut evaluator,
+            stmt_idx,
+            false,
+            exports,
+        );
+    }
+}
+
+fn collect_direct_const_enum_export_from_node(
+    arena: &NodeArena,
+    evaluator: &mut EnumEvaluator<'_>,
+    node_idx: NodeIndex,
+    force_exported: bool,
+    exports: &mut DeclarationConstEnumExports,
+) {
+    let Some(node) = arena.get(node_idx) else {
+        return;
+    };
+    if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+        && let Some(export_data) = arena.get_export_decl(node)
+        && export_data.module_specifier.is_none()
+        && let Some(clause_node) = arena.get(export_data.export_clause)
+    {
+        collect_direct_const_enum_export_from_node(
+            arena,
+            evaluator,
+            export_data.export_clause,
+            true,
+            exports,
+        );
+        if clause_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+            return;
+        }
+    }
+
+    if node.kind != syntax_kind_ext::ENUM_DECLARATION {
+        return;
+    }
+    let Some(enum_data) = arena.get_enum(node) else {
+        return;
+    };
+    if !arena.has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+        || (!force_exported && !arena.has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword))
+    {
+        return;
+    }
+    let name = identifier_text(arena, enum_data.name);
+    if name.is_empty() {
+        return;
+    }
+    let values = evaluator.evaluate_enum(node_idx);
+    if !values.is_empty() {
+        exports.named.insert(name, values);
+    }
+}
+
+fn collect_aliased_const_enum_exports(
+    file: &BoundFile,
+    file_lookup: &FxHashMap<String, String>,
+    exports_by_file: &FxHashMap<String, DeclarationConstEnumExports>,
+    exports: &mut DeclarationConstEnumExports,
+) {
+    let Some(statements) = source_statements(file) else {
+        return;
+    };
+    let local_aliases = collect_const_enum_import_aliases(file, file_lookup, exports_by_file);
+    for &stmt_idx in &statements.nodes {
+        let Some(stmt_node) = file.arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            && let Some(export_assignment) = file.arena.get_export_assignment(stmt_node)
+            && !export_assignment.is_export_equals
+        {
+            let name = identifier_text(&file.arena, export_assignment.expression);
+            if let Some(values) = local_aliases
+                .get(&name)
+                .or_else(|| exports.named.get(&name))
+                .cloned()
+            {
+                exports.default = Some(values);
+            }
+            continue;
+        }
+
+        if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+            continue;
+        }
+        let Some(export_data) = file.arena.get_export_decl(stmt_node) else {
+            continue;
+        };
+        if export_data.is_default_export {
+            let name = identifier_text(&file.arena, export_data.export_clause);
+            if let Some(values) = local_aliases
+                .get(&name)
+                .or_else(|| exports.named.get(&name))
+                .cloned()
+            {
+                exports.default = Some(values);
+            }
+            continue;
+        }
+        let Some(clause_node) = file.arena.get(export_data.export_clause) else {
+            continue;
+        };
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            continue;
+        }
+        let Some(named_exports) = file.arena.get_named_imports(clause_node) else {
+            continue;
+        };
+        let source_exports = if export_data.module_specifier.is_some() {
+            literal_text(&file.arena, export_data.module_specifier)
+                .and_then(|module_spec| {
+                    resolve_relative_module_file(&file.file_name, &module_spec, file_lookup)
+                })
+                .and_then(|path| exports_by_file.get(&path))
+        } else {
+            None
+        };
+
+        for &spec_idx in &named_exports.elements.nodes {
+            let Some(spec_node) = file.arena.get(spec_idx) else {
+                continue;
+            };
+            let Some(spec) = file.arena.get_specifier(spec_node) else {
+                continue;
+            };
+            if spec.is_type_only {
+                continue;
+            }
+            let exported_name = identifier_text(&file.arena, spec.name);
+            let local_or_imported_name = if spec.property_name.is_some() {
+                identifier_text(&file.arena, spec.property_name)
+            } else {
+                exported_name.clone()
+            };
+            let values = source_exports
+                .and_then(|source| source.named.get(&local_or_imported_name))
+                .cloned()
+                .or_else(|| local_aliases.get(&local_or_imported_name).cloned())
+                .or_else(|| exports.named.get(&local_or_imported_name).cloned());
+            let Some(values) = values else {
+                continue;
+            };
+            if exported_name == "default" {
+                exports.default = Some(values);
+            } else if !exported_name.is_empty() {
+                exports.named.insert(exported_name, values);
+            }
+        }
+    }
+}
+
+fn collect_const_enum_import_aliases(
+    file: &BoundFile,
+    file_lookup: &FxHashMap<String, String>,
+    exports_by_file: &FxHashMap<String, DeclarationConstEnumExports>,
+) -> FxHashMap<String, ConstEnumValues> {
+    let mut aliases = FxHashMap::default();
+    let Some(statements) = source_statements(file) else {
+        return aliases;
+    };
+    for &stmt_idx in &statements.nodes {
+        let Some(stmt_node) = file.arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+            continue;
+        }
+        let Some(import_data) = file.arena.get_import_decl(stmt_node) else {
+            continue;
+        };
+        let Some(module_spec) = literal_text(&file.arena, import_data.module_specifier) else {
+            continue;
+        };
+        let Some(target_path) =
+            resolve_relative_module_file(&file.file_name, &module_spec, file_lookup)
+        else {
+            continue;
+        };
+        let Some(source_exports) = exports_by_file.get(&target_path) else {
+            continue;
+        };
+        let Some(clause_node) = file.arena.get(import_data.import_clause) else {
+            continue;
+        };
+        let Some(clause) = file.arena.get_import_clause(clause_node) else {
+            continue;
+        };
+        if clause.name.is_some()
+            && let Some(values) = &source_exports.default
+        {
+            let name = identifier_text(&file.arena, clause.name);
+            if !name.is_empty() {
+                aliases.insert(name, values.clone());
+            }
+        }
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = file.arena.get(clause.named_bindings)
+            && let Some(named_imports) = file.arena.get_named_imports(bindings_node)
+            && named_imports.name.is_none()
+        {
+            for &spec_idx in &named_imports.elements.nodes {
+                let Some(spec_node) = file.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = file.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                let imported_name = if spec.property_name.is_some() {
+                    identifier_text(&file.arena, spec.property_name)
+                } else {
+                    identifier_text(&file.arena, spec.name)
+                };
+                let local_name = identifier_text(&file.arena, spec.name);
+                if let Some(values) = source_exports.named.get(&imported_name)
+                    && !local_name.is_empty()
+                {
+                    aliases.insert(local_name, values.clone());
+                }
+            }
+        }
+    }
+    aliases
+}
+
+fn source_statements(file: &BoundFile) -> Option<&tsz_parser::parser::NodeList> {
+    file.arena
+        .get(file.source_file)
+        .and_then(|node| file.arena.get_source_file(node))
+        .map(|source| &source.statements)
+}
+
+fn identifier_text(arena: &NodeArena, idx: NodeIndex) -> String {
+    arena.identifier_text_owned(idx).unwrap_or_default()
+}
+
+fn literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    arena
+        .get(idx)
+        .and_then(|node| arena.get_literal(node))
+        .map(|lit| lit.text.clone())
+}
+
+fn build_program_file_lookup(program: &MergedProgram) -> FxHashMap<String, String> {
+    program
+        .files
+        .iter()
+        .map(|file| {
+            let key = normalized_file_key(&file.file_name);
+            (key.clone(), key)
+        })
+        .collect()
+}
+
+fn normalized_file_key(file_name: &str) -> String {
+    normalize_path(Path::new(file_name))
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn resolve_relative_module_file(
+    containing_file: &str,
+    module_spec: &str,
+    file_lookup: &FxHashMap<String, String>,
+) -> Option<String> {
+    if !(module_spec.starts_with("./") || module_spec.starts_with("../")) {
+        return None;
+    }
+    let containing = Path::new(containing_file);
+    let base = containing
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(module_spec);
+    for candidate in module_resolution_candidates(&base) {
+        let key = normalize_path(&candidate)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if let Some(path) = file_lookup.get(&key) {
+            return Some(path.clone());
+        }
+    }
+    None
+}
+
+fn module_resolution_candidates(base: &Path) -> Vec<PathBuf> {
+    if base.extension().is_some() {
+        return vec![base.to_path_buf()];
+    }
+    vec![
+        base.with_extension("ts"),
+        base.with_extension("tsx"),
+        base.with_extension("d.ts"),
+        base.with_extension("js"),
+        base.join("index.ts"),
+        base.join("index.tsx"),
+        base.join("index.d.ts"),
+        base.join("index.js"),
+    ]
 }
 
 fn normalize_ts2883_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {

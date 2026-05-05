@@ -45,6 +45,21 @@ const fn is_ident_or_member_access_char(ch: char) -> bool {
     ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric()
 }
 
+fn skip_ascii_ws(bytes: &[u8], mut i: usize) -> usize {
+    while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
+        i += 1;
+    }
+    i
+}
+
+fn is_ident_start(byte: u8) -> bool {
+    byte == b'_' || byte == b'$' || byte.is_ascii_alphabetic()
+}
+
+fn is_ident_continue(byte: u8) -> bool {
+    is_ident_start(byte) || byte.is_ascii_digit()
+}
+
 /// Strip type-only content from source text so that identifiers in type
 /// positions are not mistaken for value usages.
 ///
@@ -125,6 +140,70 @@ pub fn strip_type_only_content(source: &str) -> String {
         result.push('\n');
     }
     result
+}
+
+pub fn strip_qualified_accesses_for_names<'a>(
+    haystack: &'a str,
+    names: &rustc_hash::FxHashSet<String>,
+) -> Cow<'a, str> {
+    if names.is_empty() {
+        return Cow::Borrowed(haystack);
+    }
+
+    let mut bytes = haystack.as_bytes().to_vec();
+    let mut changed = false;
+    for name in names {
+        if name.is_empty() {
+            continue;
+        }
+        let needle = name.as_bytes();
+        let mut i = 0;
+        while i + needle.len() <= bytes.len() {
+            if &bytes[i..i + needle.len()] != needle
+                || (i > 0 && is_ident_continue(bytes[i - 1]))
+                || (i + needle.len() < bytes.len() && is_ident_continue(bytes[i + needle.len()]))
+            {
+                i += 1;
+                continue;
+            }
+
+            let mut j = skip_ascii_ws(&bytes, i + needle.len());
+            let end = if j < bytes.len() && bytes[j] == b'.' {
+                j = skip_ascii_ws(&bytes, j + 1);
+                if j < bytes.len() && is_ident_start(bytes[j]) {
+                    j += 1;
+                    while j < bytes.len() && is_ident_continue(bytes[j]) {
+                        j += 1;
+                    }
+                    Some(j)
+                } else {
+                    None
+                }
+            } else if j < bytes.len() && bytes[j] == b'[' {
+                j += 1;
+                while j < bytes.len() && bytes[j] != b']' {
+                    j += 1;
+                }
+                (j < bytes.len()).then_some(j + 1)
+            } else {
+                None
+            };
+
+            if let Some(end) = end {
+                bytes[i..end].fill(b' ');
+                changed = true;
+                i = end;
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    if changed {
+        Cow::Owned(String::from_utf8(bytes).unwrap_or_default())
+    } else {
+        Cow::Borrowed(haystack)
+    }
 }
 
 /// Strip only purely type-level declaration lines from source text.
@@ -530,3 +609,4 @@ fn skip_type_annotation(bytes: &[u8], mut i: usize) -> usize {
 #[cfg(test)]
 #[path = "../tests/import_usage.rs"]
 mod tests;
+use std::borrow::Cow;

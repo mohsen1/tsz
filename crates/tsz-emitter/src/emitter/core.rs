@@ -141,6 +141,11 @@ pub struct PrinterOptions {
     /// cross-file const enum inlining. Note: `--preserveConstEnums` alone
     /// preserves declarations but still inlines values.
     pub no_const_enum_inlining: bool,
+    /// Const enum values resolved outside the current source file, keyed by the
+    /// local binding name used in this file.
+    pub external_const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
+    /// Local binding names that refer to external const enums.
+    pub external_const_enum_bindings: FxHashSet<String>,
     /// Import helpers from tslib instead of inlining them
     pub import_helpers: bool,
     /// JSX emit mode
@@ -193,6 +198,8 @@ impl Default for PrinterOptions {
             resolved_node_module_to_cjs: false,
             preserve_const_enums: false,
             no_const_enum_inlining: false,
+            external_const_enum_values: FxHashMap::default(),
+            external_const_enum_bindings: FxHashSet::default(),
             import_helpers: false,
             jsx: JsxEmit::Preserve,
             jsx_factory: None,
