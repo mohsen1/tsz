@@ -1078,6 +1078,46 @@ fn test_partial_object_and_callable_merging() {
     // NOTE: Object order independence should be tested separately
 }
 
+#[test]
+fn test_mixed_intersection_preserves_callable_object_order() {
+    let interner = TypeInterner::new();
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("func"),
+        TypeId::ANY,
+    )]);
+
+    let inter = interner.intersection(vec![func, obj]);
+    let Some(TypeData::Intersection(members)) = interner.lookup(inter) else {
+        panic!("Expected mixed callable/object intersection");
+    };
+    let member_list = interner.type_list(members);
+    assert_eq!(member_list.len(), 2);
+    assert!(
+        matches!(
+            interner.lookup(member_list[0]),
+            Some(TypeData::Function(_) | TypeData::Callable(_))
+        ),
+        "First member should preserve the source-order callable"
+    );
+    assert!(
+        matches!(
+            interner.lookup(member_list[1]),
+            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+        ),
+        "Second member should preserve the source-order object"
+    );
+}
+
 // Task #47: Template Literal Canonicalization Tests
 
 #[test]

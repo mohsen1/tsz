@@ -452,21 +452,47 @@ impl TypeInterner {
             }
         }
 
-        // Step 3: Rebuild flat with merged results, preserving declaration order.
-        // tsc preserves the original order of intersection members.
+        // Step 3: Rebuild the member list. Keep the existing canonical rebuild
+        // for non-callable object intersections so `{}`/primitive normalization
+        // remains stable. When callables participate, walk the original list and
+        // replace the first object/callable occurrence with its merged
+        // representative; this keeps tsc's source-order display for mixed
+        // intersections such as `(() => void) & { prop: any }`.
         let mut final_flat: TypeListBuffer = SmallVec::new();
+        if merged_callable.is_some() {
+            let mut emitted_object = false;
+            let mut emitted_callable = false;
+            for &member in &flat {
+                if let Some(obj_id) = merged_object
+                    && matches!(
+                        self.lookup(member),
+                        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                    )
+                {
+                    if !emitted_object {
+                        final_flat.push(obj_id);
+                        emitted_object = true;
+                    }
+                    continue;
+                }
 
-        // Add remaining non-object, non-callable members
-        final_flat.extend(remaining_after_callables.iter().copied());
+                if let Some(call_id) = merged_callable
+                    && crate::type_queries::is_callable_type(self, member)
+                {
+                    if !emitted_callable {
+                        final_flat.push(call_id);
+                        emitted_callable = true;
+                    }
+                    continue;
+                }
 
-        // Add merged object if present
-        if let Some(obj_id) = merged_object {
-            final_flat.push(obj_id);
-        }
-
-        // Add merged callable if present
-        if let Some(call_id) = merged_callable {
-            final_flat.push(call_id);
+                final_flat.push(member);
+            }
+        } else {
+            final_flat.extend(remaining_after_callables.iter().copied());
+            if let Some(obj_id) = merged_object {
+                final_flat.push(obj_id);
+            }
         }
 
         // Early exit if simplified to single type

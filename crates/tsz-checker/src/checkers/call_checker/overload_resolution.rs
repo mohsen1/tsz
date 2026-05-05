@@ -1206,11 +1206,14 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types,
                                 fallback_return,
                             )
-                            && !crate::query_boundaries::common::contains_type_parameters(
-                                self.ctx.types,
-                                fallback_return,
-                            )
                         {
+                            // Keep the candidate's instantiated recovery return even
+                            // when it still mentions type parameters from the caller's
+                            // generic context. For `Object.assign(a, b)` inside
+                            // `<T, U>(a: T, b: U) => ...`, tsc recovers with
+                            // `{} & U` rather than the final catch-all overload's
+                            // `any`, so the outer call can still report assignment
+                            // errors against `U`.
                             mismatch_recovery_return = Some(fallback_return);
                         }
                         type_mismatch_count += 1;
