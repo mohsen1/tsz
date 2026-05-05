@@ -15475,6 +15475,54 @@ const Frozen = Object.freeze({ A: 1 });
 }
 
 #[test]
+fn compile_jsdoc_satisfies_malformed_tag_does_not_apply_later_braced_type() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true,
+            "types": []
+          },
+          "files": ["satisfies-malformed.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("satisfies-malformed.js"),
+        r#"// @ts-check
+/** @satisfies nope {{ a: number }} */
+const value = { b: 1 };
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<_> = result.diagnostics.iter().map(|diag| diag.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "Expected malformed @satisfies to keep TS1005, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
+        "Expected malformed @satisfies name to keep TS2304, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+        ),
+        "Malformed @satisfies should not apply later braced type and emit TS2353, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
