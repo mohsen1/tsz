@@ -495,18 +495,30 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if let Some(is_external_module_by_file) = self.ctx.is_external_module_by_file.as_ref() {
-            return !is_external_module_by_file
-                .get(&source_file.file_name)
-                .copied()
-                .unwrap_or(false);
+        if let Some(is_external_module_by_file) = self.ctx.is_external_module_by_file.as_ref()
+            && let Some(is_external_module) = is_external_module_by_file.get(&source_file.file_name)
+        {
+            return !is_external_module;
         }
 
-        self.ctx
+        if self
+            .ctx
             .all_binders
             .as_ref()
             .and_then(|binders| binders.get(file_idx))
-            .is_none_or(|binder| !binder.is_external_module())
+            .is_some_and(|binder| binder.is_external_module())
+        {
+            return false;
+        }
+
+        !source_file.statements.nodes.iter().any(|&stmt_idx| {
+            arena.get(stmt_idx).is_some_and(|stmt| {
+                stmt.kind == syntax_kind_ext::IMPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            })
+        })
     }
 
     /// TS8033: Check all JSDoc comments for `@typedef` with multiple `@type` tags.
@@ -1602,14 +1614,20 @@ impl<'a> CheckerState<'a> {
                                 // `@typedef {ReadonlyArray<Json>} JsonArray`
                                 // declared above the `@typedef Json` itself
                                 // can fail point-in-time resolution while
-                                // still being valid. Skip when *any* known
-                                // source file in the project declares a
-                                // `@typedef Name` matching this argument —
+                                // still being valid. Skip when a visible
+                                // `@typedef Name` matches this argument —
                                 // text-based, so it is immune to typedef
-                                // resolution re-entrancy.
+                                // resolution re-entrancy. Cross-file typedefs
+                                // are visible only from global scripts; typedefs
+                                // inside external modules require imports.
                                 let mut declared_as_typedef = false;
                                 if let Some(arenas) = self.ctx.all_arenas.as_ref() {
-                                    for arena in arenas.iter() {
+                                    for (file_idx, arena) in arenas.iter().enumerate() {
+                                        if file_idx != self.ctx.current_file_idx
+                                            && !self.jsdoc_file_is_global_script(file_idx)
+                                        {
+                                            continue;
+                                        }
                                         for sf in arena.source_files.iter() {
                                             if Self::source_file_has_jsdoc_typedef_named(
                                                 sf,
