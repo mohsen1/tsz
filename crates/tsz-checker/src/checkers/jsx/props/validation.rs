@@ -257,7 +257,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    fn jsx_concrete_prop_expected_type(
+    pub(in crate::checkers_domain::jsx) fn jsx_concrete_prop_expected_type(
         &mut self,
         type_id: TypeId,
         attr_name: &str,
@@ -272,7 +272,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(app) = common::type_application(self.ctx.types, type_id)
             && app.args.len() == 1
-            && self.format_type(app.base) == "Readonly"
+            && matches!(self.format_type(app.base).as_str(), "Readonly" | "Element")
         {
             return self.jsx_concrete_prop_expected_type(app.args[0], attr_name, visited);
         }
@@ -284,7 +284,7 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(app) = common::type_application(self.ctx.types, resolved)
             && app.args.len() == 1
-            && self.format_type(app.base) == "Readonly"
+            && matches!(self.format_type(app.base).as_str(), "Readonly" | "Element")
         {
             return self.jsx_concrete_prop_expected_type(app.args[0], attr_name, visited);
         }

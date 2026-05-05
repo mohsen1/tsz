@@ -1,6 +1,5 @@
 //! JSX generic spread whole-object assignability diagnostics.
 
-use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -32,7 +31,7 @@ impl<'a> CheckerState<'a> {
             has_explicit_jsx_attrs,
         } = report;
 
-        if generic_spread_types.is_empty() || has_excess_property_error || skip_prop_checks {
+        if generic_spread_types.is_empty() || skip_prop_checks {
             return false;
         }
         // With no explicit attributes, `provided_attrs` may still contain
@@ -50,26 +49,40 @@ impl<'a> CheckerState<'a> {
         members.push(explicit_attrs_type);
         let attrs_type = self.ctx.types.factory().intersection(members);
 
-        let props_for_access = self.evaluate_type_with_env(props_type);
-        let props_for_access = self.resolve_type_for_property_access(props_for_access);
-        let props_for_access = self.resolve_lazy_type(props_for_access);
-        let props_for_access = self.evaluate_type_with_env(props_for_access);
+        let props_for_access = self.normalize_jsx_required_props_target(props_type);
 
         let has_explicit_prop_mismatch = provided_attrs.iter().any(|(name, actual_type)| {
+            use crate::query_boundaries::common::PropertyAccessResult;
+
             if matches!(*actual_type, TypeId::ANY | TypeId::ERROR) {
                 return false;
             }
-            let access = self.resolve_property_access_with_env(props_for_access, name);
-            let expected_type = match access {
-                crate::query_boundaries::common::PropertyAccessResult::Success {
-                    type_id, ..
-                }
-                | crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+            let expected_type = match self.resolve_property_access_with_env(props_for_access, name)
+            {
+                PropertyAccessResult::Success { type_id, .. }
+                | PropertyAccessResult::PossiblyNullOrUndefined {
                     property_type: Some(type_id),
                     ..
-                } => crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id),
-                _ => return false,
+                } => Some(type_id),
+                _ => crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    props_for_access,
+                )
+                .and_then(|shape| {
+                    shape.properties.iter().find_map(|prop| {
+                        (self.ctx.types.resolve_atom(prop.name) == name.as_str())
+                            .then_some(prop.type_id)
+                    })
+                }),
             };
+            let expected_type = expected_type.or_else(|| {
+                self.jsx_concrete_prop_expected_type(props_for_access, name, &mut Vec::new())
+            });
+            let Some(expected_type) = expected_type else {
+                return false;
+            };
+            let expected_type =
+                crate::query_boundaries::common::remove_undefined(self.ctx.types, expected_type);
             !self.is_assignable_to(*actual_type, expected_type)
         });
 
@@ -79,32 +92,19 @@ impl<'a> CheckerState<'a> {
                 *actual_type == TypeId::NUMBER
                     && target_display.contains(&format!("{name}: string"))
             });
-        let has_alias_number_prop_mismatch = provided_attrs.iter().any(|(name, actual_type)| {
-            name == "myProp"
-                && *actual_type == TypeId::NUMBER
-                && target_display.contains("WrapperComponentProps")
-        });
 
-        if !(has_explicit_prop_mismatch
-            || has_displayed_string_prop_mismatch
-            || has_alias_number_prop_mismatch
-            || !self.is_assignable_to(attrs_type, props_type))
+        if has_excess_property_error
+            && !has_explicit_prop_mismatch
+            && !has_displayed_string_prop_mismatch
         {
             return false;
         }
 
-        if has_alias_number_prop_mismatch {
-            let source = self.format_type(attrs_type);
-            let target = "IntrinsicAttributes & IntrinsicClassAttributes<Component<WrapperComponentProps, any, any>> & Readonly<...> & Readonly<...>";
-            let message = format!(
-                "Type '{source}' is not assignable to type '{target}'.\n  Type '{source}' is not assignable to type 'Readonly<WrapperComponentProps>'."
-            );
-            self.error_at_node(
-                tag_name_idx,
-                &message,
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            );
-            return true;
+        if !has_explicit_prop_mismatch
+            && !has_displayed_string_prop_mismatch
+            && self.is_assignable_to(attrs_type, props_type)
+        {
+            return false;
         }
 
         self.report_jsx_synthesized_props_assignability_error(
