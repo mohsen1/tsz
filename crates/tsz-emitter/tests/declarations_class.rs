@@ -858,6 +858,35 @@ fn class_name_references_in_lowered_static_elements_use_class_value_alias() {
 }
 
 #[test]
+fn static_block_only_classes_assign_class_value_alias() {
+    let source = r#"class Thing {
+    static {
+        this.doSomething = () => {};
+    }
+}
+
+class ElementsArray extends Array {
+    static {
+        const superisArray = super.isArray;
+        this.isArray = superisArray;
+    }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
+
+    assert!(
+        output.contains("_a = Thing;\n(() => {\n    _a.doSomething = () => { };\n})();"),
+        "static block `this` should use an assigned class-value alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_b = ElementsArray;\n(() => {\n    const superisArray = Reflect.get(_c, \"isArray\", _b);"
+        ),
+        "static block `super` should use the assigned class-value alias as receiver.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn static_private_accessor_class_body_references_use_alias() {
     let source = r#"class A2 {
     static get #prop() { return ""; }
