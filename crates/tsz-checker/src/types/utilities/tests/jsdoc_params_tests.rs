@@ -529,10 +529,10 @@ fn jsdoc_template_multiple_comma() {
 }
 
 #[test]
-fn jsdoc_template_multiple_space() {
+fn jsdoc_template_space_does_not_delimit_names() {
     let jsdoc = "* @template T U";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
-    assert_eq!(names_only(&params), vec!["T", "U"]);
+    assert_eq!(names_only(&params), vec!["T"]);
 }
 
 #[test]
@@ -568,6 +568,13 @@ fn jsdoc_template_ignores_brace_form_for_binding() {
     let jsdoc = "* @template {T}";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
     assert!(params.is_empty());
+}
+
+#[test]
+fn jsdoc_template_constraint_keeps_comma_names() {
+    let jsdoc = "* @template {{ a: number, b: string }} T,U A Comment";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(names_only(&params), vec!["T", "U"]);
 }
 
 #[test]

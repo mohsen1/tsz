@@ -54,6 +54,10 @@ name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
 
 [[test]]
+name = "nan_equality_lib_symbol_ids_tests"
+path = "tests/nan_equality_lib_symbol_ids_tests.rs"
+
+[[test]]
 name = "ts2567_augmentation_enum_cross_arena_decl_tests"
 path = "tests/ts2567_augmentation_enum_cross_arena_decl_tests.rs"
 
@@ -768,6 +772,10 @@ path = "tests/template_literal_empty_placeholder_tests.rs"
 [[test]]
 name = "object_element_access_diagnostics_tests"
 path = "tests/object_element_access_diagnostics_tests.rs"
+
+[[test]]
+name = "intersection_index_signature_fingerprint_tests"
+path = "tests/intersection_index_signature_fingerprint_tests.rs"
 
 [lints]
 workspace = true

@@ -235,6 +235,24 @@ function f() {
     }
 
     #[test]
+    fn function_scope_let_var_function_conflict_uses_duplicate_identifier_only() {
+        let source = "function f() {\n    let x1;\n    var x1;\n    function x1() { }\n}";
+        let diagnostics = crate::test_utils::check_source_diagnostics(source);
+        let ts2300: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+        let ts2451: Vec<_> = diagnostics.iter().filter(|d| d.code == 2451).collect();
+
+        assert_eq!(
+            ts2300.len(),
+            3,
+            "expected TS2300 on all three declarations, got: {diagnostics:#?}"
+        );
+        assert!(
+            ts2451.is_empty(),
+            "did not expect TS2451 when the conflict also has a function declaration, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
     fn only_ts2481_errors_present() {
         // Ensure ONLY TS2481 is emitted for this case, nothing else
         let source = "{\n    const x = 0;\n    var x = \"\";\n}";
@@ -454,6 +472,32 @@ var v: Pair<1, 2>;
             ts2403.len(),
             0,
             "No TS2403 expected for type alias application: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn array_shorthand_redecl_no_false_ts2403() {
+        let source = r#"
+interface Bullean { }
+interface BulleanConstructor {
+    new(v1?: any): Bullean;
+    <T>(v2?: T): v2 is T;
+}
+declare var Bullean: BulleanConstructor;
+declare let realanys: any[];
+var ys: any[];
+var ys = realanys.filter(Boolean);
+var foos: Array<boolean>;
+var foos = [true, true, false, null].filter((thing): thing is boolean => thing !== null);
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for Array<T> vs T[] redecl: {ts2403:?}"
         );
     }
 

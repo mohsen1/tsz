@@ -299,6 +299,15 @@ impl<'a> CheckerState<'a> {
             }
 
             for source_file in &arena.source_files {
+                if Self::jsdoc_source_file_is_external_module(
+                    &self.ctx,
+                    file_idx,
+                    arena,
+                    binder,
+                    source_file,
+                ) {
+                    continue;
+                }
                 if use_typedef_prescan
                     && !Self::source_file_has_jsdoc_typedef_named(source_file, name)
                 {
@@ -334,6 +343,42 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn jsdoc_source_file_is_external_module(
+        ctx: &crate::context::CheckerContext<'_>,
+        file_idx: usize,
+        arena: &tsz_parser::parser::NodeArena,
+        binder: &tsz_binder::BinderState,
+        source_file: &SourceFileData,
+    ) -> bool {
+        if binder.is_external_module() {
+            return true;
+        }
+
+        if let Some(is_external_module_by_file) = ctx.is_external_module_by_file.as_ref()
+            && let Some(is_external_module) = is_external_module_by_file.get(&source_file.file_name)
+        {
+            return *is_external_module;
+        }
+
+        if ctx
+            .all_binders
+            .as_ref()
+            .and_then(|binders| binders.get(file_idx))
+            .is_some_and(|binder| binder.is_external_module())
+        {
+            return true;
+        }
+
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            arena.get(stmt_idx).is_some_and(|stmt| {
+                stmt.kind == syntax_kind_ext::IMPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            })
+        })
     }
 
     pub(crate) fn source_file_data_for_node(

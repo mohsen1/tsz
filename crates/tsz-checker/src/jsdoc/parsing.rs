@@ -141,6 +141,23 @@ impl<'a> CheckerState<'a> {
         parts
     }
 
+    pub(super) fn split_jsdoc_type_param_constraint(type_param: &str) -> (&str, Option<&str>) {
+        let trimmed = type_param.trim();
+        for (idx, _) in trimmed.match_indices("extends") {
+            let after_idx = idx + "extends".len();
+            let before = trimmed[..idx].chars().next_back();
+            let after = trimmed[after_idx..].chars().next();
+            if before.is_some_and(char::is_whitespace) && after.is_some_and(char::is_whitespace) {
+                let name = trimmed[..idx].trim();
+                let constraint = trimmed[after_idx..].trim();
+                if !name.is_empty() && !constraint.is_empty() {
+                    return (name, Some(constraint));
+                }
+            }
+        }
+        (trimmed, None)
+    }
+
     /// Split parameter list by commas at the top level.
     pub(super) fn split_top_level_params(s: &str) -> Vec<&str> {
         let mut parts = Vec::new();
@@ -277,31 +294,25 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
-        let typedef_pos = jsdoc.find("@typedef");
-        let mut tag_pos = jsdoc.find("@type");
-        while let Some(pos) = tag_pos {
-            let next_char = jsdoc[pos + "@type".len()..].chars().next();
-            if !next_char.is_some_and(|c| c.is_alphabetic()) {
-                if let Some(td_pos) = typedef_pos
-                    && td_pos < pos
-                {
-                    let typedef_rest = &jsdoc[td_pos + "@typedef".len()..pos];
-                    let mut has_non_object_base = false;
-                    if let Some(open) = typedef_rest.find('{')
-                        && let Some(close) = typedef_rest[open..].find('}')
-                    {
-                        let base = typedef_rest[open + 1..open + close].trim();
-                        if base != "Object" && base != "object" && !base.is_empty() {
-                            has_non_object_base = true;
-                        }
-                    }
-                    if !has_non_object_base {
-                        return None; // The @type is absorbed by the @typedef
-                    }
+        let typedef_pos = Self::jsdoc_tag_offset(jsdoc, "typedef");
+        let tag_pos = Self::jsdoc_tag_offset(jsdoc, "type");
+        if let Some(pos) = tag_pos
+            && let Some(td_pos) = typedef_pos
+            && td_pos < pos
+        {
+            let typedef_rest = &jsdoc[td_pos + "@typedef".len()..pos];
+            let mut has_non_object_base = false;
+            if let Some(open) = typedef_rest.find('{')
+                && let Some(close) = typedef_rest[open..].find('}')
+            {
+                let base = typedef_rest[open + 1..open + close].trim();
+                if base != "Object" && base != "object" && !base.is_empty() {
+                    has_non_object_base = true;
                 }
-                break;
             }
-            tag_pos = jsdoc[pos + 1..].find("@type").map(|p| p + pos + 1);
+            if !has_non_object_base {
+                return None; // The @type is absorbed by the @typedef
+            }
         }
         let tag_pos = tag_pos?;
         let rest = &jsdoc[tag_pos + "@type".len()..];
@@ -609,6 +620,10 @@ impl<'a> CheckerState<'a> {
                 // `jsdoc_template_type_params` — see that fn's comment.
                 if name == "in" || name == "out" {
                     continue;
+                }
+
+                if parsed_any && !saw_comma {
+                    break;
                 }
 
                 let mut lookahead = cursor;
@@ -992,7 +1007,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if let Some((imported_name, local_name)) =
-                            Self::parse_jsdoc_named_import_alias(part)
+                            Self::split_jsdoc_import_as_keyword(part)
                         {
                             results.push((
                                 local_name.to_string(),
@@ -1003,7 +1018,8 @@ impl<'a> CheckerState<'a> {
                             results.push((part.to_string(), specifier.clone(), part.to_string()));
                         }
                     }
-                } else if let Some(ns_name) = Self::strip_jsdoc_import_namespace_alias(before_from)
+                } else if let Some(("*", ns_name)) =
+                    Self::split_jsdoc_import_as_keyword(before_from)
                 {
                     let ns_name = ns_name.to_string();
                     if !ns_name.is_empty() {
@@ -1018,22 +1034,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         results
-    }
-
-    fn strip_jsdoc_import_namespace_alias(before_from: &str) -> Option<&str> {
-        let after_star = before_from.strip_prefix('*')?;
-        if !after_star.chars().next().is_some_and(char::is_whitespace) {
-            return None;
-        }
-        let mut pieces = after_star.split_whitespace();
-        if pieces.next()? != "as" {
-            return None;
-        }
-        let ns_name = pieces.next()?;
-        if pieces.next().is_some() {
-            return None;
-        }
-        Some(ns_name)
     }
 
     fn find_jsdoc_import_from_keyword(rest: &str) -> Option<usize> {
@@ -1083,17 +1083,34 @@ impl<'a> CheckerState<'a> {
         ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
-    fn parse_jsdoc_named_import_alias(part: &str) -> Option<(&str, &str)> {
-        let mut pieces = part.split_whitespace();
-        let imported_name = pieces.next()?;
-        if pieces.next()? != "as" {
-            return None;
+    /// Split a JSDoc `@import` clause at the `as` keyword.
+    ///
+    /// Recognizes the keyword when it is bounded on both sides by any JS
+    /// whitespace, matching tsc's tokenization. Returns `None` if no
+    /// whitespace-bounded `as` appears, or if either side would be empty.
+    fn split_jsdoc_import_as_keyword(part: &str) -> Option<(&str, &str)> {
+        let mut search_start = 0;
+        while let Some(rel) = part[search_start..].find("as") {
+            let abs = search_start + rel;
+            let before_ok = part[..abs]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace);
+            let after_idx = abs + 2;
+            let after_ok = part[after_idx..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace);
+            if before_ok && after_ok {
+                let imported = part[..abs].trim();
+                let local = part[after_idx..].trim();
+                if !imported.is_empty() && !local.is_empty() {
+                    return Some((imported, local));
+                }
+            }
+            search_start = abs + 2;
         }
-        let local_name = pieces.next()?;
-        if pieces.next().is_some() {
-            return None;
-        }
-        Some((imported_name, local_name))
+        None
     }
 
     pub(super) fn parse_jsdoc_typedef_definition(line: &str) -> Option<(String, Option<String>)> {
@@ -1201,8 +1218,25 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let mut depth = 0usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
         for (idx, ch) in line.char_indices() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
             match ch {
+                '"' | '\'' | '`' => quote = Some(ch),
                 '{' => depth += 1,
                 '}' => {
                     depth = depth.saturating_sub(1);
@@ -1214,6 +1248,124 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod jsdoc_import_as_whitespace_tests {
+    use crate::state::CheckerState;
+
+    fn parse(rest: &str) -> Vec<(String, String, String)> {
+        CheckerState::parse_jsdoc_import_tag(rest)
+    }
+
+    #[test]
+    fn import_named_alias_with_space() {
+        let imports = parse("{ Foo as LocalFoo } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "LocalFoo".to_string(),
+                "./dep".to_string(),
+                "Foo".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn import_named_alias_with_tab() {
+        let imports = parse("{ Foo as\tLocalFoo } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "LocalFoo".to_string(),
+                "./dep".to_string(),
+                "Foo".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn import_named_alias_with_mixed_whitespace() {
+        let imports = parse("{ Foo \tas \tLocalFoo } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "LocalFoo".to_string(),
+                "./dep".to_string(),
+                "Foo".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn import_namespace_alias_with_tab() {
+        let imports = parse("*\tas\tNS from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![("NS".to_string(), "./dep".to_string(), "*".to_string())]
+        );
+    }
+
+    #[test]
+    fn import_namespace_alias_with_space() {
+        let imports = parse("* as NS from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![("NS".to_string(), "./dep".to_string(), "*".to_string())]
+        );
+    }
+
+    #[test]
+    fn import_named_no_alias_unchanged() {
+        let imports = parse("{ Foo, Bar } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![
+                ("Foo".to_string(), "./dep".to_string(), "Foo".to_string(),),
+                ("Bar".to_string(), "./dep".to_string(), "Bar".to_string(),),
+            ]
+        );
+    }
+
+    #[test]
+    fn import_named_alias_does_not_match_inside_identifier() {
+        // `Class` contains the substring "as" but is not a renaming.
+        let imports = parse("{ Class } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "Class".to_string(),
+                "./dep".to_string(),
+                "Class".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn import_named_alias_with_identifier_containing_as() {
+        let imports = parse("{ Class as Klass } from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "Klass".to_string(),
+                "./dep".to_string(),
+                "Class".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn import_default_unchanged() {
+        let imports = parse("Foo from \"./dep\"");
+        assert_eq!(
+            imports,
+            vec![(
+                "Foo".to_string(),
+                "./dep".to_string(),
+                "default".to_string(),
+            )]
+        );
     }
 }
 

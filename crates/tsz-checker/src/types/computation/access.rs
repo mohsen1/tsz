@@ -1180,6 +1180,20 @@ impl<'a> CheckerState<'a> {
                         );
                         use_index_signature_check = false;
                         Some(TypeId::ERROR)
+                    } else if !self.is_super_expression(access.expression)
+                        && self.property_access_is_current_class_construction_recovery(
+                            access.expression,
+                            object_type_for_access,
+                        )
+                        && let Some((class_idx, is_static_access)) =
+                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                        && let Some(member_type) = self
+                            .summarize_class_chain(class_idx)
+                            .lookup(&property_name, is_static_access, true)
+                            .map(|member| member.type_id)
+                    {
+                        use_index_signature_check = false;
+                        Some(member_type)
                     } else {
                         // TS2339 parity for element access on `typeof const enum` with a missing
                         // string-literal member. Const enums do not have reverse mappings, so they

@@ -212,7 +212,10 @@ impl ParserState {
                     break;
                 }
                 // Missing comma - emit error and continue parsing for recovery
-                self.parse_expected(SyntaxKind::CommaToken);
+                self.parse_error_at_current_token(
+                    "',' expected.",
+                    tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                );
 
                 // Skip tokens that cannot start a binding element so the
                 // next loop iteration sees either a valid element start, `}`

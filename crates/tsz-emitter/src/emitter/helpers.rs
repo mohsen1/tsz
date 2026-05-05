@@ -986,6 +986,12 @@ impl<'a> Printer<'a> {
         let Some(name) = self.arena.identifier_text_owned(idx) else {
             return false;
         };
+        if self
+            .namespace_current_class_fn_enum_names
+            .contains(name.as_str())
+        {
+            return false;
+        }
 
         let namespace_matches = |namespace: &String| {
             namespace == &parent

@@ -342,6 +342,27 @@ fn template_substitution_comment_with_dollar_brace_is_preserved() {
 }
 
 #[test]
+fn template_literal_comment_text_is_not_reemitted() {
+    let source = "const s = `// not a comment`;\nconst n = 1;\n";
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("const s = `// not a comment`;"),
+        "Template literal text should stay in place.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const n = 1;"),
+        "Following statement should stay intact.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("// not a comment").count(),
+        1,
+        "Template literal text must not be collected and emitted as a comment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn parenthesized_expression_open_paren_comment_has_no_extra_space_after_block() {
     let source = "var j;\nvar f: () => any;\n<any>( /* Preserve */ j = f());\n";
     let output = parse_and_print_with_opts(source, PrintOptions::es6());

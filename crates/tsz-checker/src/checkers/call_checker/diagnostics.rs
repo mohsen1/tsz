@@ -135,6 +135,9 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+            if Self::should_preserve_speculative_call_diagnostic(diag) {
+                return true;
+            }
             !callback_spans
                 .iter()
                 .any(|(start, end)| diag.start >= *start && diag.start < *end)
@@ -524,6 +527,9 @@ impl<'a> CheckerState<'a> {
             .diagnostics_between(from_snap, to_snap)
             .iter()
             .filter(|diag| {
+                if Self::should_preserve_speculative_call_diagnostic(diag) {
+                    return true;
+                }
                 !args.iter().any(|&arg_idx| {
                     let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
                         return false;

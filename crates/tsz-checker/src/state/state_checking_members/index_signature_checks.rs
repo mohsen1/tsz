@@ -1294,17 +1294,17 @@ impl<'a> CheckerState<'a> {
         let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
             return false;
         };
-
         match expr_node.kind {
             ek if ek == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
                     return false;
                 };
-                self.ctx
-                    .arena
-                    .get_identifier_at(access.expression)
-                    .is_some_and(|ident| ident.escaped_text.as_str() == "Symbol")
-                    && self.is_identifier_reference_to_global_symbol(access.expression)
+                let Some(ident) = self.ctx.arena.get_identifier_at(access.expression) else {
+                    return false;
+                };
+                let is_global_symbol =
+                    self.known_global_identifier_resolves_to_lib_value(access.expression, "Symbol");
+                ident.escaped_text.as_str() == "Symbol" && is_global_symbol
             }
             ek if ek == tsz_scanner::SyntaxKind::Identifier as u16 => {
                 let expr_type = self.get_type_of_node(computed.expression);

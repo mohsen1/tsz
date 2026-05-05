@@ -1190,11 +1190,15 @@ impl<'a> CheckerState<'a> {
             return Some((class_idx, true));
         }
 
-        if object_type != TypeId::ANY
-            && object_type != TypeId::ERROR
-            && let Some(class_idx) = self.get_class_decl_from_type(object_type)
-        {
-            return Some((class_idx, false));
+        if object_type != TypeId::ANY && object_type != TypeId::ERROR {
+            if let Some(class_idx) = self.get_class_decl_from_type(object_type) {
+                return Some((class_idx, false));
+            }
+            if let Some(sym_id) = self.property_access_receiver_symbol(object_type)
+                && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+            {
+                return Some((class_idx, false));
+            }
         }
 
         // `this: T extends Foo` in a free function: object_type is the type
@@ -1217,7 +1221,7 @@ impl<'a> CheckerState<'a> {
             if let Some(class_idx) = self.get_class_decl_from_type(constraint) {
                 return Some((class_idx, false));
             }
-            if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(constraint)
+            if let Some(sym_id) = self.property_access_receiver_symbol(constraint)
                 && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
             {
                 return Some((class_idx, false));

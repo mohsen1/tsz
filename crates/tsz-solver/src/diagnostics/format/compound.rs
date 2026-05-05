@@ -483,7 +483,7 @@ impl<'a> TypeFormatter<'a> {
             let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
                 "{ro}[{key_name}: string]: {}",
-                self.format(idx.value_type)
+                self.format_index_signature_value(idx.value_type)
             ));
         }
         if let Some(ref idx) = shape.number_index {
@@ -494,7 +494,7 @@ impl<'a> TypeFormatter<'a> {
             let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
                 "{ro}[{key_name}: number]: {}",
-                self.format(idx.value_type)
+                self.format_index_signature_value(idx.value_type)
             ));
         }
         // Sort properties by declaration_order for display (preserves source order)
@@ -508,6 +508,14 @@ impl<'a> TypeFormatter<'a> {
         }
 
         self.format_object_parts(parts)
+    }
+
+    fn format_index_signature_value(&mut self, value_type: TypeId) -> String {
+        let previous_skip = self.skip_intersection_display_alias;
+        self.skip_intersection_display_alias = true;
+        let result = self.format(value_type).into_owned();
+        self.skip_intersection_display_alias = previous_skip;
+        result
     }
 
     pub(super) fn format_union(&mut self, members: &[TypeId]) -> String {

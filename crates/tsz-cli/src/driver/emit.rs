@@ -567,6 +567,11 @@ pub(crate) fn emit_outputs(
         if bundled.ends_with(new_line) {
             bundled.truncate(bundled.len() - new_line.len());
         }
+        if matches!(context.options.printer.module, ModuleKind::AMD)
+            && context.options.printer.always_strict
+        {
+            prepend_use_strict_to_bundle(&mut bundled, new_line);
+        }
         outputs.push(OutputFile {
             path: bundle_path,
             contents: bundled,
@@ -584,6 +589,25 @@ pub(crate) fn emit_outputs(
     }
 
     Ok((outputs, emit_diagnostics))
+}
+
+fn prepend_use_strict_to_bundle(contents: &mut String, new_line: &str) {
+    let directive = format!("\"use strict\";{new_line}");
+    if contents.starts_with(&directive) {
+        return;
+    }
+
+    if contents.starts_with("#!") {
+        if let Some(line_end) = contents.find('\n') {
+            let insert_at = line_end + 1;
+            if !contents[insert_at..].starts_with(&directive) {
+                contents.insert_str(insert_at, &directive);
+            }
+        }
+        return;
+    }
+
+    contents.insert_str(0, &directive);
 }
 
 type ConstEnumValues = FxHashMap<String, EnumValue>;

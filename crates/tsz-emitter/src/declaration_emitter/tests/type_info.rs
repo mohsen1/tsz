@@ -343,8 +343,11 @@ export class Derived extends mixin(Base) {}
 #[test]
 fn test_default_export_class_extends_expression_uses_synthetic_base_alias() {
     let source = r#"
+interface Greeter {
+    getGreeting(): string;
+}
 interface GreeterConstructor {
-    new (): {};
+    new (): Greeter;
 }
 declare function getGreeterBase(): GreeterConstructor;
 export default class extends getGreeterBase() {}
@@ -380,6 +383,10 @@ export default class extends getGreeterBase() {}
         DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
     let output = emitter.emit(root);
 
+    assert!(
+        output.contains("interface Greeter {"),
+        "Expected synthetic base alias dependencies to retain constructor return interface: {output}"
+    );
     assert!(
         output.contains("declare const default_base: GreeterConstructor;"),
         "Expected default export class extends expression to synthesize a default_base alias: {output}"
@@ -1311,5 +1318,46 @@ fn test_constructor_with_infer_in_extends_renders_as_arrow_with_infer() {
         printed.contains("? C : "),
         "Expected the true branch to reference the inferred placeholder by bare \
          name `C`, not `infer C`: {printed}"
+    );
+}
+
+#[test]
+fn test_inexact_optional_mapped_intersection_simplifies_for_inferred_emit() {
+    let actual = r#"(x: {} & {
+    [K in "foo" | "bar" | "baz" as undefined extends {
+    foo?: string;
+    bar: number;
+    baz: undefined;
+}[keyof unknown] ? keyof unknown : never]+?: undefined extends {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown] ? {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown] | undefined : {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown];
+} & {
+    [K in "foo" | "bar" | "baz" as undefined extends {
+    foo?: string;
+    bar: number;
+    baz: undefined;
+}[keyof unknown] ? never : keyof unknown]: {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown];
+}) => null"#;
+
+    let simplified = DeclarationEmitter::simplify_inexact_optional_mapped_intersection_text(actual)
+        .expect("expected inexact optional mapped intersection to simplify");
+
+    assert_eq!(
+        simplified,
+        "(x: {\n    foo?: string | undefined;\n    baz?: undefined;\n} & {\n    bar: number;\n}) => null"
     );
 }

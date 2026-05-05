@@ -520,47 +520,16 @@ impl<'a> CheckerState<'a> {
 
         let comment_text = comment.get_text(source_text);
         for tag in ["augments", "extends"] {
-            let needle = format!("@{tag}");
-            for (match_pos, _) in comment_text.match_indices(&needle) {
-                let after = match_pos + needle.len();
-                if after >= comment_text.len() {
-                    continue;
-                }
-                let next_ch = comment_text[after..]
-                    .chars()
-                    .next()
-                    .expect("after < len checked above");
-                if next_ch.is_ascii_alphanumeric() {
-                    continue;
-                }
+            for match_pos in Self::jsdoc_tag_offsets(comment_text, tag) {
+                let after = match_pos + tag.len() + 1;
                 let rest = comment_text[after..].trim_start();
                 if rest.is_empty() {
                     continue;
                 }
 
                 let rest_offset = rest.as_ptr() as usize - comment_text.as_ptr() as usize;
-                if let Some(inner) = rest.strip_prefix('{') {
-                    // Walk brace-balanced so nested `{...}` inside the
-                    // annotation (e.g. `@extends {A<{x:number}>}`) are kept
-                    // intact. The previous `rest.find('}')` truncated at the
-                    // inner closing `}` and silently dropped the remainder.
-                    let mut depth = 1usize;
-                    let mut close = None;
-                    for (idx, ch) in inner.char_indices() {
-                        match ch {
-                            '{' => depth += 1,
-                            '}' => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    close = Some(idx);
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    let close = close?;
-                    let raw = &inner[..close];
+                if rest.starts_with('{') {
+                    let (raw, _after_type) = Self::parse_jsdoc_curly_type_expr(rest)?;
                     let type_expr = raw.trim();
                     if type_expr.is_empty() {
                         continue;

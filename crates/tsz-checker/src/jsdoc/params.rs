@@ -2483,7 +2483,6 @@ impl<'a> CheckerState<'a> {
     /// Supports simple forms like:
     /// - `@template T`
     /// - `@template T,U`
-    /// - `@template T U`
     /// - `@template const T`
     /// - `@template const T, U` (both T and U are const per tsc)
     pub(crate) fn jsdoc_template_type_params(jsdoc: &str) -> Vec<(String, bool)> {
@@ -2497,36 +2496,82 @@ impl<'a> CheckerState<'a> {
             // In tsc, `@template const T, U` makes ALL type params on
             // that line const.
             let mut saw_const = false;
-            for token in rest.split([',', ' ', '\t']) {
-                let name = token.trim();
-                if name.is_empty() {
-                    continue;
+            let mut segment_start = 0usize;
+            let mut depth = 0usize;
+            let mut push_segment = |segment: &str, saw_const: &mut bool| {
+                let bytes = segment.as_bytes();
+                let mut cursor = 0usize;
+                while cursor < bytes.len() {
+                    while cursor < bytes.len() && (bytes[cursor] as char).is_ascii_whitespace() {
+                        cursor += 1;
+                    }
+                    if cursor >= bytes.len() {
+                        break;
+                    }
+                    if bytes[cursor] as char == '{' {
+                        let mut brace_depth = 1usize;
+                        cursor += 1;
+                        while cursor < bytes.len() && brace_depth > 0 {
+                            match bytes[cursor] as char {
+                                '{' => brace_depth += 1,
+                                '}' => brace_depth = brace_depth.saturating_sub(1),
+                                _ => {}
+                            }
+                            cursor += 1;
+                        }
+                        continue;
+                    }
+
+                    let start = cursor;
+                    while cursor < bytes.len() {
+                        let ch = bytes[cursor] as char;
+                        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                            cursor += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if start == cursor {
+                        break;
+                    }
+
+                    let name = &segment[start..cursor];
+                    // Track `const` modifier keyword (e.g., `@template const T`).
+                    // tsc treats `const` as a type parameter modifier, not a name.
+                    if name == "const" {
+                        *saw_const = true;
+                        continue;
+                    }
+                    // Skip variance modifier keywords (e.g., `@template in T`,
+                    // `@template out T`, `@template in out T`). tsc treats `in`
+                    // and `out` as type-parameter modifiers, not names. Without
+                    // this skip, downstream consumers see an extra unbound name
+                    // like `in` and emit cascading TS2314/TS7006 false positives.
+                    // (TS1274 — `'in' modifier can only appear on a type
+                    // parameter of a class, interface or type alias` — is
+                    // emitted by a separate validator and is not in scope here.)
+                    if name == "in" || name == "out" {
+                        continue;
+                    }
+                    if !out.iter().any(|(existing, _)| existing == name) {
+                        out.push((name.to_string(), *saw_const));
+                    }
+                    break;
                 }
-                // Track `const` modifier keyword (e.g., `@template const T`).
-                // tsc treats `const` as a type parameter modifier, not a name.
-                if name == "const" {
-                    saw_const = true;
-                    continue;
-                }
-                // Skip variance modifier keywords (e.g., `@template in T`,
-                // `@template out T`, `@template in out T`). tsc treats `in`
-                // and `out` as type-parameter modifiers, not names. Without
-                // this skip, downstream consumers see an extra unbound name
-                // like `in` and emit cascading TS2314/TS7006 false positives.
-                // (TS1274 — `'in' modifier can only appear on a type
-                // parameter of a class, interface or type alias` — is
-                // emitted by a separate validator and is not in scope here.)
-                if name == "in" || name == "out" {
-                    continue;
-                }
-                if name
-                    .chars()
-                    .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                    && !out.iter().any(|(existing, _)| existing == name)
-                {
-                    out.push((name.to_string(), saw_const));
+            };
+
+            for (idx, ch) in rest.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => depth = depth.saturating_sub(1),
+                    ',' if depth == 0 => {
+                        push_segment(&rest[segment_start..idx], &mut saw_const);
+                        segment_start = idx + ch.len_utf8();
+                    }
+                    _ => {}
                 }
             }
+            push_segment(&rest[segment_start..], &mut saw_const);
         }
         out
     }

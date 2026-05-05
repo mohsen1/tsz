@@ -2188,6 +2188,30 @@ type T = Foo<?string>;
 }
 
 #[test]
+fn test_type_argument_with_jsdoc_prefix_type_simplifies_ts17020_suggestion() {
+    let source = r#"
+type T = Foo<?undefined>;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostic = parser
+        .get_diagnostics()
+        .iter()
+        .find(|d| d.code == 17020)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS17020 for `Foo<?undefined>`, got {:?}",
+                parser.get_diagnostics()
+            )
+        });
+    assert_eq!(
+        diagnostic.message,
+        "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'null | undefined'?"
+    );
+}
+
+#[test]
 fn test_expression_type_argument_with_empty_jsdoc_wildcard_emits_ts8020_only() {
     let source = r#"
 const WhatFoo = foo<?>;
@@ -3282,6 +3306,40 @@ fn test_prefix_question_emits_ts17020() {
 }
 
 #[test]
+fn test_prefix_question_simplifies_ts17020_suggestions() {
+    for (input, expected) in [
+        ("unknown", "unknown"),
+        ("never", "never"),
+        ("void", "void"),
+        ("undefined", "null | undefined"),
+        ("null", "null | undefined"),
+        ("number", "number | null | undefined"),
+    ] {
+        let source = format!("let x: ?{input};");
+        let mut parser = ParserState::new(format!("{input}.ts"), source);
+        let _root = parser.parse_source_file();
+
+        let diagnostic = parser
+            .get_diagnostics()
+            .iter()
+            .find(|d| d.code == 17020)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected TS17020 for ?{input}, got {:?}",
+                    parser.get_diagnostics()
+                )
+            });
+        assert_eq!(
+            diagnostic.message,
+            format!(
+                "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{expected}'?"
+            ),
+            "wrong TS17020 suggestion for ?{input}"
+        );
+    }
+}
+
+#[test]
 fn test_multiple_nullable_types() {
     // Multiple nullable types in different positions
     let source = r"
@@ -4219,6 +4277,67 @@ fn test_array_terminated_by_close_bracket_keeps_clean_close() {
     assert!(
         diagnostics.is_empty(),
         "well-formed array literal must not emit diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_parameter_list_stray_colon_recovers_through_object_binding_tail() {
+    // Regression for `parametersSyntaxErrorNoCrash1.ts`. After the stray second
+    // colon, tsc keeps parsing the following `{ return arg; }` as a malformed
+    // object binding parameter, producing the full recovery tail.
+    let source = "\n// https://github.com/microsoft/TypeScript/issues/59422\n\nfunction identity<T>(arg: T: T {\n    return arg;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let line_map = LineMap::build(source);
+
+    let mut fingerprints: Vec<(u32, u32, u32, String)> = diagnostics
+        .iter()
+        .map(|d| {
+            let pos = line_map.offset_to_position(d.start, source);
+            (d.code, pos.line + 1, pos.character + 1, d.message.clone())
+        })
+        .collect();
+    fingerprints.sort();
+
+    let mut expected = vec![
+        (
+            diagnostic_codes::EXPECTED,
+            4,
+            28,
+            "',' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            4,
+            32,
+            "',' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            5,
+            12,
+            "':' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            5,
+            15,
+            "',' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            6,
+            2,
+            "')' expected.".to_string(),
+        ),
+    ];
+    expected.sort();
+
+    assert_eq!(
+        fingerprints, expected,
+        "parameter-list recovery fingerprints must match tsc, got: {diagnostics:?}"
     );
 }
 

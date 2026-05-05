@@ -480,6 +480,50 @@ impl<'a> ES5ClassTransformer<'a> {
         self.source_text = Some(source_text);
     }
 
+    /// Append the property's immediately-preceding leading block comment (if any)
+    /// to `body`. When a class property's initializer is lifted into the
+    /// constructor, the comment that decorated the property in source must move
+    /// with it — otherwise the user-authored documentation silently disappears.
+    ///
+    /// We scan backwards from the property's `pos` through whitespace and
+    /// newlines and, if the previous bytes form `*/`, capture the enclosing
+    /// `/* ... */` (or `/** ... */`) span as a leading `Raw` IR node. This
+    /// covers the common JSDoc case targeted by this fix; line comments before
+    /// properties are still handled by the existing trivia logic when they
+    /// happen to land in the surrounding leading-comment range.
+    fn emit_property_leading_comment(&self, body: &mut Vec<IRNode>, prop_idx: NodeIndex) {
+        let Some(prop_node) = self.arena.get(prop_idx) else {
+            return;
+        };
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let mut i = prop_node.pos as usize;
+        if i > bytes.len() {
+            return;
+        }
+        while i > 0 && matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r') {
+            i -= 1;
+        }
+        if i < 2 || &bytes[i - 2..i] != b"*/" {
+            return;
+        }
+        let comment_end = i;
+        let mut start = i.saturating_sub(2);
+        loop {
+            if start + 2 <= bytes.len() && &bytes[start..start + 2] == b"/*" {
+                let comment_text = &text[start..comment_end];
+                body.push(IRNode::Raw(comment_text.to_string().into()));
+                return;
+            }
+            if start == 0 {
+                return;
+            }
+            start -= 1;
+        }
+    }
+
     fn emit_leading_statement_comments(
         &self,
         body: &mut Vec<IRNode>,
@@ -495,12 +539,29 @@ impl<'a> ES5ClassTransformer<'a> {
             return;
         }
         let segment = &source_text[start..end];
+        let mut block_lines: Option<Vec<String>> = None;
         for line in segment.lines() {
+            if let Some(ref mut acc) = block_lines {
+                acc.push(line.trim_end().to_string());
+                if line.contains("*/") {
+                    let collected = block_lines.take().expect("block was active");
+                    body.push(IRNode::Raw(collected.join("\n").into()));
+                }
+                continue;
+            }
+
             let trimmed = line.trim_start();
-            let is_comment =
-                trimmed.starts_with("//") || (trimmed.starts_with("/*") && trimmed.ends_with("*/"));
-            if is_comment {
+            if trimmed.starts_with("//") {
                 body.push(IRNode::Raw(trimmed.to_string().into()));
+            } else if trimmed.starts_with("/*") {
+                if trimmed.contains("*/") {
+                    body.push(IRNode::Raw(trimmed.to_string().into()));
+                } else {
+                    // Begin a multi-line block comment. Preserve indentation on
+                    // the opening line so subsequent lines retain their relative
+                    // alignment when rejoined.
+                    block_lines = Some(vec![line.trim_end().to_string()]);
+                }
             }
         }
     }
@@ -2008,6 +2069,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                     // Instance property initializations
                     for &prop_idx in &instance_props {
+                        self.emit_property_leading_comment(&mut ctor_body, prop_idx);
                         if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
                             ctor_body.push(ir);
                         }
@@ -2030,6 +2092,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 // Instance property initializations
                 for &prop_idx in &instance_props {
+                    self.emit_property_leading_comment(&mut ctor_body, prop_idx);
                     if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false) {
                         ctor_body.push(ir);
                     }
@@ -2160,6 +2223,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // Emit instance property initializers
         for &prop_idx in instance_props {
+            self.emit_property_leading_comment(body, prop_idx);
             if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
                 body.push(ir);
             }
@@ -2240,6 +2304,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // Emit instance property initializers
         for &prop_idx in instance_props {
+            self.emit_property_leading_comment(body, prop_idx);
             if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false) {
                 body.push(ir);
             }

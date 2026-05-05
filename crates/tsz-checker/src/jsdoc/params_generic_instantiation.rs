@@ -80,10 +80,7 @@ impl<'a> CheckerState<'a> {
                     if raw.is_empty() {
                         continue;
                     }
-                    let name = raw
-                        .split_once(" extends ")
-                        .map_or(raw, |(name, _)| name)
-                        .trim();
+                    let (name, _) = Self::split_jsdoc_type_param_constraint(raw);
                     if !name.is_empty() {
                         template_params.push(name.to_string());
                     }

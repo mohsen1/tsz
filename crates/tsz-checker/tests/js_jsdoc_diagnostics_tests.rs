@@ -269,6 +269,43 @@ value.y;
 }
 
 #[test]
+fn checked_js_jsdoc_param_string_literal_type_keeps_closing_brace() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"
+// @ts-check
+
+/**
+ * @param {"}"} x
+ */
+function takesBrace(x) {}
+
+takesBrace("not-brace");
+            "#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for assigning a different string to @param string-literal brace type. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 8024) && !has_error(&diagnostics, 7006),
+        "JSDoc @param type should not be truncated into a bogus name or any parameter. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn checked_js_jsdoc_typeof_import_rejects_backtick_module_specifier() {
     let diagnostics = compile_named_files(
         &[
@@ -308,6 +345,40 @@ ns.value;
     assert!(
         !has_error(&diagnostics, 2339),
         "Invalid JSDoc typeof import syntax should not resolve the module namespace and emit downstream TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_template_whitespace_does_not_declare_second_name() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"
+// @ts-check
+
+/**
+ * @template T U
+ * @param {U} y
+ * @returns {U}
+ */
+function f(y) { return y; }
+            "#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2304 && message.contains("'U'")),
+        "Expected whitespace-only @template delimiter to leave U unresolved. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

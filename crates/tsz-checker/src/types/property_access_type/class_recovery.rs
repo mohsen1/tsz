@@ -1,12 +1,13 @@
 //! Recovery helpers for property access during class construction.
 
+use crate::classes_domain::class_summary::ClassChainSummary;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn property_access_is_current_class_construction_recovery(
+    pub(crate) fn property_access_is_current_class_construction_recovery(
         &self,
         expression: NodeIndex,
         receiver_type: TypeId,
@@ -26,7 +27,7 @@ impl<'a> CheckerState<'a> {
         self.property_access_receiver_symbol(receiver_type) == Some(class_sym)
     }
 
-    pub(super) fn property_access_receiver_symbol(
+    pub(crate) fn property_access_receiver_symbol(
         &self,
         type_id: TypeId,
     ) -> Option<tsz_binder::SymbolId> {
@@ -34,6 +35,23 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::application_info(self.ctx.types, type_id)
                 .and_then(|(base, _)| self.ctx.resolve_type_to_symbol_id(base))
         })
+    }
+
+    pub(super) fn recover_property_from_class_chain_summary(
+        &self,
+        expression: NodeIndex,
+        receiver_type: TypeId,
+        resolved_class_access: Option<(NodeIndex, bool)>,
+        summary: Option<&ClassChainSummary>,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        if !self.property_access_is_current_class_construction_recovery(expression, receiver_type) {
+            return None;
+        }
+        let (_, is_static_access) = resolved_class_access?;
+        summary?
+            .member_info(property_name, is_static_access, true)
+            .map(|member| member.type_id)
     }
 
     fn property_access_is_in_class_property_initializer(&self, idx: NodeIndex) -> bool {

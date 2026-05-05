@@ -3275,6 +3275,42 @@ fn test_package_imports_exact_mapping_marks_ts_extension_usage_when_key_ends_wit
 }
 
 #[test]
+fn test_package_imports_array_falls_back_after_missing_target() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_test_package_imports_array_fallback");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("package.json"),
+        r##"{
+            "name": "pkg",
+            "type": "module",
+            "imports": {
+                "#x": ["./missing.d.ts", "./ok.d.ts"]
+            }
+        }"##,
+    )
+    .unwrap();
+    fs::write(dir.join("ok.d.ts"), "export declare const value: 1;").unwrap();
+    fs::write(dir.join("main.ts"), "import { value } from '#x'; value;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver
+        .resolve("#x", &dir.join("main.ts"), Span::new(0, 3))
+        .unwrap();
+
+    assert_eq!(result.resolved_path, dir.join("ok.d.ts"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_package_imports_pattern_does_not_mark_ts_extension_when_key_lacks_ts_suffix() {
     use std::fs;
 
@@ -4499,6 +4535,49 @@ fn test_node16_direct_index_file_gets_extension_suggestion() {
         }
         other => panic!("Expected TS2835 with suggestion, got {:?}", other.err()),
     }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_node16_module_suffix_index_file_emits_ts2834_without_suggestion() {
+    // `./pkg` resolves through `pkg/index.native.ts` via moduleSuffixes. Adding
+    // `./pkg.js` would not reach that file, so this must be TS2834 rather than
+    // TS2835 with a suggested extension.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_node16_modulesuffix_index_ts2834");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("pkg")).unwrap();
+
+    fs::write(dir.join("main.mts"), "import { x } from './pkg';").unwrap();
+    fs::write(dir.join("pkg/index.native.ts"), "export const x = 1;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        module_suffixes: vec![".native".to_string(), String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let result = resolver.resolve("./pkg", &dir.join("main.mts"), Span::new(0, 7));
+    let failure = result.expect_err("Expected TS2834 without suggestion");
+    match &failure {
+        ResolutionFailure::ImportPathNeedsExtension {
+            suggested_extension,
+            ..
+        } => {
+            assert!(
+                suggested_extension.is_empty(),
+                "Module-suffix directory index should not get a suggestion"
+            );
+        }
+        other => panic!("Expected TS2834 without suggestion, got {other:?}"),
+    }
+    assert_eq!(failure.to_diagnostic().code, IMPORT_PATH_NEEDS_EXTENSION);
 
     let _ = fs::remove_dir_all(&dir);
 }
