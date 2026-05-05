@@ -343,6 +343,25 @@ f(42);
 }
 
 #[test]
+fn union_callee_intersects_any_with_specific_parameter_type() {
+    let source = r#"
+declare let f: ((x: any) => number) | ((x: number) => string);
+f(true);
+"#;
+    let diagnostics = get_diagnostics(source);
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains(
+                    "Argument of type 'boolean' is not assignable to parameter of type 'number'.",
+                )
+        }),
+        "union callable should check against the specific parameter type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn union_callee_incompatible_param_count() {
     let source = r#"
 declare let f: ((x: number) => void) | ((x: number, y: string) => void);

@@ -18,6 +18,20 @@ use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::FxHashSet;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn intersect_union_call_param_types(&self, param_types: &[TypeId]) -> TypeId {
+        let mut non_any = param_types
+            .iter()
+            .copied()
+            .filter(|&param_type| param_type != TypeId::ANY);
+        let Some(mut result) = non_any.next() else {
+            return TypeId::ANY;
+        };
+        for param_type in non_any {
+            result = self.interner.intersection2(result, param_type);
+        }
+        result
+    }
+
     /// Resolve a function call: func(args...) -> result
     ///
     /// This is pure type logic - no AST nodes, just types in and types out.
@@ -448,11 +462,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Shouldn't happen since we iterate up to max_param_count
                 continue;
             } else {
-                let mut result = param_types_at_pos[0];
-                for &pt in &param_types_at_pos[1..] {
-                    result = self.interner.intersection2(result, pt);
-                }
-                result
+                self.intersect_union_call_param_types(&param_types_at_pos)
             };
 
             combined_params.push(combined_type);
@@ -712,16 +722,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                 // Compute the intersection of all parameter types
                 // For incompatible primitives like number & boolean, this becomes never
-                let intersected_param = if param_types.len() == 1 {
-                    param_types[0]
-                } else {
-                    // Build intersection by combining all types
-                    let mut result = param_types[0];
-                    for &param_type in &param_types[1..] {
-                        result = self.interner.intersection2(result, param_type);
-                    }
-                    result
-                };
+                let intersected_param = self.intersect_union_call_param_types(&param_types);
 
                 // Return a single ArgumentTypeMismatch with the intersected type
                 // Use the first argument type as the actual
