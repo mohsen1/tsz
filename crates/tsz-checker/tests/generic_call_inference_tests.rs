@@ -49,6 +49,36 @@ fn relevant_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+#[test]
+fn conditional_parameter_infers_through_branches_before_assignability() {
+    let source = r#"
+interface Iterable<T> {}
+interface Array<T> extends Iterable<T> {}
+
+type NonStringIterable<T> =
+  T extends string ? never : T extends Iterable<any> ? T : never;
+
+declare function doSomething<T>(value: NonStringIterable<T>): T;
+
+doSomething('value'); // error: T = string, parameter reduces to never
+doSomething(['v']); // ok: T = string[], parameter reduces to string[]
+doSomething([{ foo() {} }]); // ok: T = { foo(): void }[]
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Only the string argument should fail after branch inference. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2345
+            .iter()
+            .any(|(_, msg)| msg.contains("not assignable to parameter of type 'never'")),
+        "The rejected string branch should reduce the parameter to never. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Overloaded function arguments ───────────────────────────────────
 
 #[test]

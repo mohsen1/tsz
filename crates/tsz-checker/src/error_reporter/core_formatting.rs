@@ -1467,6 +1467,89 @@ impl<'a> CheckerState<'a> {
         best_candidate.map(|s| format!("\"{s}\""))
     }
 
+    pub(in crate::error_reporter) fn format_ts2820_target_display(
+        &mut self,
+        target: TypeId,
+        evaluated_target: TypeId,
+        target_str: &str,
+    ) -> String {
+        let expanded_target_str = self.format_type_diagnostic(evaluated_target);
+        if expanded_target_str == target_str {
+            return target_str.to_string();
+        }
+
+        if target_str.contains('<') || self.ts2820_target_contains_alias_surface(target) {
+            Self::widen_numeric_member_literals_in_display_text(target_str)
+        } else {
+            expanded_target_str
+        }
+    }
+
+    fn widen_numeric_member_literals_in_display_text(display: &str) -> String {
+        let bytes = display.as_bytes();
+        let mut out = String::with_capacity(display.len());
+        let mut i = 0usize;
+        let is_boundary = |b: u8| {
+            matches!(
+                b,
+                b';' | b',' | b'}' | b'>' | b')' | b'|' | b'&' | b']' | b' '
+            )
+        };
+        while i < bytes.len() {
+            if i + 2 < bytes.len() && bytes[i] == b':' && bytes[i + 1] == b' ' {
+                out.push(':');
+                out.push(' ');
+                i += 2;
+
+                let mut j = i;
+                if j < bytes.len() && bytes[j] == b'-' {
+                    j += 1;
+                }
+                let mut saw_digit = false;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                    saw_digit = true;
+                }
+                if j < bytes.len() && bytes[j] == b'.' {
+                    j += 1;
+                    while j < bytes.len() && bytes[j].is_ascii_digit() {
+                        j += 1;
+                        saw_digit = true;
+                    }
+                }
+                if saw_digit && (j >= bytes.len() || is_boundary(bytes[j])) {
+                    out.push_str("number");
+                    i = j;
+                    continue;
+                }
+            }
+
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        out
+    }
+
+    fn ts2820_target_contains_alias_surface(&self, target: TypeId) -> bool {
+        if self.ctx.types.get_display_alias(target).is_some()
+            || self.lookup_type_alias_name_for_display(target).is_some()
+        {
+            return true;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, target).or_else(|| {
+                crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+            })
+        {
+            return members
+                .iter()
+                .any(|&member| self.ts2820_target_contains_alias_surface(member));
+        }
+
+        false
+    }
+
     pub(super) fn first_nonpublic_constructor_param_property(
         &mut self,
         ty: TypeId,

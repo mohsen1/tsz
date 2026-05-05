@@ -1348,23 +1348,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Get the function shape for the target property
-                let target_fn_shape =
-                    common::function_shape_for_type(self.ctx.types, target_prop_type);
-                let Some(target_fn) = target_fn_shape else {
+                let Some((contextual_fn_type, _target_params, target_return_type)) = self
+                    .inference_callable_context_for_property_target(
+                        target_prop_type,
+                        type_param_names,
+                    )
+                else {
                     continue;
                 };
-
-                // Check if ALL function parameter types are concrete (don't contain the
-                // type parameters being inferred). Return type MAY contain them - that's
-                // what we want to infer FROM.
-                let params_are_concrete = target_fn.params.iter().all(|param| {
-                    !self.type_contains_any_type_param(param.type_id, type_param_names)
-                });
-
-                if !params_are_concrete {
-                    continue;
-                }
 
                 // When the return type contains unresolved type parameters AND the
                 // function body has context-sensitive return expressions (e.g., nested
@@ -1374,7 +1365,7 @@ impl<'a> CheckerState<'a> {
                 // diagnostics are rolled back, the resulting cached type pollutes the
                 // inference. The full contextual type (with substituted type params)
                 // will be applied in Round 2.
-                if self.type_contains_any_type_param(target_fn.return_type, type_param_names)
+                if self.type_contains_any_type_param(target_return_type, type_param_names)
                     && super::contextual::expression_needs_contextual_return_type(
                         self,
                         prop.initializer,
@@ -1390,7 +1381,7 @@ impl<'a> CheckerState<'a> {
                 // (the params WILL get contextual types in the final pass).
                 let value_type = self.speculative_type_of_node(
                     prop.initializer,
-                    &TypingRequest::with_contextual_type(target_prop_type),
+                    &TypingRequest::with_contextual_type(contextual_fn_type),
                 );
 
                 // If the speculative result still contains any of the type parameters
@@ -1432,23 +1423,18 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                let target_fn_shape =
-                    common::function_shape_for_type(self.ctx.types, target_prop_type);
-                let Some(target_fn) = target_fn_shape else {
+                let Some((contextual_fn_type, _target_params, _target_return_type)) = self
+                    .inference_callable_context_for_property_target(
+                        target_prop_type,
+                        type_param_names,
+                    )
+                else {
                     continue;
                 };
 
-                let params_are_concrete = target_fn.params.iter().all(|param| {
-                    !self.type_contains_any_type_param(param.type_id, type_param_names)
-                });
-
-                if !params_are_concrete {
-                    continue;
-                }
-
                 let value_type = self.speculative_type_of_function(
                     elem_idx,
-                    &TypingRequest::with_contextual_type(target_prop_type),
+                    &TypingRequest::with_contextual_type(contextual_fn_type),
                 );
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
@@ -1460,6 +1446,41 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(self.ctx.types.factory().object_fresh(properties))
+    }
+
+    fn inference_callable_context_for_property_target(
+        &self,
+        target_prop_type: TypeId,
+        type_param_names: &[tsz_common::Atom],
+    ) -> Option<(TypeId, Vec<tsz_solver::ParamInfo>, TypeId)> {
+        let mut candidates = Vec::new();
+        if let Some(members) = common::union_members(self.ctx.types, target_prop_type) {
+            candidates.extend(members);
+        } else {
+            candidates.push(target_prop_type);
+        }
+
+        for candidate in candidates {
+            if let Some(target_fn) = common::function_shape_for_type(self.ctx.types, candidate)
+                && target_fn.params.iter().all(|param| {
+                    !self.type_contains_any_type_param(param.type_id, type_param_names)
+                })
+            {
+                return Some((candidate, target_fn.params.clone(), target_fn.return_type));
+            }
+
+            if let Some(signatures) = common::call_signatures_for_type(self.ctx.types, candidate) {
+                for sig in signatures {
+                    if sig.params.iter().all(|param| {
+                        !self.type_contains_any_type_param(param.type_id, type_param_names)
+                    }) {
+                        return Some((candidate, sig.params, sig.return_type));
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Extract inference from an object literal whose target type is a mapped type.

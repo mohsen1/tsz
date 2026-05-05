@@ -309,16 +309,11 @@ impl<'a> CheckerState<'a> {
                 self.find_string_literal_spelling_suggestion(source, evaluated_target_for_ts2820)
             });
         if let Some(suggestion) = ts2820_suggestion {
-            // TSC uses the expanded union form (not the alias name) when emitting TS2820.
-            let expanded_target_str = self.format_type_diagnostic(evaluated_target_for_ts2820);
-            let display_target_str = if expanded_target_str != target_str {
-                &expanded_target_str
-            } else {
-                &target_str
-            };
+            let display_target_str =
+                self.format_ts2820_target_display(target, evaluated_target_for_ts2820, &target_str);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
-                &[&source_str, display_target_str, &suggestion],
+                &[&source_str, &display_target_str, &suggestion],
             );
             return Diagnostic::error(
                 file_name,

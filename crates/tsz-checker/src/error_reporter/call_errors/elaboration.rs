@@ -1725,16 +1725,16 @@ impl<'a> CheckerState<'a> {
                         })
                     {
                         let src_str = self.format_type_diagnostic(literal_source_type);
-                        let tgt_str = self.format_type_diagnostic(target_prop_type_for_diagnostic);
-                        let expanded_tgt_str = self.format_type_diagnostic(evaluated_target);
-                        let display_target = if expanded_tgt_str != tgt_str {
-                            &expanded_tgt_str
-                        } else {
-                            &tgt_str
-                        };
+                        let tgt_str = self
+                            .format_type_for_assignability_message(target_prop_type_for_diagnostic);
+                        let display_target = self.format_ts2820_target_display(
+                            target_prop_type_for_diagnostic,
+                            evaluated_target,
+                            &tgt_str,
+                        );
                         let msg = format_message(
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
-                            &[&src_str, display_target, &suggestion],
+                            &[&src_str, &display_target, &suggestion],
                         );
                         let anchor_idx = self.resolve_diagnostic_anchor_node(
                             prop_name_idx,

@@ -4359,6 +4359,46 @@ fn test_infer_generic_conditional_param_from_arg() {
 }
 
 #[test]
+fn test_infer_generic_conditional_param_with_check_placeholder_from_branch() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let conditional = interner.conditional(ConditionalType {
+        check_type: t_type,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NEVER,
+        false_type: t_type,
+        is_distributive: false,
+    });
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: conditional,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[TypeId::NUMBER]);
+    assert_eq!(result, TypeId::NUMBER);
+}
+
+#[test]
 fn test_infer_generic_mapped_param_from_object_arg() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
