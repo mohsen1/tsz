@@ -58,6 +58,19 @@ impl<'a> DeclarationEmitter<'a> {
             .as_ref()
             .map(|type_params| self.collect_type_param_names(type_params))
             .unwrap_or_default();
+        self.source_nested_function_type_text(Some(outer_func), inner_func, &outer_type_param_names)
+    }
+
+    pub(in crate::declaration_emitter) fn source_nested_function_type_text(
+        &self,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+        outer_type_param_names: &[String],
+    ) -> Option<String> {
+        let outer_type_param_names = outer_func
+            .and_then(|func| func.type_parameters.as_ref())
+            .map(|type_params| self.collect_type_param_names(type_params))
+            .unwrap_or_else(|| outer_type_param_names.to_vec());
         let inner_type_params = inner_func.type_parameters.as_ref();
         let inner_renames = inner_type_params.map_or_else(Vec::new, |type_params| {
             self.shadowed_function_type_param_renames(type_params, &outer_type_param_names)
@@ -98,6 +111,79 @@ impl<'a> DeclarationEmitter<'a> {
         Some(format!(
             "{type_params_text}({params_text}) => {return_text}"
         ))
+    }
+
+    pub(in crate::declaration_emitter) fn direct_returned_function_expression_type_text(
+        &self,
+        outer_func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        let body_node = self.arena.get(outer_func.body)?;
+        let block = self.arena.get_block(body_node)?;
+        let mut returned_function = None;
+        for stmt_idx in block.statements.nodes.iter().copied() {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                if stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                    continue;
+                }
+                return None;
+            }
+            let ret = self.arena.get_return_statement(stmt_node)?;
+            if !ret.expression.is_some() {
+                return None;
+            }
+            let expr_idx = self.skip_parenthesized_expression(ret.expression)?;
+            let expr_node = self.arena.get(expr_idx)?;
+            if expr_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                && expr_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            {
+                return None;
+            }
+            if returned_function.replace(expr_idx).is_some() {
+                return None;
+            }
+        }
+        let inner_idx = returned_function?;
+        let inner_node = self.arena.get(inner_idx)?;
+        let inner_func = self.arena.get_function(inner_node)?;
+        self.source_nested_function_type_text(Some(outer_func), inner_func, &[])
+    }
+
+    pub(in crate::declaration_emitter) fn class_property_function_initializer_type_text(
+        &self,
+        prop_idx: NodeIndex,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            && init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+        {
+            return None;
+        }
+        let inner_func = self.arena.get_function(init_node)?;
+        let outer_type_param_names = self.enclosing_class_type_param_names(prop_idx);
+        self.source_nested_function_type_text(None, inner_func, &outer_type_param_names)
+    }
+
+    fn enclosing_class_type_param_names(&self, from_idx: NodeIndex) -> Vec<String> {
+        let mut current = from_idx;
+        while let Some(parent_idx) = self.arena.parent_of(current) {
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return self
+                    .arena
+                    .get_class(parent_node)
+                    .and_then(|class| class.type_parameters.as_ref())
+                    .map(|type_params| self.collect_type_param_names(type_params))
+                    .unwrap_or_default();
+            }
+            current = parent_idx;
+        }
+        Vec::new()
     }
 
     fn shadowed_function_type_param_renames(
@@ -143,25 +229,40 @@ impl<'a> DeclarationEmitter<'a> {
         let param_node = self.arena.get(param_idx)?;
         let param = self.arena.get_parameter(param_node)?;
         let name = self.get_identifier_text(param.name)?;
-        let type_text = self
+        let raw_type_text = self
             .preferred_annotation_name_text(param.type_annotation)
             .or_else(|| self.emit_type_node_text(param.type_annotation))
             .unwrap_or_else(|| "any".to_string());
-        Some(format!(
-            "{name}: {}",
-            Self::rename_type_text_identifiers(&type_text, type_param_renames)
-        ))
+        let type_text = Self::simple_type_reference_name(&raw_type_text)
+            .and_then(|alias_name| self.local_type_alias_annotation_text(param_idx, &alias_name))
+            .unwrap_or_else(|| {
+                Self::rename_type_text_identifiers(&raw_type_text, type_param_renames)
+            });
+        Some(format!("{name}: {type_text}"))
     }
 
     fn source_function_initializer_return_type_text(
         &self,
-        outer_func: &tsz_parser::parser::node::FunctionData,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
         inner_func: &tsz_parser::parser::node::FunctionData,
         inner_type_param_renames: &[(String, String)],
     ) -> Option<String> {
+        if inner_func.type_annotation.is_some() {
+            let type_text = self
+                .preferred_annotation_name_text(inner_func.type_annotation)
+                .or_else(|| self.emit_type_node_text(inner_func.type_annotation))?;
+            return Some(Self::rename_type_text_identifiers(
+                &type_text,
+                inner_type_param_renames,
+            ));
+        }
+        if inner_func.body.is_some() && self.body_returns_void(inner_func.body) {
+            return Some("void".to_string());
+        }
         if inner_func.body.is_none() {
             return None;
         }
+        let outer_func = outer_func?;
         let return_expr = self
             .const_asserted_expression(inner_func.body)
             .unwrap_or(inner_func.body);
@@ -243,6 +344,37 @@ impl<'a> DeclarationEmitter<'a> {
             return self
                 .preferred_annotation_name_text(param.type_annotation)
                 .or_else(|| self.emit_type_node_text(param.type_annotation));
+        }
+        None
+    }
+
+    fn local_type_alias_annotation_text(&self, from_idx: NodeIndex, name: &str) -> Option<String> {
+        let mut current_idx = from_idx;
+        while let Some(parent_idx) = self.arena.parent_of(current_idx) {
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::BLOCK
+                && let Some(block) = self.arena.get_block(parent_node)
+            {
+                for stmt_idx in block.statements.nodes.iter().copied() {
+                    let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                        continue;
+                    };
+                    if stmt_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                        continue;
+                    }
+                    let Some(alias) = self.arena.get_type_alias(stmt_node) else {
+                        continue;
+                    };
+                    if self.get_identifier_text(alias.name).as_deref() == Some(name) {
+                        return self
+                            .preferred_annotation_name_text(alias.type_node)
+                            .or_else(|| self.emit_type_node_text(alias.type_node));
+                    }
+                }
+            }
+            current_idx = parent_idx;
         }
         None
     }
