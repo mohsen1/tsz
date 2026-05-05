@@ -1145,8 +1145,10 @@ pub fn resolve_compiler_options(
     if let Some(ref module_detection) = options.module_detection {
         if module_detection.eq_ignore_ascii_case("force") {
             resolved.printer.module_detection_force = true;
+        } else if module_detection.eq_ignore_ascii_case("legacy") {
+            resolved.printer.module_detection_legacy = true;
         }
-        // "auto" and "legacy" both leave module_detection_force as false
+        // "auto" leaves both detection flags as false
     } else if resolved.printer.module.is_node_module() {
         // tsc defaults to Force for Node16/Node18/Node20/NodeNext
         resolved.printer.module_detection_force = true;

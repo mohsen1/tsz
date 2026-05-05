@@ -84,6 +84,9 @@ pub struct TranspileOptions {
     /// Downlevel iteration for for-of loops
     #[serde(default)]
     pub downlevel_iteration: Option<bool>,
+    /// Module detection mode: "auto" (default), "force", or "legacy"
+    #[serde(default)]
+    pub module_detection: Option<String>,
 }
 
 impl TranspileOptions {
@@ -103,6 +106,14 @@ impl TranspileOptions {
 
         opts.remove_comments = self.remove_comments.unwrap_or(false);
         opts.downlevel_iteration = self.downlevel_iteration.unwrap_or(false);
+
+        if let Some(ref detection) = self.module_detection {
+            if detection.eq_ignore_ascii_case("force") {
+                opts.module_detection_force = true;
+            } else if detection.eq_ignore_ascii_case("legacy") {
+                opts.module_detection_legacy = true;
+            }
+        }
 
         opts
     }

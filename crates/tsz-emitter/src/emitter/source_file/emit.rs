@@ -462,6 +462,17 @@ impl<'a> Printer<'a> {
             && self.ctx.original_module_kind.is_none()
             && !(is_es_module_output && is_file_module)
             && !jsx_will_add_esm_imports;
+        // moduleDetection=legacy: a non-module file under module=System still
+        // emits a top-level "use strict" because System modules are strict.
+        // Without legacy, the file would either be a module wrapped in
+        // System.register (which already emits its own strict) or we'd add a
+        // JSX import (which would promote to a module). Under legacy, neither
+        // happens — but the implicit strictness of the module setting still
+        // applies, matching tsc's emit.
+        let needs_use_strict_legacy_system = self.ctx.options.module_detection_legacy
+            && !is_file_module
+            && matches!(self.ctx.options.module, ModuleKind::System)
+            && !has_module_wrapper_stmt;
         let has_invalid_export_recovery = source.statements.nodes.iter().any(|&idx| {
             self.arena
                 .get(idx)
@@ -482,7 +493,8 @@ impl<'a> Printer<'a> {
                 || needs_use_strict_amd_umd
                 || needs_use_strict_inside_wrapper
                 || needs_use_strict_always
-                || needs_use_strict_invalid_export_recovery);
+                || needs_use_strict_invalid_export_recovery
+                || needs_use_strict_legacy_system);
 
         // When the source has its own "use strict" prologue AND this is a CJS
         // module file, we must emit "use strict" at the correct position (before
@@ -755,8 +767,18 @@ impl<'a> Printer<'a> {
         }
 
         // Emit JSX auto-import for jsx=react-jsx / react-jsxdev (ESM only here;
-        // CJS require() is emitted after __esModule below)
-        let jsx_import_text = self.jsx_auto_import_text();
+        // CJS require() is emitted after __esModule below).
+        // Under `--moduleDetection legacy`, JSX usage in a file that has no
+        // explicit import/export must NOT auto-promote the file to a module —
+        // tsc emits the `_jsx` calls bare (referencing an undefined identifier
+        // at runtime, but matching tsc's output verbatim).
+        let suppress_jsx_import_legacy =
+            self.ctx.options.module_detection_legacy && !is_file_module;
+        let jsx_import_text = if suppress_jsx_import_legacy {
+            None
+        } else {
+            self.jsx_auto_import_text()
+        };
         let mut emitted_jsx_esm_import = false;
         if !self.ctx.is_commonjs()
             && let Some(ref jsx_import) = jsx_import_text

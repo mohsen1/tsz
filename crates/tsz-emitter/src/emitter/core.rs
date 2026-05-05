@@ -126,6 +126,12 @@ pub struct PrinterOptions {
     pub es_module_interop: bool,
     /// When true, treat all non-declaration files as modules (moduleDetection=force)
     pub module_detection_force: bool,
+    /// When true, only files with explicit import/export syntax are treated as
+    /// modules (moduleDetection=legacy). Notably, JSX usage in `react-jsx` /
+    /// `react-jsxdev` mode does NOT auto-promote a script to a module under
+    /// legacy — tsc emits the `_jsx` calls inline without adding the
+    /// `react/jsx-runtime` import.
+    pub module_detection_legacy: bool,
     /// When true, this file was resolved from Node16/NodeNext to ESM based on
     /// file extension (.mts) or package.json "type":"module". Such files are
     /// definitively ES modules regardless of import/export content.
@@ -189,6 +195,7 @@ impl Default for PrinterOptions {
             emit_decorator_metadata: false,
             es_module_interop: false,
             module_detection_force: false,
+            module_detection_legacy: false,
             resolved_node_module_to_esm: false,
             resolved_node_module_to_cjs: false,
             preserve_const_enums: false,
