@@ -1056,7 +1056,16 @@ impl<'a> DeclarationEmitter<'a> {
         identifier_idx: NodeIndex,
     ) -> Option<String> {
         self.function_parameter_type_text(func, identifier_idx)
-            .or_else(|| self.reference_declared_type_annotation_text(identifier_idx))
+            .or_else(|| {
+                let type_text = self.reference_declared_type_annotation_text(identifier_idx)?;
+                if let Some(type_id) = self.reference_declared_type_id(identifier_idx)
+                    && (self.printed_type_uses_non_emittable_local_alias_root(&type_text)
+                        || self.should_expand_named_application_for_inferred_declaration(type_id))
+                {
+                    return Some(self.print_type_id_for_inferred_declaration(type_id));
+                }
+                Some(type_text)
+            })
     }
 
     pub(in crate::declaration_emitter) fn function_return_identifier_declared_type_id(
