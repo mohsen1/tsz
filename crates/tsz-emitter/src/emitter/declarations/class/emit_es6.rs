@@ -1473,14 +1473,23 @@ impl<'a> Printer<'a> {
         let mut field_init_comment_idx = 0usize;
         let prev_scoped_class_expression_self_alias =
             self.scoped_class_expression_self_alias.take();
-        if let Some(temp) = class_expr_temp.as_ref()
+        if let Some(temp) = class_expr_temp.as_ref() {
+            if class_name_is_real && !class_name.is_empty() && class_name != *temp {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(temp.as_str()),
+                ));
+            }
+        } else if let Some((static_class_name, static_class_alias)) =
+            self.private_static_class_alias.clone()
             && class_name_is_real
             && !class_name.is_empty()
-            && class_name != *temp
+            && class_name == static_class_name
+            && class_name != static_class_alias
         {
             self.scoped_class_expression_self_alias = Some((
                 Arc::<str>::from(class_name.as_str()),
-                Arc::<str>::from(temp.as_str()),
+                Arc::<str>::from(static_class_alias.as_str()),
             ));
         }
         for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
