@@ -22,6 +22,7 @@ pub(crate) mod alias_narrowing;
 pub(crate) mod assignment;
 mod assignment_fallback;
 mod call_condition_narrowing;
+mod comparison_types;
 pub(crate) mod condition_narrowing;
 mod core;
 pub(crate) mod narrowing;

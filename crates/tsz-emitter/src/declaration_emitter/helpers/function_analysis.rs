@@ -29,7 +29,255 @@ use tsz_scanner::SyntaxKind;
 
 use super::{JsDefinedPropertyDecl, LateBoundAssignmentMember};
 
+#[derive(Default)]
+struct BooleanReturnSummary {
+    has_true: bool,
+    has_false: bool,
+    has_undefined: bool,
+    has_other: bool,
+}
+
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn conditional_boolean_undefined_default_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<&'static str> {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(initializer);
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::CONDITIONAL_EXPRESSION {
+            return None;
+        }
+        let conditional = self.arena.get_conditional_expr(init_node)?;
+        let true_branch = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(conditional.when_true);
+        let false_branch = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(conditional.when_false);
+        let true_node = self.arena.get(true_branch)?;
+        let false_node = self.arena.get(false_branch)?;
+
+        let has_boolean_literal = true_node.kind == SyntaxKind::TrueKeyword as u16
+            || true_node.kind == SyntaxKind::FalseKeyword as u16
+            || false_node.kind == SyntaxKind::TrueKeyword as u16
+            || false_node.kind == SyntaxKind::FalseKeyword as u16;
+        let has_undefined = true_node.kind == SyntaxKind::UndefinedKeyword as u16
+            || false_node.kind == SyntaxKind::UndefinedKeyword as u16
+            || self.get_identifier_text(true_branch).as_deref() == Some("undefined")
+            || self.get_identifier_text(false_branch).as_deref() == Some("undefined");
+
+        (has_boolean_literal && has_undefined).then_some("boolean | undefined")
+    }
+
+    pub(in crate::declaration_emitter) fn boolean_default_param_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        if func.type_annotation.is_some() || !func.body.is_some() {
+            return None;
+        }
+
+        let mut defaulted_params = FxHashSet::default();
+        for param_idx in func.parameters.nodes.iter().copied() {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            if param.initializer.is_some()
+                && let Some(name) = self.get_identifier_text(param.name)
+            {
+                defaulted_params.insert(name);
+            }
+        }
+        if defaulted_params.is_empty() {
+            return None;
+        }
+
+        let body_node = self.arena.get(func.body)?;
+        let block = self.arena.get_block(body_node)?;
+        let mut summary = BooleanReturnSummary::default();
+        let mut false_narrowed = FxHashSet::default();
+        let definitely_returns = self.collect_boolean_default_returns_from_block(
+            &block.statements,
+            &defaulted_params,
+            &mut false_narrowed,
+            &mut summary,
+        );
+        if !definitely_returns {
+            summary.has_undefined = true;
+        }
+
+        if summary.has_other {
+            return None;
+        }
+        match (summary.has_true, summary.has_false, summary.has_undefined) {
+            (true, true, false) => Some("boolean".to_string()),
+            (false, true, true) => Some("false | undefined".to_string()),
+            _ => None,
+        }
+    }
+
+    fn collect_boolean_default_returns_from_block(
+        &self,
+        statements: &NodeList,
+        defaulted_params: &FxHashSet<String>,
+        false_narrowed: &mut FxHashSet<String>,
+        summary: &mut BooleanReturnSummary,
+    ) -> bool {
+        for stmt_idx in statements.nodes.iter().copied() {
+            if self.collect_boolean_default_returns_from_statement(
+                stmt_idx,
+                defaulted_params,
+                false_narrowed,
+                summary,
+            ) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn collect_boolean_default_returns_from_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        defaulted_params: &FxHashSet<String>,
+        false_narrowed: &mut FxHashSet<String>,
+        summary: &mut BooleanReturnSummary,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                    return true;
+                };
+                if !ret.expression.is_some() {
+                    summary.has_undefined = true;
+                    return true;
+                }
+                self.collect_boolean_return_expression(
+                    ret.expression,
+                    defaulted_params,
+                    false_narrowed,
+                    summary,
+                );
+                true
+            }
+            k if k == syntax_kind_ext::BLOCK => {
+                self.arena.get_block(stmt_node).is_some_and(|block| {
+                    self.collect_boolean_default_returns_from_block(
+                        &block.statements,
+                        defaulted_params,
+                        false_narrowed,
+                        summary,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                let Some(if_data) = self.arena.get_if_statement(stmt_node) else {
+                    return false;
+                };
+                let narrowed_name =
+                    self.false_equality_default_param_name(if_data.expression, defaulted_params);
+                if let Some(name) = narrowed_name.as_ref() {
+                    false_narrowed.insert(name.clone());
+                }
+                let then_returns = self.collect_boolean_default_returns_from_statement(
+                    if_data.then_statement,
+                    defaulted_params,
+                    false_narrowed,
+                    summary,
+                );
+                if let Some(name) = narrowed_name.as_ref() {
+                    false_narrowed.remove(name);
+                }
+
+                if if_data.else_statement.is_some() {
+                    let else_returns = self.collect_boolean_default_returns_from_statement(
+                        if_data.else_statement,
+                        defaulted_params,
+                        false_narrowed,
+                        summary,
+                    );
+                    then_returns && else_returns
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn collect_boolean_return_expression(
+        &self,
+        expr_idx: NodeIndex,
+        defaulted_params: &FxHashSet<String>,
+        false_narrowed: &FxHashSet<String>,
+        summary: &mut BooleanReturnSummary,
+    ) {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            summary.has_other = true;
+            return;
+        };
+        if expr_node.kind == SyntaxKind::TrueKeyword as u16 {
+            summary.has_true = true;
+        } else if expr_node.kind == SyntaxKind::FalseKeyword as u16 {
+            summary.has_false = true;
+        } else if expr_node.kind == SyntaxKind::Identifier as u16
+            && let Some(name) = self.get_identifier_text(expr_idx)
+            && defaulted_params.contains(&name)
+            && false_narrowed.contains(&name)
+        {
+            summary.has_false = true;
+        } else {
+            summary.has_other = true;
+        }
+    }
+
+    fn false_equality_default_param_name(
+        &self,
+        expr_idx: NodeIndex,
+        defaulted_params: &FxHashSet<String>,
+    ) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsEqualsEqualsToken as u16 {
+            return None;
+        }
+        self.false_equality_side(binary.left, binary.right, defaulted_params)
+            .or_else(|| self.false_equality_side(binary.right, binary.left, defaulted_params))
+    }
+
+    fn false_equality_side(
+        &self,
+        name_idx: NodeIndex,
+        false_idx: NodeIndex,
+        defaulted_params: &FxHashSet<String>,
+    ) -> Option<String> {
+        let false_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(false_idx);
+        let false_node = self.arena.get(false_idx)?;
+        if false_node.kind != SyntaxKind::FalseKeyword as u16 {
+            return None;
+        }
+        let name_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(name_idx);
+        let name = self.get_identifier_text(name_idx)?;
+        defaulted_params.contains(&name).then_some(name)
+    }
+
     pub(in crate::declaration_emitter) fn js_returned_define_property_function_info(
         &self,
         body_idx: NodeIndex,

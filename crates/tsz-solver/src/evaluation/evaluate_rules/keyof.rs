@@ -273,7 +273,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 TypeData::Mapped(mapped_id) => {
                     let mapped = self.interner().get_mapped(mapped_id);
-                    if mapped.name_type.is_some() {
+                    if let Some(name_type) = mapped.name_type {
+                        let constraint_has_type_params =
+                            crate::type_queries::contains_type_parameters_db(
+                                self.interner(),
+                                mapped.constraint,
+                            );
+                        if !constraint_has_type_params
+                            && let Some(keys) =
+                                self.collect_keyof_for_remapped_mapped_type(mapped_id, &mapped)
+                        {
+                            return keys;
+                        }
+                        if constraint_has_type_params
+                            && let Some(keys) =
+                                self.collect_keyof_for_remapped_mapped_type(mapped_id, &mapped)
+                            && keys != name_type
+                        {
+                            return keys;
+                        }
+                        if constraint_has_type_params
+                            || crate::type_queries::contains_type_parameters_except_name_db(
+                                self.interner(),
+                                name_type,
+                                mapped.type_param.name,
+                            )
+                        {
+                            return self.interner().keyof(evaluated_operand);
+                        }
                         self.collect_keyof_for_remapped_mapped_type(mapped_id, &mapped)
                             .unwrap_or_else(|| {
                                 self.evaluate(mapped.name_type.unwrap_or(TypeId::ERROR))

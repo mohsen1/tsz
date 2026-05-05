@@ -8,7 +8,7 @@ use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 use super::assignability::{
@@ -17,6 +17,87 @@ use super::assignability::{
 };
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
+    fn no_union_member_matches_switch_source_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> Option<String> {
+        let expected_len = crate::query_boundaries::common::union_members(self.ctx.types, source)
+            .map(|members| members.len())?;
+        let target_members = crate::query_boundaries::common::union_members(self.ctx.types, target);
+        if expected_len < 2 {
+            return None;
+        }
+
+        let mut current = anchor_idx;
+        let clause_idx = loop {
+            let parent = self.ctx.arena.parent_of(current)?;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::CASE_CLAUSE {
+                break parent;
+            }
+            current = parent;
+        };
+
+        let case_block_idx = self.ctx.arena.parent_of(clause_idx)?;
+        let case_block_node = self.ctx.arena.get(case_block_idx)?;
+        let case_block = self.ctx.arena.get_block(case_block_node)?;
+        let clause_pos = case_block
+            .statements
+            .nodes
+            .iter()
+            .position(|&idx| idx == clause_idx)?;
+
+        let mut start = clause_pos;
+        while start > 0 {
+            let prev_idx = case_block.statements.nodes[start - 1];
+            let Some(prev_node) = self.ctx.arena.get(prev_idx) else {
+                break;
+            };
+            let Some(prev_clause) = self.ctx.arena.get_case_clause(prev_node) else {
+                break;
+            };
+            if !prev_clause.statements.nodes.is_empty() {
+                break;
+            }
+            start -= 1;
+        }
+
+        let mut invalid = Vec::new();
+        let mut valid = Vec::new();
+        for &idx in &case_block.statements.nodes[start..=clause_pos] {
+            let clause_node = self.ctx.arena.get(idx)?;
+            let clause = self.ctx.arena.get_case_clause(clause_node)?;
+            if clause.expression.is_none() {
+                return None;
+            }
+            let case_type = self.literal_type_from_initializer(clause.expression)?;
+            let display = self
+                .literal_expression_display(clause.expression)
+                .unwrap_or_else(|| self.format_assignability_type_for_message(case_type, target));
+            let matches_target = case_type == target
+                || target_members
+                    .as_ref()
+                    .is_some_and(|members| members.contains(&case_type));
+            if matches_target {
+                valid.push(display);
+            } else {
+                invalid.push(display);
+            }
+        }
+
+        if invalid.len() + valid.len() != expected_len {
+            return None;
+        }
+
+        invalid.extend(valid);
+        Some(invalid.join(" | "))
+    }
+
     fn format_tuple_shape_for_readonly_to_mutable(&mut self, type_id: TypeId) -> Option<String> {
         let elements = crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)?;
         let mut formatted = Vec::with_capacity(elements.len());
@@ -405,27 +486,31 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_union_members: _,
             } => {
+                let display_source = if depth == 0 { source } else { *source_type };
                 let (mut source_str, target_str) = if depth == 0 {
                     let use_structural_source_display =
-                        crate::query_boundaries::common::enum_def_id(self.ctx.types, source)
-                            .is_none();
+                        crate::query_boundaries::common::enum_def_id(
+                            self.ctx.types,
+                            display_source,
+                        )
+                        .is_none();
                     (
                         if use_structural_source_display {
                             self.format_type_for_diagnostic_role(
-                                source,
+                                display_source,
                                 DiagnosticTypeDisplayRole::AssignmentSource {
                                     target,
                                     anchor_idx: idx,
                                 },
                             )
                         } else {
-                            self.format_type_diagnostic(*source_type)
+                            self.format_type_diagnostic(display_source)
                         },
                         if use_structural_source_display {
                             self.format_type_for_diagnostic_role(
                                 target,
                                 DiagnosticTypeDisplayRole::AssignmentTarget {
-                                    source,
+                                    source: display_source,
                                     anchor_idx: idx,
                                 },
                             )
@@ -435,7 +520,7 @@ impl<'a> CheckerState<'a> {
                     )
                 } else {
                     (
-                        self.format_type_diagnostic(*source_type),
+                        self.format_type_diagnostic(display_source),
                         self.format_type_diagnostic(target),
                     )
                 };
@@ -445,6 +530,19 @@ impl<'a> CheckerState<'a> {
                     target,
                 ) {
                     source_str = widened;
+                }
+                if source_str == "unknown" && source != TypeId::UNKNOWN {
+                    let fallback =
+                        self.format_assignability_type_for_message(display_source, target);
+                    if fallback != "unknown" {
+                        source_str = fallback;
+                    }
+                }
+                if depth == 0
+                    && let Some(switch_display) =
+                        self.no_union_member_matches_switch_source_display(source, target, idx)
+                {
+                    source_str = switch_display;
                 }
                 let evaluated_target_for_suggestion = self.evaluate_type_with_env(target);
                 if let Some(suggestion) = self.find_string_literal_spelling_suggestion(

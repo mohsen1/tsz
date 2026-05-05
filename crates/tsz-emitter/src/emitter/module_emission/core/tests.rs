@@ -1,4 +1,6 @@
+use crate::context::emit::EmitContext;
 use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+use crate::lowering::LoweringPass;
 use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
 
@@ -167,6 +169,42 @@ export = Foo;
     assert!(
         !output.contains("return Foo.a;"),
         "Namespace cross-block export substitution should not qualify a shadowing parameter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_arrow_this_capture_skips_multiple_user_bindings() {
+    let source = r#"export function make(this: { value: string }) {
+  const _this = "first user binding";
+  const _this_1 = "second user binding";
+  return (() => this.value + ":" + _this + ":" + _this_1)();
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _this_2 = this;"),
+        "Arrow lowering should skip both user _this bindings.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return _this_2.value + \":\" + _this + \":\" + _this_1;"),
+        "Rewritten lexical this references should use the fresh capture name.\nOutput:\n{output}"
     );
 }
 

@@ -54,6 +54,39 @@ fn test_global_class_name_shadowed_by_type_param_uses_global_this() {
 }
 
 #[test]
+fn test_static_super_method_call_preserves_return_type() {
+    let output = emit_dts_with_binding(
+        r#"
+class C1 {
+    protected static sx: number;
+    protected static sf() {
+        return this.sx;
+    }
+}
+class C2 extends C1 {
+    protected static sf() {
+        return super.sf() + this.sx;
+    }
+}
+class C3 extends C2 {
+    static sf() {
+        return super.sf();
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("protected static sf(): number;"),
+        "Expected protected static super method return to be number: {output}"
+    );
+    assert!(
+        output.contains("static sf(): number;"),
+        "Expected public static super method return to be number: {output}"
+    );
+}
+
+#[test]
 fn test_inferred_generic_function_type_omits_synthesized_optional_undefined() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");

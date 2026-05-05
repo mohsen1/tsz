@@ -172,6 +172,7 @@ impl<'a> DeclarationEmitter<'a> {
                         name_node.end - name_node.pos,
                     );
                 }
+                let type_text = self.qualify_current_namespace_self_type_text(&type_text);
                 self.write(": ");
                 self.write(&Self::strip_synthetic_anonymous_object_members(&type_text));
             } else if has_initializer
@@ -402,9 +403,11 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
+                let selected_type_text =
+                    self.qualify_current_namespace_self_type_text(selected_type_text);
                 self.write(": ");
                 self.write(&Self::strip_synthetic_anonymous_object_members(
-                    selected_type_text,
+                    &selected_type_text,
                 ));
             } else if let Some(typeof_text) =
                 self.typeof_prefix_for_value_entity(initializer, has_initializer, None)

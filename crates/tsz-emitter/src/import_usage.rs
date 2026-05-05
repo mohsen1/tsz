@@ -60,6 +60,137 @@ const fn is_ident_continue(byte: u8) -> bool {
     is_ident_start(byte) || byte.is_ascii_digit()
 }
 
+fn push_non_code_blank(result: &mut String, byte: u8) {
+    if byte == b'\t' {
+        result.push('\t');
+    } else {
+        result.push(' ');
+    }
+}
+
+fn strip_quoted_literal_text(bytes: &[u8], i: &mut usize, result: &mut String, quote: u8) {
+    result.push(quote as char);
+    *i += 1;
+    while *i < bytes.len() {
+        if bytes[*i] == b'\\' && *i + 1 < bytes.len() {
+            push_non_code_blank(result, bytes[*i]);
+            push_non_code_blank(result, bytes[*i + 1]);
+            *i += 2;
+        } else if bytes[*i] == quote {
+            result.push(quote as char);
+            *i += 1;
+            break;
+        } else {
+            push_non_code_blank(result, bytes[*i]);
+            *i += 1;
+        }
+    }
+}
+
+fn strip_template_literal_text(bytes: &[u8], i: &mut usize, result: &mut String) {
+    result.push('`');
+    *i += 1;
+    while *i < bytes.len() {
+        if bytes[*i] == b'\\' && *i + 1 < bytes.len() {
+            push_non_code_blank(result, bytes[*i]);
+            push_non_code_blank(result, bytes[*i + 1]);
+            *i += 2;
+        } else if bytes[*i] == b'`' {
+            result.push('`');
+            *i += 1;
+            break;
+        } else if bytes[*i] == b'$' && *i + 1 < bytes.len() && bytes[*i + 1] == b'{' {
+            push_non_code_blank(result, bytes[*i]);
+            result.push('{');
+            *i += 2;
+            let mut depth = 1u32;
+            while *i < bytes.len() && depth > 0 {
+                match bytes[*i] {
+                    b'\'' | b'"' => {
+                        let quote = bytes[*i];
+                        strip_quoted_literal_text(bytes, i, result, quote);
+                    }
+                    b'/' if *i + 1 < bytes.len() && bytes[*i + 1] == b'*' => {
+                        push_non_code_blank(result, bytes[*i]);
+                        push_non_code_blank(result, bytes[*i + 1]);
+                        *i += 2;
+                        while *i < bytes.len() {
+                            if bytes[*i] == b'*' && *i + 1 < bytes.len() && bytes[*i + 1] == b'/' {
+                                push_non_code_blank(result, bytes[*i]);
+                                push_non_code_blank(result, bytes[*i + 1]);
+                                *i += 2;
+                                break;
+                            }
+                            push_non_code_blank(result, bytes[*i]);
+                            *i += 1;
+                        }
+                    }
+                    b'/' if *i + 1 < bytes.len() && bytes[*i + 1] == b'/' => {
+                        *i = bytes.len();
+                    }
+                    b'{' => {
+                        depth += 1;
+                        result.push('{');
+                        *i += 1;
+                    }
+                    b'}' => {
+                        depth -= 1;
+                        result.push('}');
+                        *i += 1;
+                    }
+                    _ => {
+                        result.push(bytes[*i] as char);
+                        *i += 1;
+                    }
+                }
+            }
+        } else {
+            push_non_code_blank(result, bytes[*i]);
+            *i += 1;
+        }
+    }
+}
+
+fn strip_non_code_text(line: &str, in_block_comment: &mut bool) -> String {
+    let mut result = String::with_capacity(line.len());
+    let bytes = line.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if *in_block_comment {
+            if bytes[i] == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                push_non_code_blank(&mut result, bytes[i]);
+                push_non_code_blank(&mut result, bytes[i + 1]);
+                i += 2;
+                *in_block_comment = false;
+            } else {
+                push_non_code_blank(&mut result, bytes[i]);
+                i += 1;
+            }
+            continue;
+        }
+
+        match bytes[i] {
+            b'\'' | b'"' => {
+                let quote = bytes[i];
+                strip_quoted_literal_text(bytes, &mut i, &mut result, quote);
+            }
+            b'`' => strip_template_literal_text(bytes, &mut i, &mut result),
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => break,
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                push_non_code_blank(&mut result, bytes[i]);
+                push_non_code_blank(&mut result, bytes[i + 1]);
+                i += 2;
+                *in_block_comment = true;
+            }
+            _ => {
+                result.push(bytes[i] as char);
+                i += 1;
+            }
+        }
+    }
+    result
+}
+
 /// Strip type-only content from source text so that identifiers in type
 /// positions are not mistaken for value usages.
 ///
@@ -76,8 +207,10 @@ pub fn strip_type_only_content(source: &str) -> String {
     // Track brace depth to skip multi-line type declaration bodies
     // (interface, type alias, declare blocks)
     let mut type_brace_depth: u32 = 0;
+    let mut in_block_comment = false;
     for line in source.lines() {
-        let trimmed = line.trim();
+        let code_line = strip_non_code_text(line, &mut in_block_comment);
+        let trimmed = code_line.trim();
 
         // If we're inside a type declaration body, count braces to find the end
         if type_brace_depth > 0 {
@@ -135,7 +268,7 @@ pub fn strip_type_only_content(source: &str) -> String {
             continue;
         }
         // For remaining lines, strip type annotations
-        let stripped = strip_type_annotations_safe(line);
+        let stripped = strip_type_annotations_safe(&code_line);
         result.push_str(&stripped);
         result.push('\n');
     }

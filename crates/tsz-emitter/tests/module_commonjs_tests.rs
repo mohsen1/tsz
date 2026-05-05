@@ -370,8 +370,12 @@ export const bar = 42;
         panic!("Failed to get source file");
     };
 
-    let result =
-        collect_export_names_categorized(&parser.arena, &source_file.statements.nodes, false);
+    let result = collect_export_names_categorized(
+        &parser.arena,
+        &source_file.statements.nodes,
+        false,
+        &rustc_hash::FxHashSet::default(),
+    );
 
     assert_eq!(
         result.function_exports,
@@ -382,6 +386,46 @@ export const bar = 42;
         result.other_exports,
         vec!["bar"],
         "Non-function exports should be unaffected"
+    );
+}
+
+#[test]
+fn collect_export_names_categorized_skips_marked_type_only_specifiers() {
+    let source = "export { I, I as II };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let source_file = parser
+        .arena
+        .get_source_file(parser.arena.get(root).expect("root node must exist"))
+        .expect("source file must exist");
+
+    let mut type_only_nodes = rustc_hash::FxHashSet::default();
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt) = parser.arena.get(stmt_idx) else {
+            continue;
+        };
+        let Some(export_decl) = parser.arena.get_export_decl(stmt) else {
+            continue;
+        };
+        let Some(clause_node) = parser.arena.get(export_decl.export_clause) else {
+            continue;
+        };
+        let Some(named_exports) = parser.arena.get_named_imports(clause_node) else {
+            continue;
+        };
+        type_only_nodes.extend(named_exports.elements.nodes.iter().copied());
+    }
+
+    let result = collect_export_names_categorized(
+        &parser.arena,
+        &source_file.statements.nodes,
+        false,
+        &type_only_nodes,
+    );
+
+    assert!(
+        result.other_exports.is_empty(),
+        "type-only export specifiers should not be preinitialized"
     );
 }
 

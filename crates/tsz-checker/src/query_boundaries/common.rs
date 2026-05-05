@@ -25,6 +25,10 @@ pub(crate) use tsz_solver::TypeFormatter;
 pub(crate) use tsz_solver::TypeInstantiator;
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;
+pub(crate) use tsz_solver::type_queries::{
+    RemappedMappedIndexAccessResult, is_remapped_mapped_index_access,
+    remapped_mapped_index_access_result,
+};
 
 pub(crate) use tsz_solver::AssignabilityChecker;
 #[allow(unused_imports)]
@@ -45,17 +49,16 @@ pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
 /// This is the result enum returned by property access evaluation in the solver.
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 
-/// Re-export of the solver's type substitution mapping.
-///
-/// Wraps `tsz_solver::TypeSubstitution`.
-/// Used to build type parameter -> type argument mappings for instantiation.
-pub(crate) use tsz_solver::TypeSubstitution;
-
 /// Re-export of the solver's call resolution result type.
 ///
 /// Wraps `tsz_solver::CallResult`.
 /// This is the result enum returned by call/new expression resolution.
 pub(crate) use tsz_solver::CallResult;
+/// Re-export of the solver's type substitution mapping.
+///
+/// Wraps `tsz_solver::TypeSubstitution`.
+/// Used to build type parameter -> type argument mappings for instantiation.
+pub(crate) use tsz_solver::TypeSubstitution;
 
 pub(crate) fn instantiate_type(
     db: &dyn QueryDatabase,

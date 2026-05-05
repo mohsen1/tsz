@@ -779,9 +779,14 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        let used_by_exported_object_literal =
+            self.get_identifier_text(func.name).is_some_and(|name| {
+                self.namespace_member_referenced_by_exported_object_literal(func_idx, &name)
+            });
         if !is_exported
             && !self.should_emit_public_api_member(&func.modifiers)
             && !self.should_emit_public_api_dependency(func.name)
+            && !used_by_exported_object_literal
         {
             return;
         }
@@ -872,6 +877,9 @@ impl<'a> DeclarationEmitter<'a> {
                 &func.parameters,
             )
         {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) = self.boolean_default_param_return_type_text(func) {
             self.write(": ");
             self.write(&return_type_text);
         } else if func_body.is_some()

@@ -24,6 +24,39 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn test_defaulted_boolean_param_false_narrowing_return_type() {
+    let source = r#"
+function removeUndefinedButNotFalse(x = true) {
+    if (x === false) {
+        return x;
+    }
+}
+
+declare const cond: boolean;
+function removeNothing(y = cond ? true : undefined) {
+    if (y !== undefined) {
+        if (y === false) {
+            return y;
+        }
+    }
+    return true;
+}
+"#;
+    let output = emit_dts(source);
+
+    assert!(
+        output.contains(
+            "declare function removeUndefinedButNotFalse(x?: boolean): false | undefined;"
+        ),
+        "Expected false narrowing plus fallthrough undefined to be preserved: {output}"
+    );
+    assert!(
+        output.contains("declare function removeNothing(y?: boolean | undefined): boolean;"),
+        "Expected false/true branches to widen to boolean: {output}"
+    );
+}
+
+#[test]
 fn test_object_rest_with_keyword_property_names_omits_destructured_key() {
     let source = r#"
 type P = {
@@ -1228,6 +1261,24 @@ export = X;
         output.contains("export {};"),
         "Expected mixed exported and local namespace members to emit a scope marker: {output}"
     );
+}
+
+#[test]
+fn test_namespace_shadowed_default_export_uses_self_import_type_names() {
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.current_namespace_self_import_alias = Some("me".to_string());
+    emitter.current_namespace_shadowed_default_name = Some("MyComponent".to_string());
+    emitter.current_namespace_self_export_names.extend([
+        "Things".to_string(),
+        "Props".to_string(),
+        "MyComponent".to_string(),
+    ]);
+
+    let qualified = emitter.qualify_current_namespace_self_type_text("Things<Props, MyComponent>");
+
+    assert_eq!(qualified, "me.Things<me.Props, me.default>");
 }
 
 #[test]

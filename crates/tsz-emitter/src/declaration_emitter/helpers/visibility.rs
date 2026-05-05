@@ -223,7 +223,129 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(sym_id) = binder.file_locals.get(&name) {
             return used.contains_key(&sym_id);
         }
-        false
+        self.namespace_member_referenced_by_exported_object_literal(decl_idx, &name)
+    }
+
+    pub(crate) fn namespace_member_referenced_by_exported_object_literal(
+        &self,
+        _decl_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        self.arena.nodes.iter().any(|node| {
+            let Some(module_block) = self.arena.get_module_block(node) else {
+                return false;
+            };
+            let Some(statements) = module_block.statements.as_ref() else {
+                return false;
+            };
+            statements.nodes.iter().copied().any(|stmt_idx| {
+                self.exported_variable_statement_initializer_references_name(stmt_idx, name)
+            })
+        }) || self.object_literal_member_references_name(name)
+    }
+
+    fn object_literal_member_references_name(&self, name: &str) -> bool {
+        self.arena.nodes.iter().any(|node| {
+            let Some(object) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            object.elements.nodes.iter().copied().any(|member_idx| {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    return false;
+                };
+                if let Some(shorthand) = self.arena.get_shorthand_property(member_node) {
+                    return self.get_identifier_text(shorthand.name).as_deref() == Some(name);
+                }
+                if let Some(property) = self.arena.get_property_assignment(member_node) {
+                    return self.get_identifier_text(property.initializer).as_deref() == Some(name);
+                }
+                false
+            })
+        })
+    }
+
+    fn exported_variable_statement_initializer_references_name(
+        &self,
+        stmt_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+        let has_export_modifier = self.stmt_has_export_modifier(stmt_node)
+            || self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            || self
+                .get_source_slice(stmt_node.pos, stmt_node.end)
+                .is_some_and(|text| text.trim_start().starts_with("export "));
+        if !has_export_modifier {
+            return false;
+        }
+        var_stmt
+            .declarations
+            .nodes
+            .iter()
+            .copied()
+            .any(|decl_list_idx| {
+                self.arena
+                    .get(decl_list_idx)
+                    .and_then(|decl_list_node| self.arena.get_variable(decl_list_node))
+                    .is_some_and(|decl_list| {
+                        decl_list
+                            .declarations
+                            .nodes
+                            .iter()
+                            .copied()
+                            .any(|var_decl_idx| {
+                                self.exported_variable_initializer_references_name(
+                                    var_decl_idx,
+                                    name,
+                                )
+                            })
+                    })
+            })
+    }
+
+    fn exported_variable_initializer_references_name(
+        &self,
+        var_decl_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(var_decl_node) = self.arena.get(var_decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = self.arena.get_variable_declaration(var_decl_node) else {
+            return false;
+        };
+        if !var_decl.initializer.is_some() {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(var_decl.initializer) else {
+            return false;
+        };
+        let Some(object) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
+
+        object.elements.nodes.iter().copied().any(|member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if let Some(shorthand) = self.arena.get_shorthand_property(member_node) {
+                return self.get_identifier_text(shorthand.name).as_deref() == Some(name);
+            }
+            if let Some(property) = self.arena.get_property_assignment(member_node) {
+                return self.get_identifier_text(property.initializer).as_deref() == Some(name);
+            }
+            false
+        })
     }
 
     /// Extract the name `NodeIndex` from a declaration node.
@@ -743,7 +865,12 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(bindings) = self.arena.get_named_imports(bindings_node)
                 {
                     if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
-                        if self.imported_name_is_used(binder, used, bindings.name) {
+                        if self.imported_name_is_used(binder, used, bindings.name)
+                            || self.namespace_import_needed_for_shadowed_self_type(
+                                bindings.name,
+                                import.module_specifier,
+                            )
+                        {
                             named_count = 1;
                         }
                     } else {
