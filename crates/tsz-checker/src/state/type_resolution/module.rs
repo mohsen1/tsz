@@ -15,6 +15,55 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn emit_module_has_no_default_export_at(
+        &mut self,
+        module_specifier: &str,
+        decl_node: NodeIndex,
+    ) {
+        let (start, length) = if decl_node.is_some() {
+            if let Some(node) = self.ctx.arena.get(decl_node) {
+                (node.pos, node.end - node.pos)
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
+
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let display_name = self.imported_namespace_display_module_name(module_specifier);
+        let quoted_name = format!("\"{display_name}\"");
+        let message = format_message(
+            diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
+            &[&quoted_name],
+        );
+        self.error(
+            start,
+            length,
+            message,
+            diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT,
+        );
+    }
+
+    pub(crate) fn source_file_idx_is_js_with_esm_syntax(&self, target_idx: usize) -> bool {
+        if !self.source_file_idx_has_esm_syntax(target_idx) {
+            return false;
+        }
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        if source_file.is_declaration_file {
+            return false;
+        }
+        let file_name = source_file.file_name.as_str();
+        file_name.ends_with(".js")
+            || file_name.ends_with(".jsx")
+            || file_name.ends_with(".mjs")
+            || file_name.ends_with(".cjs")
+    }
+
     fn module_export_file_key_candidates(&self, file_name: &str) -> Vec<String> {
         let mut candidates = Vec::new();
         let mut push_unique = |value: String| {
@@ -1869,8 +1918,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Only emit TS1192 if report_unresolved_imports is enabled
-        if !self.ctx.report_unresolved_imports {
+        let resolved_import_target = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(module_specifier));
+
+        // Only let report_unresolved_imports suppress diagnostics for truly
+        // unresolved modules. A resolved module with no default export still
+        // needs TS1192 even in checked-JS rechecks.
+        if !self.ctx.report_unresolved_imports && resolved_import_target.is_none() {
             return;
         }
 
@@ -1881,6 +1937,12 @@ impl<'a> CheckerState<'a> {
             && self.ctx.compiler_options.module == tsz_common::common::ModuleKind::System
             && !self.module_has_export_equals(module_specifier)
             && !self.module_has_export_assignment_declaration(module_specifier)
+        {
+            return;
+        }
+
+        if self.ctx.compiler_options.module.is_node_module()
+            && self.module_can_use_synthetic_default_import(module_specifier)
         {
             return;
         }
@@ -1942,14 +2004,18 @@ impl<'a> CheckerState<'a> {
 
         use crate::diagnostics::{diagnostic_messages, format_message};
 
+        let target_has_esm_syntax =
+            resolved_import_target.is_some_and(|idx| self.source_file_idx_has_esm_syntax(idx));
+
         let has_export_equals = self.module_has_export_equals(module_specifier)
             || self.module_has_export_assignment_declaration(module_specifier);
 
         // `export =` inside an ESM-extension module (.mts/.mjs/.d.mts) is a
         // syntax error (TS1203) and does not provide a default export. Fall
         // through to TS1192 so the default-import side is also diagnosed.
-        let export_equals_provides_default =
-            has_export_equals && !self.module_has_explicit_esm_extension(module_specifier);
+        let export_equals_provides_default = has_export_equals
+            && !self.module_has_explicit_esm_extension(module_specifier)
+            && !target_has_esm_syntax;
 
         if export_equals_provides_default {
             // TS1259: "Module X can only be default-imported using the 'allowSyntheticDefaultImports' flag"
@@ -2012,6 +2078,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        let target_idx = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(module_specifier));
+        if target_idx.is_some_and(|idx| self.source_file_idx_has_esm_syntax(idx)) {
+            return false;
+        }
+
         if self
             .resolve_js_export_surface_for_module(module_specifier, Some(self.ctx.current_file_idx))
             .is_some_and(|surface| surface.has_commonjs_exports)
@@ -2019,7 +2093,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
+        let Some(target_idx) = target_idx else {
             return false;
         };
         let arena = self.ctx.get_arena_for_file(target_idx as u32);

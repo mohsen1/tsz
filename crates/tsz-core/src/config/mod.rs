@@ -2817,6 +2817,7 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "noimplicitthis" => Some("noImplicitThis"),
         "noimplicitusestrict" => Some("noImplicitUseStrict"),
         "nolib" => Some("noLib"),
+        "notypesandsymbols" => Some("noTypesAndSymbols"),
         "nopropertyaccessfromindexsignature" => Some("noPropertyAccessFromIndexSignature"),
         "noresolve" => Some("noResolve"),
         "nostrictgenericchecks" => Some("noStrictGenericChecks"),

@@ -274,6 +274,10 @@ impl<'a> CheckerState<'a> {
         &self,
         idx: NodeIndex,
     ) -> bool {
+        if self.current_source_file_has_esm_syntax() {
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };

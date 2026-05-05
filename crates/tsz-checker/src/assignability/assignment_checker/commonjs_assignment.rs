@@ -124,7 +124,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if self.source_file_has_esm_syntax() {
+        if self.current_source_file_has_esm_syntax() {
             return false;
         }
 
@@ -161,7 +161,7 @@ impl<'a> CheckerState<'a> {
     /// against the inferred type. Without this, `exports.apply = undefined` followed
     /// by `exports.apply = function() {}` would emit false TS2322.
     pub(crate) fn is_commonjs_exports_property_declaration(&self, target_idx: NodeIndex) -> bool {
-        if !self.is_js_file() {
+        if !self.is_js_file() || self.current_source_file_has_esm_syntax() {
             return false;
         }
 
@@ -845,28 +845,5 @@ impl<'a> CheckerState<'a> {
 
         self.error_property_not_exist_at(&prop_name, direct_export_type, access.name_or_argument);
         true
-    }
-
-    fn source_file_has_esm_syntax(&self) -> bool {
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
-            return false;
-        };
-        for &stmt_idx in &source_file.statements.nodes {
-            if stmt_idx.is_none() {
-                continue;
-            }
-            let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            match stmt.kind {
-                syntax_kind_ext::IMPORT_DECLARATION
-                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                | syntax_kind_ext::EXPORT_DECLARATION
-                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-                | syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
-                _ => {}
-            }
-        }
-        false
     }
 }

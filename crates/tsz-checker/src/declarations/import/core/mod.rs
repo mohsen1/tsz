@@ -8,5 +8,6 @@ mod import_members;
 #[cfg(test)]
 mod import_members_tests;
 mod module_exports;
+mod type_only_js;
 
 pub(crate) use helpers::ModuleNotFoundSite;

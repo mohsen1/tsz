@@ -1800,6 +1800,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_current_file_commonjs_export_base_syntax(&self, idx: NodeIndex) -> bool {
+        if self.current_source_file_has_esm_syntax() {
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };

@@ -618,6 +618,10 @@ impl<'a> CheckerState<'a> {
 
     /// Compute the JS export surface from scratch (uncached).
     fn compute_js_export_surface(&mut self, target_file_idx: usize) -> JsExportSurface {
+        if self.source_file_idx_has_esm_syntax(target_file_idx) {
+            return JsExportSurface::empty();
+        }
+
         let mut surface = JsExportSurface::empty();
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
         let target_is_external_module = self
