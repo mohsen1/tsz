@@ -372,6 +372,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     let consumed_offset = i - rest_start;
                     let remaining_rest_type =
                         self.remaining_rest_type_after_offset(rest_type, consumed_offset);
+                    if crate::type_queries::contains_type_parameters_db(
+                        self.interner,
+                        remaining_rest_type,
+                    ) {
+                        continue;
+                    }
                     if self.checker.is_assignable_to(inner, remaining_rest_type) {
                         continue;
                     }

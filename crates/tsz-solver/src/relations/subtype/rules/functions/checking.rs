@@ -1270,6 +1270,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let is_multi_sig = source.call_signatures.len() > 1 || target.call_signatures.len() > 1;
         for t_sig in &target.call_signatures {
             let mut found_match = false;
+            if source.call_signatures.len() > 1
+                && (t_sig.is_method || source.call_signatures.iter().any(|sig| sig.is_method))
+                && self
+                    .method_overloads_cover_tuple_union_rest_target(&source.call_signatures, t_sig)
+            {
+                found_match = true;
+            }
             for s_sig in &source.call_signatures {
                 if self.check_call_signature_subtype(s_sig, t_sig).is_true() {
                     found_match = true;
@@ -1403,6 +1410,80 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         SubtypeResult::True
+    }
+
+    fn method_overloads_cover_tuple_union_rest_target(
+        &mut self,
+        source_sigs: &[CallSignature],
+        target_sig: &CallSignature,
+    ) -> bool {
+        use crate::type_queries::data::get_union_members;
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        let Some(last_target_param) = target_sig.params.last().filter(|param| param.rest) else {
+            return false;
+        };
+        let Some(union_members) = get_union_members(self.interner, last_target_param.type_id)
+        else {
+            return false;
+        };
+
+        let prefix_params = &target_sig.params[..target_sig.params.len().saturating_sub(1)];
+        union_members.iter().all(|member_type_id| {
+            let member_param = ParamInfo {
+                type_id: *member_type_id,
+                rest: true,
+                ..*last_target_param
+            };
+            let mut variant_params = prefix_params.to_vec();
+            variant_params.extend(unpack_tuple_rest_parameter(self.interner, &member_param));
+            source_sigs.iter().any(|source_sig| {
+                let source_fn = FunctionShape {
+                    type_params: source_sig.type_params.clone(),
+                    params: source_sig.params.clone(),
+                    this_type: source_sig.this_type,
+                    return_type: source_sig.return_type,
+                    type_predicate: source_sig.type_predicate,
+                    is_constructor: false,
+                    is_method: source_sig.is_method,
+                };
+                let variant_fn = FunctionShape {
+                    type_params: target_sig.type_params.clone(),
+                    params: variant_params.clone(),
+                    this_type: target_sig.this_type,
+                    return_type: target_sig.return_type,
+                    type_predicate: target_sig.type_predicate,
+                    is_constructor: false,
+                    is_method: target_sig.is_method,
+                };
+                self.check_function_subtype(&source_fn, &variant_fn)
+                    .is_true()
+                    || self.method_overload_prefix_covers_variant(source_sig, &variant_params)
+            })
+        })
+    }
+
+    fn method_overload_prefix_covers_variant(
+        &mut self,
+        source_sig: &CallSignature,
+        variant_params: &[ParamInfo],
+    ) -> bool {
+        if !source_sig.is_method || variant_params.is_empty() {
+            return false;
+        }
+        if source_sig.params.len() < variant_params.len() {
+            return false;
+        }
+        source_sig
+            .params
+            .iter()
+            .zip(variant_params.iter())
+            .take(variant_params.len())
+            .all(|(source_param, target_param)| {
+                let (source_type, target_type) =
+                    self.effective_param_type_pair(source_param, target_param);
+                self.are_parameters_compatible_impl(source_type, target_type, true)
+            })
     }
 
     /// Check call signature subtyping.
