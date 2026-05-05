@@ -4257,6 +4257,43 @@ const r1: number = x;
 }
 
 #[test]
+fn test_module_local_builtin_iterator_return_alias_shadows_intrinsic() {
+    let source = r#"
+export {};
+
+type BuiltinIteratorReturn = string;
+
+const ok: BuiltinIteratorReturn = "done";
+const bad: BuiltinIteratorReturn = undefined;
+
+ok;
+bad;
+"#;
+    let options = CheckerOptions {
+        strict_builtin_iterator_return: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", options);
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for assigning undefined to the local string alias. Got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0]
+            .1
+            .contains("Type 'undefined' is not assignable to type 'string'."),
+        "Expected the local alias to resolve to string. Actual diagnostic: {ts2322:#?}"
+    );
+}
+
+#[test]
 fn test_ts2322_intersections_and_optional_properties_source_display() {
     let source = r#"
 declare let x: { a?: number, b: string };
