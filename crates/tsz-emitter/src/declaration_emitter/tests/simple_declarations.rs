@@ -2984,6 +2984,50 @@ class C {
 }
 
 #[test]
+fn test_class_property_initializer_same_name_enum_uses_typeof_enum() {
+    let source = r#"
+enum Hello {
+    World
+}
+class Foo {
+    Hello = Hello;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let source_file = parser
+        .arena
+        .get(root)
+        .and_then(|node| parser.arena.get_source_file(node))
+        .expect("missing source file");
+    let class_idx = source_file.statements.nodes[1];
+    let prop_idx = parser
+        .arena
+        .get(class_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .and_then(|class| class.members.nodes.first().copied())
+        .expect("missing property");
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(prop_idx.0, TypeId::ANY);
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("Hello: typeof Hello;"),
+        "Expected same-name enum initializer to emit typeof enum: {output}"
+    );
+    assert!(
+        !output.contains("readonly [x: number]"),
+        "Did not expect enum value object shape to leak into property type: {output}"
+    );
+}
+
+#[test]
 fn test_returned_local_conditional_annotation_uses_function_generic_scope() {
     let output = emit_dts_with_binding(
         r#"
