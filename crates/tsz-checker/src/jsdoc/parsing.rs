@@ -914,12 +914,13 @@ impl<'a> CheckerState<'a> {
                         if part.is_empty() {
                             continue;
                         }
-                        let parts: Vec<&str> = part.split(" as ").collect();
-                        if parts.len() == 2 {
+                        if let Some((imported_name, local_name)) =
+                            Self::parse_jsdoc_named_import_alias(part)
+                        {
                             results.push((
-                                parts[1].trim().to_string(),
+                                local_name.to_string(),
                                 specifier.clone(),
-                                parts[0].trim().to_string(),
+                                imported_name.to_string(),
                             ));
                         } else {
                             results.push((part.to_string(), specifier.clone(), part.to_string()));
@@ -986,6 +987,19 @@ impl<'a> CheckerState<'a> {
 
     const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
         ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+    }
+
+    fn parse_jsdoc_named_import_alias(part: &str) -> Option<(&str, &str)> {
+        let mut pieces = part.split_whitespace();
+        let imported_name = pieces.next()?;
+        if pieces.next()? != "as" {
+            return None;
+        }
+        let local_name = pieces.next()?;
+        if pieces.next().is_some() {
+            return None;
+        }
+        Some((imported_name, local_name))
     }
 
     pub(super) fn parse_jsdoc_typedef_definition(line: &str) -> Option<(String, Option<String>)> {
