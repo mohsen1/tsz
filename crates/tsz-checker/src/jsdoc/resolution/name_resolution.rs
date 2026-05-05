@@ -742,14 +742,8 @@ impl<'a> CheckerState<'a> {
                 if tp_name.is_empty() {
                     continue;
                 }
-                // Handle constraints: `T extends Foo`
-                let (name, constraint_str) = if let Some(ext_idx) = tp_name.find(" extends ") {
-                    (&tp_name[..ext_idx], Some(&tp_name[ext_idx + 9..]))
-                } else {
-                    (tp_name, None)
-                };
-                let constraint =
-                    constraint_str.and_then(|s| self.jsdoc_type_from_expression(s.trim()));
+                let (name, constraint_str) = Self::split_jsdoc_type_param_constraint(tp_name);
+                let constraint = constraint_str.and_then(|s| self.jsdoc_type_from_expression(s));
                 let atom = self.ctx.types.intern_string(name);
                 let info = tsz_solver::TypeParamInfo {
                     name: atom,

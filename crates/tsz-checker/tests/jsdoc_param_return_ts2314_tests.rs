@@ -241,6 +241,27 @@ function f(arr) { return []; }
     );
 }
 
+#[test]
+fn arrow_generic_type_params_with_tab_constraint_keep_template_arg_in_scope() {
+    let codes = check_js_strict(
+        "\
+/**
+ * @template T
+ * @typedef {{ value: T }} Box
+ */
+
+/**
+ * @param {<T extends\tstring>(value: Box<T>) => void} cb
+ */
+function use(cb) {}
+",
+    );
+    assert!(
+        !codes.contains(&2304) && !codes.contains(&2314) && !codes.contains(&2315),
+        "tab-whitespace JSDoc arrow type parameter should keep T in scope for Box<T>, got: {codes:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // strict mode mirrors the jsdocArrayObjectPromiseNoImplicitAny.ts scenario
 // ---------------------------------------------------------------------------
