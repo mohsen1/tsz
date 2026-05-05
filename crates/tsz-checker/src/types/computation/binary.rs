@@ -758,10 +758,26 @@ impl<'a> CheckerState<'a> {
                     let left_type = self.get_type_of_node(left_idx);
                     self.ctx.preserve_literal_types = prev_preserve;
                     let outer_context = request.contextual_type;
+                    let right_ctx_idx = self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
+                    let right_accepts_context =
+                        self.ctx.arena.get(right_ctx_idx).is_some_and(|right_node| {
+                            matches!(
+                                right_node.kind,
+                                syntax_kind_ext::ARROW_FUNCTION
+                                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    | syntax_kind_ext::CONDITIONAL_EXPRESSION
+                            )
+                        });
                     // Right operand: prefer the whole-expression contextual type
-                    // inherited from the parent (e.g. assignment target). Fall back
-                    // to the left operand with nullish removed when there is no outer
-                    // context.
+                    // inherited from the parent only for expression forms that
+                    // are context-sensitive. Identifiers and other ordinary
+                    // expressions should be checked once as part of the whole
+                    // logical expression result, matching tsc's single
+                    // assignment-level diagnostic for `var x: T = a || b`.
+                    // Fall back to the left operand with nullish removed when
+                    // there is no outer context.
                     let right_request = if outer_context.is_none() {
                         let evaluated_left = self.evaluate_type_with_env(left_type);
                         let mut non_nullish = self.ctx.types.remove_nullish(evaluated_left);
@@ -779,19 +795,6 @@ impl<'a> CheckerState<'a> {
                                 non_nullish = dn;
                             }
                         }
-                        let right_ctx_idx =
-                            self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
-                        let right_accepts_context =
-                            self.ctx.arena.get(right_ctx_idx).is_some_and(|right_node| {
-                                matches!(
-                                    right_node.kind,
-                                    syntax_kind_ext::ARROW_FUNCTION
-                                        | syntax_kind_ext::FUNCTION_EXPRESSION
-                                        | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                        | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                        | syntax_kind_ext::CONDITIONAL_EXPRESSION
-                                )
-                            });
                         if right_accepts_context
                             && non_nullish != TypeId::NEVER
                             && non_nullish != TypeId::UNKNOWN
@@ -801,66 +804,71 @@ impl<'a> CheckerState<'a> {
                             TypingRequest::NONE
                         }
                     } else {
-                        request.read()
+                        if right_accepts_context {
+                            request.read()
+                        } else {
+                            TypingRequest::NONE
+                        }
                     };
                     let right_type = self.get_type_of_node_with_request(right_idx, &right_request);
 
-                    let should_check_contextual_right = outer_context.is_some() && {
-                        let mut parent_idx = self
-                            .ctx
-                            .arena
-                            .get_extended(node_idx)
-                            .map(|ext| ext.parent)
-                            .unwrap_or(NodeIndex::NONE);
-                        let mut check = true;
-                        for _ in 0..4 {
-                            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                    let should_check_contextual_right =
+                        outer_context.is_some() && right_accepts_context && {
+                            let mut parent_idx = self
+                                .ctx
+                                .arena
+                                .get_extended(node_idx)
+                                .map(|ext| ext.parent)
+                                .unwrap_or(NodeIndex::NONE);
+                            let mut check = true;
+                            for _ in 0..4 {
+                                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                                    break;
+                                };
+                                if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                                    parent_idx = self
+                                        .ctx
+                                        .arena
+                                        .get_extended(parent_idx)
+                                        .map(|ext| ext.parent)
+                                        .unwrap_or(NodeIndex::NONE);
+                                    continue;
+                                }
+                                if matches!(
+                                    parent_node.kind,
+                                    syntax_kind_ext::AS_EXPRESSION
+                                        | syntax_kind_ext::TYPE_ASSERTION
+                                        | syntax_kind_ext::SATISFIES_EXPRESSION
+                                        | syntax_kind_ext::CASE_CLAUSE
+                                        | syntax_kind_ext::SPREAD_ELEMENT
+                                        | syntax_kind_ext::SPREAD_ASSIGNMENT
+                                ) {
+                                    // Suppress contextual assignability check when:
+                                    // - Case clauses: use comparability (TS2678), not
+                                    //   assignability, for the switch discriminant.
+                                    // - Type assertions/satisfies: explicit type override.
+                                    // - Spread elements/assignments: the RHS of ?? inside
+                                    //   a spread doesn't need to independently satisfy the
+                                    //   contextual type because properties merge with
+                                    //   earlier ones in the containing object literal.
+                                    check = false;
+                                } else if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                    && let Some(parent_binary) =
+                                        self.ctx.arena.get_binary_expr(parent_node)
+                                    && matches!(
+                                        parent_binary.operator_token,
+                                        k if k == SyntaxKind::BarBarToken as u16
+                                            || k == SyntaxKind::AmpersandAmpersandToken as u16
+                                            || k == SyntaxKind::QuestionQuestionToken as u16
+                                            || k == SyntaxKind::CommaToken as u16
+                                    )
+                                {
+                                    check = false;
+                                }
                                 break;
-                            };
-                            if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                                parent_idx = self
-                                    .ctx
-                                    .arena
-                                    .get_extended(parent_idx)
-                                    .map(|ext| ext.parent)
-                                    .unwrap_or(NodeIndex::NONE);
-                                continue;
                             }
-                            if matches!(
-                                parent_node.kind,
-                                syntax_kind_ext::AS_EXPRESSION
-                                    | syntax_kind_ext::TYPE_ASSERTION
-                                    | syntax_kind_ext::SATISFIES_EXPRESSION
-                                    | syntax_kind_ext::CASE_CLAUSE
-                                    | syntax_kind_ext::SPREAD_ELEMENT
-                                    | syntax_kind_ext::SPREAD_ASSIGNMENT
-                            ) {
-                                // Suppress contextual assignability check when:
-                                // - Case clauses: use comparability (TS2678), not
-                                //   assignability, for the switch discriminant.
-                                // - Type assertions/satisfies: explicit type override.
-                                // - Spread elements/assignments: the RHS of ?? inside
-                                //   a spread doesn't need to independently satisfy the
-                                //   contextual type because properties merge with
-                                //   earlier ones in the containing object literal.
-                                check = false;
-                            } else if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                                && let Some(parent_binary) =
-                                    self.ctx.arena.get_binary_expr(parent_node)
-                                && matches!(
-                                    parent_binary.operator_token,
-                                    k if k == SyntaxKind::BarBarToken as u16
-                                        || k == SyntaxKind::AmpersandAmpersandToken as u16
-                                        || k == SyntaxKind::QuestionQuestionToken as u16
-                                        || k == SyntaxKind::CommaToken as u16
-                                )
-                            {
-                                check = false;
-                            }
-                            break;
-                        }
-                        check
-                    };
+                            check
+                        };
                     if should_check_contextual_right
                         && right_type != TypeId::ANY
                         && right_type != TypeId::ERROR
