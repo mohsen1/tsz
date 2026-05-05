@@ -208,6 +208,42 @@ fn es5_arrow_this_capture_skips_multiple_user_bindings() {
     );
 }
 
+#[test]
+fn commonjs_module_temp_skips_user_binding() {
+    let source = r#"import { value } from "foo";
+
+const foo_1 = "user binding";
+
+export const result = value + ":" + foo_1;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("const foo_2 = require(\"foo\");"),
+        "CommonJS module temp should skip the user foo_1 binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const foo_1 = \"user binding\";"),
+        "User binding should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.result = foo_2.value + \":\" + foo_1;"),
+        "Imported reads should use the fresh module temp while local reads remain local.\nOutput:\n{output}"
+    );
+}
+
 /// `export default function f()` in CJS should emit `exports.default = f;`
 /// BEFORE the function declaration, because JS function declarations are
 /// hoisted. This matches tsc's output ordering.
