@@ -217,6 +217,7 @@ impl<'a> CheckerState<'a> {
                         attributes_idx,
                         react_child_type,
                         react_child_type,
+                        Some(children_type),
                     );
                     return;
                 }
@@ -960,6 +961,7 @@ impl<'a> CheckerState<'a> {
                 attributes_idx,
                 expected_child_type,
                 original_children_type,
+                None,
             )
         {
             return;
@@ -1126,13 +1128,15 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         expected_child_type: TypeId,
         original_children_type: TypeId,
+        contextual_child_type: Option<TypeId>,
     ) -> bool {
         let Some(child_nodes) = self.get_jsx_body_child_nodes(attributes_idx) else {
             return false;
         };
 
-        let child_request =
-            crate::context::TypingRequest::with_contextual_type(expected_child_type);
+        let child_request = crate::context::TypingRequest::with_contextual_type(
+            contextual_child_type.unwrap_or(expected_child_type),
+        );
         let mut emitted = false;
 
         for child_idx in child_nodes {
@@ -1143,10 +1147,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // The diagnostic anchor is the JSX child wrapper itself
-            // (`{expr}` or `<Elem />`) so its column matches tsc's report,
-            // while the child's *type* still comes from the inner expression
-            // when the wrapper is a JSX expression container.
             let type_node = if child_node.kind == syntax_kind_ext::JSX_EXPRESSION {
                 self.ctx
                     .arena
@@ -1157,7 +1157,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 child_idx
             };
-            let diag_node = child_idx;
+            let diag_node = if self.ctx.arena.get(type_node).is_some_and(|node| {
+                node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            }) {
+                type_node
+            } else {
+                child_idx
+            };
 
             let actual_child_type =
                 self.compute_type_of_node_with_request(type_node, &child_request);
