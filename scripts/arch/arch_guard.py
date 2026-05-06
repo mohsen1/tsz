@@ -398,6 +398,7 @@ LINE_LIMIT_CHECKS = [
             # any regression.
             "crates/tsz-checker/src/assignability/assignability_checker.rs",
             "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
+            "crates/tsz-checker/src/checkers/jsx/tests.rs",
             "crates/tsz-checker/src/checkers/jsx/props/resolution.rs",
             "crates/tsz-checker/src/checkers/jsx/tests.rs",
             "crates/tsz-checker/src/classes/class_checker.rs",
