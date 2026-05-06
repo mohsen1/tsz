@@ -1751,6 +1751,49 @@ fn show_config_rejects_tsconfig_only_cli_options() {
 }
 
 #[test]
+fn invalid_top_level_config_array_types_emit_ts5024() {
+    let temp = TempDir::new("top_level_config_array_types").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "export {};\n");
+
+    for (key, value) in [
+        ("include", r#""*.ts""#),
+        ("exclude", r#""dist""#),
+        ("references", r#""./lib""#),
+    ] {
+        write_file(
+            &temp.path.join("tsconfig.json"),
+            &format!(
+                r#"{{
+  "{key}": {value},
+  "compilerOptions": {{ "noEmit": true }},
+  "files": ["a.ts"]
+}}
+"#
+            ),
+        );
+
+        let (code, output) =
+            run_tsz_with_exit_code(&temp.path, &["-p", "tsconfig.json", "--pretty", "false"])
+                .expect("tsz should run");
+
+        assert_ne!(
+            code, 0,
+            "expected config diagnostic for {key}, got: {output}"
+        );
+        assert!(
+            !output.contains("failed to parse tsconfig"),
+            "invalid {key} should recover through TS5024, got:\n{output}"
+        );
+        assert!(
+            output.contains(&format!(
+                "error TS5024: Compiler option '{key}' requires a value of type Array."
+            )),
+            "expected TS5024 for {key}, got:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn show_config_includes_supported_direct_and_inherited_options() {
     let temp = TempDir::new("show_config_supported_options").expect("temp dir");
     write_file(&temp.path.join("a.ts"), "enum E { A }\n");
