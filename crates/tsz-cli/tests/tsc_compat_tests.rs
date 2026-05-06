@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 struct TempDir {
     path: PathBuf,
@@ -169,6 +169,60 @@ fn trace_resolution_prints_relative_import_resolution() {
             && stdout.contains("dep.ts'. ========"),
         "expected trace to include successful module resolution, got:\n{stdout}"
     );
+}
+
+#[test]
+fn positional_file_no_lib_no_emit_returns_from_binary() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("positional_no_lib_no_emit").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "const x = 1;\n");
+
+    let mut child = Command::new(tsz_bin)
+        .args(["a.ts", "--noLib", "--noEmit", "--pretty", "false"])
+        .current_dir(&temp.path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tsz positional compile");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if child
+            .try_wait()
+            .expect("poll tsz positional compile")
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let output = child.wait_with_output().expect("collect killed tsz output");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            panic!("tsz positional compile timed out\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    let output = child
+        .wait_with_output()
+        .expect("collect tsz positional compile output");
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "expected diagnostics-with-no-emit exit\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("error TS2318: Cannot find global type 'Array'."),
+        "expected noLib missing global diagnostics, got:\n{stdout}"
+    );
+    assert!(stderr.is_empty(), "expected no stderr, got:\n{stderr}");
 }
 
 #[test]

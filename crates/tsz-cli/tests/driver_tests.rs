@@ -3495,6 +3495,29 @@ fn compile_with_explicit_files_without_tsconfig() {
 }
 
 #[test]
+fn compile_with_explicit_files_no_lib_no_emit_without_tsconfig_returns() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("main.ts"), "const value = 1;\n");
+
+    let args = parse_args(&["tsz", "main.ts", "--noLib", "--noEmit", "--pretty", "false"]);
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.iter().all(|code| *code == 2318),
+        "expected only TS2318 missing global type diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(!codes.is_empty(), "expected TS2318 diagnostics");
+    assert!(result.emitted_files.is_empty());
+    assert_eq!(result.files_read.len(), 1);
+    assert!(result.files_read[0].ends_with("main.ts"));
+}
+
+#[test]
 fn compile_no_check_no_emit_is_parse_only() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
