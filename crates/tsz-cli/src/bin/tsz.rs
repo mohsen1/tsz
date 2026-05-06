@@ -18,6 +18,7 @@ use tsz_cli::{driver, locale, reporter::Reporter, watch};
 const EXIT_SUCCESS: i32 = 0;
 const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
+const TS5112_COMMAND_LINE_FILES_MESSAGE: &str = "tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.";
 
 fn main() -> Result<()> {
     // Initialize tracing if TSZ_LOG or RUST_LOG is set (zero cost otherwise).
@@ -80,6 +81,11 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     // Handle --showConfig: print resolved configuration
     if args.show_config {
         return handle_show_config(&args, &cwd);
+    }
+
+    if should_report_ts5112_for_command_line_files(&args, &cwd) {
+        println!("error TS5112: {TS5112_COMMAND_LINE_FILES_MESSAGE}");
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
     }
 
     // Handle --listFilesOnly: print file list and exit
@@ -279,6 +285,14 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     }
 
     std::process::exit(EXIT_SUCCESS);
+}
+
+fn should_report_ts5112_for_command_line_files(args: &CliArgs, cwd: &std::path::Path) -> bool {
+    !args.ignore_config
+        && !args.build
+        && args.project.is_none()
+        && !args.files.is_empty()
+        && cwd.join("tsconfig.json").exists()
 }
 
 const fn should_use_large_stack_thread(args: &CliArgs) -> bool {

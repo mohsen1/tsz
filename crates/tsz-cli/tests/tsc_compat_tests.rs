@@ -1259,6 +1259,8 @@ fn tsc_compat_double_digit_line_number_pretty() {
 // CLI error format tests (TS5023, TS5025, TS6369, build mode flag remapping)
 // ===========================================================================
 
+const TS5112_COMMAND_LINE_FILES_OUTPUT: &str = "error TS5112: tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.\n";
+
 #[test]
 fn unknown_flag_ts5023_format() {
     let temp = TempDir::new("unknown_flag_ts5023").expect("temp dir");
@@ -1331,6 +1333,91 @@ fn bare_optional_boolean_flags_apply_to_following_input_file() {
     assert!(
         output.contains("TS7006") && output.contains("TS2322"),
         "Expected both bare boolean flags to affect test.ts, got:\n{output}"
+    );
+}
+
+#[test]
+fn command_line_files_with_discovered_tsconfig_report_ts5112() {
+    let temp = TempDir::new("command_line_files_ts5112").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true}}"#,
+    );
+    write_file(&temp.path.join("src/a.ts"), "const a = 1;\n");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--pretty", "false", "--noLib", "src/a.ts"])
+            .expect("tsz binary not found");
+
+    assert_eq!(code, 1, "Expected exit code 1 for TS5112, got {code}");
+    assert_eq!(output, TS5112_COMMAND_LINE_FILES_OUTPUT);
+}
+
+#[test]
+fn list_files_only_with_discovered_tsconfig_reports_ts5112() {
+    let temp = TempDir::new("list_files_only_ts5112").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true}}"#,
+    );
+    write_file(&temp.path.join("src/a.ts"), "const a = 1;\n");
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--pretty",
+            "false",
+            "--noLib",
+            "--listFilesOnly",
+            "src/a.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+
+    assert_eq!(code, 1, "Expected exit code 1 for TS5112, got {code}");
+    assert_eq!(output, TS5112_COMMAND_LINE_FILES_OUTPUT);
+}
+
+#[test]
+fn ignore_config_skips_ts5112_for_command_line_files() {
+    let temp = TempDir::new("ignore_config_skips_ts5112").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true}}"#,
+    );
+    write_file(&temp.path.join("src/a.ts"), "const a = 1;\n");
+
+    let (_code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--pretty", "false", "--noLib", "--ignoreConfig", "src/a.ts"],
+    )
+    .expect("tsz binary not found");
+
+    assert!(
+        !output.contains("TS5112"),
+        "--ignoreConfig should skip TS5112, got:\n{output}"
+    );
+
+    let (list_code, list_output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--pretty",
+            "false",
+            "--noLib",
+            "--ignoreConfig",
+            "--listFilesOnly",
+            "src/a.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+
+    assert_eq!(
+        list_code, 0,
+        "--listFilesOnly with --ignoreConfig should succeed, got:\n{list_output}"
+    );
+    assert!(
+        !list_output.contains("TS5112") && list_output.contains("src/a.ts"),
+        "--listFilesOnly with --ignoreConfig should list the explicit file, got:\n{list_output}"
     );
 }
 
