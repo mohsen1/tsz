@@ -1022,50 +1022,39 @@ impl BinderState {
         false
     }
 
-    /// Check if any top-level statement is a CommonJS module.exports or exports.x assignment.
+    /// Check if a source file contains a CommonJS module.exports or exports.x assignment.
     /// This detects patterns like:
     /// - `module.exports = { ... }`
     /// - `module.exports.x = ...`
     /// - `exports.x = ...`
     fn source_file_has_commonjs_indicator(arena: &NodeArena, stmts: &[NodeIndex]) -> bool {
-        for &stmt_idx in stmts {
-            if stmt_idx.is_none() {
-                continue;
-            }
-            let Some(stmt) = arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(expr_stmt) = arena.get_expression_statement(stmt) else {
+        let mut stack: Vec<NodeIndex> =
+            stmts.iter().copied().filter(|idx| !idx.is_none()).collect();
+
+        while let Some(idx) = stack.pop() {
+            let Some(node) = arena.get(idx) else {
                 continue;
             };
-            let Some(expr_node) = arena.get(expr_stmt.expression) else {
-                continue;
-            };
-            match expr_node.kind {
+            match node.kind {
                 syntax_kind_ext::BINARY_EXPRESSION => {
-                    let Some(binary) = arena.get_binary_expr(expr_node) else {
-                        continue;
-                    };
-                    if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-                        continue;
-                    }
-                    // Check left side for `module.exports` or `exports.x` pattern
-                    if Self::is_commonjs_export_target(arena, binary.left) {
+                    // Check left side for `module.exports` or `exports.x` pattern.
+                    if let Some(binary) = arena.get_binary_expr(node)
+                        && binary.operator_token == SyntaxKind::EqualsToken as u16
+                        && Self::is_commonjs_export_target(arena, binary.left)
+                    {
                         return true;
                     }
                 }
                 syntax_kind_ext::CALL_EXPRESSION
-                    if Self::is_commonjs_define_property_export_call(
-                        arena,
-                        expr_stmt.expression,
-                    ) =>
+                    if Self::is_commonjs_define_property_export_call(arena, idx) =>
                 {
                     return true;
                 }
                 _ => {}
+            }
+
+            for child in arena.get_children(idx) {
+                stack.push(child);
             }
         }
         false
