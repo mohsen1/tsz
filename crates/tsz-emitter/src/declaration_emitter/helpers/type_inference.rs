@@ -6873,8 +6873,6 @@ impl<'a> DeclarationEmitter<'a> {
             if line_idx > 0 && lines[line_idx - 1].trim_start().starts_with("/**") {
                 continue;
             }
-            lines[line_idx] =
-                Self::returned_object_method_signature_to_property_text(&lines[line_idx]);
             let indent_len = lines[line_idx].len() - lines[line_idx].trim_start().len();
             let indent = " ".repeat(indent_len);
             let mut comment_lines = Vec::new();
@@ -6891,82 +6889,6 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             lines.join("\n")
         }
-    }
-
-    fn returned_object_method_signature_to_property_text(line: &str) -> String {
-        let trimmed = line.trim_start();
-        let indent_len = line.len() - trimmed.len();
-        let Some(open_paren) = trimmed.find('(') else {
-            return line.to_string();
-        };
-        let before_paren = trimmed[..open_paren].trim();
-        let optional = before_paren.ends_with('?');
-        let method_head = before_paren.trim_end_matches('?').trim();
-        let (name, type_params) = method_head
-            .find('<')
-            .map(|type_param_start| {
-                (
-                    method_head[..type_param_start].trim(),
-                    method_head[type_param_start..].trim(),
-                )
-            })
-            .unwrap_or((method_head, ""));
-        if name.is_empty()
-            || name == "new"
-            || name.contains(' ')
-            || name.starts_with('[')
-            || before_paren.contains(':')
-        {
-            return line.to_string();
-        }
-        let Some(close_paren) = Self::matching_top_level_paren(trimmed, open_paren) else {
-            return line.to_string();
-        };
-        let rest = trimmed[close_paren + 1..].trim_start();
-        let Some(return_text) = rest.strip_prefix(':') else {
-            return line.to_string();
-        };
-        let return_text = return_text.trim_start().trim_end_matches(';');
-        let optional_text = if optional { "?" } else { "" };
-        format!(
-            "{}{}{}: {}({}) => {};",
-            &line[..indent_len],
-            name,
-            optional_text,
-            type_params,
-            &trimmed[open_paren + 1..close_paren],
-            return_text
-        )
-    }
-
-    fn matching_top_level_paren(text: &str, open_paren: usize) -> Option<usize> {
-        let mut depth = 0usize;
-        let mut quote: Option<u8> = None;
-        let mut escaped = false;
-        for (idx, byte) in text.bytes().enumerate().skip(open_paren) {
-            if let Some(active_quote) = quote {
-                if escaped {
-                    escaped = false;
-                } else if byte == b'\\' {
-                    escaped = true;
-                } else if byte == active_quote {
-                    quote = None;
-                }
-                continue;
-            }
-            match byte {
-                b'\'' | b'"' => quote = Some(byte),
-                b'(' => depth += 1,
-                b')' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return Some(idx);
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
     }
 
     fn function_initializer_unique_returned_object_literal(
