@@ -537,6 +537,24 @@ fn new_expression_missing_callee_reports_ts1109() {
 }
 
 #[test]
+fn assignment_expression_missing_rhs_reports_ts1109() {
+    let source = "a = ;\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let semicolon_pos = source.find(';').expect("semicolon") as u32;
+    let expr_expected = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .unwrap_or_else(|| panic!("expected TS1109 for missing assignment RHS, got {diags:?}"));
+
+    assert_eq!(
+        expr_expected.start, semicolon_pos,
+        "TS1109 should anchor at the semicolon after `=`, got {diags:?}"
+    );
+}
+
+#[test]
 fn async_arrow_parameter_recovery_rolls_back_speculation() {
     let source = "var foo = async (a = await => await): Promise<void> => {}";
     let (parser, _root) = parse_source(source);

@@ -1231,20 +1231,9 @@ impl CheckerState<'_> {
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
                     let visibility = self.get_member_visibility(&method.modifiers, method.name);
-                    let return_type = if method.type_annotation.is_some() {
-                        let (_type_params, updates) =
-                            self.push_type_parameters(&method.type_parameters);
-                        let return_type = self.get_type_from_type_node(method.type_annotation);
-                        self.pop_type_parameters(updates);
-                        return_type
-                    } else {
-                        TypeId::ANY
-                    };
-                    let (type_params, updates) = self.push_type_parameters(&method.type_parameters);
-                    self.pop_type_parameters(updates);
                     let method_type = factory.callable(CallableShape {
                         call_signatures: vec![CallSignature {
-                            type_params,
+                            type_params: Vec::new(),
                             params: vec![ParamInfo {
                                 name: None,
                                 type_id: TypeId::ANY,
@@ -1252,7 +1241,7 @@ impl CheckerState<'_> {
                                 rest: true,
                             }],
                             this_type: None,
-                            return_type,
+                            return_type: TypeId::ANY,
                             type_predicate: None,
                             is_method: true,
                         }],

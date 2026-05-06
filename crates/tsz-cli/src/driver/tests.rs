@@ -534,6 +534,61 @@ fn test_compile_no_unchecked_side_effect_imports_cli_reenables_ts2882() {
 }
 
 #[test]
+fn test_cli_source_map_satisfies_config_map_root_validation() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("a.ts"), "export const x = 1;\n").expect("write source");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "files": ["a.ts"],
+  "compilerOptions": {
+    "mapRoot": "maps"
+  }
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let config_args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("parse config args");
+    let config_result = compile(&config_args, dir.path()).expect("compile config");
+    assert!(
+        config_result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+        }),
+        "mapRoot without sourceMap/declarationMap should still report TS5069, got: {:?}",
+        config_result.diagnostics
+    );
+
+    let cli_args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--sourceMap",
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("parse cli args");
+    let cli_result = compile(&cli_args, dir.path()).expect("compile cli override");
+    assert!(
+        cli_result.diagnostics.iter().all(|diag| {
+            diag.code
+                != diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+        }),
+        "CLI --sourceMap should satisfy mapRoot validation, got: {:?}",
+        cli_result.diagnostics
+    );
+}
+
+#[test]
 fn test_cli_overrides_apply_type_and_declaration_options() {
     let args = CliArgs::try_parse_from([
         "tsz",
