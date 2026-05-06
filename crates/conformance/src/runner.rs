@@ -291,7 +291,6 @@ const PRODUCTION_SUPPRESSION_DEBT_REASON: &str =
 // Periodically prune patterns whose only matches now PASS — entries below
 // are the live set as of 2026-05-02.
 const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
-    "inferTypePredicates",
     "recursiveConditionalTypes",
     "moduleAugmentationDoesNamespaceEnumMergeOfReexport",
     "jsxNamespaceImplicitImportJSXNamespaceFromConfigPickedOverGlobalOne",

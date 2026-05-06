@@ -113,6 +113,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if type_predicate.is_none()
+            && method.type_annotation.is_none()
+            && matches!(return_type, TypeId::BOOLEAN | TypeId::UNKNOWN)
+            && method.body.is_some()
+        {
+            self.prewarm_inferred_predicate_operand_types(method.body);
+            let analyzer = self.flow_analyzer();
+            if let Some(pred) = analyzer.try_infer_type_predicate_from_body(
+                method.body,
+                &method.parameters.nodes,
+                &params,
+            ) {
+                type_predicate = Some(pred);
+            }
+        }
+
         // Wrap unannotated generator/async method return types (matching get_type_of_function).
         let has_annotation = method.type_annotation.is_some();
         let is_generator = method.asterisk_token;
@@ -426,22 +442,23 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Later parameter annotations can reference earlier value
-            // parameters via `typeof`.
-            self.push_typeof_param_scope(&params);
             let type_id = if param.type_annotation.is_some() {
-                match mode {
+                // Later parameter annotations can reference earlier value
+                // parameters via `typeof`.
+                self.push_typeof_param_scope(&params);
+                let type_id = match mode {
                     ParamTypeResolutionMode::InTypeLiteral => {
                         self.get_type_from_type_node_in_type_literal(param.type_annotation)
                     }
                     ParamTypeResolutionMode::FromTypeNode => {
                         self.get_type_from_type_node(param.type_annotation)
                     }
-                }
+                };
+                self.pop_typeof_param_scope(&params);
+                type_id
             } else {
                 TypeId::ANY
             };
-            self.pop_typeof_param_scope(&params);
 
             // Check for ThisKeyword parameter
             let name_node = self.ctx.arena.get(param.name);
