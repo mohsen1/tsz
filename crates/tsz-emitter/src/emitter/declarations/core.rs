@@ -135,6 +135,10 @@ impl<'a> Printer<'a> {
         self.write_space();
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        let prev_pending_function_body_parameters = std::mem::replace(
+            &mut self.pending_function_body_parameters,
+            func.parameters.nodes.clone(),
+        );
         // Don't increment again — already incremented before parameter emission
 
         // Push temp scope and block scope for function body.
@@ -165,6 +169,7 @@ impl<'a> Printer<'a> {
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
+        self.pending_function_body_parameters = prev_pending_function_body_parameters;
         self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
 
