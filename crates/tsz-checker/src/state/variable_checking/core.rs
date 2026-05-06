@@ -27,7 +27,16 @@ impl<'a> CheckerState<'a> {
             let annotation_type = self.get_type_from_type_node(annotation_idx);
             let evaluated_type = self.evaluate_application_type(annotation_type);
             let resolved_type = self.resolve_lazy_type(evaluated_type);
-            return matches!(annotation_type, TypeId::ERROR)
+            let is_unresolved_indexed_access =
+                node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                    && matches!(
+                        (annotation_type, evaluated_type, resolved_type),
+                        (TypeId::UNKNOWN, _, _)
+                            | (_, TypeId::UNKNOWN, _)
+                            | (_, _, TypeId::UNKNOWN)
+                    );
+            return is_unresolved_indexed_access
+                || matches!(annotation_type, TypeId::ERROR)
                 || matches!(evaluated_type, TypeId::ERROR)
                 || matches!(resolved_type, TypeId::ERROR)
                 || crate::query_boundaries::common::is_callable_type(
