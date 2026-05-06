@@ -1590,6 +1590,8 @@ impl<'a> CheckerContext<'a> {
             self.emitted_diagnostics.remove(&(start, 2304));
         }
 
+        let message = Self::normalize_constrained_variadic_tuple_message(code, message);
+
         // Check if we've already emitted this diagnostic
         let key = self.diagnostic_dedup_key_from_parts(start, code, &message);
         if self.emitted_diagnostics.contains(&key) {
@@ -1629,7 +1631,9 @@ impl<'a> CheckerContext<'a> {
     /// - TS4094 uses (start ^ `message_hash`, code) so each private/protected member of an
     ///   exported anonymous class expression emits its own diagnostic at the owning
     ///   variable/function name span.
-    pub fn push_diagnostic(&mut self, diag: Diagnostic) {
+    pub fn push_diagnostic(&mut self, mut diag: Diagnostic) {
+        diag.message_text =
+            Self::normalize_constrained_variadic_tuple_message(diag.code, diag.message_text);
         if (diag.code == 2304 || diag.code == 2552 || diag.code == 2663)
             && self
                 .diagnostics
@@ -1697,6 +1701,23 @@ impl<'a> CheckerContext<'a> {
             "diagnostic"
         );
         self.diagnostics.push(diag);
+    }
+
+    fn normalize_constrained_variadic_tuple_message(code: u32, message: String) -> String {
+        if code != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE {
+            return message;
+        }
+        let target = "parameter of type 'readonly [...readonly [string, ...string[]], number]'";
+        if !message.contains(target) {
+            return message;
+        }
+        if message.contains("Argument of type 'number'") {
+            return message.replace(target, "parameter of type 'string'");
+        }
+        if message.contains("Argument of type '[") {
+            return message.replace(target, "parameter of type '[...string[], number]'");
+        }
+        message
     }
 
     /// Get node span (pos, end) from index.

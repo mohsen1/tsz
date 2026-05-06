@@ -155,6 +155,11 @@ impl<'a> CheckerState<'a> {
                 argument_idx: idx,
             },
         );
+        if let Some(display) =
+            self.constrained_variadic_tuple_parameter_display(param_type, arg_type)
+        {
+            param_str = display;
+        }
         if arg_str.starts_with('{') && param_str.contains("<{") {
             param_str = Self::widen_object_member_literals_inside_generic_display(&param_str);
         }

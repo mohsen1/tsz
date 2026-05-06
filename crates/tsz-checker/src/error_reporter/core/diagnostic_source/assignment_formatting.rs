@@ -666,6 +666,12 @@ impl<'a> CheckerState<'a> {
             if target_is_generic_callable {
                 return self.format_annotation_like_type(&display);
             }
+            if display.trim_start().starts_with('[')
+                && let Some(tuple_display) =
+                    self.raw_tuple_assignment_target_display_without_alias(display_target)
+            {
+                return tuple_display;
+            }
             if Self::display_has_member_literals_assignability(&display) {
                 return self.format_annotation_like_type(&display);
             }
@@ -722,6 +728,11 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::common::enum_def_id(self.ctx.types, display_target).is_some() {
             return self.format_assignability_type_for_message(display_target, source);
         }
+        if let Some(tuple_display) =
+            self.raw_tuple_assignment_target_display_without_alias(display_target)
+        {
+            return tuple_display;
+        }
 
         if self.target_preserves_literal_surface(source) {
             let assignability_display =
@@ -765,6 +776,26 @@ impl<'a> CheckerState<'a> {
                 fallback
             }
         }
+    }
+
+    fn raw_tuple_assignment_target_display_without_alias(
+        &mut self,
+        target: TypeId,
+    ) -> Option<String> {
+        if !crate::query_boundaries::common::is_tuple_type(self.ctx.types, target) {
+            return None;
+        }
+        if crate::query_boundaries::common::lazy_def_id(self.ctx.types, target).is_some() {
+            return None;
+        }
+        let def_id = self.ctx.definition_store.find_def_for_type(target)?;
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
+            .with_skip_type_alias_def_id(def_id)
+            .with_preserve_optional_parameter_surface_syntax(true);
+        Some(formatter.format(target).into_owned())
     }
 
     fn should_evaluate_indexed_access_annotation_for_assignment(display: &str) -> bool {
