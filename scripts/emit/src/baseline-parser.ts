@@ -283,7 +283,26 @@ export function parseBaseline(content: string): BaselineContent {
           const laterName = seg.name.trim();
           return !laterName.startsWith('tests/cases/') && isTsSourceLike(laterName);
         });
-        if (hasLaterTsSource) {
+        const hasLaterJsOutput = segments.slice(i + 1).some(seg => {
+          const laterName = seg.name.trim();
+          if (laterName.startsWith('tests/cases/') || !isJsLikeOutput(laterName)) {
+            return false;
+          }
+          const laterBase = toJsOutputBase(laterName);
+          if (seenTsSources.some(src => {
+            if (src.endsWith('.d.ts')) return false;
+            return src.replace(/\.(ts|tsx|mts|cts)$/, '') === laterBase;
+          })) {
+            return true;
+          }
+          return [...seenNames].some(seen => {
+            if (!isJsLikeOutput(seen) || toJsOutputBase(seen) !== laterBase || seen === laterName) return false;
+            const seenExt = seen.match(/\.(js|jsx|mjs|cjs)$/)?.[1];
+            const laterExt = laterName.match(/\.(js|jsx|mjs|cjs)$/)?.[1];
+            return seenExt === 'jsx' && laterExt === 'js';
+          });
+        });
+        if (hasLaterTsSource || hasLaterJsOutput) {
           seenNames.add(name);
           continue;
         }
@@ -337,6 +356,7 @@ export function parseBaseline(content: string): BaselineContent {
   }
 
   for (const sourceName of sourceLikeFiles.map((f) => f.name)) {
+    if (sourceName.endsWith('.d.ts')) continue;
     dtsOutputCandidates.add(toSourceDtsOutputName(sourceName));
   }
   for (const seg of outputSegments) {

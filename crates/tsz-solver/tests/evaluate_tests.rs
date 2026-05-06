@@ -10278,6 +10278,25 @@ fn test_index_access_tuple_string_literal_length() {
 }
 
 #[test]
+fn test_index_access_optional_tuple_string_literal_length() {
+    let interner = TypeInterner::new();
+
+    let tuple = interner.tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: true,
+        rest: false,
+    }]);
+    let length_key = interner.literal_string("length");
+
+    let result = evaluate_index_access(&interner, tuple, length_key);
+    let zero = interner.literal_number(0.0);
+    let one = interner.literal_number(1.0);
+    let expected = interner.union(vec![zero, one]);
+    assert_eq!(result, expected);
+}
+
+#[test]
 fn test_index_access_tuple_string_literal_numeric_key() {
     let interner = TypeInterner::new();
 

@@ -384,10 +384,10 @@ impl<'a> TypePrinter<'a> {
             .declarations
             .iter()
             .copied()
-            .any(|decl_idx| self.class_declares_accessor(node_arena, decl_idx, property.name))
+            .any(|decl_idx| self.declaration_declares_accessor(node_arena, decl_idx, property.name))
     }
 
-    pub(crate) fn class_declares_accessor(
+    pub(crate) fn declaration_declares_accessor(
         &self,
         node_arena: &NodeArena,
         decl_idx: tsz_parser::NodeIndex,
@@ -396,32 +396,67 @@ impl<'a> TypePrinter<'a> {
         let Some(decl_node) = node_arena.get(decl_idx) else {
             return false;
         };
-        let Some(class_data) = node_arena.get_class(decl_node) else {
+
+        if let Some(class_data) = node_arena.get_class(decl_node) {
+            return class_data.members.nodes.iter().copied().any(|member_idx| {
+                self.member_is_accessor_named(node_arena, member_idx, property_name)
+            });
+        }
+
+        if let Some(interface_data) = node_arena.get_interface(decl_node) {
+            return interface_data
+                .members
+                .nodes
+                .iter()
+                .copied()
+                .any(|member_idx| {
+                    self.member_is_accessor_named(node_arena, member_idx, property_name)
+                });
+        }
+
+        if let Some(type_alias) = node_arena.get_type_alias(decl_node)
+            && let Some(type_node) = node_arena.get(type_alias.type_node)
+            && let Some(type_literal) = node_arena.get_type_literal(type_node)
+        {
+            return type_literal
+                .members
+                .nodes
+                .iter()
+                .copied()
+                .any(|member_idx| {
+                    self.member_is_accessor_named(node_arena, member_idx, property_name)
+                });
+        }
+
+        false
+    }
+
+    fn member_is_accessor_named(
+        &self,
+        node_arena: &NodeArena,
+        member_idx: tsz_parser::NodeIndex,
+        property_name: Atom,
+    ) -> bool {
+        let Some(member_node) = node_arena.get(member_idx) else {
             return false;
         };
 
-        class_data.members.nodes.iter().copied().any(|member_idx| {
-            let Some(member_node) = node_arena.get(member_idx) else {
-                return false;
-            };
-
-            match member_node.kind {
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    node_arena
-                        .get_accessor(member_node)
-                        .is_some_and(|accessor| {
-                            self.node_name_matches_atom(node_arena, accessor.name, property_name)
-                        })
-                }
-                k if k == syntax_kind_ext::PROPERTY_DECLARATION => node_arena
-                    .get_property_decl(member_node)
-                    .is_some_and(|prop| {
-                        node_arena.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                            && self.node_name_matches_atom(node_arena, prop.name, property_name)
-                    }),
-                _ => false,
+        match member_node.kind {
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                node_arena
+                    .get_accessor(member_node)
+                    .is_some_and(|accessor| {
+                        self.node_name_matches_atom(node_arena, accessor.name, property_name)
+                    })
             }
-        })
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => node_arena
+                .get_property_decl(member_node)
+                .is_some_and(|prop| {
+                    node_arena.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                        && self.node_name_matches_atom(node_arena, prop.name, property_name)
+                }),
+            _ => false,
+        }
     }
 
     pub(crate) fn find_member_name_node(
@@ -456,6 +491,20 @@ impl<'a> TypePrinter<'a> {
                     return iface.members.nodes.iter().copied().find_map(|member_idx| {
                         self.member_name_matches_atom(node_arena, member_idx, property_name)
                     });
+                }
+
+                if let Some(type_alias) = node_arena.get_type_alias(decl_node)
+                    && let Some(type_node) = node_arena.get(type_alias.type_node)
+                    && let Some(type_literal) = node_arena.get_type_literal(type_node)
+                {
+                    return type_literal
+                        .members
+                        .nodes
+                        .iter()
+                        .copied()
+                        .find_map(|member_idx| {
+                            self.member_name_matches_atom(node_arena, member_idx, property_name)
+                        });
                 }
 
                 None
@@ -1629,7 +1678,6 @@ impl<'a> TypePrinter<'a> {
 
         false
     }
-
     pub(crate) fn type_contains_symbol_reference(
         &self,
         type_id: TypeId,
