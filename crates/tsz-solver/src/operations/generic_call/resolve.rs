@@ -2580,7 +2580,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // parameter types rather than the raw types that still contain type parameters.
         // Store BEFORE the final check so they're available even if the check fails
         // (the checker uses these to perform EPC on ArgumentTypeMismatch too).
-        self.apply_callback_optional_rest_slots(func, &final_args, &mut instantiated_params);
+        self.apply_callback_optional_rest_slots(func, arg_types, &mut instantiated_params);
         self.last_instantiated_params = Some(instantiated_params.clone());
 
         if let Some((index, expected, actual)) = first_direct_primitive_mismatch {
