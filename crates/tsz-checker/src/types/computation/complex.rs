@@ -465,8 +465,16 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        let explicit_new_type_arguments = new_expr.type_arguments.clone().or_else(|| {
+            self.ctx
+                .arena
+                .get(new_expr.expression)
+                .and_then(|node| self.ctx.arena.get_expr_type_args(node))
+                .and_then(|expr_type_args| expr_type_args.type_arguments.clone())
+        });
+
         // Validate explicit type arguments against constraints (TS2344)
-        if let Some(ref type_args_list) = new_expr.type_arguments
+        if let Some(ref type_args_list) = explicit_new_type_arguments
             && !type_args_list.nodes.is_empty()
         {
             self.validate_new_expression_type_arguments(constructor_type, type_args_list, idx);
@@ -477,14 +485,13 @@ impl<'a> CheckerState<'a> {
         // inference (and so we match tsc behavior). For implicit calls in JS/checkJs,
         // keep generic constructors intact so `new Foo(1)` can still infer `T = number`
         // instead of defaulting missing type arguments to `any`.
-        if new_expr
-            .type_arguments
+        if explicit_new_type_arguments
             .as_ref()
             .is_some_and(|type_args| !type_args.nodes.is_empty())
         {
             constructor_type = self.apply_type_arguments_to_constructor_type(
                 constructor_type,
-                new_expr.type_arguments.as_ref(),
+                explicit_new_type_arguments.as_ref(),
             );
         }
 
@@ -1337,7 +1344,7 @@ impl<'a> CheckerState<'a> {
                 // `type_params` empty. The solver's non-generic path then skips
                 // display_alias creation. Store it here so the formatter shows
                 // `D<string>` instead of just `D`.
-                if let Some(ref type_args_list) = new_expr.type_arguments
+                if let Some(ref type_args_list) = explicit_new_type_arguments
                     && !type_args_list.nodes.is_empty()
                 {
                     let resolved_args: Vec<TypeId> = type_args_list
@@ -1410,6 +1417,20 @@ impl<'a> CheckerState<'a> {
                 // transiently lose construct signatures. TypeScript suppresses TS2351
                 // here and reports the underlying class/argument diagnostics instead.
                 if self.new_target_is_class_symbol(new_expr.expression) {
+                    if let Some(ref type_args_list) = explicit_new_type_arguments
+                        && !type_args_list.nodes.is_empty()
+                    {
+                        let resolved_args: Vec<TypeId> = type_args_list
+                            .nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                            .collect();
+                        if let Some(app) =
+                            self.explicit_class_new_application(new_expr.expression, resolved_args)
+                        {
+                            return app;
+                        }
+                    }
                     // Instead of returning ERROR (which suppresses TS2339 on property
                     // access), try to return the class's instance type with type
                     // parameters defaulted to `unknown`. This matches tsc behavior:
@@ -1561,6 +1582,20 @@ impl<'a> CheckerState<'a> {
                             let _ =
                                 self.check_argument_assignable_or_report(actual, expected, arg_idx);
                         }
+                    }
+                }
+                if let Some(ref type_args_list) = explicit_new_type_arguments
+                    && !type_args_list.nodes.is_empty()
+                {
+                    let resolved_args: Vec<TypeId> = type_args_list
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                        .collect();
+                    if let Some(app) =
+                        self.explicit_class_new_application(new_expr.expression, resolved_args)
+                    {
+                        return app;
                     }
                 }
                 if fallback_return != TypeId::ERROR {
