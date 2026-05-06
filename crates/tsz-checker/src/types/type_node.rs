@@ -5,7 +5,6 @@
 //!
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! resolve types, then use the solver to explain any failures.
-
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
@@ -32,7 +31,6 @@ pub struct TypeNodeChecker<'a, 'ctx> {
 }
 
 pub(super) type TypeLiteralSignatureScopeUpdates = Vec<(String, Option<TypeId>)>;
-
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Create a new type node checker with a mutable context reference.
     pub const fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
@@ -179,18 +177,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
-    // =========================================================================
-    // Type Reference Resolution
-    // =========================================================================
-
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
         self.lower_with_resolvers(idx, false, true)
     }
-
-    // =========================================================================
-    // Composite Type Resolution
-    // =========================================================================
 
     /// Get type from a union type node (A | B).
     ///
@@ -603,10 +593,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         false
     }
-
-    // =========================================================================
-    // Function and Callable Types
-    // =========================================================================
 
     /// Get type from a function type node (e.g., () => number, (x: string) => void).
     fn get_type_from_function_type(&mut self, idx: NodeIndex) -> TypeId {
@@ -1371,10 +1357,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         factory.object(properties)
     }
 
-    // =========================================================================
-    // Symbol Resolution Helpers
-    // =========================================================================
-
     /// Resolve a type symbol from a node index.
     ///
     /// Looks up the identifier in `file_locals` and `lib_contexts` for symbols with
@@ -1647,10 +1629,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         None
     }
-
-    // =========================================================================
-    // Helper Methods
-    // =========================================================================
 
     /// Extract parameter information from a signature.
     fn extract_params_from_signature(
@@ -1972,24 +1950,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return false;
         }
 
-        let Some(call) = arena.get_call_expr(node) else {
-            return false;
-        };
-        let Some(expr_node) = arena.get(call.expression) else {
-            return false;
-        };
-
         arena
-            .get_identifier(expr_node)
+            .get_call_expr(node)
+            .and_then(|call| arena.get(call.expression))
+            .and_then(|expr_node| arena.get_identifier(expr_node))
             .is_some_and(|ident| ident.escaped_text == "Symbol")
     }
-
-    /// Get the context reference (for read-only access).
-    pub const fn context(&self) -> &CheckerContext<'ctx> {
-        self.ctx
-    }
 }
-
 #[cfg(test)]
 #[path = "../../tests/type_node.rs"]
 mod tests;

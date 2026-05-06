@@ -2094,8 +2094,37 @@ declare class MyArray<T> implements Array<T> {
         "Expected TS2416 for 'every' property incompatibility. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
+        ts2416
+            .iter()
+            .any(|(_, message)| message.contains("base type 'T[]'")),
+        "Expected global Array<T> implements diagnostic to display base type 'T[]'. Actual TS2416 diagnostics: {ts2416:#?}"
+    );
+    assert!(
         ts2420.is_empty(),
         "Should NOT emit TS2420 for this case. Only TS2416 expected. Got TS2420: {ts2420:#?}"
+    );
+}
+
+#[test]
+fn test_generic_array_extension_global_array_display_uses_shorthand() {
+    let source = r#"
+export declare class ObservableArray<T> implements Array<T> {
+    concat<U extends T[]>(...items: U[]): T[];
+    concat(...items: T[]): T[];
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2420 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2420)
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2420
+            .iter()
+            .any(|(_, message)| message.contains("interface 'T[]'")),
+        "Expected global Array<T> implements diagnostic to display interface 'T[]'. Actual TS2420 diagnostics: {ts2420:#?}"
     );
 }
 

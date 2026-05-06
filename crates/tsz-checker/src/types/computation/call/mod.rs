@@ -238,7 +238,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn symbol_has_explicit_assertion_annotation(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    fn symbol_has_explicit_assertion_annotation(&mut self, sym_id: tsz_binder::SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return true;
         };
@@ -248,7 +248,7 @@ impl<'a> CheckerState<'a> {
         self.declaration_has_explicit_assertion_annotation(decl_idx)
     }
 
-    fn declaration_has_explicit_assertion_annotation(&self, decl_idx: NodeIndex) -> bool {
+    fn declaration_has_explicit_assertion_annotation(&mut self, decl_idx: NodeIndex) -> bool {
         let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
             return true;
         };

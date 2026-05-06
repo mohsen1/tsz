@@ -18,6 +18,31 @@ fn check_source_without_strict_null(source: &str) -> Vec<crate::diagnostics::Dia
 }
 
 #[test]
+fn mapped_type_template_key_constraint_argument_displays_remapped_shape() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+function foo<T extends { [K in keyof T as `${Extract<K, string>}y`]: number }>(foox: T) { }
+
+const c = { x: 1 };
+
+foo(c);
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains(
+            "Argument of type '{ x: 1; }' is not assignable to parameter of type '{ xy: number; }'."
+        ),
+        "expected remapped constraint shape in TS2345, got: {diag:?}"
+    );
+}
+
+#[test]
 fn emits_ts2721_for_calling_null() {
     let diagnostics = check_source_with_strict_null("null();");
     assert!(
