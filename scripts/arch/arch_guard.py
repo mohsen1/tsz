@@ -300,6 +300,7 @@ CHECKS = [
                 # matching here is intentional and architecturally correct.
                 "crates/tsz-checker/src/query_boundaries/state/type_environment.rs",
                 "crates/tsz-checker/src/query_boundaries/class.rs",
+                "crates/tsz-checker/src/query_boundaries/type_rewrite.rs",
                 # Pre-existing baseline debt
                 "crates/tsz-checker/src/types/class_type/core.rs",
                 "crates/tsz-emitter/src/declaration_emitter/helpers/mod.rs",

@@ -1,9 +1,3 @@
-//! Shared type query boundary functions used across multiple boundary modules.
-//!
-//! When a solver query is needed by multiple checker modules, define the
-//! canonical thin-wrapper here and re-export it from the per-module boundary
-//! files, preserving the per-module namespace pattern that callers rely on.
-
 use tsz_solver::{
     CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
     TypePredicate,
@@ -58,6 +52,8 @@ pub(crate) use tsz_solver::CallResult;
 /// Wraps `tsz_solver::TypeSubstitution`.
 /// Used to build type parameter -> type argument mappings for instantiation.
 pub(crate) use tsz_solver::TypeSubstitution;
+
+pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
 
 pub(crate) fn instantiate_type(
     db: &dyn QueryDatabase,
