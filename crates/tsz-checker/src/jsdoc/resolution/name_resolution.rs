@@ -16,6 +16,7 @@ use crate::context::{is_declaration_file_name, is_js_file_name};
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
+use tsz_common::numeric::parse_numeric_literal_value;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -62,6 +63,14 @@ impl<'a> CheckerState<'a> {
     fn jsdoc_type_expr_is_broad_function(type_expr: &str) -> bool {
         let trimmed = type_expr.trim();
         trimmed.eq_ignore_ascii_case("function") || trimmed.eq_ignore_ascii_case("Function")
+    }
+
+    fn jsdoc_type_expr_may_be_numeric_literal(type_expr: &str) -> bool {
+        type_expr.bytes().any(|byte| byte.is_ascii_digit())
+            && type_expr.bytes().all(|byte| {
+                byte.is_ascii_hexdigit()
+                    || matches!(byte, b'o' | b'O' | b'x' | b'X' | b'.' | b'_' | b'+' | b'-')
+            })
     }
 
     pub(crate) fn resolve_jsdoc_implicit_any_builtin_type(
@@ -376,10 +385,8 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             return Some(factory.literal_boolean(false));
         }
-        if let Ok(n) = type_expr.parse::<f64>()
-            && type_expr
-                .chars()
-                .all(|c| c.is_ascii_digit() || c == '.' || c == '-')
+        if Self::jsdoc_type_expr_may_be_numeric_literal(type_expr)
+            && let Some(n) = parse_numeric_literal_value(type_expr)
         {
             let factory = self.ctx.types.factory();
             return Some(factory.literal_number(n));
