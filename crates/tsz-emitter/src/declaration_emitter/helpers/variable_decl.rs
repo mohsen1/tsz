@@ -157,6 +157,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if exported_call_initializer
+                && self.preferred_expression_type_text(initializer).is_none()
                 && let Some(type_text) = self.const_literal_initializer_text_deep(initializer)
             {
                 self.write(": ");
