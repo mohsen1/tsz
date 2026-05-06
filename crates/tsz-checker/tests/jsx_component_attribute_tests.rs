@@ -1323,6 +1323,73 @@ let p = <Poisoned x />;
 }
 
 #[test]
+fn cross_file_react_class_empty_attrs_reports_missing_props_not_whole_target_ts2322() {
+    let lib_source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface ElementChildrenAttribute { children: {} }
+    interface IntrinsicAttributes {}
+    interface IntrinsicClassAttributes<T> {}
+}
+declare namespace __React {
+    type ReactNode = string | number | null | undefined;
+    class Component<P, S = {}> {
+        props: P & { children?: ReactNode };
+        state: S;
+        constructor(props?: P, context?: any);
+        render(): JSX.Element | null;
+    }
+}
+declare module "react" {
+    export = __React;
+}
+"#;
+
+    let main_source = r#"
+import React = require('react');
+
+interface PoisonedProp {
+    x: string;
+    y: "2";
+}
+class Poisoned extends React.Component<PoisonedProp, {}> {
+    render() {
+        return <div>Hello</div>;
+    }
+}
+
+let y = <Poisoned />;
+"#;
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        lib_source,
+        main_source,
+        JsxMode::Preserve,
+        true,
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                && message.contains("PoisonedProp")
+                && message.contains("x, y")
+        }),
+        "Expected TS2739 against bare PoisonedProp for empty React class attrs, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("IntrinsicClassAttributes")
+                && message.contains("Type '{}'")
+        }),
+        "Empty React class attrs should not fall through to whole-target TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
 #[ignore] // TODO: needs default lib types (Array, Object, etc.) to avoid TS2318 flood
 fn test_cross_file_react_class_generic_props_emit_errors() {
     let lib_source = r#"
