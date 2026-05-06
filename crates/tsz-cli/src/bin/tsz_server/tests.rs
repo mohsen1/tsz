@@ -359,6 +359,40 @@ fn prepare_paste_edits_accepts_protocol_copied_text_span() {
 }
 
 #[test]
+fn brace_completion_allows_template_substitution_expressions() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/index.ts",
+                    "fileContent": "const foo = 1; const x = `${foo}`;\n",
+                    "scriptKindName": "TS",
+                }),
+            ))
+            .success
+    );
+
+    for opening_brace in ["(", "{"] {
+        let response = server.handle_tsserver_request(make_request(
+            "braceCompletion",
+            serde_json::json!({
+                "file": "/src/index.ts",
+                "line": 1,
+                "offset": 32,
+                "openingBrace": opening_brace,
+            }),
+        ));
+        assert!(
+            response.success,
+            "expected {opening_brace} inside template substitution to succeed, got {response:?}"
+        );
+        assert_eq!(response.body, Some(serde_json::json!(true)));
+    }
+}
+
+#[test]
 fn implementation_finds_cross_file_class_implementation() {
     let mut server = make_server();
     assert!(
