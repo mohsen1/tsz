@@ -9,6 +9,8 @@
 //! - `inner` — the main `get_type_of_call_expression_inner` implementation
 
 mod inner;
+mod nominal_lib_object_callbacks;
+mod tail_helpers;
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
@@ -24,6 +26,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         call_idx: NodeIndex,
     ) -> Option<(TypePredicate, Vec<ParamInfo>)> {
+        if self
+            .ctx
+            .call_type_predicates
+            .is_invalid_assertion_call(call_idx.0)
+        {
+            return None;
+        }
+
         if let Some((predicate, params)) = self
             .ctx
             .call_type_predicates
@@ -54,6 +64,20 @@ impl<'a> CheckerState<'a> {
             .predicate
             .asserts
             .then_some((signature.predicate, signature.params))
+    }
+
+    pub(crate) fn store_call_type_predicate(
+        &mut self,
+        call_idx: NodeIndex,
+        callee_idx: NodeIndex,
+        predicate: (TypePredicate, Vec<ParamInfo>),
+    ) {
+        let assertion_target_is_valid = !predicate.0.asserts
+            || matches!(predicate.0.target, TypePredicateTarget::This)
+            || self.validate_assertion_call_target(call_idx, callee_idx);
+        if assertion_target_is_valid {
+            self.ctx.call_type_predicates.insert(call_idx.0, predicate);
+        }
     }
 
     pub(crate) fn assertion_call_asserted_expression(
@@ -104,6 +128,9 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::ASSERTIONS_REQUIRE_THE_CALL_TARGET_TO_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME,
                 diagnostic_codes::ASSERTIONS_REQUIRE_THE_CALL_TARGET_TO_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME,
             );
+            self.ctx
+                .call_type_predicates
+                .mark_invalid_assertion_call(call_idx.0);
             return false;
         }
 
@@ -113,6 +140,9 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::ASSERTIONS_REQUIRE_EVERY_NAME_IN_THE_CALL_TARGET_TO_BE_DECLARED_WITH_AN_EXPLICIT,
                 diagnostic_codes::ASSERTIONS_REQUIRE_EVERY_NAME_IN_THE_CALL_TARGET_TO_BE_DECLARED_WITH_AN_EXPLICIT,
             );
+            self.ctx
+                .call_type_predicates
+                .mark_invalid_assertion_call(call_idx.0);
             return false;
         }
 
@@ -979,9 +1009,7 @@ impl<'a> CheckerState<'a> {
                     })
                     .map(|sig| (sig.predicate, sig.params))
                     .unwrap_or(predicate);
-            self.ctx
-                .call_type_predicates
-                .insert(idx.0, stored_predicate);
+            self.store_call_type_predicate(idx, callee_expr, stored_predicate);
         } else {
             let is_sound_union = if common::is_union_type(self.ctx.types, callee_type_for_call) {
                 call_checker::is_valid_union_predicate(self.ctx.types, callee_type_for_call)
@@ -992,9 +1020,11 @@ impl<'a> CheckerState<'a> {
                 && let Some(extracted) =
                     call_checker::extract_predicate_signature(self.ctx.types, callee_type_for_call)
             {
-                self.ctx
-                    .call_type_predicates
-                    .insert(idx.0, (extracted.predicate, extracted.params));
+                self.store_call_type_predicate(
+                    idx,
+                    callee_expr,
+                    (extracted.predicate, extracted.params),
+                );
             }
         }
 

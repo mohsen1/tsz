@@ -63,6 +63,52 @@ use tsz::parser::ParserState;
 use tsz::parser::base::NodeIndex;
 use tsz::parser::node::NodeArena;
 
+fn deserialize_target_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_tsserver_enum_option(deserializer, |value| {
+        tsz::emitter::ScriptTarget::from_ts_numeric(value).map(|target| target.as_ts_str())
+    })
+}
+
+fn deserialize_module_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_tsserver_enum_option(deserializer, |value| {
+        tsz::ModuleKind::from_ts_numeric(value).map(|module| module.as_ts_str())
+    })
+}
+
+fn deserialize_tsserver_enum_option<'de, D, F>(
+    deserializer: D,
+    map_numeric: F,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    F: Fn(u32) -> Option<&'static str>,
+{
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(value) => Ok(Some(value)),
+        serde_json::Value::Number(number) => {
+            let mapped = number
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .and_then(map_numeric);
+            Ok(Some(
+                mapped.map_or_else(|| number.to_string(), str::to_string),
+            ))
+        }
+        _ => Ok(None),
+    }
+}
+
 // Diagnostic code for "File appears to be binary."
 const TS1490_FILE_APPEARS_TO_BE_BINARY: i32 = 1490;
 
@@ -370,9 +416,9 @@ struct CheckOptions {
     no_lib: bool,
     #[serde(default)]
     lib: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_target_option")]
     target: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_module_option")]
     module: Option<String>,
     #[serde(default)]
     experimental_decorators: bool,
@@ -922,7 +968,7 @@ impl Server {
             "suggestionDiagnosticsSync" => self.handle_suggestion_diagnostics_sync(seq, &request),
             "geterr" => self.handle_geterr(seq, &request),
             "geterrForProject" => self.handle_geterr_for_project(seq, &request),
-            "navtree" => self.handle_navtree(seq, &request),
+            "navtree" | "navtree-full" => self.handle_navtree(seq, &request),
             "navbar" => self.handle_navbar(seq, &request),
             "navto" | "navTo" | "navto-full" | "navTo-full" => self.handle_navto(seq, &request),
             "documentHighlights" => self.handle_document_highlights(seq, &request),
@@ -944,6 +990,7 @@ impl Server {
             "openExternalProject" | "openExternalProjects" | "closeExternalProject" => {
                 self.handle_external_project(seq, &request)
             }
+            "synchronizeProjectList" => self.handle_synchronize_project_list(seq, &request),
             "updateOpen" => self.handle_update_open(seq, &request),
             "encodedSemanticClassifications-full" => {
                 self.handle_encoded_semantic_classifications_full(seq, &request)
@@ -993,19 +1040,18 @@ impl Server {
             "getCompilerOptionsDiagnostics" => {
                 self.handle_compiler_options_diagnostics(seq, &request)
             }
-            "reload" | "reloadProjects" => self.handle_reload(seq, &request),
+            "reload" => self.handle_reload(seq, &request),
+            "reloadProjects" => self.handle_reload_projects(seq, &request),
             "status" => self.stub_response(
                 seq,
                 &request,
-                Some(serde_json::json!({"version": env!("CARGO_PKG_VERSION")})),
+                Some(serde_json::json!({"version": tsz_cli::help::TSC_VERSION})),
             ),
             "compileOnSaveAffectedFileList" => {
-                self.stub_response(seq, &request, Some(serde_json::json!([])))
+                self.handle_compile_on_save_affected_file_list(seq, &request)
             }
-            "compileOnSaveEmitFile" => {
-                self.stub_response(seq, &request, Some(serde_json::json!(false)))
-            }
-            "saveto" | "watchChange" => self.stub_response(seq, &request, None),
+            "compileOnSaveEmitFile" => self.handle_compile_on_save_emit_file(seq, &request),
+            "saveto" => self.handle_save_to(seq, &request),
             "exit" => TsServerResponse {
                 seq,
                 msg_type: "response".to_string(),
@@ -1029,9 +1075,8 @@ impl Server {
 
     // Stub handlers for protocol commands — return `success: true` with
     // empty/minimal responses for commands whose semantics ARE "no result yet"
-    // (`compileOnSaveAffectedFileList` → `[]`, `compileOnSaveEmitFile` →
-    // `false`, async-acknowledged ones like `geterr`). This is the right
-    // shape when the empty body is a valid answer to the protocol question.
+    // (async-acknowledged ones like `geterr`). This is the right shape when the
+    // empty body is a valid answer to the protocol question.
     pub(crate) fn stub_response(
         &self,
         seq: u64,

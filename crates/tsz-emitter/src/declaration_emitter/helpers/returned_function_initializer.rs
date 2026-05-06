@@ -231,19 +231,16 @@ impl<'a> DeclarationEmitter<'a> {
 
         let type_params_text = inner_type_params
             .filter(|type_params| !type_params.nodes.is_empty())
-            .map(|type_params| {
+            .and_then(|type_params| {
                 let params = type_params
                     .nodes
                     .iter()
                     .copied()
-                    .filter_map(|param_idx| {
-                        let param_node = self.arena.get(param_idx)?;
-                        let param = self.arena.get_type_parameter(param_node)?;
-                        let name = self.identifier_text_or_source(param.name)?;
-                        Some(Self::renamed_type_param_name(&name, &inner_renames))
+                    .map(|param_idx| {
+                        self.source_function_type_parameter_text(param_idx, &inner_renames)
                     })
-                    .collect::<Vec<_>>();
-                format!("<{}>", params.join(", "))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(format!("<{}>", params.join(", ")))
             })
             .unwrap_or_default();
 
@@ -389,6 +386,57 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         renames
+    }
+
+    fn source_function_type_parameter_text(
+        &self,
+        param_idx: NodeIndex,
+        type_param_renames: &[(String, String)],
+    ) -> Option<String> {
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_type_parameter(param_node)?;
+        let name = self.identifier_text_or_source(param.name)?;
+        let mut text = String::new();
+
+        if let Some(ref modifiers) = param.modifiers {
+            for &modifier_idx in &modifiers.nodes {
+                let Some(modifier_node) = self.arena.get(modifier_idx) else {
+                    continue;
+                };
+                match modifier_node.kind {
+                    k if k == SyntaxKind::InKeyword as u16 => text.push_str("in "),
+                    k if k == SyntaxKind::OutKeyword as u16 => text.push_str("out "),
+                    k if k == SyntaxKind::ConstKeyword as u16 => text.push_str("const "),
+                    _ => {}
+                }
+            }
+        }
+
+        text.push_str(&Self::renamed_type_param_name(&name, type_param_renames));
+
+        if param.constraint.is_some() {
+            let constraint_text = self
+                .preferred_annotation_name_text(param.constraint)
+                .or_else(|| self.emit_type_node_text(param.constraint))?;
+            text.push_str(" extends ");
+            text.push_str(&Self::rename_type_text_identifiers(
+                &constraint_text,
+                type_param_renames,
+            ));
+        }
+
+        if param.default.is_some() {
+            let default_text = self
+                .preferred_annotation_name_text(param.default)
+                .or_else(|| self.emit_type_node_text(param.default))?;
+            text.push_str(" = ");
+            text.push_str(&Self::rename_type_text_identifiers(
+                &default_text,
+                type_param_renames,
+            ));
+        }
+
+        Some(text)
     }
 
     fn source_function_parameter_text(

@@ -203,7 +203,10 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
     ) {
         let display_arg_type = common::widen_argument_type_for_display(self.ctx.types, arg_type);
-        let actual_display = self.format_type_diagnostic(display_arg_type);
+        let mut actual_display = self.format_type_diagnostic(display_arg_type);
+        if matches!(actual_display.as_str(), "true[]" | "false[]") {
+            actual_display = "boolean[]".to_string();
+        }
         let mut target_display = self
             .finite_mapped_parameter_display_type(param_type)
             .map(|display_type| self.format_type_for_assignability_message(display_type))

@@ -1625,6 +1625,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        if self.ctx.arena.get(var_decl.name).is_some_and(|name| {
+            name.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        }) {
+            return;
+        }
+
         // Skip if no initializer
         if var_decl.initializer.is_none() {
             return;

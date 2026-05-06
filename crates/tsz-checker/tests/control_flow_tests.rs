@@ -1417,7 +1417,6 @@ x;
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_array_destructuring_assignment_clears_narrowing() {
     let source = r#"
 let x: string | number;
@@ -1462,7 +1461,6 @@ if (typeof x === "string") {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_object_destructuring_assignment_clears_narrowing() {
     let source = r#"
 let x: string | number;
@@ -1507,7 +1505,6 @@ if (typeof x === "string") {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_array_destructuring_default_initializer_clears_narrowing() {
     let source = r#"
 let x: string | number;
@@ -1552,7 +1549,6 @@ if (typeof x === "string") {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_object_destructuring_alias_default_initializer_clears_narrowing() {
     let source = r#"
 let x: string | number;
@@ -1597,7 +1593,6 @@ if (typeof x === "string") {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_object_destructuring_alias_assignment_clears_narrowing() {
     let source = r#"
 let x: string | number;
@@ -1639,6 +1634,72 @@ if (typeof x === "string") {
     // After destructuring with assignment, type is widened to primitive (number)
     // This matches TypeScript's verified behavior
     assert_eq!(narrowed_after, TypeId::NUMBER);
+}
+
+#[test]
+fn test_destructuring_assignment_widens_literals_for_exact_assignment_diagnostics() {
+    let source = r#"
+function arrayAssignment() {
+  let x: string | number = "s";
+  if (typeof x === "string") {
+    [x] = [1];
+    const exact: 1 = x;
+  }
+}
+
+function objectAssignment() {
+  let x: string | number = "s";
+  if (typeof x === "string") {
+    ({ x } = { x: 1 });
+    const exact: 1 = x;
+  }
+}
+
+function objectAlias() {
+  let x: string | number = "s";
+  if (typeof x === "string") {
+    ({ y: x } = { y: 1 });
+    const exact: 1 = x;
+  }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "expected TS2322 for each exact literal assignment after destructuring writes, got: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert!(
+        ts2322.iter().all(|diag| diag
+            .message_text
+            .contains("Type 'number' is not assignable to type '1'")),
+        "expected destructuring writes to widen literal 1 to number, got: {ts2322:?}"
+    );
 }
 
 #[test]

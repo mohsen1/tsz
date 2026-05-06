@@ -11,7 +11,7 @@
 use super::{TypeInterner, TypeListBuffer};
 use crate::types::{
     CallableShape, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId,
-    ParamInfo, PropertyInfo, TypeData, TypeId,
+    ParamInfo, PropertyInfo, TypeData, TypeId, Visibility,
 };
 use crate::visitor::is_literal_type;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -675,7 +675,17 @@ impl TypeInterner {
                 })
                 .collect();
             if !brands.is_empty() {
-                brand_sets.push(brands);
+                let has_private_member = properties.iter().any(|prop| {
+                    prop.visibility == Visibility::Private
+                        && !self.resolve_atom(prop.name).starts_with("__private_brand_")
+                });
+                let has_restricted_member = properties.iter().any(|prop| {
+                    matches!(prop.visibility, Visibility::Private | Visibility::Protected)
+                        && !self.resolve_atom(prop.name).starts_with("__private_brand_")
+                });
+                if has_private_member || !has_restricted_member {
+                    brand_sets.push(brands);
+                }
             }
         }
 

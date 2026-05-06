@@ -7,7 +7,7 @@ use super::content_predicates::{
     get_array_element_type, get_intersection_members, get_tuple_elements, get_union_members,
 };
 use crate::TypeDatabase;
-use crate::types::{LiteralValue, PropertyInfo, TypeData, TypeId};
+use crate::types::{LiteralValue, PropertyInfo, TypeData, TypeId, Visibility};
 use rustc_hash::FxHashSet;
 use tsz_common::Atom;
 
@@ -506,6 +506,63 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
         return Some(TypeId::NEVER);
     }
     Some(crate::utils::union_or_single(db, key_types))
+}
+
+pub fn receiver_property_visibility(
+    db: &dyn TypeDatabase,
+    object_type: TypeId,
+    property_name: &str,
+) -> Option<Visibility> {
+    const fn merge_visibility(left: Visibility, right: Visibility) -> Visibility {
+        match (left, right) {
+            (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
+            (Visibility::Public, _) | (_, Visibility::Public) => Visibility::Public,
+            (Visibility::Protected, Visibility::Protected) => Visibility::Protected,
+        }
+    }
+
+    fn find_in_props(
+        db: &dyn TypeDatabase,
+        props: &[PropertyInfo],
+        property_name: &str,
+    ) -> Option<Visibility> {
+        props
+            .iter()
+            .find(|prop| db.resolve_atom_ref(prop.name).as_ref() == property_name)
+            .map(|prop| prop.visibility)
+    }
+
+    if object_type.is_intrinsic() {
+        return None;
+    }
+
+    match db.lookup(object_type) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            find_in_props(db, &shape.properties, property_name)
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            find_in_props(db, &shape.properties, property_name)
+        }
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            let mut visibility = None;
+            for &member in members.iter() {
+                let Some(member_visibility) =
+                    receiver_property_visibility(db, member, property_name)
+                else {
+                    continue;
+                };
+                visibility = Some(match visibility {
+                    Some(current) => merge_visibility(current, member_visibility),
+                    None => member_visibility,
+                });
+            }
+            visibility
+        }
+        _ => None,
+    }
 }
 
 /// Detect intersections that should preserve a discriminated object-union shape

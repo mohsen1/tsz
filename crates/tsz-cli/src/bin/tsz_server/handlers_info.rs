@@ -7,7 +7,6 @@ use tsz::binder::SymbolId;
 use tsz::lsp::definition::GoToDefinition;
 use tsz::lsp::highlighting::DocumentHighlightProvider;
 use tsz::lsp::hover::HoverProvider;
-use tsz::lsp::implementation::GoToImplementationProvider;
 use tsz::lsp::position::LineMap;
 use tsz::lsp::project::Project;
 use tsz::lsp::references::FindReferences;
@@ -2033,6 +2032,7 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
+            let full = request.command == "navtree-full";
             let native_open_files = if let Some(text) = self.open_files.get(file) {
                 let mut map = serde_json::Map::new();
                 map.insert(file.to_string(), serde_json::Value::String(text.clone()));
@@ -2040,11 +2040,13 @@ impl Server {
             } else {
                 serde_json::json!({})
             };
-            if let Some(native) = self.try_native_typescript_operation(serde_json::json!({
+            if !full
+                && let Some(native) = self.try_native_typescript_operation(serde_json::json!({
                 "op": "navtree",
                 "file": file,
                 "openFiles": native_open_files,
-            })) {
+                }))
+            {
                 return Some(native);
             }
             let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
@@ -2061,8 +2063,41 @@ impl Server {
             let mut symbols = provider.get_document_symbols(root);
             sort_symbols_deep(&mut symbols);
 
+            fn range_to_line_span(range: tsz_common::position::Range) -> serde_json::Value {
+                serde_json::json!({
+                    "start": {
+                        "line": range.start.line + 1,
+                        "offset": range.start.character + 1,
+                    },
+                    "end": {
+                        "line": range.end.line + 1,
+                        "offset": range.end.character + 1,
+                    },
+                })
+            }
+
+            fn range_to_text_span(
+                line_map: &LineMap,
+                source_text: &str,
+                range: tsz_common::position::Range,
+            ) -> serde_json::Value {
+                let start = line_map
+                    .position_to_offset(range.start, source_text)
+                    .unwrap_or(0);
+                let end = line_map
+                    .position_to_offset(range.end, source_text)
+                    .unwrap_or(start);
+                serde_json::json!({
+                    "start": start,
+                    "length": end.saturating_sub(start),
+                })
+            }
+
             fn symbol_to_navtree(
                 sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
+                line_map: &LineMap,
+                source_text: &str,
+                full: bool,
             ) -> serde_json::Value {
                 let kind = if matches!(
                     sym.kind,
@@ -2073,22 +2108,25 @@ impl Server {
                 } else {
                     symbol_kind_to_tsserver(sym.kind, &sym.kind_modifiers)
                 };
-                let children: Vec<serde_json::Value> =
-                    sym.children.iter().map(symbol_to_navtree).collect();
+                let children: Vec<serde_json::Value> = sym
+                    .children
+                    .iter()
+                    .map(|child| symbol_to_navtree(child, line_map, source_text, full))
+                    .collect();
+                let span = if full {
+                    range_to_text_span(line_map, source_text, sym.range)
+                } else {
+                    range_to_line_span(sym.range)
+                };
                 let mut obj = serde_json::json!({
                     "text": sym.name,
                     "kind": kind,
-                    "spans": [{
-                        "start": {
-                            "line": sym.range.start.line + 1,
-                            "offset": sym.range.start.character + 1,
-                        },
-                        "end": {
-                            "line": sym.range.end.line + 1,
-                            "offset": sym.range.end.character + 1,
-                        },
-                    }],
+                    "spans": [span],
                 });
+                if full {
+                    obj["nameSpan"] =
+                        range_to_text_span(line_map, source_text, sym.selection_range);
+                }
                 if !children.is_empty() {
                     obj["childItems"] = serde_json::json!(children);
                 }
@@ -2105,8 +2143,10 @@ impl Server {
                 obj
             }
 
-            let child_items: Vec<serde_json::Value> =
-                symbols.iter().map(symbol_to_navtree).collect();
+            let child_items: Vec<serde_json::Value> = symbols
+                .iter()
+                .map(|sym| symbol_to_navtree(sym, &line_map, &source_text, full))
+                .collect();
 
             // Compute the end span based on source text length
             let total_lines = source_text.lines().count();
@@ -2131,23 +2171,34 @@ impl Server {
             } else {
                 ("<global>".to_string(), "script")
             };
+            let root_span = if full {
+                serde_json::json!({"start": 0, "length": source_text.len()})
+            } else {
+                serde_json::json!({"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}})
+            };
             Some(serde_json::json!({
                 "text": text,
                 "kind": kind,
                 "childItems": child_items,
-                "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}}],
+                "spans": [root_span],
             }))
         })();
-        self.stub_response(
-            seq,
-            request,
-            Some(result.unwrap_or(serde_json::json!({
+        let fallback = if request.command == "navtree-full" {
+            serde_json::json!({
+                "text": "<global>",
+                "kind": "script",
+                "childItems": [],
+                "spans": [{"start": 0, "length": 0}],
+            })
+        } else {
+            serde_json::json!({
                 "text": "<global>",
                 "kind": "script",
                 "childItems": [],
                 "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": 1, "offset": 1}}],
-            }))),
-        )
+            })
+        };
+        self.stub_response(seq, request, Some(result.unwrap_or(fallback)))
     }
 
     pub(crate) fn handle_navbar(
@@ -2451,12 +2502,9 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
-            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
-            let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let provider =
-                GoToImplementationProvider::new(&arena, &binder, &line_map, file, &source_text);
-            let locations = provider.get_implementations(root, position)?;
+            let mut project = self.build_project_for_file(&file)?;
+            let locations = project.get_implementations(&file, position)?;
             let body: Vec<serde_json::Value> = locations
                 .iter()
                 .map(|loc| {

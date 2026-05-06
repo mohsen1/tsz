@@ -385,17 +385,36 @@ impl<'a> TypeFormatter<'a> {
         // For distributive conditionals, `boolean` distributes as `true | false`.
         // Mirrors the instantiation policy in instantiate.rs that expands
         // `BOOLEAN` to `[BOOLEAN_TRUE, BOOLEAN_FALSE]` before substitution.
-        let members: Vec<TypeId> = if check_arg == TypeId::BOOLEAN {
+        let mut members: Vec<TypeId> = if check_arg == TypeId::BOOLEAN {
             vec![TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE]
         } else if let Some(TypeData::Union(member_list_id)) = self.interner.lookup(check_arg) {
-            let list = self.interner.type_list(member_list_id);
-            if list.len() < 2 {
-                return None;
+            if let Some(origin) = self.interner.get_union_origin(check_arg) {
+                if origin.len() < 2 {
+                    return None;
+                }
+                origin.to_vec()
+            } else {
+                let list = self.interner.type_list(member_list_id);
+                if list.len() < 2 {
+                    return None;
+                }
+                list.to_vec()
             }
-            list.to_vec()
         } else {
             return None;
         };
+
+        if let Some(def_store) = self.def_store {
+            let positions: Vec<_> = members
+                .iter()
+                .map(|&member| self.get_source_position_for_type(member, def_store))
+                .collect();
+            if positions.iter().all(|&(tier, _, _)| tier < 2) {
+                let mut pairs: Vec<_> = members.iter().copied().zip(positions).collect();
+                pairs.sort_by_key(|&(_, pos)| pos);
+                members = pairs.into_iter().map(|(member, _)| member).collect();
+            }
+        }
 
         // Only evaluate the distributed branches when the *other* type args are
         // fully concrete. If any non-check arg carries free type parameters
@@ -441,7 +460,9 @@ impl<'a> TypeFormatter<'a> {
                 }
             })
             .collect();
-        Some(self.interner.union(distributed))
+        let union = self.interner.union(distributed.clone());
+        self.interner.store_union_origin(union, distributed);
+        Some(union)
     }
 
     /// Returns `true` when the application points to a distributive conditional

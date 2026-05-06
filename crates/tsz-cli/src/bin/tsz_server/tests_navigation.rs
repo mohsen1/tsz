@@ -99,6 +99,70 @@ fn test_navtree_fallback_has_spans() {
 }
 
 #[test]
+fn test_navtree_full_returns_numeric_text_spans() {
+    let mut server = make_server();
+    let source = "export function f(x: number) {\n  return x;\n}\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), source.to_string());
+
+    let req = make_request("navtree-full", serde_json::json!({"file": "/a.ts"}));
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("navtree-full should return a body");
+    let root_span = body
+        .get("spans")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|spans| spans.first())
+        .expect("navtree-full root should include a span");
+    assert_eq!(
+        root_span.get("start").and_then(serde_json::Value::as_u64),
+        Some(0),
+        "navtree-full root span should use numeric TextSpan shape: {root_span:?}"
+    );
+    assert_eq!(
+        root_span.get("length").and_then(serde_json::Value::as_u64),
+        Some(source.len() as u64),
+        "navtree-full root span should cover the source text: {root_span:?}"
+    );
+
+    let function_item = body
+        .get("childItems")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("text").and_then(serde_json::Value::as_str) == Some("f"))
+        })
+        .expect("navtree-full should include function f");
+    let function_span = function_item
+        .get("spans")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|spans| spans.first())
+        .expect("function item should include a span");
+    assert!(
+        function_span
+            .get("start")
+            .and_then(serde_json::Value::as_u64)
+            .is_some(),
+        "function span should use numeric TextSpan shape: {function_span:?}"
+    );
+    let name_span = function_item
+        .get("nameSpan")
+        .expect("function item should include numeric nameSpan");
+    assert_eq!(
+        name_span.get("start").and_then(serde_json::Value::as_u64),
+        Some(16),
+        "function nameSpan should start at the function name: {name_span:?}"
+    );
+    assert_eq!(
+        name_span.get("length").and_then(serde_json::Value::as_u64),
+        Some(1),
+        "function nameSpan should cover the function name: {name_span:?}"
+    );
+}
+
+#[test]
 fn test_references_response_entries_have_valid_spans() {
     // Each reference entry must have valid start/end spans.
     let mut server = make_server();

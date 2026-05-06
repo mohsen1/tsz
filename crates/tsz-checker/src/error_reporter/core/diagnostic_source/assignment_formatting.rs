@@ -206,6 +206,11 @@ impl<'a> CheckerState<'a> {
                         &annotation_text,
                     )
                 {
+                    if let Some(display) =
+                        self.declared_intersection_annotation_display_for_expression(expr_idx)
+                    {
+                        return display;
+                    }
                     return self.format_declared_annotation_for_diagnostic(&annotation_text);
                 }
                 let display_type =
@@ -270,6 +275,11 @@ impl<'a> CheckerState<'a> {
             if node_type_matches_source
                 && let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
             {
+                if let Some(intersection_display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return intersection_display;
+                }
                 return display;
             }
         }
@@ -356,6 +366,11 @@ impl<'a> CheckerState<'a> {
                     &annotation_text,
                 )
             {
+                if let Some(display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return display;
+                }
                 return self.format_declared_annotation_for_diagnostic(&annotation_text);
             }
             let display_type = if expr_display_type != TypeId::ERROR {
@@ -404,6 +419,11 @@ impl<'a> CheckerState<'a> {
             if expr_type == TypeId::ERROR
                 && let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
             {
+                if let Some(intersection_display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return intersection_display;
+                }
                 return display;
             }
 
@@ -476,6 +496,11 @@ impl<'a> CheckerState<'a> {
                     display_type,
                 ) || display.trim() == formatted)
             {
+                if let Some(intersection_display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return intersection_display;
+                }
                 if crate::query_boundaries::common::enum_def_id(self.ctx.types, display_type)
                     .is_some()
                 {
@@ -560,6 +585,20 @@ impl<'a> CheckerState<'a> {
         let target_expr = self
             .assignment_target_expression(anchor_idx)
             .unwrap_or(anchor_idx);
+        if display_target == target
+            && let Some(display) =
+                self.declared_intersection_annotation_display_for_expression(target_expr)
+        {
+            return display;
+        }
+        if display_target == target
+            && let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
+            && display.contains('&')
+            && display.contains('{')
+            && !display.trim_start().starts_with("keyof ")
+        {
+            return self.format_annotation_like_type(&display);
+        }
         if let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
             && (display.starts_with("keyof ")
                 || display.contains("[P in ")
@@ -596,6 +635,11 @@ impl<'a> CheckerState<'a> {
         if display_target == target
             && let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
         {
+            if let Some(intersection_display) =
+                self.declared_intersection_annotation_display_for_expression(target_expr)
+            {
+                return intersection_display;
+            }
             if crate::query_boundaries::common::is_index_access_type(self.ctx.types, display_target)
                 && Self::should_evaluate_indexed_access_annotation_for_assignment(&display)
             {
@@ -839,6 +883,11 @@ impl<'a> CheckerState<'a> {
 
         if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                if let Some(intersection_display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return intersection_display;
+                }
                 return display;
             }
 
@@ -875,6 +924,11 @@ impl<'a> CheckerState<'a> {
 
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                if let Some(intersection_display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return intersection_display;
+                }
                 return display;
             }
 

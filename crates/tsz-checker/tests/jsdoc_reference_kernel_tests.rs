@@ -191,6 +191,10 @@ foo({});
         !codes.contains(&2315),
         "Funcs<A, B> must not emit TS2315 when templates are after @typedef, got: {codes:?}"
     );
+    assert!(
+        !codes.contains(&2304),
+        "Funcs<A, B> must not be reported as one unresolved JSDoc name, got: {codes:?}"
+    );
 }
 
 #[test]
