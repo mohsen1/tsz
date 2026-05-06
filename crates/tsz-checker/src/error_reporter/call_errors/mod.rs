@@ -19,5 +19,9 @@ mod call_errors_binding_patterns;
 mod optional_parameter_tests;
 
 #[cfg(test)]
+#[path = "../call_errors_array_literal_tests.rs"]
+mod call_errors_array_literal_tests;
+
+#[cfg(test)]
 #[path = "../call_errors_tests.rs"]
 mod tests;

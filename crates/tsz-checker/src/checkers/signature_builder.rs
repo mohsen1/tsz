@@ -426,7 +426,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Resolve parameter type based on mode
+            // Later parameter annotations can reference earlier value
+            // parameters via `typeof`.
+            self.push_typeof_param_scope(&params);
             let type_id = if param.type_annotation.is_some() {
                 match mode {
                     ParamTypeResolutionMode::InTypeLiteral => {
@@ -439,6 +441,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypeId::ANY
             };
+            self.pop_typeof_param_scope(&params);
 
             // Check for ThisKeyword parameter
             let name_node = self.ctx.arena.get(param.name);

@@ -13,9 +13,9 @@ use crate::types::{
 };
 use crate::visitor::enum_components;
 use crate::visitor::{
-    application_id, index_access_parts, is_identity_comparable_type, is_literal_type,
-    keyof_inner_type, lazy_def_id, mapped_type_id, readonly_inner_type, tuple_list_id,
-    type_param_info, union_list_id,
+    application_id, array_element_type, index_access_parts, is_identity_comparable_type,
+    is_literal_type, keyof_inner_type, lazy_def_id, mapped_type_id, readonly_inner_type,
+    tuple_list_id, type_param_info, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -103,6 +103,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This handles: T <: [...T], T <: readonly [...T]
         {
             // Unwrap readonly wrapper if present
+            let target_is_readonly = readonly_inner_type(self.interner, target).is_some();
             let inner_target = readonly_inner_type(self.interner, target).unwrap_or(target);
             if let Some(t_list) = tuple_list_id(self.interner, inner_target) {
                 let t_elems = self.interner.tuple_list(t_list);
@@ -110,6 +111,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     && t_elems[0].rest
                     && type_param_info(self.interner, t_elems[0].type_id)
                         .is_some_and(|inner_info| inner_info.name == s_info.name)
+                    && self.type_param_constraint_allows_spread_identity(
+                        s_info.constraint,
+                        target_is_readonly,
+                    )
                 {
                     return SubtypeResult::True;
                 }
@@ -117,6 +122,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         SubtypeResult::False
+    }
+
+    fn type_param_constraint_allows_spread_identity(
+        &self,
+        constraint: Option<TypeId>,
+        target_is_readonly: bool,
+    ) -> bool {
+        let Some(constraint) = constraint else {
+            return false;
+        };
+        let constraint_is_readonly = readonly_inner_type(self.interner, constraint).is_some();
+        let array_like = if let Some(inner) = readonly_inner_type(self.interner, constraint) {
+            array_element_type(self.interner, inner).is_some()
+                || tuple_list_id(self.interner, inner).is_some()
+        } else {
+            array_element_type(self.interner, constraint).is_some()
+                || tuple_list_id(self.interner, constraint).is_some()
+        };
+
+        array_like && (target_is_readonly || !constraint_is_readonly)
     }
 
     /// Check if a type (identified by name and optional constraint) is assignable

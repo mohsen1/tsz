@@ -1,12 +1,15 @@
+use super::CompilationCache;
 use super::FileReadResult;
 use super::check_module_resolution_compatibility;
 use super::check_module_resolution_compatibility_mut;
+use super::compilation_cache_to_build_info;
 use super::compile;
 use super::find_tsconfig;
 use super::no_input_diagnostics_for_config;
 use super::read_source_file;
 use crate::args::CliArgs;
 use crate::config::{CompilerOptions, ResolvedCompilerOptions};
+use crate::incremental::compute_file_version;
 use clap::Parser;
 use std::fs;
 use std::io::Write;
@@ -78,6 +81,33 @@ fn find_tsconfig_walks_up_from_project_subdirectory() {
     fs::create_dir_all(&nested).expect("create nested project dir");
 
     assert_eq!(find_tsconfig(&nested), Some(config));
+}
+
+#[test]
+fn compilation_cache_build_info_uses_source_hash_for_file_version() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let source_path = dir.path().join("src/index.ts");
+    fs::create_dir_all(source_path.parent().unwrap()).expect("create source dir");
+    fs::write(&source_path, "export const value = 1;").expect("write source");
+
+    let mut cache = CompilationCache::default();
+    cache.export_hashes.insert(source_path.clone(), 0x1234);
+
+    let build_info = compilation_cache_to_build_info(
+        &cache,
+        std::slice::from_ref(&source_path),
+        dir.path(),
+        &ResolvedCompilerOptions::default(),
+    );
+    let file_info = build_info
+        .get_file_info("src/index.ts")
+        .expect("source file should be recorded");
+
+    assert_eq!(
+        file_info.version,
+        compute_file_version(&source_path).unwrap()
+    );
+    assert_eq!(file_info.signature.as_deref(), Some("0000000000001234"));
 }
 
 #[test]

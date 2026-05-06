@@ -533,7 +533,7 @@ impl<'a> CheckerState<'a> {
         // Build an object type from the collected properties.
         let props: Vec<PropertyInfo> = properties.into_values().collect();
         let factory = self.ctx.types.factory();
-        let instance_type = factory.object(props);
+        let instance_type = factory.object_with_symbol(props, sym_id);
 
         // If the constructor function has template type params, instantiate the
         // instance type by inferring type arguments from the actual call arguments.

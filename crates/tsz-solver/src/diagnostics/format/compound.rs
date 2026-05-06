@@ -1433,12 +1433,20 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_tuple(&mut self, elements: &[TupleElement]) -> String {
-        // Normalize: a tuple with a single rest element `[...T[]]` displays as `T[]`
-        // to match tsc's display behavior.  Named rest elements (`[...urls: string[]]`)
-        // are also simplified because the label is irrelevant in type display.
+        // Normalize: a tuple with a single concrete rest element `[...T[]]`
+        // displays as `T[]` to match tsc's display behavior. Type-parameter
+        // spreads must keep their tuple wrapper (`[...T]`) so diagnostics can
+        // distinguish the mutable tuple view from the bare type parameter `T`.
         if elements.len() == 1 && elements[0].rest {
-            let inner = self.format(elements[0].type_id);
-            return inner.into_owned();
+            if matches!(
+                self.interner.lookup(elements[0].type_id),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            ) {
+                // Fall through to normal tuple formatting.
+            } else {
+                let inner = self.format(elements[0].type_id);
+                return inner.into_owned();
+            }
         }
         // Format each element's type independently, then apply namespace
         // disambiguation across elements whose display names collide —

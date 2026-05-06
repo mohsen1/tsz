@@ -109,3 +109,30 @@ class Foo<T> {
         "Should not emit TS2558 for new Foo<T>() inside generic static method, got: {codes:?}"
     );
 }
+
+#[test]
+fn test_new_generic_class_with_private_constructor_uses_explicit_class_type_args() {
+    let codes = get_error_codes(
+        r#"
+class Result<T, E> {
+    private constructor(
+        private readonly value: T | undefined,
+        private readonly error: E | undefined,
+        private readonly isOk: boolean
+    ) {}
+
+    static ok<T, E>(value: T): Result<T, E> {
+        return new Result<T, E>(value, undefined, true);
+    }
+
+    static err<T, E>(error: E): Result<T, E> {
+        return new Result<T, E>(undefined, error, false);
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Should not default explicit class type arguments on new to unknown, got: {codes:?}"
+    );
+}

@@ -618,6 +618,19 @@ impl Server {
             let query_offset =
                 Self::adjusted_quoted_specifier_offset(&arena, &source_text, raw_query_offset);
             let position = line_map.offset_to_position(query_offset, &source_text);
+            let quoted_alias_is_type_only =
+                Self::is_type_only_quoted_import_or_export_specifier_offset(
+                    &arena,
+                    &source_text,
+                    query_offset,
+                );
+            let quoted_symbol_name = if quoted_alias_is_type_only {
+                Self::quoted_specifier_literal_at_offset(&arena, &source_text, query_offset)
+                    .map(|name| format!("\"{name}\""))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
             if let Some(mut project) = self.build_project_for_file(&file)
                 && let Some(locs) = self.quoted_alias_chain_references(
                     &mut project,
@@ -626,7 +639,7 @@ impl Server {
                     &source_text,
                     query_offset,
                     position,
-                    true,
+                    !quoted_alias_is_type_only,
                 )
             {
                 let definition_locs = project.get_definition(&file, position).unwrap_or_default();
@@ -638,11 +651,20 @@ impl Server {
                             .get(&loc.file_path)
                             .cloned()
                             .or_else(|| std::fs::read_to_string(&loc.file_path).ok())?;
+                        let loc_line_map = LineMap::build(&source);
                         let line_text = source
                             .lines()
                             .nth(loc.range.start.line as usize)
                             .unwrap_or("")
                             .to_string();
+                        let is_query_alias_definition = quoted_alias_is_type_only
+                            && loc.file_path == file
+                            && loc_line_map
+                                .position_to_offset(loc.range.start, &source)
+                                .zip(loc_line_map.position_to_offset(loc.range.end, &source))
+                                .is_some_and(|(start, end)| {
+                                    start <= query_offset && query_offset <= end
+                                });
                         let is_definition = definition_locs
                             .iter()
                             .any(|def| def.file_path == loc.file_path && def.range == loc.range);
@@ -651,14 +673,14 @@ impl Server {
                             "start": Self::lsp_to_tsserver_position(loc.range.start),
                             "end": Self::lsp_to_tsserver_position(loc.range.end),
                             "lineText": line_text,
-                            "isWriteAccess": false,
-                            "isDefinition": is_definition,
+                            "isWriteAccess": is_query_alias_definition,
+                            "isDefinition": is_definition || is_query_alias_definition,
                         }))
                     })
                     .collect();
                 return Some(serde_json::json!({
                     "refs": refs,
-                    "symbolName": "",
+                    "symbolName": quoted_symbol_name,
                 }));
             }
             if let Some(mut project) = self.build_project_for_file(&file)

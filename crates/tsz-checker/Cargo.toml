@@ -46,6 +46,10 @@ name = "generator_return_type_widening_tests"
 path = "tests/generator_return_type_widening_tests.rs"
 
 [[test]]
+name = "implicit_any_nullish_return_tests"
+path = "tests/implicit_any_nullish_return_tests.rs"
+
+[[test]]
 name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
@@ -800,6 +804,10 @@ path = "tests/ts2855_static_super_field_tests.rs"
 [[test]]
 name = "jsdoc_tag_boundary_tests"
 path = "tests/jsdoc_tag_boundary_tests.rs"
+
+[[test]]
+name = "jsdoc_import_multiline_tests"
+path = "tests/jsdoc_import_multiline_tests.rs"
 
 [[test]]
 name = "jsdoc_import_default_and_named_tests"

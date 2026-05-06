@@ -35,6 +35,12 @@ impl<'a> CheckerState<'a> {
         if resolved_args.is_empty() {
             return None;
         }
+        let expr_idx = self
+            .ctx
+            .arena
+            .get(expr_idx)
+            .and_then(|node| self.ctx.arena.get_expr_type_args(node))
+            .map_or(expr_idx, |expr_type_args| expr_type_args.expression);
 
         let sym_id = self
             .ctx

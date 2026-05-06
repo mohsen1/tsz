@@ -1631,7 +1631,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     ) -> (Vec<tsz_solver::ParamInfo>, Option<TypeId>) {
         use tsz_solver::ParamInfo;
 
-        let mut params = Vec::new();
+        let mut params: Vec<ParamInfo> = Vec::new();
         let mut this_type = None;
 
         if let Some(ref param_list) = sig.parameters {
@@ -1653,12 +1653,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     continue;
                 }
 
-                // Get parameter type
+                // Later parameter annotations can reference earlier value
+                // parameters via `typeof`.
+                for param in &params {
+                    if let Some(name_atom) = param.name {
+                        let name = self.ctx.types.resolve_atom(name_atom);
+                        self.ctx.typeof_param_scope.insert(name, param.type_id);
+                    }
+                }
                 let type_id = if param_data.type_annotation.is_some() {
                     self.check(param_data.type_annotation)
                 } else {
                     TypeId::ANY
                 };
+                for param in &params {
+                    if let Some(name_atom) = param.name {
+                        let name = self.ctx.types.resolve_atom(name_atom);
+                        self.ctx.typeof_param_scope.remove(&name);
+                    }
+                }
 
                 let optional = param_data.question_token || param_data.initializer.is_some();
                 let rest = param_data.dot_dot_dot_token;

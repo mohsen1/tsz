@@ -899,6 +899,132 @@ fn test_type_only_quoted_alias_references_work_from_type_keyword_offset() {
 }
 
 #[test]
+fn test_type_only_quoted_alias_references_follow_local_alias_uses() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "type foo = \"foo\";",
+            "export { type foo as \"__<alias>\" };",
+            "import { type \"__<alias>\" as bar } from \"./foo\";",
+            "const testBar: bar = \"foo\";",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { type \"__<alias>\" as first } from \"./foo\";",
+            "export { type \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { type \"<other>\" as second } from \"./bar\";",
+            "const testFirst: first = \"foo\";",
+            "const testSecond: second = \"foo\";",
+        ]
+        .join("\n"),
+    );
+
+    let req = make_request(
+        "references",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 2,
+            "offset": 24
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("references should return body");
+    assert_eq!(
+        body.get("symbolName").and_then(serde_json::Value::as_str),
+        Some("\"__<alias>\""),
+        "quoted type alias references should preserve symbolName: {body:?}"
+    );
+    let refs = body
+        .get("refs")
+        .and_then(serde_json::Value::as_array)
+        .expect("references should include refs array");
+    assert_eq!(
+        refs.len(),
+        12,
+        "expected the full quoted type-only alias chain, got: {refs:?}"
+    );
+
+    let ref_text = |entry: &serde_json::Value| -> Option<String> {
+        let file = entry.get("file")?.as_str()?;
+        let source = server.open_files.get(file)?;
+        let start = entry.get("start")?;
+        let end = entry.get("end")?;
+        let start_line = start.get("line")?.as_u64()? as usize;
+        let start_offset = start.get("offset")?.as_u64()? as usize;
+        let end_line = end.get("line")?.as_u64()? as usize;
+        let end_offset = end.get("offset")?.as_u64()? as usize;
+        if start_line != end_line || start_offset == 0 || end_offset == 0 {
+            return None;
+        }
+        let line = source.lines().nth(start_line.checked_sub(1)?)?;
+        line.get(start_offset - 1..end_offset - 1)
+            .map(str::to_string)
+    };
+
+    let has_ref = |file: &str, line: u64, text: &str| {
+        refs.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some(file)
+                && entry
+                    .get("start")
+                    .and_then(|start| start.get("line"))
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(line)
+                && ref_text(entry).as_deref() == Some(text)
+        })
+    };
+
+    for (file, line, text) in [
+        ("/foo.ts", 2, "__<alias>"),
+        ("/foo.ts", 3, "__<alias>"),
+        ("/foo.ts", 3, "bar"),
+        ("/foo.ts", 4, "bar"),
+        ("/bar.ts", 1, "__<alias>"),
+        ("/bar.ts", 1, "first"),
+        ("/bar.ts", 2, "__<alias>"),
+        ("/bar.ts", 2, "<other>"),
+        ("/bar.ts", 3, "<other>"),
+        ("/bar.ts", 3, "second"),
+        ("/bar.ts", 4, "first"),
+        ("/bar.ts", 5, "second"),
+    ] {
+        assert!(
+            has_ref(file, line, text),
+            "missing reference {file}:{line} {text:?}; refs: {refs:?}"
+        );
+    }
+
+    let queried_export = refs.iter().find(|entry| {
+        entry.get("file").and_then(serde_json::Value::as_str) == Some("/foo.ts")
+            && entry
+                .get("start")
+                .and_then(|start| start.get("line"))
+                .and_then(serde_json::Value::as_u64)
+                == Some(2)
+            && ref_text(entry).as_deref() == Some("__<alias>")
+    });
+    let queried_export = queried_export.expect("query export alias reference should be present");
+    assert_eq!(
+        queried_export
+            .get("isDefinition")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "queried export alias should be marked as a definition: {queried_export:?}"
+    );
+    assert_eq!(
+        queried_export
+            .get("isWriteAccess")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "queried export alias should be marked as a write reference: {queried_export:?}"
+    );
+}
+
+#[test]
 fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
     let mut server = make_server();
     server.open_files.insert(

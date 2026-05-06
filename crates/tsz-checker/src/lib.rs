@@ -559,6 +559,9 @@ mod union_multi_overload_unified_sig_tests;
 #[path = "../tests/variadic_tuple_elaboration_tests.rs"]
 mod variadic_tuple_elaboration_tests;
 #[cfg(test)]
+#[path = "../tests/variadic_tuple_readonly_relation_tests.rs"]
+mod variadic_tuple_readonly_relation_tests;
+#[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;
 #[cfg(test)]

@@ -109,6 +109,30 @@ fn test_substitute_params_from_english_replaces_placeholders_in_order() {
 }
 
 #[test]
+fn test_substitute_params_from_english_replaces_unquoted_numeric_placeholders() {
+    let template = "{0} Argumente wurden erwartet, empfangen wurden aber {1}.";
+    let english = "Expected 1 arguments, but got 0.";
+    let substituted = substitute_params_from_english(2554, template, english);
+
+    assert_eq!(
+        substituted,
+        "1 Argumente wurden erwartet, empfangen wurden aber 0."
+    );
+}
+
+#[test]
+fn test_substitute_params_from_english_replaces_bare_template_placeholders() {
+    let template = "Importiert ueber {0} aus Datei '{1}'";
+    let english = "Imported via packageJson from file '/tmp/index.ts'";
+    let substituted = substitute_params_from_english(1393, template, english);
+
+    assert_eq!(
+        substituted,
+        "Importiert ueber packageJson aus Datei '/tmp/index.ts'"
+    );
+}
+
+#[test]
 fn test_substitute_params_from_english_leaves_missing_placeholders_intact() {
     let template = "Cannot use '{0}' with '{1}' and '{2}'.";
     let english = "Cannot use 'a' with 'b'.";
