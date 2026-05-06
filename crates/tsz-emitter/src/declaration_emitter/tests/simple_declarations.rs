@@ -551,7 +551,7 @@ export class Next {}
 
     assert!(
         output.contains(
-            "export declare const make: (value: string) => {\n    /** field docs */\n    field: (next: number) => void;\n    /** method docs */\n    method: (next: number) => void;\n};"
+            "export declare const make: (value: string) => {\n    /** field docs */\n    field: (next: number) => void;\n    /** method docs */\n    method(next: number): void;\n};"
         ),
         "Expected returned object literal member JSDoc to stay with members: {output}"
     );
@@ -2713,6 +2713,32 @@ type HandlerOptions = {
         output.trim(),
         expected,
         "Expected CommonJS class static assignments and typedefs to emit in source order: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_property_typedef_quotes_non_identifier_names() {
+    let source = r#"
+/**
+ * @typedef {Object} Options
+ * @property {String} data-id
+ * @property {Number} [max-count]
+ */
+exports.value = {};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("\"data-id\": string;"),
+        "Expected hyphenated JSDoc property name to be quoted: {output}"
+    );
+    assert!(
+        output.contains("\"max-count\"?: number;"),
+        "Expected optional hyphenated JSDoc property name to be quoted before ?: {output}"
     );
 }
 

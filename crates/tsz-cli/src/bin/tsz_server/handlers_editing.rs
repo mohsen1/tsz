@@ -585,14 +585,28 @@ impl Server {
                     }
                 }
                 let message = &rest[..msg_end];
+                let position = Self::utf16_position_for_byte_offset(source_text, pos);
                 results.push(serde_json::json!({
                     "descriptor": { "text": text, "priority": priority },
                     "message": message,
-                    "position": pos,
+                    "position": position,
                 }));
                 return; // Only match first descriptor at this position
             }
         }
+    }
+
+    fn utf16_position_for_byte_offset(source_text: &str, byte_offset: usize) -> usize {
+        let byte_offset = byte_offset.min(source_text.len());
+        let boundary = if source_text.is_char_boundary(byte_offset) {
+            byte_offset
+        } else {
+            (0..byte_offset)
+                .rev()
+                .find(|&idx| source_text.is_char_boundary(idx))
+                .unwrap_or(0)
+        };
+        source_text[..boundary].encode_utf16().count()
     }
 
     pub(crate) fn handle_doc_comment_template(
@@ -1396,9 +1410,12 @@ impl Server {
         // indentation returns { position: number, indentation: number }
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
-            let line = request.arguments.get("line")?.as_u64()? as usize;
-            let position = request.arguments.get("offset")?.as_u64().unwrap_or(1);
+            let line = request.arguments.get("line")?.as_u64()? as u32;
+            let offset = request.arguments.get("offset")?.as_u64().unwrap_or(1) as u32;
             let source_text = self.open_files.get(file)?;
+            let line_map = LineMap::build(source_text);
+            let requested_position = line_map
+                .position_to_offset(Self::tsserver_to_lsp_position(line, offset), source_text)?;
 
             // Get indent size from options (default 4)
             let indent_size = request
@@ -1419,7 +1436,7 @@ impl Server {
                 .unwrap_or(0) as usize;
 
             let lines: Vec<&str> = source_text.lines().collect();
-            let target_line_idx = if line > 0 { line - 1 } else { 0 };
+            let target_line_idx = line.saturating_sub(1) as usize;
 
             // Smart indentation: compute brace/bracket/paren depth up to the target line
             // by scanning all lines before it, then adjust for the current line.
@@ -1571,7 +1588,7 @@ impl Server {
             }
 
             Some(serde_json::json!({
-                "position": position,
+                "position": requested_position,
                 "indentation": indentation
             }))
         })();

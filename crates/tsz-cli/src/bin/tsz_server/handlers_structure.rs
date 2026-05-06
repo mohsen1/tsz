@@ -4,7 +4,7 @@
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
 use super::{Server, TsServerRequest, TsServerResponse};
-use tsz::emitter::{ModuleKind, Printer, PrinterOptions};
+use tsz::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 
 /// `projectInfo`-only view of inferred-project lib/target/noLib settings.
 /// Kept parallel to `Server.inferred_check_options` so we can surface the
@@ -146,10 +146,7 @@ impl Server {
                     libs = Some(parsed);
                 }
             }
-            let target = options
-                .get("target")
-                .and_then(serde_json::Value::as_str)
-                .map(std::string::ToString::to_string);
+            let target = Self::project_info_target_option(options.get("target"));
             let no_lib = options
                 .get("noLib")
                 .and_then(serde_json::Value::as_bool)
@@ -168,6 +165,21 @@ impl Server {
                 .is_some_and(Self::inferred_module_option_is_none);
             self.auto_imports_allowed_for_inferred_projects =
                 Self::inferred_auto_imports_allowed(options);
+        }
+    }
+
+    fn project_info_target_option(value: Option<&serde_json::Value>) -> Option<String> {
+        match value? {
+            serde_json::Value::String(target) => Some(target.clone()),
+            serde_json::Value::Number(number) => {
+                let mapped = number
+                    .as_u64()
+                    .and_then(|value| u32::try_from(value).ok())
+                    .and_then(ScriptTarget::from_ts_numeric)
+                    .map(ScriptTarget::as_ts_str);
+                Some(mapped.map_or_else(|| number.to_string(), str::to_string))
+            }
+            _ => None,
         }
     }
 
@@ -1152,6 +1164,10 @@ impl Server {
     /// Project files are filtered to those present in `open_files` (virtual VFS
     /// membership) to match tsserver's behavior of excluding non-existent files.
     pub(crate) fn compute_project_info(&self, active_file: &str) -> (String, Vec<String>) {
+        if let Some(project_info) = self.external_project_info(active_file) {
+            return project_info;
+        }
+
         let config_file_name = self.find_project_config_file(active_file);
         let (lib_names, no_lib, project_files) = match config_file_name.as_deref() {
             Some(config_path) => self.parse_tsconfig_for_project_info(config_path),
@@ -1175,6 +1191,21 @@ impl Server {
         }
 
         (config_file_name.unwrap_or_default(), file_names)
+    }
+
+    fn external_project_info(&self, active_file: &str) -> Option<(String, Vec<String>)> {
+        let mut projects: Vec<(&String, &Vec<String>)> =
+            self.external_project_files.iter().collect();
+        projects.sort_by_key(|(project_name, _)| *project_name);
+
+        let (project_name, files) = projects
+            .into_iter()
+            .find(|(_, files)| files.iter().any(|file| file == active_file))?;
+        let mut file_names = files.clone();
+        file_names.sort();
+        file_names.dedup();
+
+        Some((project_name.clone(), file_names))
     }
 
     /// Parse a tsconfig (from `open_files` or disk) and return its lib list,
@@ -1811,7 +1842,11 @@ impl Server {
             _ => {}
         }
 
-        self.stub_response(seq, request, None)
+        let body = match request.command.as_str() {
+            "openExternalProject" | "openExternalProjects" => Some(serde_json::json!(true)),
+            _ => None,
+        };
+        self.stub_response(seq, request, body)
     }
 
     pub(crate) fn handle_synchronize_project_list(
@@ -1824,44 +1859,158 @@ impl Server {
             .get("includeProjectReferenceRedirectInfo")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        let mut body: Vec<serde_json::Value> = Vec::new();
+
         let mut projects: Vec<(&String, &Vec<String>)> =
             self.external_project_files.iter().collect();
         projects.sort_by_key(|(left, _)| *left);
 
-        let body: Vec<serde_json::Value> = projects
-            .into_iter()
-            .map(|(project_name, files)| {
-                let files: Vec<serde_json::Value> = if include_redirect_info {
-                    files
-                        .iter()
-                        .map(|file_name| {
-                            serde_json::json!({
-                                "fileName": file_name,
-                                "isSourceOfProjectReferenceRedirect": false,
-                            })
-                        })
-                        .collect()
-                } else {
-                    files
-                        .iter()
-                        .map(|file_name| serde_json::json!(file_name))
-                        .collect()
-                };
-                serde_json::json!({
-                    "info": {
-                        "projectName": project_name,
-                        "isInferred": false,
-                        "version": 1,
-                        "options": {},
-                        "languageServiceDisabled": false,
-                    },
-                    "files": files,
-                    "projectErrors": [],
-                })
-            })
+        for (project_name, files) in projects {
+            body.push(Self::synchronize_project_list_entry(
+                project_name,
+                false,
+                serde_json::json!({}),
+                files.clone(),
+                include_redirect_info,
+            ));
+        }
+
+        let external_files: rustc_hash::FxHashSet<String> = self
+            .external_project_files
+            .values()
+            .flat_map(|files| files.iter().cloned())
             .collect();
+        let mut configured_projects: std::collections::BTreeMap<String, serde_json::Value> =
+            std::collections::BTreeMap::new();
+        let mut inferred_roots: Vec<String> = Vec::new();
+
+        let mut open_files: Vec<&String> = self.open_files.keys().collect();
+        open_files.sort();
+        for file in open_files {
+            if external_files.contains(file) || !Self::is_supported_project_source_file(file) {
+                continue;
+            }
+            match self.find_project_config_file(file) {
+                Some(config_path) => {
+                    configured_projects
+                        .entry(config_path.clone())
+                        .or_insert_with(|| {
+                            let options = self
+                                .read_config_json(&config_path)
+                                .and_then(|config| config.get("compilerOptions").cloned())
+                                .unwrap_or_else(|| serde_json::json!({}));
+                            let (_, file_names) = self.compute_project_info(file);
+                            Self::synchronize_project_list_entry(
+                                &config_path,
+                                false,
+                                options,
+                                file_names,
+                                include_redirect_info,
+                            )
+                        });
+                }
+                None => inferred_roots.push(file.clone()),
+            }
+        }
+
+        body.extend(configured_projects.into_values());
+
+        if !inferred_roots.is_empty() {
+            let mut file_names: Vec<String> = Vec::new();
+            let (lib_names, no_lib, _) = self.inferred_project_info(&inferred_roots[0]);
+            if !no_lib {
+                file_names.extend(self.resolve_virtual_lib_files(&lib_names));
+            }
+
+            let mut visited: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+            let mut project_files = Vec::new();
+            for root in inferred_roots {
+                self.collect_reachable_files(&root, &mut visited, &mut project_files);
+            }
+            project_files.sort();
+            project_files.dedup();
+            file_names.extend(project_files);
+
+            body.push(Self::synchronize_project_list_entry(
+                "/dev/null/inferredProject1*",
+                true,
+                self.inferred_project_options_json(),
+                file_names,
+                include_redirect_info,
+            ));
+        }
 
         self.stub_response(seq, request, Some(serde_json::json!(body)))
+    }
+
+    fn synchronize_project_list_entry(
+        project_name: &str,
+        is_inferred: bool,
+        options: serde_json::Value,
+        files: Vec<String>,
+        include_redirect_info: bool,
+    ) -> serde_json::Value {
+        let files: Vec<serde_json::Value> = if include_redirect_info {
+            files
+                .iter()
+                .map(|file_name| {
+                    serde_json::json!({
+                        "fileName": file_name,
+                        "isSourceOfProjectReferenceRedirect": false,
+                    })
+                })
+                .collect()
+        } else {
+            files
+                .iter()
+                .map(|file_name| serde_json::json!(file_name))
+                .collect()
+        };
+
+        serde_json::json!({
+            "info": {
+                "projectName": project_name,
+                "isInferred": is_inferred,
+                "version": 1,
+                "options": options,
+                "languageServiceDisabled": false,
+            },
+            "files": files,
+            "projectErrors": [],
+        })
+    }
+
+    fn inferred_project_options_json(&self) -> serde_json::Value {
+        let mut options = serde_json::Map::new();
+        let (lib, target, no_lib) = match self.inferred_projectinfo_options.as_ref() {
+            Some(opts) => (opts.lib.as_ref(), opts.target.as_ref(), opts.no_lib),
+            None => (
+                self.inferred_check_options.lib.as_ref(),
+                self.inferred_check_options.target.as_ref(),
+                self.inferred_check_options.no_lib,
+            ),
+        };
+
+        if let Some(lib) = lib {
+            options.insert("lib".to_string(), serde_json::json!(lib));
+        }
+        if let Some(target) = target {
+            options.insert("target".to_string(), serde_json::json!(target));
+        }
+        if no_lib {
+            options.insert("noLib".to_string(), serde_json::json!(true));
+        }
+        if let Some(module) = self.inferred_check_options.module.as_ref() {
+            options.insert("module".to_string(), serde_json::json!(module));
+        }
+        if self.inferred_check_options.allow_js {
+            options.insert("allowJs".to_string(), serde_json::json!(true));
+        }
+        if self.inferred_check_options.check_js {
+            options.insert("checkJs".to_string(), serde_json::json!(true));
+        }
+
+        serde_json::Value::Object(options)
     }
 
     pub(crate) fn handle_inlay_hints(

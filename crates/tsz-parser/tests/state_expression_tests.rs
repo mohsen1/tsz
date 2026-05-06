@@ -106,6 +106,24 @@ const a = ver < (MyVer.v1 >= MyVer.v2 ? MyVer.v1 : MyVer.v2)
 }
 
 #[test]
+fn object_accessors_without_body_report_open_brace_expected() {
+    for source in ["const o = { get x() , };", "const o = { set x(value) , };"] {
+        let (parser, _root) = parse_source(source);
+        let diags = parser.get_diagnostics();
+        let comma_pos = source.find(',').unwrap() as u32;
+
+        assert!(
+            diags
+                .iter()
+                .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                    && diag.start == comma_pos
+                    && diag.message == "'{' expected."),
+            "expected TS1005 open-brace diagnostic at comma for {source:?}, got {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn jsx_empty_type_arguments_accept_compound_closer_without_text_child() {
     let source = "const a = <div<>></div>;";
     let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
@@ -515,6 +533,24 @@ fn new_expression_missing_callee_reports_ts1109() {
         expr_expected.start,
         source.find(')').expect("closing paren") as u32,
         "TS1109 should anchor at ')' after bare `new`: {diags:?}"
+    );
+}
+
+#[test]
+fn assignment_expression_missing_rhs_reports_ts1109() {
+    let source = "a = ;\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let semicolon_pos = source.find(';').expect("semicolon") as u32;
+    let expr_expected = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .unwrap_or_else(|| panic!("expected TS1109 for missing assignment RHS, got {diags:?}"));
+
+    assert_eq!(
+        expr_expected.start, semicolon_pos,
+        "TS1109 should anchor at the semicolon after `=`, got {diags:?}"
     );
 }
 

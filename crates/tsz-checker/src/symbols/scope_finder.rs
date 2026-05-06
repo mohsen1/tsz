@@ -1036,6 +1036,24 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn is_arguments_in_async_function_or_method(&self, idx: NodeIndex) -> bool {
+        let Some(function_idx) = self.find_enclosing_non_arrow_function(idx) else {
+            return false;
+        };
+        let Some(node) = self.ctx.arena.get(function_idx) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_function(node)
+            .is_some_and(|function| function.is_async)
+            || self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .is_some_and(|method| self.has_async_modifier(&method.modifiers))
+    }
+
     /// Returns true when `func_idx` is the executor callback passed to
     /// `new Promise(...)` (first argument, function/arrow expression).
     pub(crate) fn is_promise_executor_function(&self, func_idx: NodeIndex) -> bool {

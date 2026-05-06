@@ -810,6 +810,10 @@ name = "shadowed_symbol_global_tests"
 path = "tests/shadowed_symbol_global_tests.rs"
 
 [[test]]
+name = "symbol_index_signature_tests"
+path = "tests/symbol_index_signature_tests.rs"
+
+[[test]]
 name = "ts2855_static_super_field_tests"
 path = "tests/ts2855_static_super_field_tests.rs"
 
@@ -824,6 +828,10 @@ path = "tests/jsdoc_import_multiline_tests.rs"
 [[test]]
 name = "jsdoc_import_default_and_named_tests"
 path = "tests/jsdoc_import_default_and_named_tests.rs"
+
+[[test]]
+name = "local_undefined_globalthis_shadow_tests"
+path = "tests/local_undefined_globalthis_shadow_tests.rs"
 
 [lints]
 workspace = true

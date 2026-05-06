@@ -532,6 +532,21 @@ const regexes: RegExp[] = [
 }
 
 #[test]
+fn test_middle_dot_identifier_part_parses_without_ts1127() {
+    let source = "const a·b = 1;\na·b;\n";
+    let mut parser = ParserState::new("middle-dot-identifier.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::INVALID_CHARACTER),
+        "Expected U+00B7 to be accepted as an identifier continuation, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_character_class_range_order_reports_ts1517() {
     let source = r#"
 const regexes: RegExp[] = [
@@ -2793,6 +2808,21 @@ fn test_invalid_unicode_escape_as_variable_name_no_var_decl_cascade() {
     assert_eq!(
         ts1134_count, 0,
         "Expected no TS1134 variable declaration cascade, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_escaped_combining_mark_as_variable_name_reports_ts1127() {
+    let source = r"var \u0345 = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 1127 && d.start == source.find('\\').unwrap() as u32),
+        "Expected TS1127 at escaped combining mark, got diagnostics: {diagnostics:?}"
     );
 }
 

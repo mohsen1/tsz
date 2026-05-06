@@ -16,6 +16,7 @@ use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
+#[derive(Debug)]
 struct Diag {
     code: u32,
     message_text: String,
@@ -137,6 +138,29 @@ fn check_js_with_libs(source: &str) -> Vec<Diag> {
     check_js_internal(source, true)
 }
 
+#[test]
+fn test_jsdoc_unknown_intrinsic_does_not_emit_ts2304() {
+    let source = r#"
+/** @type {unknown} */
+let x;
+
+/** @type {{ value: unknown, cb: function(unknown): unknown }} */
+let y;
+
+/** @type {Record<string, unknown>} */
+let z;
+"#;
+    let diagnostics = check_js_with_libs(source);
+    let ts2304_unknown: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2304 && diag.message_text.contains("'unknown'"))
+        .collect();
+    assert!(
+        ts2304_unknown.is_empty(),
+        "JSDoc unknown should resolve as an intrinsic, got: {diagnostics:#?}"
+    );
+}
+
 fn check_js_with_exact_optional(source: &str) -> Vec<Diag> {
     let options = CheckerOptions {
         allow_js: true,
@@ -188,6 +212,27 @@ class A {
         ts2322 >= 1,
         "Expected TS2322 for number assigned to boolean @type field, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn jsdoc_numeric_literal_type_accepts_exponent_syntax() {
+    let source = r#"
+// @ts-check
+/** @type {1e3} */
+let bad = 999;
+"#;
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2322 && d.message_text.contains("'999'") && d.message_text.contains("'1000'")
+        }),
+        "Expected TS2322 from JSDoc numeric literal type 1e3, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
     );
 }
 

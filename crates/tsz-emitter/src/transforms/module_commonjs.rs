@@ -150,11 +150,7 @@ fn resolve_entity_chain_has_value(
                     && n == *target_name
                 {
                     if rest.is_empty() {
-                        return super::emit_utils::is_instantiated_module_ext(
-                            arena,
-                            m.body,
-                            preserve_const_enums,
-                        );
+                        return true;
                     }
                     if let Some(body) = arena.get(m.body)
                         && let Some(block) = arena.get_module_block(body)
@@ -1215,6 +1211,20 @@ pub fn collect_export_names_with_options(
                     && let Some(name) = get_identifier_text(arena, class.name)
                 {
                     exports.push(name);
+                }
+            }
+            // export import Foo = require("foo")
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if let Some(import_decl) = arena.get_import_decl(node)
+                    && arena.has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword)
+                {
+                    collect_export_name_from_declaration(
+                        arena,
+                        node,
+                        &mut exports,
+                        preserve_const_enums,
+                        statements,
+                    );
                 }
             }
             // export enum E {} / export const enum E {} (when preserveConstEnums)

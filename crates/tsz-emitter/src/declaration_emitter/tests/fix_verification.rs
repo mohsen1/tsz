@@ -1624,3 +1624,68 @@ export namespace N {
         "Declaration emit must not use the shadowed top-level identity helper: {output}"
     );
 }
+
+#[test]
+fn fix_returned_object_jsdoc_keeps_method_signature() {
+    let output = emit_dts_with_binding(
+        r#"
+export const foo = (p: string) => {
+    return {
+        /**
+         * comment2
+         * @param s
+         */
+        bar: (s: number) => {},
+        /**
+         * comment3
+         * @param s
+         */
+        bar2(s: number) {},
+    };
+};
+"#,
+    );
+
+    assert!(
+        output.contains("bar: (s: number) => void;"),
+        "property function syntax should stay unchanged: {output}"
+    );
+    assert!(
+        output.contains("bar2(s: number): void;"),
+        "method syntax should survive JSDoc insertion: {output}"
+    );
+    assert!(
+        !output.contains("bar2: (s: number) => void;"),
+        "returned object methods must not be rewritten as property functions: {output}"
+    );
+}
+
+#[test]
+fn fix_shadowed_type_param_new_class_return_uses_global_this() {
+    let output = emit_dts_with_binding(
+        r#"
+class A {}
+
+var make = <A,>(value: A) => new A();
+function make2<A,>(value: A) {
+    return new A();
+}
+
+interface B {}
+var id = <B,>(value: B) => value;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var make: <A>(value: A) => globalThis.A;"),
+        "Expected arrow return to qualify the shadowed class constructor type: {output}"
+    );
+    assert!(
+        output.contains("declare function make2<A>(value: A): globalThis.A;"),
+        "Expected function return to qualify the shadowed class constructor type: {output}"
+    );
+    assert!(
+        output.contains("declare var id: <B>(value: B) => B;"),
+        "Type-only interface names should still bind to the type parameter: {output}"
+    );
+}
