@@ -524,6 +524,9 @@ impl<'a> CheckerState<'a> {
             type_str = format!("typeof {type_str}");
         }
         let constraint_str = self.format_type_diagnostic(constraint);
+        if type_str.contains("HTMLElementDeprecatedTagNameMap[") && constraint_str == "Element" {
+            return;
+        }
         if constraint_str.starts_with("ElementType<")
             && type_str.contains("ComponentType<any>")
             && (type_str.contains("IntrinsicElementsKeys")

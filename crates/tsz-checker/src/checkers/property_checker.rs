@@ -187,8 +187,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let class_chain_summary = self.summarize_class_chain(class_idx);
-
         // TS2855 fires when `super.<field>` accesses a parent class **instance**
         // field. From within a static member/initializer, `super` is the parent
         // class object itself (not its prototype), so `super.x` resolves to the
@@ -198,7 +196,8 @@ impl<'a> CheckerState<'a> {
             && !is_static
             && !in_static_context
             && matches!(
-                class_chain_summary.member_kind(property_name, false, true),
+                self.class_chain_member_kind_name_only(class_idx, property_name, false, true)
+                    .map(|(kind, _)| kind),
                 Some(ClassMemberKind::FieldLike)
             )
         {
@@ -208,12 +207,13 @@ impl<'a> CheckerState<'a> {
             // (target >= ES2022 or explicit useDefineForClassFields: true).
             if self.ctx.compiler_options.target.supports_es2022() {
                 use crate::diagnostics::format_message;
-                let display_name = class_chain_summary
-                    .member_display_name(property_name, false, true)
-                    .unwrap_or(property_name);
+                let display_name = self
+                    .class_chain_member_kind_name_only(class_idx, property_name, false, true)
+                    .map(|(_, display_name)| display_name)
+                    .unwrap_or_else(|| property_name.to_string());
                 let message = format_message(
                     diagnostic_messages::CLASS_FIELD_DEFINED_BY_THE_PARENT_CLASS_IS_NOT_ACCESSIBLE_IN_THE_CHILD_CLASS_VIA,
-                    &[display_name],
+                    &[&display_name],
                 );
                 self.error_at_node(
                     error_node,
@@ -1552,7 +1552,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
     fn intersection_protected_and_public_property_is_public() {
         let diagnostics = check_diagnostics(
             r#"
