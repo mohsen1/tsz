@@ -22,11 +22,10 @@ pub(crate) struct ModuleResolutionCache {
 fn package_relative_target_path(package_root: &Path, target: &str) -> Option<PathBuf> {
     let rest = target.strip_prefix("./")?;
     let path = Path::new(target);
-    if path.components().any(|component| {
-        matches!(
-            component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_)
-        )
+    if path.components().any(|component| match component {
+        Component::ParentDir | Component::RootDir | Component::Prefix(_) => true,
+        Component::Normal(segment) => segment == "node_modules",
+        _ => false,
     }) {
         return None;
     }
