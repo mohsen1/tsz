@@ -441,3 +441,15 @@ fn metadata_type_handles_method_param_annotations() {
     let src = "class T { @dec method(p: Observable<string>): void {} }\n";
     assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
 }
+
+#[test]
+fn metadata_type_handles_parameter_decorated_method_return_type() {
+    let src = "class T { method(@dec p: string): Observable<string> {} }\n";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
+}
+
+#[test]
+fn metadata_type_handles_parameter_decorated_method_param_type() {
+    let src = "class T { method(@dec p: Observable<string>): void {} }\n";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
+}

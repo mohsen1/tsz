@@ -310,7 +310,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Handle `object` intrinsic (non-primitive type) as source when target is an object.
         // `object` has no own properties, so all required target properties are "missing".
         // This produces TS2741/TS2739 instead of generic TS2322.
-        if resolved_source == TypeId::OBJECT {
+        if resolved_source == TypeId::OBJECT
+            || intrinsic_kind(self.interner, resolved_source) == Some(IntrinsicKind::Object)
+        {
             if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 return self.explain_object_failure(source, target, &[], None, &t_shape.properties);

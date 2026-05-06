@@ -17,6 +17,70 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
+    pub(crate) fn prewarm_inferred_predicate_operand_types(&mut self, body_idx: NodeIndex) {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+        let mut stack = Vec::new();
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            let Some(block) = self.ctx.arena.get_block(body_node) else {
+                return;
+            };
+            let Some(&stmt_idx) = block.statements.nodes.last() else {
+                return;
+            };
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                return;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                return;
+            }
+            let Some(ret) = self.ctx.arena.get_return_statement(stmt_node) else {
+                return;
+            };
+            if ret.expression.is_some() {
+                stack.push(ret.expression);
+            }
+        } else {
+            stack.push(body_idx);
+        }
+
+        while let Some(expr_idx) = stack.pop() {
+            let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                continue;
+            };
+            match expr_node.kind {
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                        continue;
+                    };
+                    if binary.operator_token == SyntaxKind::InstanceOfKeyword as u16 {
+                        self.get_type_of_node(binary.right);
+                    } else if matches!(
+                        binary.operator_token,
+                        k if k == SyntaxKind::AmpersandAmpersandToken as u16
+                            || k == SyntaxKind::BarBarToken as u16
+                    ) {
+                        stack.push(binary.left);
+                        stack.push(binary.right);
+                    }
+                }
+                syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                    if let Some(unary) = self.ctx.arena.get_unary_expr(expr_node) {
+                        stack.push(unary.operand);
+                    }
+                }
+                syntax_kind_ext::AS_EXPRESSION | syntax_kind_ext::SATISFIES_EXPRESSION => {
+                    if let Some(assertion) = self.ctx.arena.get_type_assertion(expr_node) {
+                        stack.push(assertion.expression);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_function_impl(idx, &TypingRequest::NONE)
@@ -1690,6 +1754,7 @@ impl<'a> CheckerState<'a> {
                     && !has_type_annotation
                     && matches!(return_type, TypeId::BOOLEAN | TypeId::UNKNOWN)
                 {
+                    self.prewarm_inferred_predicate_operand_types(body);
                     let analyzer = self.flow_analyzer();
                     if let Some(pred) = analyzer.try_infer_type_predicate_from_body(
                         body,
