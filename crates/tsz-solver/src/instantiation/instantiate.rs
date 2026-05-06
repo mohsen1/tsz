@@ -2253,10 +2253,9 @@ pub fn fill_application_defaults(
     for (i, param) in type_params.iter().enumerate() {
         if i < args.len() {
             result.push(args[i]);
-        } else if let Some(resolved) = subst.get(param.name) {
-            result.push(resolved);
         } else {
-            return None;
+            let resolved = subst.get(param.name)?;
+            result.push(resolved);
         }
     }
     Some(result)

@@ -433,29 +433,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Cross-evaluator stack overflow prevention.
-        // Only check thread-local global depth when the local guard depth
-        // is already significant (>= 10). This avoids expensive TLS access
-        // on the vast majority of shallow evaluations.
-        if self.guard.depth() >= 10 {
-            thread_local! {
-                static GLOBAL_EVAL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-            }
-            let global_depth = GLOBAL_EVAL_DEPTH.with(|d| {
-                let v = d.get();
-                d.set(v + 1);
-                v
-            });
-            if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
-                GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                self.guard.mark_exceeded();
-                return TypeId::ERROR;
-            }
-            let result = self.evaluate_guarded(type_id);
+        //
+        // This must count every non-cached evaluation, not just calls where the
+        // current evaluator is already deep. Large project checks commonly nest
+        // many fresh `TypeEvaluator` instances through checker-side application
+        // evaluation and subtype reduction; each individual evaluator can be
+        // shallow while the OS stack is still growing across all of them.
+        thread_local! {
+            static GLOBAL_EVAL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        }
+        let global_depth = GLOBAL_EVAL_DEPTH.with(|d| {
+            let v = d.get();
+            d.set(v + 1);
+            v
+        });
+        if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
             GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-            return result;
+            self.guard.mark_exceeded();
+            return TypeId::ERROR;
         }
 
-        self.evaluate_guarded(type_id)
+        let result = self.evaluate_guarded(type_id);
+        GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        result
     }
 
     /// Inner evaluate logic, called after global depth check.
@@ -1273,6 +1273,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let Some(key) = self.interner.lookup(arg) else {
             return arg;
         };
+        if matches!(
+            key,
+            TypeData::Application(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::Mapped(_)
+                | TypeData::TemplateLiteral(_)
+                | TypeData::KeyOf(_)
+        ) && crate::contains_this_type(self.interner, arg)
+        {
+            return arg;
+        }
         match key {
             TypeData::TypeQuery(sym_ref) => {
                 // Resolve the TypeQuery to get the VALUE type (constructor for classes).
@@ -1685,7 +1697,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Single-pass early-exit check instead of two separate O(N) scans.
         for &id in members.iter() {
-            if id.is_any() || self.is_complex_type(id) {
+            if id.is_any()
+                || crate::contains_this_type(self.interner, id)
+                || self.is_complex_type(id)
+            {
                 return;
             }
         }

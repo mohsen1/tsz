@@ -124,6 +124,22 @@ fn object_accessors_without_body_report_open_brace_expected() {
 }
 
 #[test]
+fn object_accessors_without_body_before_close_brace_do_not_report_open_brace_expected() {
+    for source in ["const o = { get x() };", "const o = { set x(value) };"] {
+        let (parser, _root) = parse_source(source);
+        let diags = parser.get_diagnostics();
+
+        assert!(
+            !diags
+                .iter()
+                .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                    && diag.message == "'{' expected."),
+            "did not expect TS1005 open-brace diagnostic before object close for {source:?}, got {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn jsx_empty_type_arguments_accept_compound_closer_without_text_child() {
     let source = "const a = <div<>></div>;";
     let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
