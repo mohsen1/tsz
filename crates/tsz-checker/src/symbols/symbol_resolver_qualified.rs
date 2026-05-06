@@ -702,31 +702,54 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // For nested namespaces (e.g., `Utils` inside `A`): search parent
-        // namespace exports in each binder for the target namespace name.
-        // This part still scans all_binders since the nested namespace name
-        // isn't a file_locals key -- it's an export of a parent namespace.
-        for (file_idx, binder) in all_binders.iter().enumerate() {
-            for (_, &parent_sym_id) in binder.file_locals.iter() {
-                let Some(parent_sym) = self.ctx.binder.get_symbol(parent_sym_id) else {
-                    continue;
-                };
-                if !parent_sym
-                    .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                {
-                    continue;
+        let nested_candidates = if let Some(cached) = self
+            .ctx
+            .nested_namespace_candidates_cache
+            .borrow()
+            .get(namespace_name)
+            .cloned()
+        {
+            cached
+        } else {
+            // For nested namespaces (e.g., `Utils` inside `A`): search parent
+            // namespace exports in each binder for the target namespace name.
+            // Cache candidates by namespace name so resolving many members of
+            // the same nested namespace does not rescan every binder.
+            let mut candidates = Vec::new();
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                for (_, &parent_sym_id) in binder.file_locals.iter() {
+                    let Some(parent_sym) = self.ctx.binder.get_symbol(parent_sym_id) else {
+                        continue;
+                    };
+                    if !parent_sym
+                        .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                    {
+                        continue;
+                    }
+                    if let Some(parent_exports) = parent_sym.exports.as_ref()
+                        && let Some(nested_ns_id) = parent_exports.get(namespace_name)
+                        && let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
+                        && nested_ns.flags
+                            & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                            != 0
+                    {
+                        candidates.push((file_idx, nested_ns_id));
+                    }
                 }
-                if let Some(parent_exports) = parent_sym.exports.as_ref()
-                    && let Some(nested_ns_id) = parent_exports.get(namespace_name)
-                    && let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
-                    && nested_ns.flags
-                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                        != 0
-                    && let Some(nested_exports) = nested_ns.exports.as_ref()
-                    && let Some(member_id) = nested_exports.get(member_name)
-                {
-                    consider_member(member_id, file_idx);
-                }
+            }
+            self.ctx
+                .nested_namespace_candidates_cache
+                .borrow_mut()
+                .insert(namespace_name.to_string(), candidates.clone());
+            candidates
+        };
+
+        for (file_idx, nested_ns_id) in nested_candidates {
+            if let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
+                && let Some(nested_exports) = nested_ns.exports.as_ref()
+                && let Some(member_id) = nested_exports.get(member_name)
+            {
+                consider_member(member_id, file_idx);
             }
         }
 
