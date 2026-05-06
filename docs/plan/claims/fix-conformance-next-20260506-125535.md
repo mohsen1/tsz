@@ -3,7 +3,7 @@
 - **Date**: 2026-05-06
 - **Branch**: `fix/conformance-next-20260506-125535`
 - **PR**: #4078
-- **Status**: claim
+- **Status**: abandoned
 - **Workstream**: 1 (Diagnostic Conformance)
 
 ## Intent
@@ -23,4 +23,11 @@ fingerprint without changing the intended diagnostic set.
 
 ## Verification
 
-- TBD
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz-build-targets/conformance-next-20260506-125535 CARGO_BUILD_JOBS=2 ./scripts/conformance/conformance.sh run --filter "functionCall10" --verbose --test-dir /Users/mohsen/code/tsz/.worktrees/fix-large-ts-repo-signature-param-reserve-20260506/TypeScript/tests/cases`
+
+## Abandonment Note
+
+The verbose run showed the same sibling-literal call diagnostic display bug
+already covered by open PR #4023 (`fix(checker): keep declared call parameter
+display`): tsz reports `"bar"` -> `1` where tsc reports `string` -> `number`.
+This claim is abandoned to avoid duplicating that in-flight fix.
