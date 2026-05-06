@@ -757,6 +757,7 @@ impl<'a> Printer<'a> {
                         names.push(class_name);
                     }
                     if has_top_level_using
+                        && seen_top_level_using
                         && self
                             .arena
                             .has_modifier(&class_decl.modifiers, SyntaxKind::ExportKeyword)
@@ -766,6 +767,12 @@ impl<'a> Printer<'a> {
                         && class_decl.name.is_some()
                         && seen.insert("_default".to_string())
                     {
+                        // Only hoist `_default` when the default-exported
+                        // class lives AFTER the top-level `using` in source
+                        // and so is reached from inside the synthesized
+                        // try/catch. When the class precedes the using,
+                        // the class name itself is the live binding and
+                        // tsc emits no `_default`.
                         names.push("_default".to_string());
                     }
                 }
@@ -843,9 +850,16 @@ impl<'a> Printer<'a> {
                                 names.push(name);
                             }
                             if has_top_level_using
-                                && ((class_decl.name.is_some()) || seen_top_level_using)
+                                && seen_top_level_using
                                 && seen.insert("_default".to_string())
                             {
+                                // Only hoist `_default` when this default-
+                                // exported class lives AFTER the top-level
+                                // `using` in source (so it's reached from
+                                // within the synthesized try/catch).
+                                // Named classes that PRECEDE the using don't
+                                // need the tracker — the class identifier
+                                // is already the live binding.
                                 names.push("_default".to_string());
                             }
                         }
@@ -862,10 +876,20 @@ impl<'a> Printer<'a> {
                         continue;
                     }
                     if has_top_level_using
+                        && seen_top_level_using
                         && export_decl.is_default_export
                         && (clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                             || clause_node.kind == syntax_kind_ext::CLASS_DECLARATION)
                     {
+                        // Only hoist `_default` when this default-export
+                        // sits AFTER the top-level `using` in source — that
+                        // means the class/function is reached from inside
+                        // the synthesized try/catch and needs the tracker
+                        // for the export call. When the default-export
+                        // comes BEFORE the using, the class name (or
+                        // `default_1` placeholder) is the live binding
+                        // and no separate tracker is needed; tsc does not
+                        // hoist `_default` in that case.
                         let has_local_name =
                             if clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
                                 self.arena
