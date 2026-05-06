@@ -1165,7 +1165,7 @@ impl TypeInterner {
     /// Look up the allocation order for a given `TypeId`.
     /// Returns `None` for intrinsic/error types (they have no alloc order).
     #[inline]
-    pub(super) fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
+    pub(crate) fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
         if id.is_intrinsic() || id.is_error() {
             return None;
         }
