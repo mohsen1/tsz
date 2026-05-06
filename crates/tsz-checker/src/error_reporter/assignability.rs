@@ -64,6 +64,41 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn direct_type_param_alias_application_pair_display(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<(String, String)> {
+        let (source_base, source_args) = self.application_info_or_display_alias(source)?;
+        let (target_base, target_args) = self.application_info_or_display_alias(target)?;
+        if source_base != target_base || source_args.len() != target_args.len() {
+            return None;
+        }
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_base)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body = def.body?;
+        let Some(tsz_solver::TypeData::TypeParameter(param)) = self.ctx.types.lookup(body) else {
+            return None;
+        };
+        let arg_idx = def
+            .type_params
+            .iter()
+            .position(|type_param| type_param.name == param.name)?;
+        let source_arg = *source_args.get(arg_idx)?;
+        let target_arg = *target_args.get(arg_idx)?;
+        Some((
+            self.canonicalize_assignment_numeric_literal_union_display(
+                self.format_type_diagnostic(source_arg),
+            ),
+            self.canonicalize_assignment_numeric_literal_union_display(
+                self.format_type_diagnostic(target_arg),
+            ),
+        ))
+    }
+
     fn callback_initializer_for_assignability_anchor(
         &self,
         anchor_idx: NodeIndex,
@@ -1014,6 +1049,12 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.static_schema_array_structural_display(target, source) {
             target_str = display;
         }
+        if let Some((direct_source, direct_target)) =
+            self.direct_type_param_alias_application_pair_display(source, target)
+        {
+            source_str = direct_source;
+            target_str = direct_target;
+        }
         if let Some(display) =
             self.contextual_callable_application_target_display(target, source, &target_str)
         {
@@ -1766,6 +1807,12 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(display) = self.static_schema_array_structural_display(target, source) {
                 tgt_str = display;
+            }
+            if let Some((direct_source, direct_target)) =
+                self.direct_type_param_alias_application_pair_display(source, target)
+            {
+                src_str = direct_source;
+                tgt_str = direct_target;
             }
             if let Some(display) = self.type_query_static_array_structural_display(&src_str) {
                 src_str = display;
