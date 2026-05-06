@@ -4917,6 +4917,54 @@ fn test_private_brand_lazy_self_resolution_does_not_recurse() {
 }
 
 #[test]
+fn test_private_brand_lazy_cycle_does_not_recurse() {
+    struct CyclicLazyResolver {
+        first_def: DefId,
+        first_type: TypeId,
+        second_def: DefId,
+        second_type: TypeId,
+    }
+
+    impl TypeResolver for CyclicLazyResolver {
+        fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+
+        fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            if def_id == self.first_def {
+                Some(self.second_type)
+            } else if def_id == self.second_def {
+                Some(self.first_type)
+            } else {
+                None
+            }
+        }
+    }
+
+    let interner = TypeInterner::new();
+    let first_def = DefId(42);
+    let second_def = DefId(43);
+    let first_type = interner.intern(TypeData::Lazy(first_def));
+    let second_type = interner.intern(TypeData::Lazy(second_def));
+    let resolver = CyclicLazyResolver {
+        first_def,
+        first_type,
+        second_def,
+        second_type,
+    };
+    let checker = CompatChecker::with_resolver(&interner, &resolver);
+    let target = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
+
+    assert_eq!(
+        checker.private_brand_assignability_override(first_type, target),
+        None
+    );
+}
+
+#[test]
 fn test_private_brand_same_brand_assignable() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
