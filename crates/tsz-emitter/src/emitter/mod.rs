@@ -34,6 +34,7 @@ mod core;
 mod declarations;
 mod es5;
 mod expressions;
+mod function_parameters;
 mod function_scopes;
 mod functions;
 mod helpers;

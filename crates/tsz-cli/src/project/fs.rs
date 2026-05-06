@@ -88,75 +88,77 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
             Some(build_globset(&exclude_patterns).context("failed to build exclude globset")?)
         };
 
-        let walker = WalkDir::new(&options.base_dir)
-            .follow_links(options.follow_links)
-            .into_iter()
-            .filter_entry(|entry| allow_entry(entry, &options.base_dir, exclude_set.as_ref()));
+        for walk_root in include_walk_roots(&options.base_dir, &include_patterns) {
+            let walker = WalkDir::new(&walk_root)
+                .follow_links(options.follow_links)
+                .into_iter()
+                .filter_entry(|entry| allow_entry(entry, &walk_root, exclude_set.as_ref()));
 
-        for entry in walker {
-            let entry = entry.context("failed to read directory entry")?;
-            if !entry.file_type().is_file() {
-                continue;
-            }
-
-            let path = entry.path();
-            if !(is_ts_file(path)
-                || (options.allow_js && is_js_file(path))
-                || (options.resolve_json_module && is_json_file(path)))
-            {
-                continue;
-            }
-
-            // tsc never includes config files (tsconfig.json, jsconfig.json) as
-            // program inputs, even when resolveJsonModule is enabled. Skip them
-            // during pattern-based discovery.
-            if is_json_file(path) && is_config_json(path) {
-                continue;
-            }
-
-            let rel_path = path.strip_prefix(&options.base_dir).unwrap_or(path);
-            if !include_set.is_match(rel_path) {
-                continue;
-            }
-
-            if let Some(exclude) = exclude_set.as_ref()
-                && exclude.is_match(rel_path)
-            {
-                continue;
-            }
-
-            // Avoid canonicalizing package-link paths whose lexical path is
-            // outside node_modules but whose real target lives under
-            // node_modules. Ordinary resolved package files should still
-            // canonicalize so tempdir aliases like /var -> /private/var
-            // collapse to a stable path.
-            let resolved = if options.follow_links {
-                let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-                let path_has_node_modules = path.components().any(|component| {
-                    matches!(
-                        component,
-                        std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
-                    )
-                });
-                let canonical_has_node_modules = canonical.components().any(|component| {
-                    matches!(
-                        component,
-                        std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
-                    )
-                });
-                let preserve_symlink_identity =
-                    !path_has_node_modules && canonical_has_node_modules;
-                if preserve_symlink_identity
-                    || path_has_symlinked_package_ancestor(path, &options.base_dir)
-                {
-                    path.to_path_buf()
-                } else {
-                    canonical
+            for entry in walker {
+                let entry = entry.context("failed to read directory entry")?;
+                if !entry.file_type().is_file() {
+                    continue;
                 }
-            } else {
-                path.to_path_buf()
-            };
-            files.insert(resolved);
+
+                let path = entry.path();
+                if !(is_ts_file(path)
+                    || (options.allow_js && is_js_file(path))
+                    || (options.resolve_json_module && is_json_file(path)))
+                {
+                    continue;
+                }
+
+                // tsc never includes config files (tsconfig.json, jsconfig.json) as
+                // program inputs, even when resolveJsonModule is enabled. Skip them
+                // during pattern-based discovery.
+                if is_json_file(path) && is_config_json(path) {
+                    continue;
+                }
+
+                if !matches_discovery_patterns(path, &options.base_dir, &walk_root, &include_set) {
+                    continue;
+                }
+
+                if let Some(exclude) = exclude_set.as_ref()
+                    && matches_discovery_patterns(path, &options.base_dir, &walk_root, exclude)
+                {
+                    continue;
+                }
+
+                // Avoid canonicalizing package-link paths whose lexical path is
+                // outside node_modules but whose real target lives under
+                // node_modules. Ordinary resolved package files should still
+                // canonicalize so tempdir aliases like /var -> /private/var
+                // collapse to a stable path.
+                let resolved = if options.follow_links {
+                    let canonical =
+                        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+                    let path_has_node_modules = path.components().any(|component| {
+                        matches!(
+                            component,
+                            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+                        )
+                    });
+                    let canonical_has_node_modules = canonical.components().any(|component| {
+                        matches!(
+                            component,
+                            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+                        )
+                    });
+                    let preserve_symlink_identity =
+                        !path_has_node_modules && canonical_has_node_modules;
+                    if preserve_symlink_identity
+                        || path_has_symlinked_package_ancestor(path, &options.base_dir)
+                    {
+                        path.to_path_buf()
+                    } else {
+                        canonical
+                    }
+                } else {
+                    path.to_path_buf()
+                };
+                files.insert(resolved);
+            }
         }
     }
 
@@ -192,6 +194,54 @@ fn path_has_symlinked_package_ancestor(path: &Path, base_dir: &Path) -> bool {
     }
     false
 }
+
+fn include_walk_roots(base_dir: &Path, include_patterns: &[String]) -> Vec<PathBuf> {
+    let mut roots = BTreeSet::new();
+    for pattern in include_patterns {
+        if is_absolute_pattern(pattern) {
+            roots.insert(fixed_pattern_prefix(pattern));
+        } else {
+            roots.insert(base_dir.to_path_buf());
+        }
+    }
+    roots.into_iter().collect()
+}
+
+fn is_absolute_pattern(pattern: &str) -> bool {
+    Path::new(pattern).is_absolute()
+}
+
+fn fixed_pattern_prefix(pattern: &str) -> PathBuf {
+    let mut prefix = PathBuf::new();
+    for component in Path::new(pattern).components() {
+        let text = component.as_os_str().to_string_lossy();
+        if text.contains('*') || text.contains('?') || text.contains('[') {
+            break;
+        }
+        prefix.push(component.as_os_str());
+    }
+    if prefix.as_os_str().is_empty() {
+        PathBuf::from("/")
+    } else {
+        prefix
+    }
+}
+
+fn matches_discovery_patterns(
+    path: &Path,
+    base_dir: &Path,
+    walk_root: &Path,
+    patterns: &GlobSet,
+) -> bool {
+    patterns.is_match(path)
+        || path
+            .strip_prefix(base_dir)
+            .is_ok_and(|rel| patterns.is_match(rel))
+        || path
+            .strip_prefix(walk_root)
+            .is_ok_and(|rel| patterns.is_match(rel))
+}
+
 fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
     match options.include.as_ref() {
         Some(patterns) if patterns.is_empty() => Vec::new(),
@@ -340,6 +390,9 @@ fn allow_entry(entry: &DirEntry, base_dir: &Path, exclude: Option<&GlobSet>) -> 
     let path = entry.path();
     if path == base_dir {
         return true;
+    }
+    if exclude.is_match(path) {
+        return false;
     }
 
     // Use safe path handling instead of unwrap_or for panic hardening
@@ -789,6 +842,34 @@ mod tests {
             result_with_js.iter().any(|p| p.ends_with("lib.js")),
             ".js file should be included from pattern with allowJs"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_absolute_include_walks_pattern_prefix() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_absolute_include");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("base/src")).unwrap();
+        fs::create_dir_all(dir.join("app")).unwrap();
+        fs::write(dir.join("base/src/a.ts"), "export const x = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.join("app"),
+            files: vec![],
+            files_explicitly_set: false,
+            include: Some(vec![
+                dir.join("base/src/**/*.ts").to_string_lossy().into_owned(),
+            ]),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert_eq!(result, vec![dir.join("base/src/a.ts")]);
 
         let _ = fs::remove_dir_all(&dir);
     }
