@@ -371,6 +371,40 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn commonjs_deferred_class_export_alias_emits_after_declaration() {
+        let source = "export { J as JJ };\nexport class J {}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::CommonJS,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let class_pos = output
+            .find("class J")
+            .expect("class declaration should emit");
+        let direct_export_pos = output
+            .find("exports.J = J;")
+            .expect("direct class export should emit after the class");
+        let alias_export_pos = output
+            .find("exports.JJ = J;")
+            .expect("deferred export alias should emit after the class");
+
+        assert!(
+            class_pos < direct_export_pos && direct_export_pos < alias_export_pos,
+            "CommonJS class export aliases should be emitted after the class in tsc order.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn ambient_class_parenthesized_tail_emits_recovered_expression() {
         let source = "declare class foo();\nfunction foo() {}\n";
 
