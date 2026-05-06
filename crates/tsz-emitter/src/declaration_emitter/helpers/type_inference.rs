@@ -6783,10 +6783,8 @@ impl<'a> DeclarationEmitter<'a> {
 
             let value_idx = if let Some(data) = self.arena.get_shorthand_property(member_node) {
                 data.name
-            } else if let Some(data) = self.arena.get_property_assignment(member_node) {
-                data.initializer
             } else {
-                return None;
+                self.arena.get_property_assignment(member_node)?.initializer
             };
 
             let type_text = self

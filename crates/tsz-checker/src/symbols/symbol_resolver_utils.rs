@@ -1170,11 +1170,8 @@ impl<'a> CheckerState<'a> {
                     return Some(current);
                 }
                 _ => {
-                    if let Some(ext) = arena.get_extended(current) {
-                        current = ext.parent;
-                    } else {
-                        return None;
-                    }
+                    let ext = arena.get_extended(current)?;
+                    current = ext.parent;
                 }
             }
         }
