@@ -45,26 +45,22 @@ impl NodeArena {
         &self.interner
     }
 
-    /// Resolve an identifier text using `Atom` (fast) or `escaped_text` (fallback).
+    /// Resolve identifier display text.
     ///
-    /// When `data.atom` is set and the interner returns the canonical text,
-    /// that's the happy path. When `data.atom` is set but the interner
-    /// returns an empty string — for example, because the arena's interner
-    /// is stale relative to the scanner's (the workstream 7 coherence
-    /// regression that PR #1205 fixed for incremental parse) — fall back to
-    /// `data.escaped_text` so the function never silently returns `""` for a
-    /// real identifier. `escaped_text` is always populated at parse time.
+    /// The parser stores the source spelling in `escaped_text` when it builds
+    /// an identifier. Prefer that spelling for user-visible text so a stale or
+    /// mismatched atom cannot corrupt non-ASCII names; use the atom only for
+    /// synthetic identifiers that have no parsed text.
     #[inline]
     #[must_use]
     pub fn resolve_identifier_text<'a>(&'a self, data: &'a IdentifierData) -> &'a str {
+        if !data.escaped_text.is_empty() {
+            return &data.escaped_text;
+        }
         if data.atom == Atom::NONE {
             return &data.escaped_text;
         }
-        let resolved = self.interner.resolve(data.atom);
-        if resolved.is_empty() && !data.escaped_text.is_empty() {
-            return &data.escaped_text;
-        }
-        resolved
+        self.interner.resolve(data.atom)
     }
 
     /// Create an arena with pre-allocated capacity.
@@ -2337,16 +2333,15 @@ mod tests {
         );
     }
 
-    /// Sanity check: when the interner has the atom's canonical text, that
-    /// canonical text wins (the happy path). The fallback only fires when
-    /// the interner's lookup is empty.
+    /// Sanity check: parsed identifier text is authoritative for display even
+    /// when an atom resolves to a different string.
     ///
     /// Use `Interner::new()` (which reserves Atom(0) for the empty string,
     /// matching the production scanner setup) rather than `Default::default`
     /// so the first interned string gets `Atom(1)`, not `Atom(0)` (which
     /// the resolver classifies as `Atom::NONE`).
     #[test]
-    fn resolve_identifier_text_uses_interner_when_atom_resolves() {
+    fn resolve_identifier_text_prefers_escaped_text_when_atom_resolves() {
         let mut arena = NodeArena::new();
         arena.set_interner(Interner::new());
         let atom = arena.interner.intern("canonical_text");
@@ -2361,6 +2356,6 @@ mod tests {
             type_arguments: None,
         };
 
-        assert_eq!(arena.resolve_identifier_text(&data), "canonical_text");
+        assert_eq!(arena.resolve_identifier_text(&data), "stale_escaped_form");
     }
 }

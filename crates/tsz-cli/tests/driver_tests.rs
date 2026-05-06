@@ -5826,6 +5826,45 @@ var spread1 = <div x='' {...foo} y='' />;"#,
 }
 
 #[test]
+fn compile_jsx_attribute_name_allows_hyphen_followed_by_digit() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "jsx": "preserve",
+            "noEmit": true
+          },
+          "files": ["index.tsx"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.tsx"),
+        r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        x: { "data-123": "ok" };
+    }
+}
+
+const ok = <x data-123="ok" />;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics for JSX attribute name with digit-starting hyphen segment, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_with_project_dir_resolves_package_exported_tsconfig_extends() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -10677,6 +10716,46 @@ fn compile_cli_allow_importing_ts_extensions_accepts_no_emit_guard() {
 }
 
 #[test]
+fn compile_bundler_dts_value_import_reports_ts2846_not_ts2307() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "allowImportingTsExtensions": true,
+            "noEmit": true
+          },
+          "files": ["a.ts", "types.d.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "export {};\n");
+    write_file(&base.join("types.d.ts"), "import {} from \"./a.d.ts\";\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT
+        ),
+        "expected TS2846 for value import of ./a.d.ts, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "TS2846 should suppress TS2307 for ./a.d.ts when ./a.ts exists, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn cli_declaration_dir_places_declarations_outside_out_dir() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -13187,6 +13266,56 @@ export function copy(a: number[]): number[] {
 }
 
 #[test]
+fn compile_es5_downlevel_iteration_single_call_spread_uses_read() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "dist",
+            "downlevelIteration": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["src/calls.ts"]
+        }"#,
+    );
+
+    write_file(
+        &base.join("src/calls.ts"),
+        r#"
+function f(...args: any[]) {
+    return args.join("|");
+}
+const s: any = "ab";
+export const value = f(...s);
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Should compile without errors: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("dist/src/calls.js")).expect("read js");
+    assert!(
+        js.contains("f.apply(void 0, __spreadArray([], __read(s), false))"),
+        "single call spread with downlevelIteration should read iterables before apply:\n{js}"
+    );
+    assert!(
+        !js.contains("f.apply(void 0, s)"),
+        "single call spread must not pass iterable directly to apply:\n{js}"
+    );
+}
+
+#[test]
 fn compile_object_spread() {
     // Test object spread operator compilation
     let temp = TempDir::new().expect("temp dir");
@@ -13488,6 +13617,59 @@ export function getSecond(arr: number[]): number {
 
     let js = std::fs::read_to_string(base.join("dist/src/arrays.js")).expect("read js");
     assert!(!js.is_empty(), "JS output should not be empty");
+}
+
+#[test]
+fn compile_es5_downlevel_iteration_array_rest_reads_full_iterator() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "lib": ["es2015", "dom"],
+            "downlevelIteration": true,
+            "ignoreDeprecations": "6.0",
+            "outDir": "dist"
+          },
+          "files": ["src/rest.ts"]
+        }"#,
+    );
+
+    write_file(
+        &base.join("src/rest.ts"),
+        r#"
+const iter: any = new Set([1, 2]);
+const [first, ...rest] = iter;
+console.log(first, rest.join(","));
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Should compile without errors: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("dist/src/rest.js")).expect("read js");
+    assert!(
+        js.contains("__read(iter)"),
+        "array rest binding should read the full iterator: {js}"
+    );
+    assert!(
+        !js.contains("__read(iter, 1)"),
+        "array rest binding must not truncate the iterator read: {js}"
+    );
+    assert!(
+        js.contains("rest = _a.slice(1)") || js.contains("rest = _b.slice(1)"),
+        "array rest binding should slice after the fixed element: {js}"
+    );
 }
 
 #[test]
@@ -15123,6 +15305,48 @@ export const vec = new Vec(1);
     assert!(
         dts.contains("dot(other: Vec): number;"),
         "expected self-referential prototype method parameter to print by name: {dts}"
+    );
+}
+
+#[test]
+fn jsdoc_property_typedef_declaration_emit_quotes_non_identifier_names() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist"
+  },
+  "include": ["index.js"]
+}"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"/**
+ * @typedef {Object} Options
+ * @property {string} data-id
+ */
+exports.value = {};
+"#,
+    );
+
+    let args = default_args();
+    compile(&args, base).expect("compile should succeed");
+
+    let dts = std::fs::read_to_string(base.join("dist/index.d.ts"))
+        .expect("index declaration should be emitted");
+    assert!(
+        dts.contains("\"data-id\": string;"),
+        "expected JSDoc property name requiring quotes to emit a valid string-literal property: {dts}"
+    );
+    assert!(
+        !dts.contains("data-id: string;"),
+        "expected invalid unquoted hyphenated property name to be absent: {dts}"
     );
 }
 

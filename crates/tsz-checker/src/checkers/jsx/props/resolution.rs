@@ -1960,6 +1960,9 @@ impl<'a> CheckerState<'a> {
                     })
                     .collect();
                 let attrs_type = self.ctx.types.factory().object(properties);
+                if self.is_assignable_to(attrs_type, props_type) {
+                    return;
+                }
                 // tsc anchors JSX union props errors at the tag name (e.g., <TextComponent>),
                 // not the attributes container.
                 self.report_jsx_synthesized_props_assignability_error(
