@@ -931,6 +931,13 @@ impl<'a> CheckerState<'a> {
         let mut target_str =
             self.rewrite_target_display_for_non_literal_assignability(target, target_str);
 
+        if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+            source_str = self.format_type_diagnostic(unfolded);
+        }
+        if let Some(unfolded) = self.ts2739_alias_of_application_source_display(target) {
+            target_str = self.format_type_diagnostic(unfolded);
+        }
+
         let should_prefer_authoritative_name = |display: &str| {
             display.starts_with("{ ")
                 || display.starts_with("typeof import(")
@@ -1000,6 +1007,13 @@ impl<'a> CheckerState<'a> {
         }
         let (source_str, mut target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
+        let mut source_str = source_str;
+        if let Some(display) = self.static_schema_array_structural_display(source, target) {
+            source_str = display;
+        }
+        if let Some(display) = self.static_schema_array_structural_display(target, source) {
+            target_str = display;
+        }
         if let Some(display) =
             self.contextual_callable_application_target_display(target, source, &target_str)
         {
@@ -1225,6 +1239,19 @@ impl<'a> CheckerState<'a> {
         );
         let (source_str, mut target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
+        let mut source_str = source_str;
+        if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+            source_str = self.format_type_diagnostic(unfolded);
+        }
+        if let Some(unfolded) = self.ts2739_alias_of_application_source_display(target) {
+            target_str = self.format_type_diagnostic(unfolded);
+        }
+        if let Some(display) = self.static_schema_array_structural_display(source, target) {
+            source_str = display;
+        }
+        if let Some(display) = self.static_schema_array_structural_display(target, source) {
+            target_str = display;
+        }
         if let Some(display) =
             self.contextual_callable_application_target_display(target, source, &target_str)
         {
@@ -1726,6 +1753,23 @@ impl<'a> CheckerState<'a> {
             );
             let (src_str, tgt_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
+            let mut src_str = src_str;
+            let mut tgt_str = tgt_str;
+            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+                src_str = self.format_type_diagnostic(unfolded);
+            }
+            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(target) {
+                tgt_str = self.format_type_diagnostic(unfolded);
+            }
+            if let Some(display) = self.static_schema_array_structural_display(source, target) {
+                src_str = display;
+            }
+            if let Some(display) = self.static_schema_array_structural_display(target, source) {
+                tgt_str = display;
+            }
+            if let Some(display) = self.type_query_static_array_structural_display(&src_str) {
+                src_str = display;
+            }
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.
             let authoritative_src = self.authoritative_assignability_def_name(source);
@@ -1772,6 +1816,8 @@ impl<'a> CheckerState<'a> {
                     && authoritative_src.as_deref() == source_generic_base;
                 let source_name = if src_str.starts_with("typeof ")
                     || src_str.starts_with("import(")
+                    || src_str.starts_with('{')
+                    || src_str.contains('<')
                     || preserve_generic_nominal_pair
                     || display_is_literal_value(&src_str)
                 {
@@ -1781,6 +1827,8 @@ impl<'a> CheckerState<'a> {
                 };
                 let target_name = if tgt_str.starts_with("typeof ")
                     || tgt_str.starts_with("import(")
+                    || tgt_str.starts_with('{')
+                    || tgt_str.contains('<')
                     || preserve_generic_nominal_pair
                     || display_is_literal_value(&tgt_str)
                 {
