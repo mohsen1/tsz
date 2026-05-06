@@ -1511,15 +1511,38 @@ impl Server {
         self.lib_cache.clear();
         self.unified_lib_cache = None;
 
-        // Re-read open files from disk
-        let paths: Vec<String> = self.open_files.keys().cloned().collect();
-        for path in &paths {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                self.open_files.insert(path.clone(), content);
+        let reload_finished = if let Some(file) = request
+            .arguments
+            .get("file")
+            .and_then(|value| value.as_str())
+        {
+            let source_path = request
+                .arguments
+                .get("tmpfile")
+                .and_then(|value| value.as_str())
+                .unwrap_or(file);
+            if let Ok(content) = std::fs::read_to_string(source_path) {
+                self.open_files.insert(file.to_string(), content);
+                true
+            } else {
+                false
             }
-        }
+        } else {
+            // Re-read all open files for reload-project style requests.
+            let paths: Vec<String> = self.open_files.keys().cloned().collect();
+            for path in &paths {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    self.open_files.insert(path.clone(), content);
+                }
+            }
+            true
+        };
 
-        self.stub_response(seq, request, Some(serde_json::json!(true)))
+        self.stub_response(
+            seq,
+            request,
+            Some(serde_json::json!({ "reloadFinished": reload_finished })),
+        )
     }
 
     pub(crate) fn handle_compiler_options_for_inferred(
