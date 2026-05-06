@@ -9022,6 +9022,64 @@ fn compile_config_remove_comments_reaches_printer() {
 }
 
 #[test]
+fn compile_config_use_define_for_class_fields_false_reaches_printer() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "commonjs",
+            "useDefineForClassFields": false,
+            "skipLibCheck": true,
+            "outDir": "dist"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"class Base {
+  set x(value: number) {
+    console.log("setter", value);
+  }
+}
+
+class Derived extends Base {
+  // @ts-ignore Deliberately comparing emit semantics for accessor/property override.
+  x = 1;
+}
+
+new Derived();
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read JS output");
+    assert!(
+        js.contains("constructor()"),
+        "Expected useDefineForClassFields=false from config to lower the field into the constructor: {js}"
+    );
+    assert!(
+        js.contains("this.x = 1;"),
+        "Expected legacy assignment semantics for class field: {js}"
+    );
+    assert!(
+        !js.contains("\n    x = 1;"),
+        "Expected native class field syntax to be suppressed: {js}"
+    );
+}
+
+#[test]
 fn compile_config_and_cli_new_line_reach_printer() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
