@@ -994,7 +994,8 @@ impl Server {
             "getCompilerOptionsDiagnostics" => {
                 self.handle_compiler_options_diagnostics(seq, &request)
             }
-            "reload" | "reloadProjects" => self.handle_reload(seq, &request),
+            "reload" => self.handle_reload(seq, &request),
+            "reloadProjects" => self.handle_reload_projects(seq, &request),
             "status" => self.stub_response(
                 seq,
                 &request,
