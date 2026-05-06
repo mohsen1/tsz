@@ -102,5 +102,9 @@ path = "tests/cjs_arbitrary_module_namespace_identifier_tests.rs"
 name = "cjs_import_equals_export_tests"
 path = "tests/cjs_import_equals_export_tests.rs"
 
+[[test]]
+name = "cjs_destructuring_export_inline_tests"
+path = "tests/cjs_destructuring_export_inline_tests.rs"
+
 [lints]
 workspace = true
