@@ -378,6 +378,48 @@ n();
 }
 
 #[test]
+fn compile_for_of_unknown_expression_reports_ts18046() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"
+declare const value: unknown;
+
+for (const item of value) {
+  item;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::IS_OF_TYPE_UNKNOWN
+                && diagnostic
+                    .message_text
+                    .contains("'value' is of type 'unknown'")
+        }),
+        "expected TS18046 for for-of over unknown, got {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn plain_js_suppresses_ts2774_without_check_js() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1960,11 +2002,13 @@ export const works1 = fn((x: number) => x);
 
     let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
     assert!(
-        dts.contains("export declare const fail1: <T>(x: T) => T;"),
+        dts.contains("export declare const fail1: import(\"module\").Modifier<(<T>(x: T) => T)>;"),
         "expected inferred generic function type argument: {dts}"
     );
     assert!(
-        dts.contains("export declare const works1: (x: number) => number;"),
+        dts.contains(
+            "export declare const works1: import(\"module\").Modifier<(x: number) => number>;"
+        ),
         "expected inferred arrow return type argument: {dts}"
     );
 }
@@ -2015,7 +2059,7 @@ export const Mixer = Mix(class {
 
     let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
     assert!(
-        dts.contains("export declare const Mixer: {\n    new (): {\n        [a]: () => number;\n    };\n} & (new (...args: any[]) => {\n    mixed: true;\n});"),
+        dts.contains("export declare const Mixer: {\n    new (): {\n        [a]: () => number;\n    };\n} & (new (...args: any[]) => {mixed: true});"),
         "expected inferred class-expression constructor type to survive generic substitution: {dts}"
     );
 }
@@ -3034,6 +3078,50 @@ fn compile_with_tsconfig_emits_outputs() {
     assert!(result.diagnostics.is_empty());
     assert!(base.join("dist/src/index.js").is_file());
     assert!(base.join("dist/src/index.d.ts").is_file());
+}
+
+#[test]
+fn compile_allow_js_passthrough_emits_skipped_node_modules_js() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "module": "commonjs",
+            "target": "es2015",
+            "outDir": "out",
+            "noCheck": true,
+            "noLib": true
+          },
+          "files": ["node_modules/untyped/index.js", "bug40140.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/untyped/index.js"),
+        "module.exports = {}",
+    );
+    write_file(
+        &base.join("bug40140.js"),
+        "const u = require('untyped');\nu.assignment.nested = true\nu.noError()\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code == 7016),
+        "Expected TS7016 for the untyped package, got: {:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        std::fs::read_to_string(base.join("out/node_modules/untyped/index.js"))
+            .expect("read emitted skipped JS"),
+        "module.exports = {}"
+    );
 }
 
 #[test]
@@ -13029,6 +13117,57 @@ export enum Size {
     assert!(!js.is_empty(), "JS output should not be empty");
 }
 
+#[test]
+fn compile_enum_with_nan_and_infinity_globals() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "out",
+            "noEmitOnError": false,
+            "pretty": false,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["a.ts"]
+        }"#,
+    );
+
+    write_file(
+        &base.join("a.ts"),
+        r#"
+enum E { A = Infinity, B }
+enum N { A = NaN, B }
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "NaN and Infinity enum initializers should not report diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("out/a.js")).expect("read js");
+    for expected in [
+        "E[E[\"A\"] = Infinity] = \"A\"",
+        "E[E[\"B\"] = Infinity] = \"B\"",
+        "N[N[\"A\"] = NaN] = \"A\"",
+        "N[N[\"B\"] = NaN] = \"B\"",
+    ] {
+        assert!(
+            js.contains(expected),
+            "Expected emitted JS to contain {expected:?}, got:\n{js}"
+        );
+    }
+}
+
 // =============================================================================
 // E2E: Arrow Function Compilation
 // =============================================================================
@@ -16224,17 +16363,17 @@ fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    let ts2581_diags: Vec<_> = result
+    let ts2592_diags: Vec<_> = result
         .diagnostics
         .iter()
         .filter(|d| {
             d.code
-                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA
+                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2
         })
         .collect();
     assert!(
-        !ts2581_diags.is_empty(),
-        "Expected TS2581 for unresolved jQuery global `$`, got diagnostics: {:?}",
+        !ts2592_diags.is_empty(),
+        "Expected TS2592 for unresolved jQuery global `$`, got diagnostics: {:?}",
         result.diagnostics
     );
 

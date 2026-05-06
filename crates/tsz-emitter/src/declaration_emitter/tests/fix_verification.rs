@@ -1575,6 +1575,28 @@ export const viaInlineArrow = (<T>(value: T) => value)("ok" as const);
 }
 
 #[test]
+fn fix_generic_call_constructor_return_object_formats_multiline() {
+    let output = emit_dts(
+        r#"
+declare const a: symbol;
+type Constructor = new (...args: any[]) => {};
+declare function Mix<T extends Constructor>(
+    classish: T
+): T & (new (...args: any[]) => {mixed: true});
+
+export const Mixer = Mix(class {
+    [a]() { return 1 };
+});
+"#,
+    );
+
+    assert!(
+        output.contains("): T & (new (...args: any[]) => {\n    mixed: true;\n});"),
+        "constructor-arrow return object should be normalized to multiline: {output}"
+    );
+}
+
+#[test]
 fn fix_const_literal_preservation_uses_lexical_const_symbol() {
     let output = emit_dts_with_binding(
         r#"
@@ -1687,5 +1709,23 @@ var id = <B,>(value: B) => value;
     assert!(
         output.contains("declare var id: <B>(value: B) => B;"),
         "Type-only interface names should still bind to the type parameter: {output}"
+    );
+}
+
+#[test]
+fn fix_static_method_return_this_does_not_emit_instance_this() {
+    let output = emit_dts_with_binding(
+        r#"
+export class Enhancement {
+  static getType() {
+    return this;
+  }
+}
+"#,
+    );
+
+    assert!(
+        !output.contains("static getType(): this;"),
+        "Static methods must not use instance this return syntax: {output}"
     );
 }

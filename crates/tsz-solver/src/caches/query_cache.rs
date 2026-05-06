@@ -1104,6 +1104,11 @@ impl TypeDatabase for QueryCache<'_> {
             .store_union_origin(union_type_id, origin_members);
     }
 
+    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        self.interner
+            .replace_union_origin_for_display(union_type_id, origin_members);
+    }
+
     fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
         self.interner.get_union_origin(type_id)
     }
@@ -1792,6 +1797,10 @@ impl QueryDatabase for QueryCache<'_> {
             .insert(def_id, Arc::clone(&result));
 
         Some(result)
+    }
+
+    fn insert_type_param_variance(&self, def_id: DefId, variance: Arc<[Variance]>) {
+        self.variance_cache.borrow_mut().insert(def_id, variance);
     }
 
     fn canonical_id(&self, type_id: TypeId) -> TypeId {
