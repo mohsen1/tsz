@@ -1317,6 +1317,15 @@ impl<'a> Printer<'a> {
         self.emit_assignment_pattern_with_object_rest(left_idx, &source_name, true, &mut first);
     }
 
+    pub(in crate::emitter) fn emit_assignment_object_rest_destructuring_from_source(
+        &mut self,
+        left_idx: NodeIndex,
+        source: &str,
+    ) {
+        let mut first = true;
+        self.emit_assignment_pattern_with_object_rest(left_idx, source, true, &mut first);
+    }
+
     fn emit_assignment_rest_only_object(&mut self, left_idx: NodeIndex, right_idx: NodeIndex) {
         let Some(node) = self.arena.get(left_idx) else {
             return;
