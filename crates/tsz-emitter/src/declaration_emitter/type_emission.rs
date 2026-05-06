@@ -16,14 +16,21 @@ use tsz_scanner::SyntaxKind;
 /// to a real newline.  This function converts them back to escape sequences.
 fn escape_template_literal_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
-    for ch in s.chars() {
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
         match ch {
             '\\' => out.push_str("\\\\"),
             '`' => out.push_str("\\`"),
             '$' => {
-                // Only escape $ when followed by { (but we don't have lookahead here,
-                // so just push as-is; actual ${...} is handled structurally)
-                out.push('$');
+                // A literal `${` in the cooked text means the source wrote `\${`
+                // (the scanner consumed the backslash). Without re-escaping the
+                // `$`, the `${` would be re-interpreted as a template
+                // substitution by any consumer that re-parses the .d.ts.
+                if chars.peek() == Some(&'{') {
+                    out.push_str("\\$");
+                } else {
+                    out.push('$');
+                }
             }
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
