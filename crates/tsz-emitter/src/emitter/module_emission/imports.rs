@@ -1025,7 +1025,10 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if !is_exported_var && !self.import_decl_has_runtime_value(import) {
+        let has_runtime_value = self.import_decl_has_runtime_value(import);
+        if !has_runtime_value
+            && (!is_exported_var || module_node.kind == SyntaxKind::Identifier as u16)
+        {
             return;
         }
         // Even when the alias has the `export` modifier, skip the runtime

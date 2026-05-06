@@ -258,6 +258,102 @@ pub(crate) fn import_alias_resolves_to_exported_type_only(
     chain_resolves_to_exported_type_only(arena, &parts, statements, false)
 }
 
+fn import_alias_identifier_resolves_to_exported_type_only_namespace(
+    arena: &NodeArena,
+    entity_name_idx: NodeIndex,
+    statements: &[NodeIndex],
+    preserve_const_enums: bool,
+) -> bool {
+    let Some(alias_target) = get_identifier_text(arena, entity_name_idx) else {
+        return false;
+    };
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        let inner_node = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(ed) = arena.get_export_decl(node)
+                && !ed.is_type_only
+                && ed.module_specifier.is_none()
+            {
+                arena.get(ed.export_clause)
+            } else {
+                None
+            }
+        } else {
+            Some(node)
+        };
+        let Some(inner) = inner_node else {
+            continue;
+        };
+        if inner.kind == syntax_kind_ext::MODULE_DECLARATION
+            && let Some(module) = arena.get_module(inner)
+            && get_identifier_text(arena, module.name).as_deref() == Some(alias_target.as_str())
+            && !super::emit_utils::is_instantiated_module_ext(
+                arena,
+                module.body,
+                preserve_const_enums,
+            )
+            && module_body_has_exported_type_only_member(arena, module.body)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn module_body_has_exported_type_only_member(arena: &NodeArena, module_body: NodeIndex) -> bool {
+    let Some(body_node) = arena.get(module_body) else {
+        return false;
+    };
+    if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+        return arena
+            .get_module(body_node)
+            .is_some_and(|module| module_body_has_exported_type_only_member(arena, module.body));
+    }
+    let Some(block) = arena.get_module_block(body_node) else {
+        return false;
+    };
+    let Some(ref statements) = block.statements else {
+        return false;
+    };
+    statements.nodes.iter().any(|&stmt_idx| {
+        let Some(node) = arena.get(stmt_idx) else {
+            return false;
+        };
+        let (inner_node, has_export_wrapper) = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(ed) = arena.get_export_decl(node)
+                && !ed.is_type_only
+                && ed.module_specifier.is_none()
+            {
+                (arena.get(ed.export_clause), true)
+            } else {
+                (None, false)
+            }
+        } else {
+            (Some(node), false)
+        };
+        let Some(inner) = inner_node else {
+            return false;
+        };
+        match inner.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                has_export_wrapper
+                    || arena.get_interface(inner).is_some_and(|i| {
+                        arena.has_modifier(&i.modifiers, SyntaxKind::ExportKeyword)
+                    })
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                has_export_wrapper
+                    || arena.get_type_alias(inner).is_some_and(|t| {
+                        arena.has_modifier(&t.modifiers, SyntaxKind::ExportKeyword)
+                    })
+            }
+            _ => false,
+        }
+    })
+}
+
 fn chain_resolves_to_exported_type_only(
     arena: &NodeArena,
     parts: &[String],
@@ -451,6 +547,18 @@ fn collect_export_name_from_declaration(
                     import_decl.module_specifier,
                     statements,
                 ) {
+                    return;
+                }
+                if arena
+                    .get(import_decl.module_specifier)
+                    .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+                    && import_alias_identifier_resolves_to_exported_type_only_namespace(
+                        arena,
+                        import_decl.module_specifier,
+                        statements,
+                        preserve_const_enums,
+                    )
+                {
                     return;
                 }
                 exports.push(name);
