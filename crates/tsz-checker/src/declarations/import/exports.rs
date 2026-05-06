@@ -263,7 +263,7 @@ impl<'a> CheckerState<'a> {
 
         // Named re-exports (export { X } from './module')
         if let Some(reexports) = binder.reexports.get(&file_name) {
-            for (name, _) in reexports.iter() {
+            for name in reexports.keys() {
                 names.insert(name.to_string());
             }
         }

@@ -703,6 +703,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.binding_pattern_is_empty(decl.name) {
+            self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
+            return;
+        }
+
         let is_simple_ident = self
             .arena
             .get(decl.initializer)
@@ -1947,6 +1952,36 @@ mod tests {
         assert!(
             output.contains("new Foo().x"),
             "new Foo() with args should NOT have extra parens.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn empty_binding_patterns_with_identifier_rhs_emit_temp() {
+        let source = "let {} = undefined;\nlet {} = maybe;\nlet [] = xs;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var _a = undefined;"),
+            "Empty object binding with `undefined` RHS should still evaluate through a temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _b = maybe;"),
+            "Empty object binding with identifier RHS should still evaluate through a temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _c = xs;"),
+            "Empty array binding with identifier RHS should still evaluate through a temp.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var ;"),
+            "Empty binding patterns must not emit an empty variable declaration.\nOutput:\n{output}"
         );
     }
 }

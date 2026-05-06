@@ -25,7 +25,9 @@ impl<'a> Printer<'a> {
 
         // For JavaScript emit: skip declaration-only functions (no body)
         // These are just type information in TypeScript (overload signatures)
-        if func.body.is_none() {
+        let has_recovered_trailing_comma =
+            func.body.is_none() && self.has_recovered_declaration_trailing_comma(node);
+        if func.body.is_none() && !has_recovered_trailing_comma {
             self.skip_comments_for_erased_node(node);
             return;
         }
@@ -123,6 +125,18 @@ impl<'a> Printer<'a> {
             self.emit_recovered_async_await_arrow_parameter(&func.parameters.nodes);
         }
         self.write(")");
+
+        if has_recovered_trailing_comma {
+            self.write(" { }");
+            self.function_scope_depth -= 1;
+            if func.name.is_some() {
+                let func_name = self.get_identifier_text_idx(func.name);
+                if !func_name.is_empty() {
+                    self.declared_namespace_names.insert(func_name);
+                }
+            }
+            return;
+        }
 
         // No return type for JavaScript — skip comments inside erased return type
         if !self.ctx.flags.in_declaration_emit

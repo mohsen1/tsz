@@ -155,6 +155,12 @@ impl<'a> CheckerState<'a> {
                 argument_idx: idx,
             },
         );
+        if let Some(display) = self.mapped_property_mismatch_parameter_display(
+            &param_str,
+            analysis.failure_reason.as_ref(),
+        ) {
+            param_str = display;
+        }
         if let Some(display) =
             self.constrained_variadic_tuple_parameter_display(param_type, arg_type)
         {
@@ -188,6 +194,35 @@ impl<'a> CheckerState<'a> {
         };
 
         self.emit_render_request(idx, request);
+    }
+
+    pub(in crate::error_reporter::call_errors) fn mapped_property_mismatch_parameter_display(
+        &mut self,
+        param_display: &str,
+        failure_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) -> Option<String> {
+        if !param_display.trim_start().starts_with("{ [") {
+            return None;
+        }
+        let tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
+            property_name,
+            target_property_type,
+            ..
+        } = failure_reason?
+        else {
+            return None;
+        };
+
+        let mut property = tsz_solver::PropertyInfo::new(*property_name, *target_property_type);
+        property.optional = Self::type_includes_undefined(self.ctx.types, *target_property_type);
+        let display_type = self.ctx.types.factory().object(vec![property]);
+        Some(self.format_type_for_assignability_message(display_type))
+    }
+
+    fn type_includes_undefined(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+        ty == TypeId::UNDEFINED
+            || crate::query_boundaries::common::union_members(db, ty)
+                .is_some_and(|members| members.contains(&TypeId::UNDEFINED))
     }
 
     fn widen_object_member_literals_inside_generic_display(display: &str) -> String {
