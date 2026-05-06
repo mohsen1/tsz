@@ -3054,7 +3054,7 @@ fn affected_lib_interface_names(
         }
     }
 
-    let mut index_signature_affected = index_signature_seed_interfaces.clone();
+    let mut index_signature_affected = index_signature_seed_interfaces;
     let mut changed = true;
     while changed {
         changed = false;

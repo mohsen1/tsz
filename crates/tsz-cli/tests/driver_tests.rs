@@ -15428,17 +15428,17 @@ fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    let ts2592_diags: Vec<_> = result
+    let ts2581_diags: Vec<_> = result
         .diagnostics
         .iter()
         .filter(|d| {
             d.code
-                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2
+                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA
         })
         .collect();
     assert!(
-        !ts2592_diags.is_empty(),
-        "Expected TS2592 for unresolved jQuery global `$`, got diagnostics: {:?}",
+        !ts2581_diags.is_empty(),
+        "Expected TS2581 for unresolved jQuery global `$`, got diagnostics: {:?}",
         result.diagnostics
     );
 
@@ -15454,7 +15454,7 @@ fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
 }
 
 #[test]
-fn missing_external_globals_without_types_use_types_field_diagnostics() {
+fn missing_external_globals_without_types_use_install_only_diagnostics() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
 
@@ -15483,9 +15483,9 @@ describe("suite", () => {});
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     for code in [
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
     ] {
         assert!(
             codes.contains(&code),
@@ -15494,13 +15494,13 @@ describe("suite", () => {});
         );
     }
     for code in [
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
     ] {
         assert!(
             !codes.contains(&code),
-            "Did not expect install-only diagnostic {code}, got diagnostics: {:?}",
+            "Did not expect types-field diagnostic {code}, got diagnostics: {:?}",
             result.diagnostics
         );
     }
@@ -15597,9 +15597,9 @@ Buffer.from("x");
     let ts2591 = diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2;
 
     assert_eq!(
-        codes.iter().filter(|&&code| code == ts2591).count(),
+        codes.iter().filter(|&&code| code == ts2580).count(),
         2,
-        "Expected TS2591 for process and Buffer in checked JS, got diagnostics: {:?}",
+        "Expected TS2580 for process and Buffer in checked JS, got diagnostics: {:?}",
         result.diagnostics
     );
     assert!(
@@ -15620,8 +15620,8 @@ Buffer.from("x");
         );
     }
     assert!(
-        !codes.contains(&ts2580),
-        "Did not expect TS2580, got diagnostics: {:?}",
+        !codes.contains(&ts2591),
+        "Did not expect TS2591, got diagnostics: {:?}",
         result.diagnostics
     );
     assert!(
@@ -15631,6 +15631,41 @@ Buffer.from("x");
             .all(|d| !(d.code == diagnostic_codes::CANNOT_FIND_NAME
                 && d.message_text.contains("'module'"))),
         "Did not expect TS2304 for module.exports in checked JS, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn checked_js_esm_commonjs_globals_require_node_types() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("repro.js"),
+        r#"export {};
+module.exports = {};
+require;
+"#,
+    );
+
+    let mut args = default_args();
+    args.no_emit = true;
+    args.allow_js = true;
+    args.check_js = true;
+    args.module = Some(crate::args::Module::EsNext);
+    args.files = vec![PathBuf::from("repro.js")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2591 = diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2;
+
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == ts2591)
+            .count(),
+        2,
+        "Expected TS2591 for module and require in checked JS ESM, got diagnostics: {:?}",
         result.diagnostics
     );
 }
