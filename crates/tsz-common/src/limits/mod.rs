@@ -224,7 +224,7 @@ pub const MAX_TYPE_RESOLUTION_OPS: u32 = 100_000;
 /// cycle consumes real stack frames even with logical recursion guards.
 ///
 /// Used by `tsz-cli` (CLI entrypoint) and `tsz-core` (rayon global pool init).
-pub const THREAD_STACK_SIZE_BYTES: usize = 64 * 1024 * 1024;
+pub const THREAD_STACK_SIZE_BYTES: usize = 128 * 1024 * 1024;
 
 #[cfg(test)]
 #[path = "../../tests/limits.rs"]
