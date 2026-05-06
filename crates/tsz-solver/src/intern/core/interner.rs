@@ -1392,6 +1392,9 @@ impl TypeInterner {
             ) || self.union_origin_overrides_canonical_application_sort(
                 current.as_ref(),
                 &origin_members,
+            ) || self.union_origin_overrides_canonical_keyof_literal_sort(
+                current.as_ref(),
+                &origin_members,
             ) || self
                 .union_origin_overrides_canonical_composite_sort(current.as_ref(), &origin_members);
             if !needs_origin {
@@ -1536,6 +1539,38 @@ impl TypeInterner {
             && expected_base.is_some()
     }
 
+    /// Preserve as-written order for unions that mix `keyof T` with literal
+    /// keys. TypeScript keeps the source spelling in generic mapped displays
+    /// such as `Record<keyof Shape | "knownLiteralKey", number>`.
+    fn union_origin_overrides_canonical_keyof_literal_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        let mut has_keyof = false;
+        let mut has_literal = false;
+        for &id in current {
+            match self.lookup(id) {
+                Some(TypeData::KeyOf(_)) => has_keyof = true,
+                Some(TypeData::Literal(_)) => has_literal = true,
+                _ => return false,
+            }
+        }
+        has_keyof && has_literal
+    }
+
     /// Preserve source/diagnostic order when a union contains only composite
     /// members whose TypeId ordering is an implementation detail. This keeps
     /// diagnostic displays like `Cover | Cover[]` and `U | NonNullable<T>`
@@ -1564,6 +1599,7 @@ impl TypeInterner {
                 Some(
                     TypeData::Object(_)
                         | TypeData::ObjectWithIndex(_)
+                        | TypeData::Intersection(_)
                         | TypeData::Array(_)
                         | TypeData::Tuple(_)
                         | TypeData::Function(_)
