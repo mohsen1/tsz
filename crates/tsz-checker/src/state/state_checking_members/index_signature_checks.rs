@@ -1213,7 +1213,7 @@ impl<'a> CheckerState<'a> {
             if own_names.contains(&prop_name) {
                 continue;
             }
-            if prop_name.starts_with("__private_brand_") {
+            if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                 continue;
             }
 

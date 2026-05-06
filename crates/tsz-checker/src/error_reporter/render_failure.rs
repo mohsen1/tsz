@@ -192,7 +192,7 @@ impl<'a> CheckerState<'a> {
                     if prop.parent_id == Some(target_symbol) {
                         saw_own = true;
                         let name = self.ctx.types.resolve_atom_ref(prop.name);
-                        if !name.starts_with("__private_brand")
+                        if !tsz_solver::utils::is_synthetic_private_brand_name(&name)
                             && !is_object_prototype_method(&name)
                             && !source_props.contains(&prop.name)
                             && !class_own_missing.contains(&prop.name)
@@ -1228,7 +1228,7 @@ impl<'a> CheckerState<'a> {
 
         // Private brand properties handling
         let prop_name = self.ctx.types.resolve_atom_ref(property_name).to_string();
-        if prop_name.starts_with("__private_brand") {
+        if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
             let src_str = if depth == 0 {
                 self.format_type_for_diagnostic_role(
                     source,
@@ -1852,7 +1852,7 @@ impl<'a> CheckerState<'a> {
         }
         let _has_non_proto_missing = property_names.iter().any(|name| {
             let s = self.ctx.types.resolve_atom_ref(*name);
-            !s.starts_with("__private_brand")
+            !tsz_solver::utils::is_synthetic_private_brand_name(&s)
                 && if is_array_target {
                     !is_object_prototype_method_for_array_target(&s)
                 } else {
@@ -1863,7 +1863,7 @@ impl<'a> CheckerState<'a> {
             .iter()
             .filter(|name| {
                 let s = self.ctx.types.resolve_atom_ref(**name);
-                if s.starts_with("__private_brand") {
+                if tsz_solver::utils::is_synthetic_private_brand_name(&s) {
                     return false;
                 }
                 if is_array_target {

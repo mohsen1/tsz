@@ -174,7 +174,7 @@ impl<'a> CheckerState<'a> {
             && let Some(property_name) = self.missing_single_required_property(source, target)
         {
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-            if prop_name.starts_with("__private_brand") {
+            if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                 let (source_display, target_display) = self
                     .finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
                 let message = self
