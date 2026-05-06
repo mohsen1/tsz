@@ -2231,10 +2231,7 @@ impl<'a> CheckerState<'a> {
                             .is_some_and(|rhs| self.js_assignment_rhs_is_void_zero(rhs));
                     let has_jsdoc_this_context = is_this_access
                         && self.is_js_file()
-                        && self
-                            .find_enclosing_non_arrow_function(access.expression)
-                            .and_then(|func_idx| self.get_jsdoc_for_function(func_idx))
-                            .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"));
+                        && self.enclosing_function_has_jsdoc_this_tag(access.expression);
                     // When `this` type comes from a ThisType<T> marker (e.g., Vue 2
                     // Options API pattern), property access on unresolved type parameters
                     // should not emit TS2339. The type parameters will be inferred from the
