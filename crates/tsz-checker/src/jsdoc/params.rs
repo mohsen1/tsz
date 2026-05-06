@@ -1986,11 +1986,6 @@ impl<'a> CheckerState<'a> {
         Some(rest)
     }
 
-    pub(crate) fn strip_jsdoc_return_tag_prefix(text: &str) -> Option<&str> {
-        Self::strip_jsdoc_tag_prefix(text, "returns")
-            .or_else(|| Self::strip_jsdoc_tag_prefix(text, "return"))
-    }
-
     /// Like `extract_jsdoc_param_type_expr_from_param_tag`, but returns the matching type expression
     /// and its byte offset within a full JSDoc block.
     fn extract_jsdoc_param_type_expr_with_span(
@@ -2199,7 +2194,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             // @template T
-            if Self::line_starts_with_jsdoc_tag(trimmed, "template") {
+            if Self::jsdoc_line_starts_with_tag(trimmed, "template") {
                 return true;
             }
         }

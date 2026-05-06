@@ -69,7 +69,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             // Skip type predicates — handled separately
-            if type_expr.contains(" is ") || type_expr.starts_with("asserts ") {
+            if Self::jsdoc_returns_type_predicate_from_type_expr(type_expr).is_some() {
                 return None;
             }
             return self.resolve_jsdoc_reference(type_expr);

@@ -175,18 +175,18 @@ impl<'a> CheckerState<'a> {
                     template_is_invalid_here = true;
                     continue;
                 }
-                if (Self::line_starts_with_jsdoc_tag(content, "property")
-                    || Self::line_starts_with_jsdoc_tag(content, "prop")
-                    || Self::line_starts_with_jsdoc_tag(content, "member")
-                    || Self::line_starts_with_jsdoc_tag(content, "param"))
+                if (Self::jsdoc_line_starts_with_tag(content, "property")
+                    || Self::jsdoc_line_starts_with_tag(content, "prop")
+                    || Self::jsdoc_line_starts_with_tag(content, "member")
+                    || Self::jsdoc_line_starts_with_tag(content, "param"))
                     && saw_typedef
                 {
                     template_is_invalid_here = true;
                 }
 
-                if !Self::line_starts_with_jsdoc_tag(content, "template") {
+                let Some(template_rest) = Self::strip_jsdoc_tag_prefix(content, "template") else {
                     continue;
-                }
+                };
                 if !template_is_invalid_here && !saw_typedef {
                     break;
                 }
@@ -202,8 +202,9 @@ impl<'a> CheckerState<'a> {
                     );
                     emitted_template_error = true;
                 }
-                let invalid_template_name = Self::strip_jsdoc_tag_prefix(content, "template")
-                    .and_then(|rest| rest.split_whitespace().next())
+                let invalid_template_name = template_rest
+                    .split_whitespace()
+                    .next()
                     .map(|name| name.trim_matches(',').to_string())
                     .filter(|name| !name.is_empty());
                 if let Some(name) = invalid_template_name.as_deref() {
@@ -218,7 +219,7 @@ impl<'a> CheckerState<'a> {
                             .trim()
                             .trim_end_matches("*/")
                             .trim();
-                        if Self::line_starts_with_jsdoc_tag(later_content, "template") {
+                        if Self::jsdoc_line_starts_with_tag(later_content, "template") {
                             later_base += later_line.len() + 1;
                             continue;
                         }
