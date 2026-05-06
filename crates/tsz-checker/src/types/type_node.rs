@@ -1365,11 +1365,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     /// Resolve a type symbol from a node index.
-    ///
     /// Looks up the identifier in `file_locals` and `lib_contexts` for symbols with
     /// TYPE, `REGULAR_ENUM`, or `CONST_ENUM` flags. Returns the raw symbol ID (u32).
-    /// Skips compiler-managed types (Array, ReadonlyArray, etc.) that `TypeLowering`
-    /// handles specially.
+    /// Skips unshadowed compiler-managed types handled specially by `TypeLowering`.
     pub(crate) fn resolve_type_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
@@ -1378,7 +1376,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let ident = self.ctx.arena.get_identifier_at(node_idx)?;
         let name = ident.escaped_text.as_str();
 
-        if is_compiler_managed_type(name) {
+        if is_compiler_managed_type(name) && !self.ctx.file_local_type_shadow_for_lib_name(name) {
             return None;
         }
 
