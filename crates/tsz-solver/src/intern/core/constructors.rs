@@ -510,6 +510,13 @@ impl TypeInterner {
             (None, None) => {}
         }
 
+        let rank_a = Self::cached_union_member_rank(a);
+        let rank_b = Self::cached_union_member_rank(b);
+        let rank_cmp = rank_a.cmp(&rank_b);
+        if rank_cmp != Ordering::Equal {
+            return rank_cmp;
+        }
+
         // Both are non-built-in types -- use cached type data
         if let (Some(data_a), Some(data_b)) = (&a.data, &b.data) {
             match (data_a, data_b) {
@@ -584,16 +591,16 @@ impl TypeInterner {
                     }
                 }
                 (TypeData::Application(app1), TypeData::Application(app2)) => {
-                    // Application types still need recursive comparison for base/args,
-                    // but the top-level union members' lookups are already cached.
+                    // Keep application ordering total by comparing the stable raw
+                    // component key sequence instead of recursing into union-member ordering.
                     let a1 = self.type_application(*app1);
                     let a2 = self.type_application(*app2);
-                    let cmp = self.compare_union_members(a1.base, a2.base);
+                    let cmp = self.compare_application_component(a1.base, a2.base);
                     if cmp != Ordering::Equal {
                         return cmp;
                     }
                     for (arg1, arg2) in a1.args.iter().zip(a2.args.iter()) {
-                        let cmp = self.compare_union_members(*arg1, *arg2);
+                        let cmp = self.compare_application_component(*arg1, *arg2);
                         if cmp != Ordering::Equal {
                             return cmp;
                         }
@@ -608,10 +615,96 @@ impl TypeInterner {
         }
 
         // Fallback: use pre-fetched allocation order
-        match (a.alloc_order, b.alloc_order) {
+        let alloc_cmp = match (a.alloc_order, b.alloc_order) {
             (Some(oa), Some(ob)) => oa.cmp(&ob),
-            _ => a.id.0.cmp(&b.id.0),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        };
+        if alloc_cmp != Ordering::Equal {
+            return alloc_cmp;
         }
+
+        a.id.0.cmp(&b.id.0)
+    }
+
+    const fn cached_union_member_rank(member: &CachedUnionMember) -> u8 {
+        match member.data.as_ref() {
+            Some(data) => Self::type_data_rank(data),
+            None => 34,
+        }
+    }
+
+    const fn type_data_rank(data: &TypeData) -> u8 {
+        match data {
+            TypeData::Intrinsic(_) => 0,
+            TypeData::Literal(LiteralValue::String(_)) => 1,
+            TypeData::Literal(LiteralValue::Number(_)) => 2,
+            TypeData::Literal(LiteralValue::BigInt(_)) => 3,
+            TypeData::Literal(LiteralValue::Boolean(_)) => 4,
+            TypeData::Object(_) => 5,
+            TypeData::ObjectWithIndex(_) => 6,
+            TypeData::Union(_) => 7,
+            TypeData::Intersection(_) => 8,
+            TypeData::Array(_) => 9,
+            TypeData::Tuple(_) => 10,
+            TypeData::Function(_) => 11,
+            TypeData::Callable(_) => 12,
+            TypeData::TypeParameter(_) => 13,
+            TypeData::BoundParameter(_) => 14,
+            TypeData::Lazy(_) => 15,
+            TypeData::Recursive(_) => 16,
+            TypeData::Enum(_, _) => 17,
+            TypeData::Application(_) => 18,
+            TypeData::Conditional(_) => 19,
+            TypeData::Mapped(_) => 20,
+            TypeData::IndexAccess(_, _) => 21,
+            TypeData::TemplateLiteral(_) => 22,
+            TypeData::TypeQuery(_) => 23,
+            TypeData::KeyOf(_) => 24,
+            TypeData::ReadonlyType(_) => 25,
+            TypeData::UniqueSymbol(_) => 26,
+            TypeData::Infer(_) => 27,
+            TypeData::ThisType => 28,
+            TypeData::StringIntrinsic { .. } => 29,
+            TypeData::ModuleNamespace(_) => 30,
+            TypeData::NoInfer(_) => 31,
+            TypeData::Error => 32,
+            TypeData::UnresolvedTypeName(_) => 33,
+        }
+    }
+
+    fn compare_application_component(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        if a == b {
+            return std::cmp::Ordering::Equal;
+        }
+
+        match (Self::builtin_sort_key(a), Self::builtin_sort_key(b)) {
+            (Some(ka), Some(kb)) => return ka.cmp(&kb).then_with(|| a.0.cmp(&b.0)),
+            (Some(ka), None) => return ka.cmp(&100),
+            (None, Some(kb)) => return 100u32.cmp(&kb),
+            (None, None) => {}
+        }
+
+        if let (Some(data_a), Some(data_b)) = (self.lookup(a), self.lookup(b)) {
+            let rank_cmp = Self::type_data_rank(&data_a).cmp(&Self::type_data_rank(&data_b));
+            if rank_cmp != std::cmp::Ordering::Equal {
+                return rank_cmp;
+            }
+
+            match (&data_a, &data_b) {
+                (TypeData::Lazy(def_a), TypeData::Lazy(def_b))
+                | (TypeData::Enum(def_a, _), TypeData::Enum(def_b, _)) => {
+                    let cmp = def_a.0.cmp(&def_b.0);
+                    if cmp != std::cmp::Ordering::Equal {
+                        return cmp;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        a.0.cmp(&b.0)
     }
 
     /// Sort union members using pre-cached lookups to avoid redundant `DashMap` reads.
@@ -628,192 +721,12 @@ impl TypeInterner {
         let mut cached: SmallVec<[CachedUnionMember; TYPE_LIST_INLINE]> =
             flat.iter().map(|&id| self.cache_union_member(id)).collect();
 
-        // Sort using cached data: O(N log N) comparisons with zero further lookups
-        // (except for Application types which still recurse via compare_union_members).
-        // The comparison function has edge cases where transitivity may not hold
-        // (mixed type data variants with alloc_order fallback). Catch panics from
-        // Rust's total-order validation and fall back to TypeId-based sorting.
-        {
-            // Suppress panic output from total-order validation
-            let prev_hook = std::panic::take_hook();
-            std::panic::set_hook(Box::new(|_| {}));
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                cached.sort_by(|a, b| self.compare_cached_members(a, b));
-            }));
-            std::panic::set_hook(prev_hook);
-            if result.is_err() {
-                // Fallback: sort by raw TypeId for deterministic but non-semantic order
-                cached.sort_by_key(|m| m.id.0);
-            }
-        }
+        // Sort using cached data: O(N log N) comparisons with zero further lookups.
+        cached.sort_by(|a, b| self.compare_cached_members(a, b));
 
         // Write sorted TypeIds back
         for (i, member) in cached.iter().enumerate() {
             flat[i] = member.id;
-        }
-    }
-
-    /// Compare two union members for ordering.
-    ///
-    /// For built-in/intrinsic types: uses fixed sort keys for consistent ordering
-    /// (e.g., null/undefined always last).
-    ///
-    /// For non-built-in types of the same category: uses semantic identity
-    /// (literal content, DefId, SymbolId) to approximate tsc's source-order
-    /// allocation. This ensures e.g. `"A" | "B" | "C"` instead of arbitrary
-    /// interning order, and `C | D` for `class C {}; class D extends C {}`.
-    ///
-    /// Fallback: raw TypeId comparison.
-    ///
-    /// NOTE: This is kept for the rare recursive Application comparison path.
-    /// The primary sort path uses `sort_union_members` with pre-computed keys.
-    fn compare_union_members(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-
-        // Fast path: built-in types have fixed sort positions
-        let builtin_a = Self::builtin_sort_key(a);
-        let builtin_b = Self::builtin_sort_key(b);
-        match (builtin_a, builtin_b) {
-            (Some(ka), Some(kb)) => return ka.cmp(&kb),
-            (Some(ka), None) => {
-                // Built-in vs non-built-in: built-in types sort by their
-                // fixed key, non-built-in types are at position >= 100
-                return ka.cmp(&100);
-            }
-            (None, Some(kb)) => {
-                return 100u32.cmp(&kb);
-            }
-            (None, None) => {}
-        }
-
-        // Both are non-built-in types. Use semantic identity for ordering
-        // where TypeId creation order doesn't match tsc's source-order allocation.
-        // The sharded interner embeds shard index in TypeId, making raw TypeId
-        // comparison hash-dependent. Semantic comparison ensures deterministic order.
-        if let (Some(data_a), Some(data_b)) = (self.lookup(a), self.lookup(b)) {
-            match (&data_a, &data_b) {
-                // Short string literals (1-2 chars): sort by content to match tsc's
-                // lib.d.ts pre-allocation order. tsc pre-creates common short string
-                // literal types during lib processing, giving them lower type IDs
-                // than user-code types. Since these happen to be ordered by content
-                // in tsc, content-based sorting matches tsc's display. For longer
-                // strings, alloc_order fallback preserves source encounter order.
-                //
-                // Short strings sort BEFORE long strings (matching tsc where
-                // lib-pre-allocated types have lower IDs). This ensures transitivity.
-                (
-                    TypeData::Literal(LiteralValue::String(sa)),
-                    TypeData::Literal(LiteralValue::String(sb)),
-                ) => {
-                    let str_a = self.string_interner.resolve(*sa);
-                    let str_b = self.string_interner.resolve(*sb);
-                    let a_short = str_a.len() <= 2;
-                    let b_short = str_b.len() <= 2;
-                    match (a_short, b_short) {
-                        (true, true) => {
-                            // Both short: sort by content
-                            let cmp = str_a.cmp(&str_b);
-                            if cmp != Ordering::Equal {
-                                return cmp;
-                            }
-                        }
-                        (true, false) => return Ordering::Less, // short < long
-                        (false, true) => return Ordering::Greater, // long > short
-                        (false, false) => {
-                            // Both long: fall through to allocation order
-                        }
-                    }
-                }
-                // Number literals follow tsc's type-id ordering. The checker creates
-                // the `0` literal eagerly (`zeroType`); other number literals keep
-                // first-use order through the allocation-order fallback below.
-                (
-                    TypeData::Literal(LiteralValue::Number(na)),
-                    TypeData::Literal(LiteralValue::Number(nb)),
-                ) => {
-                    let a_zero = na.0 == 0.0;
-                    let b_zero = nb.0 == 0.0;
-                    match (a_zero, b_zero) {
-                        (true, false) => return Ordering::Less,
-                        (false, true) => return Ordering::Greater,
-                        _ => {}
-                    }
-                }
-                // Lazy type references and Enum types: sort by DefId (source declaration order)
-                (TypeData::Lazy(d1), TypeData::Lazy(d2))
-                | (TypeData::Enum(d1, _), TypeData::Enum(d2, _)) => {
-                    let cmp = d1.0.cmp(&d2.0);
-                    if cmp != Ordering::Equal {
-                        return cmp;
-                    }
-                }
-                // Object types: sort by SymbolId (declaration order), then by ShapeId
-                (TypeData::Object(s1), TypeData::Object(s2))
-                | (TypeData::ObjectWithIndex(s1), TypeData::ObjectWithIndex(s2))
-                | (TypeData::Object(s1), TypeData::ObjectWithIndex(s2))
-                | (TypeData::ObjectWithIndex(s1), TypeData::Object(s2)) => {
-                    let shape1 = self.object_shape(*s1);
-                    let shape2 = self.object_shape(*s2);
-                    if let (Some(sym1), Some(sym2)) = (shape1.symbol, shape2.symbol) {
-                        let cmp = sym1.0.cmp(&sym2.0);
-                        if cmp != Ordering::Equal {
-                            return cmp;
-                        }
-                    }
-                    // For anonymous objects (no symbol), use ShapeId (allocation order,
-                    // which follows source encounter order for structurally distinct objects)
-                    if shape1.symbol.is_none() && shape2.symbol.is_none() {
-                        let cmp = s1.0.cmp(&s2.0);
-                        if cmp != Ordering::Equal {
-                            return cmp;
-                        }
-                    }
-                }
-                // Callable types: sort by SymbolId (declaration order)
-                (TypeData::Callable(s1), TypeData::Callable(s2)) => {
-                    let shape1 = self.callable_shape(*s1);
-                    let shape2 = self.callable_shape(*s2);
-                    if let (Some(sym1), Some(sym2)) = (shape1.symbol, shape2.symbol) {
-                        let cmp = sym1.0.cmp(&sym2.0);
-                        if cmp != Ordering::Equal {
-                            return cmp;
-                        }
-                    }
-                }
-                // Application types (generic instantiations like I1<number>):
-                // sort by base type first (which typically resolves to a Lazy(DefId)),
-                // then by type arguments lexicographically.
-                (TypeData::Application(app1), TypeData::Application(app2)) => {
-                    let a1 = self.type_application(*app1);
-                    let a2 = self.type_application(*app2);
-                    let cmp = self.compare_union_members(a1.base, a2.base);
-                    if cmp != Ordering::Equal {
-                        return cmp;
-                    }
-                    // Same base type — compare args lexicographically
-                    for (arg1, arg2) in a1.args.iter().zip(a2.args.iter()) {
-                        let cmp = self.compare_union_members(*arg1, *arg2);
-                        if cmp != Ordering::Equal {
-                            return cmp;
-                        }
-                    }
-                    let cmp = a1.args.len().cmp(&a2.args.len());
-                    if cmp != Ordering::Equal {
-                        return cmp;
-                    }
-                }
-                _ => {}
-            }
-        }
-        // Fallback: compare by allocation order (monotonic counter).
-        // This approximates tsc's type ID allocation order, unlike raw TypeId
-        // comparison which is hash-dependent due to the sharded interner.
-        let order_a = self.lookup_alloc_order(a);
-        let order_b = self.lookup_alloc_order(b);
-        match (order_a, order_b) {
-            (Some(oa), Some(ob)) => oa.cmp(&ob),
-            // Intrinsic types have no alloc_order entry; use raw TypeId
-            _ => a.0.cmp(&b.0),
         }
     }
 
