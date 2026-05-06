@@ -810,10 +810,14 @@ export class A {
     method.is_class_prototype = true;
     method.parent_id = Some(class_sym);
     method.declaration_order = 1;
+    let mut duplicate_property =
+        PropertyInfo::new(interner.intern_string("[iterator]"), method_type);
+    duplicate_property.parent_id = Some(class_sym);
+    duplicate_property.declaration_order = 2;
 
     let instance_type = interner.object_with_index(ObjectShape {
         flags: ObjectFlags::default(),
-        properties: vec![method],
+        properties: vec![method, duplicate_property],
         string_index: None,
         number_index: None,
         symbol: None,
