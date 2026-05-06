@@ -1,7 +1,9 @@
 //! Regression coverage for assertion-function target diagnostics and reachability.
 
 use crate::context::CheckerOptions;
-use crate::test_utils::{check_source, check_source_codes, check_source_strict_codes};
+use crate::test_utils::{
+    check_js_source_diagnostics, check_source, check_source_codes, check_source_strict_codes,
+};
 
 #[test]
 fn unannotated_assertion_identifier_emits_ts2775() {
@@ -97,6 +99,46 @@ function f(x: unknown) {
     assert!(
         codes.contains(&7027),
         "expected TS7027 after assert(false && ...), got {codes:?}"
+    );
+}
+
+#[test]
+fn jsdoc_returns_asserts_predicate_on_arrow_var_does_not_emit_ts2775() {
+    // `const foo = (a) => { … }` with `@returns {asserts a is B}` is an
+    // explicit assertion annotation in JS files. Without the JSDoc-asserts
+    // arm in `declaration_has_explicit_assertion_annotation`, every
+    // arrow-bound assertion target in JS would fire a spurious TS2775 at
+    // its call site (regression: `assertionTypePredicates2.ts`).
+    let diagnostics = check_js_source_diagnostics(
+        r#"
+/**
+ * @typedef {{ x: number }} A
+ */
+/**
+ * @typedef { A & { y: number } } B
+ */
+
+/**
+ * @param {A} a
+ * @returns { asserts a is B }
+ */
+const foo = (a) => {
+    if (/** @type { B } */ (a).y !== 0) throw TypeError();
+    return undefined;
+};
+
+/** @type { A } */
+const a = { x: 1 };
+foo(a);
+"#,
+    );
+    let ts2775: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2775)
+        .collect();
+    assert!(
+        ts2775.is_empty(),
+        "did not expect TS2775 when assertion target has @returns predicate, got: {diagnostics:#?}"
     );
 }
 

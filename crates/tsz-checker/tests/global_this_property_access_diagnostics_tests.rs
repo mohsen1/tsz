@@ -58,6 +58,33 @@ type T = typeof globalThis.someUnknownProperty;
     );
 }
 
+#[test]
+fn bare_typeof_globalthis_exposes_global_value_surface() {
+    let source = r#"
+interface ArrayConstructor { isArray(arg: any): boolean; }
+declare var Array: ArrayConstructor;
+type G = typeof globalThis;
+declare const g: G;
+const n: number = g.Array;
+const bad = g.definitelyMissingOnGlobalThis;
+"#;
+    let diags = check_with_no_implicit_any(source);
+    assert!(
+        count(&diags, 2322) >= 1,
+        "g.Array should resolve to ArrayConstructor and fail number assignment; got: {diags:#?}"
+    );
+    assert!(
+        count(&diags, 7017) >= 1,
+        "missing property on typeof globalThis should stay on TS7017; got: {diags:#?}"
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|diag| diag.code == 2339 && diag.message_text.contains("Array")),
+        "g.Array must not be reported missing on typeof globalThis; got: {diags:#?}"
+    );
+}
+
 /// Element access `globalThis['unknown']` under `--noImplicitAny` must emit
 /// TS7053. Same rationale as TS7017 above.
 #[test]

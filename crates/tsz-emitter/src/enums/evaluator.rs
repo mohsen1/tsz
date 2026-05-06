@@ -45,10 +45,8 @@ impl EnumValue {
         match self {
             Self::Number(n) => n.to_string(),
             Self::Float(f) => {
-                // Format float to match tsc output: 0.5, -1.5, etc.
-                // Remove trailing zeros after decimal but keep at least one decimal digit
-                let s = format!("{f}");
-                s
+                // Format float to match tsc output, including JS numeric globals.
+                format_js_number(*f)
             }
             Self::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
             Self::Computed => "0 /* computed */".to_string(),
@@ -331,6 +329,9 @@ impl<'a> EnumEvaluator<'a> {
                     if let Some(value) = self.resolve_top_level_const(&ident.escaped_text) {
                         return value;
                     }
+                    if let Some(value) = global_numeric_constant(&ident.escaped_text) {
+                        return value;
+                    }
                 }
                 EnumValue::Computed
             }
@@ -482,7 +483,7 @@ impl<'a> EnumEvaluator<'a> {
             match &expr_value {
                 EnumValue::String(s) => result.push_str(s),
                 EnumValue::Number(n) => result.push_str(&n.to_string()),
-                EnumValue::Float(f) => result.push_str(&f.to_string()),
+                EnumValue::Float(f) => result.push_str(&format_js_number(*f)),
                 EnumValue::Computed => return EnumValue::Computed,
             }
 
@@ -739,6 +740,28 @@ impl<'a> EnumEvaluator<'a> {
         }
 
         EnumValue::Computed
+    }
+}
+
+fn global_numeric_constant(name: &str) -> Option<EnumValue> {
+    match name {
+        "NaN" => Some(EnumValue::Float(f64::NAN)),
+        "Infinity" => Some(EnumValue::Float(f64::INFINITY)),
+        _ => None,
+    }
+}
+
+fn format_js_number(value: f64) -> String {
+    if value.is_nan() {
+        "NaN".to_string()
+    } else if value.is_infinite() {
+        if value.is_sign_positive() {
+            "Infinity".to_string()
+        } else {
+            "-Infinity".to_string()
+        }
+    } else {
+        format!("{value}")
     }
 }
 
