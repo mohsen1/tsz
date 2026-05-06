@@ -293,7 +293,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(in crate::emitter::declarations) fn scope_statements_for_runtime_lookup(
+    pub(in crate::emitter) fn scope_statements_for_runtime_lookup(
         &self,
         scope_body: Option<NodeIndex>,
     ) -> Vec<NodeIndex> {

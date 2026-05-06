@@ -147,6 +147,22 @@ impl BlockScopeState {
         emitted_name
     }
 
+    /// Register a function parameter in the current function scope.
+    ///
+    /// Parameters should occupy the function's lowered `var` scope so
+    /// block-scoped declarations that collide with them are renamed, while
+    /// `var` declarations with the same name still reuse the parameter binding.
+    pub fn register_function_parameter(&mut self, original_name: &str) {
+        if let Some(current_scope) = self.scope_stack.last_mut() {
+            current_scope
+                .entry(original_name.to_string())
+                .or_insert_with(|| original_name.to_string());
+        }
+        self.var_registrations
+            .entry(original_name.to_string())
+            .or_insert_with(|| original_name.to_string());
+    }
+
     /// Register a `var` declaration in the current scope.
     /// Unlike `register_variable`, this does NOT rename for same-scope redeclarations
     /// (since `var` allows redeclaration). It only introduces suffixes for collisions

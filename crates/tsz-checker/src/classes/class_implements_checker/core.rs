@@ -1119,7 +1119,7 @@ impl<'a> CheckerState<'a> {
                         // Skip private brand properties — these are synthetic markers
                         // for private member compatibility and are handled by the
                         // type-level assignability check, not member-by-member.
-                        if member_name.starts_with("__private_brand_") {
+                        if tsz_solver::utils::is_synthetic_private_brand_name(&member_name) {
                             continue;
                         }
 

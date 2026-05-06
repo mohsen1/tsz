@@ -1022,9 +1022,28 @@ impl<'a> CheckerState<'a> {
                 let comment_start = pos + 2;
                 if let Some(end_offset) = scan_text[comment_start..].find("*/") {
                     let comment_body = &scan_text[comment_start..comment_start + end_offset];
-                    if let Some(idx) = comment_body.find("@jsxImportSource") {
-                        let after = &comment_body[idx + "@jsxImportSource".len()..];
-                        let pkg: String = after
+                    // Only honor `@jsxImportSource` when followed by a pragma
+                    // boundary (whitespace / EOF), so fake tags like
+                    // `@jsxImportSourcex preact` are ignored.
+                    let mut start = 0usize;
+                    let mut after_idx: Option<usize> = None;
+                    while let Some(rel) = comment_body[start..].find("@jsxImportSource") {
+                        let abs = start + rel;
+                        let after = abs + "@jsxImportSource".len();
+                        let body_bytes = comment_body.as_bytes();
+                        if after >= body_bytes.len()
+                            || (body_bytes[after] as char).is_ascii_whitespace()
+                        {
+                            after_idx = Some(after);
+                            break;
+                        }
+                        start = after;
+                        if start >= comment_body.len() {
+                            break;
+                        }
+                    }
+                    if let Some(after) = after_idx {
+                        let pkg: String = comment_body[after..]
                             .trim_start()
                             .chars()
                             .take_while(|c| {

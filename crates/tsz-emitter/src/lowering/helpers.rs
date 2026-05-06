@@ -322,6 +322,22 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
+    /// Get the property-name node of a class member, when the member has one.
+    fn get_member_name(&self, member_node: &tsz_parser::parser::node::Node) -> Option<NodeIndex> {
+        match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                self.arena.get_method_decl(member_node).map(|m| m.name)
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                self.arena.get_property_decl(member_node).map(|p| p.name)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                self.arena.get_accessor(member_node).map(|a| a.name)
+            }
+            _ => None,
+        }
+    }
+
     /// Check if a property access expression accesses a private identifier.
     fn is_private_field_access(&self, node_idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(node_idx) else {
@@ -395,6 +411,11 @@ impl<'a> LoweringPass<'a> {
                 }
                 continue;
             }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_field_read(name)
+            {
+                return true;
+            }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_read(body)
             {
@@ -420,6 +441,11 @@ impl<'a> LoweringPass<'a> {
                 }
                 continue;
             }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_field_write(name)
+            {
+                return true;
+            }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_write(body)
             {
@@ -443,6 +469,11 @@ impl<'a> LoweringPass<'a> {
                     return true;
                 }
                 continue;
+            }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_in_expression(name)
+            {
+                return true;
             }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_in_expression(body)

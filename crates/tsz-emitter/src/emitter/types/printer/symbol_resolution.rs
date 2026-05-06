@@ -904,7 +904,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 line.push_str(&format!(
                     "[{}: string]: {};",
                     param,
@@ -922,7 +926,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 line.push_str(&format!(
                     "[{}: number]: {};",
                     param,
@@ -1020,7 +1028,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 member.push_str(&format!(
                     "[{}: string]: {}",
                     param,
@@ -1037,7 +1049,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 member.push_str(&format!(
                     "[{}: number]: {}",
                     param,

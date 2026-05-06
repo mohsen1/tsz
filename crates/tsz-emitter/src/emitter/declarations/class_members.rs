@@ -12,8 +12,54 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     fn emit_class_member_name_preserving_class_expression_name(&mut self, name: NodeIndex) {
+        if self
+            .arena
+            .get(name)
+            .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+            && let Some(ident) = self.arena.get_identifier_at(name)
+        {
+            let private_name = ident.escaped_text.as_str();
+            if private_name.trim_start_matches('#') == "constructor" {
+                if private_name.starts_with('#') {
+                    self.write(private_name);
+                } else {
+                    self.write("#");
+                    self.write(private_name);
+                }
+                return;
+            }
+        }
+
         let prev_alias = self.scoped_class_expression_self_alias.take();
-        self.emit(name);
+        if let Some(name_node) = self.arena.get(name)
+            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && !self.pending_weakmap_inits.is_empty()
+            && let Some(computed) = self.arena.get_computed_property(name_node)
+        {
+            let weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
+            self.write("[(");
+            for (i, init) in weakmap_inits.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(init);
+            }
+            self.write(", ");
+            let expression = self
+                .arena
+                .get(computed.expression)
+                .filter(|node| node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION)
+                .and_then(|node| self.arena.get_parenthesized(node))
+                .map_or(computed.expression, |paren| paren.expression);
+            if let Some(temp_name) = self.computed_prop_temp_map.get(&expression) {
+                self.write(&temp_name.clone());
+            } else {
+                self.emit(expression);
+            }
+            self.write(")]");
+        } else {
+            self.emit(name);
+        }
         self.scoped_class_expression_self_alias = prev_alias;
     }
 
@@ -72,6 +118,8 @@ impl<'a> Printer<'a> {
                 .get_identifier(name_node)
                 .is_some_and(|id| id.escaped_text == "(")
         });
+        let is_quoted_constructor_name =
+            self.class_member_emit_depth > 0 && self.is_quoted_constructor_method_name(method.name);
 
         // Skip method declarations without bodies (TypeScript-only overloads)
         if method.body.is_none() {
@@ -107,7 +155,9 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
-        if method.name.is_some() && !has_recovery_missing_name {
+        if is_quoted_constructor_name {
+            self.write("constructor");
+        } else if method.name.is_some() && !has_recovery_missing_name {
             self.emit_class_member_name_preserving_class_expression_name(method.name);
         }
 
@@ -242,6 +292,17 @@ impl<'a> Printer<'a> {
         {
             self.skip_comments_in_range(type_node.pos, type_node.end);
         }
+    }
+
+    fn is_quoted_constructor_method_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        name_node.kind == SyntaxKind::StringLiteral as u16
+            && self
+                .arena
+                .get_literal(name_node)
+                .is_some_and(|lit| lit.text == "constructor")
     }
 
     /// Emit async method body lowered to __awaiter + function* for ES2015 target
@@ -1443,35 +1504,51 @@ impl<'a> Printer<'a> {
         }
 
         self.write("(");
-        let open_paren_pos = {
-            self.map_token_after(
+        let needs_es5_param_transform = self.ctx.target_es5
+            && accessor.parameters.nodes.iter().any(|&param_idx| {
                 self.arena
-                    .get(accessor.name)
-                    .map_or(node.pos, |name| name.end),
-                node.end,
-                b'(',
-            );
-            self.pending_source_pos
-                .map(|source_pos| source_pos.pos)
-                .unwrap_or(node.pos)
-        };
-        let search_start = accessor
-            .parameters
-            .nodes
-            .first()
-            .and_then(|&idx| self.arena.get(idx))
-            .map_or(node.pos, |n| n.pos);
-        if let Some(body_node) = self.arena.get(accessor.body) {
-            let search_end = body_node.pos;
-            self.emit_function_parameters_with_trailing_comments(
-                &accessor.parameters.nodes,
-                open_paren_pos,
-                search_start,
-                search_end,
-            );
+                    .get(param_idx)
+                    .and_then(|param_node| self.arena.get_parameter(param_node))
+                    .is_some_and(|param| {
+                        param.dot_dot_dot_token
+                            || param.initializer.is_some()
+                            || self.is_binding_pattern(param.name)
+                    })
+            });
+        let es5_param_transforms = if needs_es5_param_transform {
+            Some(self.emit_function_parameters_es5(&accessor.parameters.nodes))
         } else {
-            self.emit_function_parameters_js(&accessor.parameters.nodes);
-        }
+            let open_paren_pos = {
+                self.map_token_after(
+                    self.arena
+                        .get(accessor.name)
+                        .map_or(node.pos, |name| name.end),
+                    node.end,
+                    b'(',
+                );
+                self.pending_source_pos
+                    .map(|source_pos| source_pos.pos)
+                    .unwrap_or(node.pos)
+            };
+            let search_start = accessor
+                .parameters
+                .nodes
+                .first()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(node.pos, |n| n.pos);
+            if let Some(body_node) = self.arena.get(accessor.body) {
+                let search_end = body_node.pos;
+                self.emit_function_parameters_with_trailing_comments(
+                    &accessor.parameters.nodes,
+                    open_paren_pos,
+                    search_start,
+                    search_end,
+                );
+            } else {
+                self.emit_function_parameters_js(&accessor.parameters.nodes);
+            }
+            None
+        };
         self.write(")");
 
         // Emit return type annotation for error recovery (e.g., `set foo(v): number {}`)
@@ -1481,8 +1558,19 @@ impl<'a> Printer<'a> {
             self.emit(accessor.type_annotation);
         }
 
-        let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
-        self.emit_accessor_body(accessor.body, compact_body);
+        if let Some(transforms) = es5_param_transforms {
+            if transforms.has_transforms() {
+                self.write(" ");
+                self.emit_block_with_param_prologue(accessor.body, &transforms);
+            } else {
+                let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
+                self.emit_accessor_body(accessor.body, compact_body);
+            }
+            self.pop_temp_scope();
+        } else {
+            let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
+            self.emit_accessor_body(accessor.body, compact_body);
+        }
     }
 
     /// Emit the body of a get/set accessor, handling scope management and fallback to empty body.
@@ -1643,6 +1731,26 @@ mod tests {
         assert!(
             output.contains("constructor(x) { this.x = x; }"),
             "Single-line constructor body should stay on one line.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn quoted_constructor_method_names_emit_as_constructors() {
+        let source = "class C {\n    \"constructor\"() {}\n}\nclass D {\n    \"\\x63onstructor\"() {}\n}\nclass E {\n    ['constructor']() {}\n}\nvar o = { \"constructor\"() {} };";
+        let output = emit_ts(source);
+
+        assert_eq!(
+            output.matches("constructor() { }").count(),
+            2,
+            "Quoted constructor method names should emit as constructors.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("['constructor']() { }"),
+            "Computed constructor property names should remain computed methods.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("var o = { \"constructor\"() { } };"),
+            "Object-literal quoted constructor methods should remain quoted methods.\nOutput: {output}"
         );
     }
 

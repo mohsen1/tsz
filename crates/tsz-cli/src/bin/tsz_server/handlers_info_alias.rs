@@ -19,6 +19,9 @@ use tsz_solver::TypeInterner;
 
 use super::handlers_info::ParsedFileContext;
 
+type LocationKey = (String, u32, u32, u32, u32);
+type LocationKeySet = rustc_hash::FxHashSet<LocationKey>;
+
 impl Server {
     pub(super) fn unquote(text: &str) -> String {
         text.trim()
@@ -994,6 +997,7 @@ impl Server {
         if !Self::is_quoted_import_or_export_specifier_offset(arena, source_text, query_offset) {
             return None;
         }
+
         let mut merged_refs = Vec::new();
         let loc_key = |loc: &tsz_common::position::Location| {
             (
@@ -1015,9 +1019,8 @@ impl Server {
             let end = line_map.position_to_offset(loc.range.end, &source)? as usize;
             source.get(start..end).map(std::string::ToString::to_string)
         };
-        let mut allowed_non_quoted_refs: Option<
-            rustc_hash::FxHashSet<(String, u32, u32, u32, u32)>,
-        > = (!quoted_only).then(rustc_hash::FxHashSet::default);
+        let mut allowed_non_quoted_refs: Option<LocationKeySet> =
+            (!quoted_only).then(rustc_hash::FxHashSet::default);
         if let Some(direct_refs) = project.find_references(file, query_position) {
             merged_refs.extend(direct_refs);
         }

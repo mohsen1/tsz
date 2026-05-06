@@ -740,7 +740,8 @@ impl<'a> Printer<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            if self.statement_is_top_level_using(stmt_node) {
+            let stmt_is_top_level_using = self.statement_is_top_level_using(stmt_node);
+            if stmt_is_top_level_using {
                 seen_top_level_using = true;
             }
             if let Some(dep_var) = system_plan.import_vars.get(&stmt_node.pos)
@@ -1124,6 +1125,16 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // tsc places the using-block helper `env_1` at the *end* of the
+        // closure's `var` list when nothing nested-hoisted appears between
+        // the using statement and the rest of the closure. The earlier
+        // nested-walk insertion (above) already places `env_1` immediately
+        // before any `var` hoisted from inside an `if` / `for` / `try`,
+        // matching tsc's `var z, env_1, y;` shape for sources like
+        // `using z = ...; if (false) { var y = 1; }`. If no nested-hoisted
+        // var appeared, the `env_1` slot stays free and we land it here at
+        // the trailing position — matching tsc's
+        // `var x, z, y, _default, w, env_1;` shape.
         if has_top_level_using && seen.insert("env_1".to_string()) {
             names.push("env_1".to_string());
         }

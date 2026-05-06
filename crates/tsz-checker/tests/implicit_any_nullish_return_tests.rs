@@ -49,6 +49,29 @@ function h(flag: boolean) {
 }
 
 #[test]
+fn generator_functions_do_not_report_ts7010_without_strict_null_checks() {
+    let diagnostics = diagnostics_for(
+        r#"
+function* g301() {
+    yield;
+    return;
+}
+
+function* g302() {
+    yield 1;
+    return;
+}
+"#,
+        false,
+    );
+
+    assert!(
+        diagnostics.iter().all(|diagnostic| diagnostic.code != 7010),
+        "did not expect TS7010 for generator declarations; got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn nullish_only_returns_do_not_report_ts7010_with_strict_null_checks() {
     let diagnostics = diagnostics_for(
         r#"

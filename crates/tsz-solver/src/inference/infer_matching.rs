@@ -1667,6 +1667,31 @@ impl<'a> InferenceContext<'a> {
             return Ok(());
         }
 
+        if let Some(TypeData::TemplateLiteral(source_template)) = source_key {
+            let source_spans = self.interner.template_list(*source_template);
+            if source_spans.len() == spans.len() {
+                let source_spans: Vec<TemplateSpan> = source_spans.iter().cloned().collect();
+                let target_spans: Vec<TemplateSpan> = spans.iter().cloned().collect();
+                let mut matched = true;
+                for (source_span, target_span) in source_spans.iter().zip(target_spans.iter()) {
+                    match (source_span, target_span) {
+                        (TemplateSpan::Text(source_text), TemplateSpan::Text(target_text))
+                            if source_text == target_text => {}
+                        (TemplateSpan::Type(source_type), TemplateSpan::Type(target_type)) => {
+                            self.infer_from_types(*source_type, *target_type, priority)?;
+                        }
+                        _ => {
+                            matched = false;
+                            break;
+                        }
+                    }
+                }
+                if matched {
+                    return Ok(());
+                }
+            }
+        }
+
         // For literal string types, perform the actual pattern matching
         if let Some(source_str) = self.extract_string_literal(source)
             && let Some(captures) = self.match_template_pattern(&source_str, &spans)

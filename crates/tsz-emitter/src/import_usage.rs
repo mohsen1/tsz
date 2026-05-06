@@ -748,8 +748,10 @@ fn skip_type_annotation(bytes: &[u8], mut i: usize) -> usize {
 ///
 /// This helper scans the *unstripped* source for `@<ident>` decorator
 /// patterns followed by a class member whose type annotation references
-/// `ident_to_find`. We only need a coarse match — the import is preserved
-/// if any decorated member's type annotation mentions the name.
+/// `ident_to_find`. It also scans method parameter lists that contain
+/// parameter decorators, since those still emit method metadata even when the
+/// method itself is undecorated. We only need a coarse match — the import is
+/// preserved if any decorated member metadata position mentions the name.
 pub fn name_appears_in_decorator_metadata_type(source: &str, ident_to_find: &str) -> bool {
     let bytes = source.as_bytes();
     let mut i = 0;
@@ -897,7 +899,124 @@ pub fn name_appears_in_decorator_metadata_type(source: &str, ident_to_find: &str
         }
         i = j.max(i + 1);
     }
+    metadata_name_appears_in_parameter_decorated_method(source, ident_to_find)
+}
+
+fn metadata_name_appears_in_parameter_decorated_method(source: &str, ident_to_find: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'(' {
+            i += 1;
+            continue;
+        }
+        let Some(close_paren) = scan_balanced_parens(bytes, i) else {
+            i += 1;
+            continue;
+        };
+        let param_start = i + 1;
+        if !region_contains_decorator(bytes, param_start, close_paren) {
+            i = close_paren + 1;
+            continue;
+        }
+        if let Ok(region) = std::str::from_utf8(&bytes[param_start..close_paren])
+            && contains_identifier_occurrence(region, ident_to_find)
+        {
+            return true;
+        }
+
+        let mut j = skip_ascii_ws(bytes, close_paren + 1);
+        if j < bytes.len() && bytes[j] == b':' {
+            j += 1;
+            let ann_start = j;
+            let ann_end = skip_type_annotation(bytes, j);
+            if ann_end > ann_start
+                && let Ok(annotation) = std::str::from_utf8(&bytes[ann_start..ann_end])
+                && contains_identifier_occurrence(annotation, ident_to_find)
+            {
+                return true;
+            }
+        }
+        i = close_paren + 1;
+    }
     false
+}
+
+fn region_contains_decorator(bytes: &[u8], start: usize, end: usize) -> bool {
+    let mut i = start;
+    while i < end {
+        if bytes[i] != b'@' {
+            i += 1;
+            continue;
+        }
+        let prev_ok = i == start
+            || matches!(
+                bytes[i - 1],
+                b' ' | b'\t' | b'\n' | b'\r' | b'(' | b',' | b';'
+            );
+        let next_is_ident = i + 1 < end && is_ident_start(bytes[i + 1]);
+        if prev_ok && next_is_ident {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+fn scan_balanced_parens(bytes: &[u8], start: usize) -> Option<usize> {
+    if start >= bytes.len() || bytes[start] != b'(' {
+        return None;
+    }
+    let mut depth = 1u32;
+    let mut i = start + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' | b'`' => i = skip_quoted_bytes(bytes, i, bytes[i]),
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                i += 2;
+                while i < bytes.len() && !matches!(bytes[i], b'\n' | b'\r') {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < bytes.len() {
+                    if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+fn skip_quoted_bytes(bytes: &[u8], mut i: usize, quote: u8) -> usize {
+    i += 1;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 2;
+        } else if bytes[i] == quote {
+            return i + 1;
+        } else {
+            i += 1;
+        }
+    }
+    i
 }
 
 fn scan_past_decorator(bytes: &[u8], start: usize) -> Option<usize> {

@@ -16,7 +16,7 @@ use crate::types::{
     IntrinsicKind, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility,
 };
 use crate::utils;
-use crate::visitor::{application_id, object_shape_id};
+use crate::visitor::{application_id, object_shape_id, object_with_index_shape_id};
 use tsz_common::interner::Atom;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -36,6 +36,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let app_id = application_id(self.interner, type_id)?;
         let app = self.interner.type_application(app_id);
         app.args.first().copied()
+    }
+
+    fn shape_or_receiver_requires_declared_index_signature(
+        &self,
+        shape: &ObjectShape,
+        receiver: Option<TypeId>,
+    ) -> bool {
+        let is_named_non_enum = |shape: &ObjectShape| {
+            shape.symbol.is_some() && !shape.flags.contains(ObjectFlags::ENUM_NAMESPACE)
+        };
+        if is_named_non_enum(shape) {
+            return true;
+        }
+
+        let Some(receiver) = receiver else {
+            return false;
+        };
+
+        let receiver_shape = object_with_index_shape_id(self.interner, receiver).or_else(|| {
+            let app_id = application_id(self.interner, receiver)?;
+            let app = self.interner.type_application(app_id);
+            object_with_index_shape_id(self.interner, app.base)
+        });
+
+        receiver_shape
+            .map(|shape_id| self.interner.object_shape(shape_id))
+            .is_some_and(|shape| is_named_non_enum(&shape))
     }
 
     fn has_compatible_symbol_iterator_methods(
@@ -896,7 +923,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // for anonymous object types and enum namespaces. Named class/interface
                 // instance types must declare a real number/string index signature.
                 // Check if source is a named type that ISN'T an enum namespace.
-                if source.symbol.is_some() && !source.flags.contains(ObjectFlags::ENUM_NAMESPACE) {
+                if self.shape_or_receiver_requires_declared_index_signature(source, source_receiver)
+                {
                     return SubtypeResult::False;
                 }
 
