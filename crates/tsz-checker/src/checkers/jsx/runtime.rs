@@ -7,6 +7,42 @@ use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 
+/// Returns true when the byte at `pos` (or end-of-string) is a JSDoc pragma
+/// tag/value boundary — i.e. ASCII whitespace (matching tsc's `\s+` separator
+/// between pragma name and value, and between value and end-of-comment).
+///
+/// Pragma tags such as `@jsxRuntime`, `@jsxImportSource`, and `@jsxFrag` are
+/// only recognized when followed by such a boundary; otherwise comments like
+/// `@jsxRuntimeautomatic` or `@jsxImportSourcex` would be misparsed as the
+/// real pragma with arbitrary identifier suffixes attached.
+fn is_pragma_boundary(body: &str, pos: usize) -> bool {
+    let bytes = body.as_bytes();
+    pos >= bytes.len() || (bytes[pos] as char).is_ascii_whitespace()
+}
+
+/// Find the first occurrence of the pragma tag `tag` in `body` such that the
+/// character immediately after the tag is a pragma boundary (whitespace or
+/// end-of-body). Returns the byte offset *after* the tag, or `None` if no
+/// complete-tag occurrence exists. Iterates past prefix-only matches like
+/// `@jsxRuntimeautomatic` so that a later valid `@jsxRuntime classic` in the
+/// same comment is still recognized.
+fn find_complete_pragma_tag(body: &str, tag: &str) -> Option<usize> {
+    let mut start = 0;
+    while let Some(rel) = body[start..].find(tag) {
+        let abs = start + rel;
+        let after = abs + tag.len();
+        if is_pragma_boundary(body, after) {
+            return Some(after);
+        }
+        // Advance past this incomplete match and keep scanning.
+        start = abs + tag.len();
+        if start >= body.len() {
+            break;
+        }
+    }
+    None
+}
+
 /// Extract the `@jsx` pragma factory name from a source file's leading comments.
 ///
 /// Matches the tsc behavior: scans for `@jsx <identifier>` in block comments
@@ -85,16 +121,18 @@ pub(crate) fn extract_jsx_frag_pragma(source: &str) -> Option<String> {
             if let Some(end_offset) = text[comment_start..].find("*/") {
                 let comment_body = &text[comment_start..comment_start + end_offset];
                 // tsc accepts `@jsxFrag`, `@jsxfrag`, and `@jsxFragment` as
-                // synonyms for the fragment-factory pragma.
+                // synonyms for the fragment-factory pragma. Prefer the longer
+                // `@jsxFragment` form when present so that a comment like
+                // `@jsxFragment Foo` doesn't get parsed as `@jsxFrag` with an
+                // `ment` suffix on the tag (which would fail the boundary
+                // check below). Both forms must be followed by a pragma
+                // boundary (whitespace / end-of-comment), so neither
+                // `@jsxFragx Foo` nor `@jsxFragmentx Foo` matches.
                 let lowered = comment_body.to_ascii_lowercase();
-                if let Some(jsx_frag_pos) = lowered.find("@jsxfrag") {
-                    let tag_len = if lowered[jsx_frag_pos..].starts_with("@jsxfragment") {
-                        "@jsxfragment".len()
-                    } else {
-                        "@jsxfrag".len()
-                    };
-                    let after = &comment_body[jsx_frag_pos + tag_len..];
-                    let factory: String = after
+                let after_idx = find_complete_pragma_tag(&lowered, "@jsxfragment")
+                    .or_else(|| find_complete_pragma_tag(&lowered, "@jsxfrag"));
+                if let Some(after) = after_idx {
+                    let factory: String = comment_body[after..]
                         .trim_start()
                         .chars()
                         .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$' || *c == '.')
@@ -135,12 +173,27 @@ pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<&'static str> {
             let comment_start = pos + 2;
             if let Some(end_offset) = source[comment_start..].find("*/") {
                 let comment_body = &source[comment_start..comment_start + end_offset];
-                if let Some(idx) = comment_body.find("@jsxRuntime") {
-                    let after = comment_body[idx + "@jsxRuntime".len()..].trim_start();
-                    if after.starts_with("classic") {
-                        result = Some("classic");
-                    } else if after.starts_with("automatic") {
-                        result = Some("automatic");
+                if let Some(after) = find_complete_pragma_tag(comment_body, "@jsxRuntime") {
+                    // Skip leading whitespace, then read the value token and
+                    // require it to be terminated by another pragma boundary.
+                    // Together this rejects both `@jsxRuntimeautomatic`
+                    // (no boundary after the tag) and `@jsxRuntime automaticx`
+                    // (no boundary after the value).
+                    let rest = comment_body[after..].trim_start();
+                    let value_end = rest
+                        .char_indices()
+                        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == '$'))
+                        .map(|(i, _)| i)
+                        .unwrap_or(rest.len());
+                    let value = &rest[..value_end];
+                    let value_terminated =
+                        value_end == rest.len() || rest.as_bytes()[value_end].is_ascii_whitespace();
+                    if value_terminated {
+                        match value {
+                            "classic" => result = Some("classic"),
+                            "automatic" => result = Some("automatic"),
+                            _ => {}
+                        }
                     }
                 }
                 pos = comment_start + end_offset + 2;
@@ -315,9 +368,13 @@ impl<'a> CheckerState<'a> {
                 let comment_start = pos + 2;
                 if let Some(end_offset) = scan_text[comment_start..].find("*/") {
                     let comment_body = &scan_text[comment_start..comment_start + end_offset];
-                    if let Some(idx) = comment_body.find("@jsxImportSource") {
-                        let after = &comment_body[idx + "@jsxImportSource".len()..];
-                        let pkg: String = after
+                    // Only honor `@jsxImportSource` when followed by a pragma
+                    // boundary. Without this, fake tags like
+                    // `@jsxImportSourcex preact` would slip through and the
+                    // package parser would extract `x` as the source.
+                    if let Some(after) = find_complete_pragma_tag(comment_body, "@jsxImportSource")
+                    {
+                        let pkg: String = comment_body[after..]
                             .trim_start()
                             .chars()
                             .take_while(|c| {
@@ -812,5 +869,203 @@ impl<'a> CheckerState<'a> {
         }
 
         self.resolve_namespace_member_from_all_binders(root_name, "JSX")
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn extract_jsx_import_source_pragma_text_only_for_test(text: &str) -> Option<String> {
+    // Mirrors `CheckerState::extract_jsx_import_source_pragma` but operates on
+    // a raw `&str`, so we can unit-test the boundary handling without
+    // constructing a checker. Kept in sync with the real implementation.
+    let scan_limit = text.len().min(4096);
+    let scan_text = &text[..scan_limit];
+    let bytes = scan_text.as_bytes();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+            let comment_start = pos + 2;
+            if let Some(end_offset) = scan_text[comment_start..].find("*/") {
+                let comment_body = &scan_text[comment_start..comment_start + end_offset];
+                if let Some(after) = find_complete_pragma_tag(comment_body, "@jsxImportSource") {
+                    let pkg: String = comment_body[after..]
+                        .trim_start()
+                        .chars()
+                        .take_while(|c| {
+                            c.is_alphanumeric()
+                                || *c == '_'
+                                || *c == '-'
+                                || *c == '/'
+                                || *c == '@'
+                                || *c == '.'
+                        })
+                        .collect();
+                    if !pkg.is_empty() {
+                        return Some(pkg);
+                    }
+                }
+                pos = comment_start + end_offset + 2;
+            } else {
+                break;
+            }
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+            if let Some(nl) = scan_text[pos..].find('\n') {
+                pos += nl + 1;
+            } else {
+                break;
+            }
+            continue;
+        }
+        break;
+    }
+    None
+}
+
+#[cfg(test)]
+mod pragma_boundary_tests {
+    //! Regression coverage for issue #2942: JSDoc pragmas like `@jsxRuntime`,
+    //! `@jsxImportSource`, and `@jsxFrag` must be parsed as complete tags
+    //! followed by a whitespace boundary, not as raw substrings/prefixes.
+    //!
+    //! Each invalid case here was previously misrecognized by tsz and changed
+    //! JSX checking even though tsc treats them as unrelated tags.
+    use super::{extract_jsx_frag_pragma, extract_jsx_import_source_pragma_text_only_for_test};
+    use super::{extract_jsx_pragma, extract_jsx_runtime_pragma};
+
+    // ---- @jsxRuntime --------------------------------------------------------
+
+    #[test]
+    fn jsx_runtime_classic_recognized() {
+        assert_eq!(
+            extract_jsx_runtime_pragma("/* @jsxRuntime classic */\nconst x = 1;"),
+            Some("classic")
+        );
+    }
+
+    #[test]
+    fn jsx_runtime_automatic_recognized() {
+        assert_eq!(
+            extract_jsx_runtime_pragma("/** @jsxRuntime automatic */\n"),
+            Some("automatic")
+        );
+    }
+
+    #[test]
+    fn jsx_runtime_prefix_tag_is_ignored() {
+        // `@jsxRuntimeautomatic` is not the @jsxRuntime tag — it is some
+        // unknown JSDoc tag. Must not switch to automatic mode.
+        assert_eq!(
+            extract_jsx_runtime_pragma("/** @jsxRuntimeautomatic */\n"),
+            None
+        );
+        assert_eq!(
+            extract_jsx_runtime_pragma("/* @jsxRuntimeclassic */\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn jsx_runtime_invalid_value_with_suffix_is_ignored() {
+        // Tag boundary holds, but the value `automaticx` is not `automatic`.
+        assert_eq!(
+            extract_jsx_runtime_pragma("/** @jsxRuntime automaticx */\n"),
+            None
+        );
+        assert_eq!(
+            extract_jsx_runtime_pragma("/** @jsxRuntime classicx */\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn jsx_runtime_unknown_value_is_ignored() {
+        assert_eq!(
+            extract_jsx_runtime_pragma("/** @jsxRuntime hybrid */\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn jsx_runtime_later_valid_pragma_still_wins_after_invalid_prefix() {
+        // tsc keeps the last valid occurrence; a junk `@jsxRuntimeautomatic`
+        // earlier must not poison a later real `@jsxRuntime classic`.
+        let src = "/** @jsxRuntimeautomatic */\n/** @jsxRuntime classic */\n";
+        assert_eq!(extract_jsx_runtime_pragma(src), Some("classic"));
+    }
+
+    // ---- @jsxImportSource ---------------------------------------------------
+
+    #[test]
+    fn jsx_import_source_recognized() {
+        assert_eq!(
+            extract_jsx_import_source_pragma_text_only_for_test("/** @jsxImportSource preact */\n"),
+            Some("preact".to_string())
+        );
+    }
+
+    #[test]
+    fn jsx_import_source_prefix_tag_is_ignored() {
+        // `@jsxImportSourcex preact` is an unrelated tag — must not yield
+        // package `x` (the previous bug) or `preact`.
+        assert_eq!(
+            extract_jsx_import_source_pragma_text_only_for_test(
+                "/** @jsxImportSourcex preact */\n"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn jsx_import_source_scoped_package_recognized() {
+        assert_eq!(
+            extract_jsx_import_source_pragma_text_only_for_test(
+                "/* @jsxImportSource @emotion/react */\n"
+            ),
+            Some("@emotion/react".to_string())
+        );
+    }
+
+    // ---- @jsxFrag / @jsxFragment --------------------------------------------
+
+    #[test]
+    fn jsx_frag_recognized() {
+        assert_eq!(
+            extract_jsx_frag_pragma("/** @jsxFrag Fragment */\n"),
+            Some("Fragment".to_string())
+        );
+    }
+
+    #[test]
+    fn jsx_fragment_long_form_recognized() {
+        // tsc accepts `@jsxFragment` as a synonym; previously the longer form
+        // would be parsed as `@jsxFrag` plus an `ment` suffix, which now
+        // (correctly) fails the boundary check — so the longer form must be
+        // tried first.
+        assert_eq!(
+            extract_jsx_frag_pragma("/** @jsxFragment Foo */\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn jsx_frag_prefix_tag_is_ignored() {
+        assert_eq!(extract_jsx_frag_pragma("/** @jsxFragx Fragment */\n"), None);
+        assert_eq!(extract_jsx_frag_pragma("/** @jsxFragmentx Foo */\n"), None);
+    }
+
+    // ---- @jsx (control: existing behavior preserved) ------------------------
+
+    #[test]
+    fn jsx_factory_pragma_still_recognized() {
+        assert_eq!(extract_jsx_pragma("/** @jsx h */\n"), Some("h".to_string()));
+        assert_eq!(
+            extract_jsx_pragma("/** @jsx React.createElement */\n"),
+            Some("React.createElement".to_string())
+        );
     }
 }
