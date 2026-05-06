@@ -96,6 +96,46 @@ fn is_single_quoted_string_property_name_node(
 }
 
 impl<'a> CheckerState<'a> {
+    fn spread_source_is_unannotated_object_literal_binding(&self, expression: NodeIndex) -> bool {
+        let expression = self.ctx.arena.skip_parenthesized_and_assertions(expression);
+        let Some(node) = self.ctx.arena.get(expression) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expression)
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if var_decl.type_annotation.is_some() {
+                return false;
+            }
+            let initializer = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(var_decl.initializer);
+            let Some(init_node) = self.ctx.arena.get(initializer) else {
+                return false;
+            };
+            return init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
+        }
+        false
+    }
+
     /// Merge a single spread-contributed property into the running
     /// `properties` map.
     ///
@@ -2711,10 +2751,13 @@ impl<'a> CheckerState<'a> {
                         // the result should inherit the index signatures (with readonly removed).
                         // These are collected separately and only included in the final type
                         // when the literal has no explicit (non-spread) properties, matching tsc.
-                        if !crate::query_boundaries::type_computation::core::is_fresh_literal_indexed_object(
-                            self.ctx.types,
-                            resolved_spread,
-                        ) {
+                        if !(self.spread_source_is_unannotated_object_literal_binding(spread_expr)
+                            && !spread_props.is_empty())
+                            && !crate::query_boundaries::type_computation::core::is_fresh_literal_indexed_object(
+                                self.ctx.types,
+                                resolved_spread,
+                            )
+                        {
                             use crate::query_boundaries::common::IndexSignatureResolver;
                             let resolver = IndexSignatureResolver::new(self.ctx.types);
                             if let Some(string_index_value) =

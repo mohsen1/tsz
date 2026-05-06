@@ -62,6 +62,11 @@ impl<'db> TypeFactory<'db> {
     }
 
     #[inline]
+    pub fn union_preserve_order(&self, members: Vec<TypeId>) -> TypeId {
+        self.db.union_from_sorted_vec(members)
+    }
+
+    #[inline]
     pub fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
         self.db.union2(left, right)
     }
