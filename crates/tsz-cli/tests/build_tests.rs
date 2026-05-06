@@ -6,6 +6,7 @@ use tempfile::TempDir;
 
 use crate::args::CliArgs;
 use crate::build;
+use crate::incremental::compute_file_version;
 use crate::project_refs::ResolvedProject;
 
 /// Create a test project with tsconfig.json
@@ -89,7 +90,8 @@ fn test_is_project_up_to_date_with_buildinfo() {
     );
 
     // Create a minimal .tsbuildinfo file
-    let buildinfo_path = project_dir.join("tsconfig.tsbuildinfo");
+    let buildinfo_path = project_dir.join("dist").join("tsconfig.tsbuildinfo");
+    std::fs::create_dir_all(buildinfo_path.parent().unwrap()).unwrap();
     let compiler_version = env!("CARGO_PKG_VERSION");
     let buildinfo_content = format!(
         r#"{{
@@ -145,7 +147,8 @@ fn test_is_project_up_to_date_force_rebuild() {
     );
 
     // Create .tsbuildinfo
-    let buildinfo_path = project_dir.join("tsconfig.tsbuildinfo");
+    let buildinfo_path = project_dir.join("dist").join("tsconfig.tsbuildinfo");
+    std::fs::create_dir_all(buildinfo_path.parent().unwrap()).unwrap();
     std::fs::write(&buildinfo_path, "{}").unwrap();
 
     let project = ResolvedProject {
@@ -308,6 +311,82 @@ fn test_is_project_up_to_date_with_new_source_files() {
 
     // Project should need rebuild due to new source file
     assert!(!build::is_project_up_to_date(&project, &args));
+}
+
+#[test]
+fn test_is_project_up_to_date_ignores_unlisted_source_files() {
+    let temp_dir = TempDir::new().unwrap();
+
+    let project_dir = create_test_project(
+        temp_dir.path(),
+        "test",
+        r#"
+{
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "outDir": "./dist"
+  },
+  "files": ["src/main.ts"]
+}
+"#,
+    );
+
+    let main_file = create_source_file(&project_dir, "main.ts", "export const main = 1;\n");
+    create_source_file(&project_dir, "extra.ts", "export const extra = 2;\n");
+    let main_version = compute_file_version(&main_file).unwrap();
+
+    let buildinfo_path = project_dir.join("dist").join("tsconfig.tsbuildinfo");
+    std::fs::create_dir_all(buildinfo_path.parent().unwrap()).unwrap();
+    let compiler_version = env!("CARGO_PKG_VERSION");
+    let buildinfo_content = format!(
+        r#"{{
+  "version": "0.1.0",
+  "compilerVersion": "{compiler_version}",
+  "rootFiles": ["src/main.ts"],
+  "fileInfos": {{
+    "src/main.ts": {{
+      "version": "{main_version}",
+      "signature": null
+    }}
+  }},
+  "dependencies": {{}},
+  "semanticDiagnosticsPerFile": {{}},
+  "emitSignatures": {{}},
+  "latestChangedDtsFile": null,
+  "options": {{}},
+  "buildTime": 1234567890
+}}"#
+    );
+    std::fs::write(&buildinfo_path, buildinfo_content).unwrap();
+
+    let project = ResolvedProject {
+        config_path: project_dir.join("tsconfig.json"),
+        root_dir: project_dir.clone(),
+        config: serde_json::from_str(
+            r#"{
+                "compilerOptions": {
+                    "composite": true,
+                    "declaration": true,
+                    "outDir": "./dist"
+                },
+                "files": ["src/main.ts"]
+            }"#,
+        )
+        .unwrap(),
+        resolved_references: vec![],
+        is_composite: true,
+        no_emit: false,
+        out_dir: Some(project_dir.join("dist")),
+        declaration_dir: None,
+    };
+
+    let args = CliArgs::try_parse_from(["tsz"]).unwrap();
+
+    assert!(
+        build::is_project_up_to_date(&project, &args),
+        "unlisted source files should not invalidate a project with an explicit files list"
+    );
 }
 
 #[test]
