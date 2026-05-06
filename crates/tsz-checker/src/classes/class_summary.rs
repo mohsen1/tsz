@@ -179,6 +179,12 @@ struct JsImplicitMemberName {
     display_name: String,
 }
 
+struct ClassMemberKindLookup {
+    kind: ClassMemberKind,
+    display_name: String,
+    is_visible: bool,
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn summarize_class_initialization(
         &mut self,
@@ -567,6 +573,183 @@ impl<'a> CheckerState<'a> {
             .insert(class_idx, std::rc::Rc::clone(&summary));
 
         summary
+    }
+
+    pub(crate) fn class_chain_member_kind_name_only(
+        &mut self,
+        class_idx: NodeIndex,
+        target_name: &str,
+        target_is_static: bool,
+        skip_private: bool,
+    ) -> Option<(ClassMemberKind, String)> {
+        let mut visited = FxHashSet::default();
+        let mut current = Some(class_idx);
+
+        while let Some(current_idx) = current {
+            if !visited.insert(current_idx) {
+                break;
+            }
+
+            if let Some(found) =
+                self.class_own_member_kind_name_only(current_idx, target_name, target_is_static)
+            {
+                if skip_private && !found.is_visible {
+                    return None;
+                }
+                return Some((found.kind, found.display_name));
+            }
+
+            current = self.get_base_class_idx(current_idx);
+        }
+
+        None
+    }
+
+    fn class_own_member_kind_name_only(
+        &mut self,
+        class_idx: NodeIndex,
+        target_name: &str,
+        target_is_static: bool,
+    ) -> Option<ClassMemberKindLookup> {
+        let class = self.ctx.arena.get_class_at(class_idx)?;
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&prop.modifiers) != target_is_static {
+                        continue;
+                    }
+                    let Some(display_name) =
+                        self.member_display_name_for_kind_lookup(prop.name, target_name)
+                    else {
+                        continue;
+                    };
+                    let kind = if self.has_accessor_modifier(&prop.modifiers) {
+                        ClassMemberKind::MethodLike
+                    } else {
+                        ClassMemberKind::FieldLike
+                    };
+                    return Some(ClassMemberKindLookup {
+                        kind,
+                        display_name,
+                        is_visible: !self.has_private_modifier(&prop.modifiers),
+                    });
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&method.modifiers) != target_is_static {
+                        continue;
+                    }
+                    let Some(display_name) =
+                        self.member_display_name_for_kind_lookup(method.name, target_name)
+                    else {
+                        continue;
+                    };
+                    return Some(ClassMemberKindLookup {
+                        kind: ClassMemberKind::MethodLike,
+                        display_name,
+                        is_visible: !self.has_private_modifier(&method.modifiers),
+                    });
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&accessor.modifiers) != target_is_static {
+                        continue;
+                    }
+                    let Some(display_name) =
+                        self.member_display_name_for_kind_lookup(accessor.name, target_name)
+                    else {
+                        continue;
+                    };
+                    return Some(ClassMemberKindLookup {
+                        kind: ClassMemberKind::MethodLike,
+                        display_name,
+                        is_visible: !self.has_private_modifier(&accessor.modifiers),
+                    });
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR && !target_is_static => {
+                    let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                        continue;
+                    };
+                    for &param_idx in &ctor.parameters.nodes {
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            continue;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                            continue;
+                        };
+                        if !self.has_parameter_property_modifier(&param.modifiers) {
+                            continue;
+                        }
+                        let Some(display_name) =
+                            self.member_display_name_for_kind_lookup(param.name, target_name)
+                        else {
+                            continue;
+                        };
+                        return Some(ClassMemberKindLookup {
+                            kind: ClassMemberKind::FieldLike,
+                            display_name,
+                            is_visible: !self.has_private_modifier(&param.modifiers),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        self.class_own_js_implicit_member_kind_name_only(class, target_name, target_is_static)
+    }
+
+    fn member_display_name_for_kind_lookup(
+        &mut self,
+        name_idx: NodeIndex,
+        target_name: &str,
+    ) -> Option<String> {
+        let name = self
+            .get_property_name(name_idx)
+            .or_else(|| self.get_property_name_resolved(name_idx))?;
+        if name != target_name {
+            return None;
+        }
+        Some(
+            self.get_member_name_display_text(name_idx)
+                .unwrap_or_else(|| name.clone()),
+        )
+    }
+
+    fn class_own_js_implicit_member_kind_name_only(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+        target_name: &str,
+        target_is_static: bool,
+    ) -> Option<ClassMemberKindLookup> {
+        if !self.ctx.is_js_file() {
+            return None;
+        }
+
+        let mut summary = ClassOwnMemberSummary::default();
+        self.collect_js_implicit_member_kinds(class, &mut summary);
+        let map = if target_is_static {
+            &summary.static_members
+        } else {
+            &summary.instance_members
+        };
+        map.get(target_name).map(|entry| ClassMemberKindLookup {
+            kind: entry.kind,
+            display_name: entry.display_name.clone(),
+            is_visible: entry.is_visible,
+        })
     }
 
     /// Extract extends-clause type arguments for a class, returning the resolved

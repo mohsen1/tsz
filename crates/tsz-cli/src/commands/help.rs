@@ -646,7 +646,7 @@ type: boolean
 default: false
 
 --generateCpuProfile
-Emit a v8 CPU profile of the compiler run for debugging.
+Unsupported in tsz; use --generateTrace for native trace output.
 type: string
 default: profile.cpuprofile
 

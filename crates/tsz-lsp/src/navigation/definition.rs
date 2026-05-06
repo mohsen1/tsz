@@ -2002,33 +2002,30 @@ impl<'a> GoToDefinition<'a> {
     ) -> Option<NodeIndex> {
         let mut current = start_idx;
         for _ in 0..30 {
-            if let Some(ext) = self.arena.get_extended(current) {
-                let parent = ext.parent;
-                if parent.is_none() {
-                    return None;
-                }
-                if let Some(parent_node) = self.arena.get(parent) {
-                    match target_kind {
-                        "function" => match parent_node.kind {
-                            syntax_kind_ext::FUNCTION_DECLARATION
-                            | syntax_kind_ext::FUNCTION_EXPRESSION
-                            | syntax_kind_ext::ARROW_FUNCTION
-                            | syntax_kind_ext::METHOD_DECLARATION
-                            | syntax_kind_ext::CONSTRUCTOR
-                            | syntax_kind_ext::GET_ACCESSOR
-                            | syntax_kind_ext::SET_ACCESSOR => return Some(parent),
-                            _ => {}
-                        },
-                        "switch" if parent_node.kind == syntax_kind_ext::SWITCH_STATEMENT => {
-                            return Some(parent);
-                        }
-                        _ => {}
-                    }
-                }
-                current = parent;
-            } else {
+            let ext = self.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
                 return None;
             }
+            if let Some(parent_node) = self.arena.get(parent) {
+                match target_kind {
+                    "function" => match parent_node.kind {
+                        syntax_kind_ext::FUNCTION_DECLARATION
+                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::METHOD_DECLARATION
+                        | syntax_kind_ext::CONSTRUCTOR
+                        | syntax_kind_ext::GET_ACCESSOR
+                        | syntax_kind_ext::SET_ACCESSOR => return Some(parent),
+                        _ => {}
+                    },
+                    "switch" if parent_node.kind == syntax_kind_ext::SWITCH_STATEMENT => {
+                        return Some(parent);
+                    }
+                    _ => {}
+                }
+            }
+            current = parent;
         }
         None
     }

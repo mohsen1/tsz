@@ -509,16 +509,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if param.rest {
                         saw_rest_at_pos = true;
                         // For rest params like `...b: number[]`, extract the element type
-                        // so we intersect `number` (not `number[]`) with other members' types
-                        if let Some(elem) = crate::type_queries::get_array_element_type(
+                        // so we intersect `number` (not `number[]`) with other members' types.
+                        // If we can't extract the element type, bail out.
+                        let elem = crate::type_queries::get_array_element_type(
                             self.interner,
                             param.type_id,
-                        ) {
-                            param_types_at_pos.push(elem);
-                        } else {
-                            // Can't extract element type; bail out
-                            return None;
-                        }
+                        )?;
+                        param_types_at_pos.push(elem);
                     } else {
                         let type_id =
                             crate::narrowing::utils::remove_undefined(self.interner, param.type_id);
@@ -698,14 +695,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if i < params.len() {
                     let param = &params[i];
                     if param.rest {
-                        if let Some(elem) = crate::type_queries::get_array_element_type(
+                        let elem = crate::type_queries::get_array_element_type(
                             self.interner,
                             param.type_id,
-                        ) {
-                            param_types_at_pos.push(elem);
-                        } else {
-                            return None;
-                        }
+                        )?;
+                        param_types_at_pos.push(elem);
                     } else {
                         // Strip `| undefined` that the binder may add for optional
                         // params (`b?: number` → type_id = `number | undefined`).
