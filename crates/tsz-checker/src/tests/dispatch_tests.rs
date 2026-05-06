@@ -287,6 +287,46 @@ type Cache<QR> = {
 }
 
 #[test]
+fn ts2344_function_type_arg_with_extra_required_param_fails_single_param_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+type ArgumentType<T extends (x: any) => any> =
+    T extends (a: infer A) => any ? A : any;
+type Bad = ArgumentType<(x: string, y: string) => number>;
+"#,
+    );
+
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert_eq!(ts2344.len(), 1, "Expected one TS2344, got: {diags:?}");
+    assert!(
+        ts2344[0]
+            .message_text
+            .contains("(x: string, y: string) => number"),
+        "Expected TS2344 to report the function type argument, got: {:?}",
+        ts2344[0]
+    );
+}
+
+#[test]
+fn ts2344_single_constrained_infer_fails_incompatible_true_branch_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+type T70<T extends string> = { x: T };
+type T72<T extends number> = { y: T };
+type T73<T> = T extends T72<infer U> ? T70<U> : never;
+"#,
+    );
+
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert_eq!(ts2344.len(), 1, "Expected one TS2344, got: {diags:?}");
+    assert!(
+        ts2344[0].message_text.contains("constraint 'string'"),
+        "Expected TS2344 against the true-branch string constraint, got: {:?}",
+        ts2344[0]
+    );
+}
+
+#[test]
 fn typeof_globalthis_does_not_satisfy_arbitrary_required_constraint() {
     let diags = check_source_diagnostics(
         r#"
