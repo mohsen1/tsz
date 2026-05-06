@@ -531,6 +531,7 @@ fn test_synchronize_project_list_reports_external_project_files() {
         }),
     ));
     assert!(open_response.success);
+    assert_eq!(open_response.body, Some(serde_json::json!(true)));
 
     let response = server.handle_tsserver_request(make_request(
         "synchronizeProjectList",
@@ -557,6 +558,53 @@ fn test_synchronize_project_list_reports_external_project_files() {
             }],
             "projectErrors": [],
         }]))
+    );
+}
+
+#[test]
+fn project_info_uses_external_project_identity_and_files() {
+    let mut server = make_server();
+    let open_response = server.handle_tsserver_request(make_request(
+        "openExternalProject",
+        serde_json::json!({
+            "projectFileName": "/workspace/external-project",
+            "rootFiles": [
+                {
+                    "fileName": "/workspace/main.ts",
+                    "content": "export const main = 1;\n",
+                },
+                {
+                    "fileName": "/workspace/dep.ts",
+                    "content": "export const dep = 1;\n",
+                },
+            ],
+            "options": {
+                "target": 1,
+                "module": 1,
+            },
+        }),
+    ));
+    assert!(open_response.success);
+    assert_eq!(open_response.body, Some(serde_json::json!(true)));
+
+    let response = server.handle_tsserver_request(make_request(
+        "projectInfo",
+        serde_json::json!({
+            "file": "/workspace/main.ts",
+            "needFileNameList": true,
+        }),
+    ));
+
+    assert!(response.success);
+    assert_eq!(
+        response.body,
+        Some(serde_json::json!({
+            "configFileName": "/workspace/external-project",
+            "fileNames": [
+                "/workspace/dep.ts",
+                "/workspace/main.ts",
+            ],
+        }))
     );
 }
 
