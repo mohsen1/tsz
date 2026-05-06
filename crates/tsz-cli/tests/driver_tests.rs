@@ -3502,6 +3502,50 @@ const q: PromiseLike<number> = p;
 }
 
 #[test]
+fn compile_recursive_generic_signature_assignment_reports_only_tsc_direction() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        r#"
+interface I2<T> { p: T }
+declare var x: <T extends I2<T>>(z: T) => void;
+declare var y: <T extends I2<I2<T>>>(z: T) => void;
+x = y;
+y = x;
+"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.target = Some(crate::args::Target::Es2015);
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2322_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|diagnostic| diagnostic.message_text.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        1,
+        "Expected only y = x to report TS2322, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts2322_messages[0].contains(
+            "Type '<T extends I2<T>>(z: T) => void' is not assignable to type '<T extends I2<I2<T>>>(z: T) => void'"
+        ),
+        "Expected the y = x diagnostic to match TypeScript, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_constructor_parameters_rest_contextually_types_object_literal_methods() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

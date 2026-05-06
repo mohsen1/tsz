@@ -188,6 +188,49 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let source_has_constraint = source_tp.constraint.is_some();
                     let target_has_constraint = target_tp.constraint.is_some();
 
+                    let target_to_source = self
+                        .check_subtype(target_constraint, source_constraint)
+                        .is_true();
+                    let source_to_target = self
+                        .check_subtype(source_constraint, target_constraint)
+                        .is_true();
+                    let recursive_application_depth = |mut type_id: TypeId| {
+                        let mut base = None;
+                        let mut depth = 0;
+
+                        loop {
+                            match self.interner.lookup(type_id) {
+                                Some(TypeData::Application(app_id)) => {
+                                    let app = self.interner.type_application(app_id);
+                                    if app.args.len() != 1 {
+                                        return None;
+                                    }
+                                    if base.is_some_and(|base| base != app.base) {
+                                        return None;
+                                    }
+                                    base = Some(app.base);
+                                    depth += 1;
+                                    type_id = app.args[0];
+                                }
+                                Some(TypeData::TypeParameter(info) | TypeData::Infer(info))
+                                    if info.name == source_tp.name =>
+                                {
+                                    return base.map(|base| (base, depth));
+                                }
+                                _ => return None,
+                            }
+                        }
+                    };
+                    let source_recursive_depth = recursive_application_depth(source_constraint);
+                    let target_recursive_depth = recursive_application_depth(target_constraint);
+                    let source_wraps_target_recursive_constraint = source_recursive_depth
+                        .zip(target_recursive_depth)
+                        .is_some_and(
+                            |((source_base, source_depth), (target_base, target_depth))| {
+                                source_base == target_base && source_depth > target_depth
+                            },
+                        );
+
                     let source_is_stricter = if source_has_constraint && !target_has_constraint {
                         // Source has constraint, target doesn't → source is stricter
                         true
@@ -198,27 +241,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         // Both have constraints: check if source's is stricter
                         // If target's constraint is NOT assignable to source's constraint,
                         // then source is stricter
-                        !self
-                            .check_subtype(target_constraint, source_constraint)
-                            .is_true()
+                        !target_to_source
                     } else {
                         // Neither has constraint → equal
                         false
                     };
 
                     if source_is_stricter {
+                        if !mapped_constraint_sensitive && source_wraps_target_recursive_constraint
+                        {
+                            return true;
+                        }
                         return false; // Don't allow alpha-rename
                     }
 
                     // For mapped/indexed contexts, both directions must hold
                     // to preserve constraint information.
                     if mapped_constraint_sensitive {
-                        let target_to_source = self
-                            .check_subtype(target_constraint, source_constraint)
-                            .is_true();
-                        let source_to_target = self
-                            .check_subtype(source_constraint, target_constraint)
-                            .is_true();
                         target_to_source && source_to_target
                     } else {
                         true // Constraints are compatible, allow alpha-rename

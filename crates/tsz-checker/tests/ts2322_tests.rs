@@ -649,6 +649,35 @@ b16 = a16;
 }
 
 #[test]
+fn recursive_generic_signature_assignment_reports_only_tsc_direction() {
+    let source = r#"
+interface I2<T> { p: T }
+declare var x: <T extends I2<T>>(z: T) => void;
+declare var y: <T extends I2<I2<T>>>(z: T) => void;
+x = y;
+y = x;
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322_errors: Vec<_> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322_errors.len(),
+        1,
+        "Expected only the reverse recursive generic assignment to report TS2322, got: {ts2322_errors:?}"
+    );
+    assert!(
+        ts2322_errors[0].1.contains(
+            "Type '<T extends I2<T>>(z: T) => void' is not assignable to type '<T extends I2<I2<T>>>(z: T) => void'"
+        ),
+        "Expected the y = x diagnostic to match TypeScript, got: {ts2322_errors:?}"
+    );
+}
+
+#[test]
 fn generic_construct_signature_assignment_reports_expected_ts2322s() {
     let source = r#"
 type Base = { foo: string };

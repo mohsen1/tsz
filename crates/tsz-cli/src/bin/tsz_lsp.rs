@@ -685,15 +685,16 @@ impl LspServer {
         let mut index = 0;
 
         while index < bytes.len() {
-            if bytes[index] == b'%' && index + 2 < bytes.len() {
-                if let (Some(high), Some(low)) = (
+            if bytes[index] == b'%'
+                && index + 2 < bytes.len()
+                && let (Some(high), Some(low)) = (
                     Self::hex_digit_value(bytes[index + 1]),
                     Self::hex_digit_value(bytes[index + 2]),
-                ) {
-                    decoded.push((high << 4) | low);
-                    index += 3;
-                    continue;
-                }
+                )
+            {
+                decoded.push((high << 4) | low);
+                index += 3;
+                continue;
             }
 
             decoded.push(bytes[index]);
@@ -2864,92 +2865,6 @@ impl LspServer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn uri_to_file_name_decodes_percent_encoded_file_paths() {
-        assert_eq!(
-            LspServer::uri_to_file_name("file:///private/tmp/tsz%20lsp%20uri%20current"),
-            "/private/tmp/tsz lsp uri current"
-        );
-        assert_eq!(
-            LspServer::uri_to_file_name("file:///tmp/hash%23percent%25.ts"),
-            "/tmp/hash#percent%.ts"
-        );
-        assert_eq!(
-            LspServer::uri_to_file_name("file:///tmp/%C3%BC.ts"),
-            "/tmp/\u{00fc}.ts"
-        );
-    }
-
-    #[test]
-    fn uri_to_file_name_handles_localhost_authority() {
-        assert_eq!(
-            LspServer::uri_to_file_name("file://localhost/private/tmp/tsz%20lsp"),
-            "/private/tmp/tsz lsp"
-        );
-    }
-
-    #[test]
-    fn uri_to_file_name_handles_non_local_authority() {
-        assert_eq!(
-            LspServer::uri_to_file_name("file://server/share/a%20b.ts"),
-            "//server/share/a b.ts"
-        );
-    }
-
-    #[test]
-    fn uri_to_file_name_preserves_non_file_uris() {
-        assert_eq!(
-            LspServer::uri_to_file_name("untitled:Untitled-1"),
-            "untitled:Untitled-1"
-        );
-    }
-
-    #[test]
-    fn file_name_to_uri_percent_encodes_file_paths() {
-        assert_eq!(
-            LspServer::file_name_to_uri("/private/tmp/tsz lsp uri current/src/a#b%.ts"),
-            "file:///private/tmp/tsz%20lsp%20uri%20current/src/a%23b%25.ts"
-        );
-        assert_eq!(
-            LspServer::file_name_to_uri("/tmp/\u{00fc}.ts"),
-            "file:///tmp/%C3%BC.ts"
-        );
-        assert_eq!(
-            LspServer::file_name_to_uri("//server/share/a b%.ts"),
-            "file://server/share/a%20b%25.ts"
-        );
-    }
-
-    #[test]
-    fn uri_conversion_round_trips_encoded_absolute_paths() {
-        let file_name = "/private/tmp/tsz lsp uri current/src/a#b%.ts";
-        let uri = LspServer::file_name_to_uri(file_name);
-
-        assert_eq!(LspServer::uri_to_file_name(&uri), file_name);
-    }
-
-    #[test]
-    fn initialize_decodes_percent_encoded_workspace_root_uri() {
-        let mut server = LspServer::new();
-        let params = json!({
-            "rootUri": "file:///private/tmp/tsz%20lsp%20uri%20current",
-            "capabilities": {}
-        });
-
-        server.handle_initialize(Some(&params));
-
-        assert_eq!(
-            server.project.workspace_roots(),
-            ["/private/tmp/tsz lsp uri current".to_string()]
-        );
-    }
-}
-
 // =============================================================================
 // Main
 // =============================================================================
@@ -3051,5 +2966,91 @@ fn main() -> Result<()> {
             )?;
             stdout.flush()?;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn uri_to_file_name_decodes_percent_encoded_file_paths() {
+        assert_eq!(
+            LspServer::uri_to_file_name("file:///private/tmp/tsz%20lsp%20uri%20current"),
+            "/private/tmp/tsz lsp uri current"
+        );
+        assert_eq!(
+            LspServer::uri_to_file_name("file:///tmp/hash%23percent%25.ts"),
+            "/tmp/hash#percent%.ts"
+        );
+        assert_eq!(
+            LspServer::uri_to_file_name("file:///tmp/%C3%BC.ts"),
+            "/tmp/\u{00fc}.ts"
+        );
+    }
+
+    #[test]
+    fn uri_to_file_name_handles_localhost_authority() {
+        assert_eq!(
+            LspServer::uri_to_file_name("file://localhost/private/tmp/tsz%20lsp"),
+            "/private/tmp/tsz lsp"
+        );
+    }
+
+    #[test]
+    fn uri_to_file_name_handles_non_local_authority() {
+        assert_eq!(
+            LspServer::uri_to_file_name("file://server/share/a%20b.ts"),
+            "//server/share/a b.ts"
+        );
+    }
+
+    #[test]
+    fn uri_to_file_name_preserves_non_file_uris() {
+        assert_eq!(
+            LspServer::uri_to_file_name("untitled:Untitled-1"),
+            "untitled:Untitled-1"
+        );
+    }
+
+    #[test]
+    fn file_name_to_uri_percent_encodes_file_paths() {
+        assert_eq!(
+            LspServer::file_name_to_uri("/private/tmp/tsz lsp uri current/src/a#b%.ts"),
+            "file:///private/tmp/tsz%20lsp%20uri%20current/src/a%23b%25.ts"
+        );
+        assert_eq!(
+            LspServer::file_name_to_uri("/tmp/\u{00fc}.ts"),
+            "file:///tmp/%C3%BC.ts"
+        );
+        assert_eq!(
+            LspServer::file_name_to_uri("//server/share/a b%.ts"),
+            "file://server/share/a%20b%25.ts"
+        );
+    }
+
+    #[test]
+    fn uri_conversion_round_trips_encoded_absolute_paths() {
+        let file_name = "/private/tmp/tsz lsp uri current/src/a#b%.ts";
+        let uri = LspServer::file_name_to_uri(file_name);
+
+        assert_eq!(LspServer::uri_to_file_name(&uri), file_name);
+    }
+
+    #[test]
+    fn initialize_decodes_percent_encoded_workspace_root_uri() {
+        let mut server = LspServer::new();
+        let params = json!({
+            "rootUri": "file:///private/tmp/tsz%20lsp%20uri%20current",
+            "capabilities": {}
+        });
+
+        server.handle_initialize(Some(&params));
+
+        assert_eq!(
+            server.project.workspace_roots(),
+            ["/private/tmp/tsz lsp uri current".to_string()]
+        );
     }
 }
