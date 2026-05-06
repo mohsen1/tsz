@@ -947,7 +947,11 @@ impl ParserState {
                                     _ => {
                                         let saved_pos = *pos;
                                         let has_first = scan_regex_modifier_segment(
-                                            parser, ctx.emit, ctx.body, ctx.body_end, pos,
+                                            parser,
+                                            ctx.emit,
+                                            ctx.body,
+                                            ctx.body_end,
+                                            pos,
                                         );
 
                                         if has_first
@@ -972,10 +976,9 @@ impl ParserState {
                                             }
                                         }
 
-                                        let is_modifier_group =
-                                            has_first
-                                                && *pos < ctx.body_end
-                                                && ctx.body[*pos] == b':';
+                                        let is_modifier_group = has_first
+                                            && *pos < ctx.body_end
+                                            && ctx.body[*pos] == b':';
 
                                         if !is_modifier_group {
                                             *pos = saved_pos;
