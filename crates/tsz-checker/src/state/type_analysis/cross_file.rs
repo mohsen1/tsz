@@ -12,6 +12,10 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+thread_local! {
+    static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 pub(crate) const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
 pub(crate) const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
 pub(crate) const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
@@ -47,6 +51,18 @@ fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> O
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn enter_cross_arena_interface_delegation() {
+        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.set(c.get() + 1));
+    }
+
+    pub(crate) fn leave_cross_arena_interface_delegation() {
+        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
+    }
+
+    pub(crate) fn in_cross_arena_interface_delegation() -> bool {
+        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.get() > 0)
+    }
+
     fn resolve_cross_file_global_type_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
         let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
         let lib_binders = self.get_lib_binders();
@@ -1247,6 +1263,8 @@ impl<'a> CheckerState<'a> {
         // colliding cache entry from the caller's file.
         checker.ctx.symbol_types.remove(&sym_id);
         checker.ctx.symbol_instance_types.remove(&sym_id);
+        checker.ctx.symbol_to_def.borrow_mut().clear();
+        checker.ctx.def_to_symbol.borrow_mut().clear();
         for &id in &self.ctx.symbol_resolution_set {
             if id != sym_id {
                 checker.ctx.symbol_resolution_set.insert(id);
@@ -1264,7 +1282,9 @@ impl<'a> CheckerState<'a> {
 
         // Try compute_interface_type_from_declarations first (more direct),
         // fall back to get_type_of_symbol for non-pure-interface symbols.
+        Self::enter_cross_arena_interface_delegation();
         let mut result = checker.compute_interface_type_from_declarations(sym_id);
+        Self::leave_cross_arena_interface_delegation();
         if result == TypeId::ERROR {
             result = checker.get_type_of_symbol(sym_id);
         }
