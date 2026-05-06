@@ -1195,6 +1195,8 @@ mod array_like_constraint_helpers;
 mod callable_constraint_helpers;
 mod constraint_validation;
 mod infer_conditional_constraints;
+mod infer_conditional_helpers;
 mod instantiation_expression_constraints;
 mod mapped_constraint_helpers;
+mod recursive_heritage_constraint;
 mod symbol_declaration_helpers;
