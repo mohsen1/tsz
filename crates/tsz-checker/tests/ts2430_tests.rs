@@ -488,25 +488,30 @@ interface Child extends Parent {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_constructor_typed_property_with_outer_type_param_errors() {
     // Mirrors conformance cases like subtypingWithConstructSignatures6.ts where
     // the derived property uses an outer interface type parameter and the base
     // property uses its own generic constructor signature.
     let source = r#"
 interface Base {
+    make: new <T>() => T;
+    makeOptional: new <T>(x?: T) => T;
     a: new <T>(x: T) => T[];
 }
 
 interface Derived<T> extends Base {
+    make: new () => T;
+    makeOptional: new (x?: T) => T;
     a: new (x: T) => T[];
 }
 "#;
 
+    let diags = get_diagnostics(source);
     assert!(
-        has_error_with_code(source, 2430),
-        "Should emit TS2430 when a derived constructor-typed property narrows a base generic constructor property. Got: {:?}",
-        get_diagnostics(source)
+        diags.iter().any(|(code, message)| *code == 2430
+            && message.contains("incorrectly extends interface 'Base'")
+            && message.contains("Types of property 'make' are incompatible.")),
+        "Should emit TS2430 when derived constructor-typed properties narrow base generic constructor properties. Got: {diags:?}"
     );
 }
 

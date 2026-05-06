@@ -120,8 +120,19 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // TS1212/TS1213/TS1214: Reserved word used as parameter name in strict mode
-            if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
+            let has_recovery_error_after_name =
+                (self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty())
+                    && self.ctx.all_parse_error_positions.iter().any(|&pos| {
+                        pos >= name_node.end && pos <= param_node.end.max(name_node.end)
+                    });
+
+            // TS1212/TS1213/TS1214: Reserved word used as parameter name in strict mode.
+            // Suppress when parser recovery has already reported a syntax error inside
+            // this malformed parameter after the apparent name, e.g.
+            // `constructor(public @dec p: number)` where tsc reports only TS1005.
+            if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text)
+                && !has_recovery_error_after_name
+            {
                 if self.rest_parameter_name_is_recovery_artifact(param_idx, param.name) {
                     continue;
                 }
@@ -1379,7 +1390,12 @@ mod strict_parameter_name_tests {
 
 #[cfg(test)]
 mod binding_pattern_defaults_tests {
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::common::TypeInterner;
+    use crate::state::CheckerState;
     use crate::test_utils::{check_js_source_diagnostics, check_source_codes};
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
 
     /// Positive test: arrow function default correctly typed via contextual type.
     /// `v => v.toString()` returns string, matching `(x: number) => string`.
@@ -1563,6 +1579,51 @@ mod binding_pattern_defaults_tests {
             ts2339_count >= 3,
             "Constructor binding pattern with missing properties should \
              emit TS2339 for x1, x2, x3 (>=3 occurrences). Got codes: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn misplaced_decorator_after_parameter_property_modifier_suppresses_ts1213() {
+        let source = "declare var dec: any;
+             class C {
+                 constructor(public @dec p: number) {}
+             }";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let parse_diagnostics = parser.get_diagnostics().to_vec();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions {
+                experimental_decorators: true,
+                ..CheckerOptions::default()
+            },
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.ctx.has_parse_errors = !parse_diagnostics.is_empty();
+        checker.ctx.all_parse_error_positions =
+            parse_diagnostics.iter().map(|diag| diag.start).collect();
+        checker.check_source_file(root);
+
+        let codes: Vec<u32> = parse_diagnostics
+            .iter()
+            .map(|diag| diag.code)
+            .chain(checker.ctx.diagnostics.iter().map(|diag| diag.code))
+            .collect();
+        assert!(
+            codes.contains(&1005),
+            "Expected misplaced parameter decorator to keep TS1005, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&1213),
+            "Expected no TS1213 reserved-word cascade for recovered parameter, got: {codes:?}"
         );
     }
 }
