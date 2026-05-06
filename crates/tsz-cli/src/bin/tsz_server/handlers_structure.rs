@@ -16,6 +16,43 @@ pub(crate) struct InferredProjectInfoOptions {
     pub target: Option<String>,
     pub no_lib: bool,
 }
+
+struct CompileOnSaveProject {
+    config_path: String,
+    config_dir: std::path::PathBuf,
+    enabled: bool,
+    file_names: Vec<String>,
+    uses_out_file: bool,
+    out_dir: Option<String>,
+    module: ModuleKind,
+}
+
+impl CompileOnSaveProject {
+    fn output_path_for(&self, file: &str) -> std::path::PathBuf {
+        let input = std::path::Path::new(file);
+        let mut relative = input
+            .strip_prefix(&self.config_dir)
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|_| {
+                input
+                    .file_name()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from(file))
+            });
+        relative.set_extension("js");
+        if let Some(out_dir) = self.out_dir.as_deref() {
+            let out_dir = std::path::Path::new(out_dir);
+            let out_dir = if out_dir.is_absolute() {
+                out_dir.to_path_buf()
+            } else {
+                self.config_dir.join(out_dir)
+            };
+            out_dir.join(relative)
+        } else {
+            input.with_extension("js")
+        }
+    }
+}
 use tsz::lsp::code_actions::CodeActionProvider;
 use tsz::lsp::editor_decorations::inlay_hints::{InlayHintKind, InlayHintsProvider};
 use tsz::lsp::editor_ranges::folding::FoldingRangeProvider;
@@ -322,6 +359,57 @@ impl Server {
         )
     }
 
+    pub(crate) fn handle_compile_on_save_affected_file_list(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let project = self.compile_on_save_project(file)?;
+            if !project.enabled {
+                return Some(serde_json::json!([]));
+            }
+            Some(serde_json::json!([{
+                "projectFileName": project.config_path,
+                "fileNames": project.file_names,
+                "projectUsesOutFile": project.uses_out_file,
+            }]))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    pub(crate) fn handle_compile_on_save_emit_file(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let rich_response = request
+            .arguments
+            .get("richResponse")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let emitted = (|| -> Option<bool> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let project = self.compile_on_save_project(file)?;
+            if !project.enabled {
+                return Some(false);
+            }
+            self.emit_compile_on_save_file(file, &project).ok()?;
+            Some(true)
+        })()
+        .unwrap_or(false);
+        let body = if rich_response {
+            serde_json::json!({
+                "emitSkipped": !emitted,
+                "diagnostics": [],
+            })
+        } else {
+            serde_json::json!(emitted)
+        };
+        self.stub_response(seq, request, Some(body))
+    }
+
     fn emit_output_module_kind(&self) -> ModuleKind {
         self.inferred_check_options
             .module
@@ -345,6 +433,93 @@ impl Server {
                 _ => ModuleKind::ESNext,
             })
             .unwrap_or(ModuleKind::ESNext)
+    }
+
+    fn module_kind_from_config(config_json: &serde_json::Value) -> ModuleKind {
+        config_json
+            .get("compilerOptions")
+            .and_then(|opts| opts.get("module"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_ascii_lowercase)
+            .map(|module| match module.as_str() {
+                "none" => ModuleKind::None,
+                "commonjs" => ModuleKind::CommonJS,
+                "amd" => ModuleKind::AMD,
+                "umd" => ModuleKind::UMD,
+                "system" => ModuleKind::System,
+                "es2015" | "es6" => ModuleKind::ES2015,
+                "es2020" => ModuleKind::ES2020,
+                "es2022" => ModuleKind::ES2022,
+                "esnext" => ModuleKind::ESNext,
+                "node16" => ModuleKind::Node16,
+                "node18" => ModuleKind::Node18,
+                "node20" => ModuleKind::Node20,
+                "nodenext" => ModuleKind::NodeNext,
+                "preserve" => ModuleKind::Preserve,
+                _ => ModuleKind::ESNext,
+            })
+            .unwrap_or(ModuleKind::ESNext)
+    }
+
+    fn compile_on_save_project(&self, file: &str) -> Option<CompileOnSaveProject> {
+        let config_path = self.find_project_config_file(file)?;
+        let config_json = self.read_config_json(&config_path)?;
+        let enabled = config_json
+            .get("compileOnSave")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let compiler_options = config_json.get("compilerOptions");
+        let uses_out_file = compiler_options
+            .and_then(|opts| opts.get("outFile").or_else(|| opts.get("out")))
+            .and_then(serde_json::Value::as_str)
+            .is_some();
+        let out_dir = compiler_options
+            .and_then(|opts| opts.get("outDir"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let config_dir = std::path::Path::new(&config_path)
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("/"));
+        let (_, _, mut file_names) = self.parse_tsconfig_for_project_info(&config_path);
+        if file_names.is_empty() {
+            file_names.push(Self::normalize_path_string(std::path::Path::new(file)));
+        }
+        Some(CompileOnSaveProject {
+            config_path,
+            config_dir,
+            enabled,
+            file_names,
+            uses_out_file,
+            out_dir,
+            module: Self::module_kind_from_config(&config_json),
+        })
+    }
+
+    fn emit_compile_on_save_file(
+        &self,
+        file: &str,
+        project: &CompileOnSaveProject,
+    ) -> std::io::Result<()> {
+        let (arena, _binder, root, source_text) = self
+            .parse_and_bind_file(file)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, file.to_string()))?;
+        let mut printer = Printer::with_source_text_len_and_options(
+            &arena,
+            source_text.len(),
+            PrinterOptions {
+                module: project.module,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(&source_text);
+        printer.emit(root);
+        let output = printer.take_output();
+        let out_path = project.output_path_for(file);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(out_path, output)
     }
 
     pub(crate) fn handle_get_applicable_refactors(
