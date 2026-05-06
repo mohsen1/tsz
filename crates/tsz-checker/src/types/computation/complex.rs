@@ -1598,13 +1598,17 @@ impl<'a> CheckerState<'a> {
             }
             CallResult::NoOverloadMatch {
                 failures,
-                fallback_return: _,
+                fallback_return,
                 ..
             } => {
                 if !self.should_suppress_weak_key_no_overload(new_expr.expression, args) {
                     self.error_no_overload_matches_at(idx, &failures);
                 }
-                TypeId::ERROR
+                if fallback_return != TypeId::ERROR {
+                    query::instantiate_type_params_to_constraints(self.ctx.types, fallback_return)
+                } else {
+                    TypeId::ERROR
+                }
             }
             CallResult::ThisTypeMismatch {
                 expected_this,

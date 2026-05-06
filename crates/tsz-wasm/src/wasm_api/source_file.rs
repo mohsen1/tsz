@@ -7,6 +7,7 @@ use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
 use tsz::parser::syntax_kind_ext;
 use tsz::parser::{NodeArena, NodeIndex, ParserState};
+use tsz_common::file_extensions::is_ts_declaration_file_name;
 
 use super::enums::{ScriptKind, ScriptTarget};
 
@@ -40,7 +41,7 @@ impl TsSourceFile {
     #[wasm_bindgen(constructor)]
     pub fn new(file_name: String, source_text: String) -> Self {
         let script_kind = get_script_kind_from_file_name(&file_name);
-        let is_declaration_file = file_name.ends_with(".d.ts");
+        let is_declaration_file = is_ts_declaration_file_name(&file_name);
 
         Self {
             file_name,

@@ -2,6 +2,7 @@
 use crate::parser::test_fixture::parse_source;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::position::LineMap;
 use tsz_scanner::SyntaxKind;
 
 #[test]
@@ -89,6 +90,59 @@ fn parse_namespace_import_with_while_yields_to_while_statement_recovery() {
             .iter()
             .any(|d| d.code == TS1005 && d.start == 23 && d.message.contains("')'")),
         "expected TS1005 `')' expected.` at `\"foo\"` (col 24), got {diags:?}"
+    );
+}
+
+#[test]
+fn parse_namespace_import_reserved_statement_starters_yield_to_statement_recovery() {
+    let (parser, root) = parse_source(
+        "import * as do from \"m\";\nimport * as try from \"m\";\nimport * as return from \"m\";\nconst after = 1;\n",
+    );
+    let diags = parser.get_diagnostics();
+
+    const TS1359: u32 =
+        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE;
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+
+    for word in ["do", "try", "return"] {
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == TS1359 && d.message.contains(word)),
+            "expected TS1359 for `{word}`, got {diags:?}"
+        );
+    }
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.message.contains("'while'")),
+        "expected `do` recovery to emit TS1005 `'while' expected`, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.message.contains("'{'")),
+        "expected `try` recovery to emit TS1005 `'{{' expected`, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.message.contains("';'")),
+        "expected `return` recovery to emit TS1005 `';' expected`, got {diags:?}"
+    );
+
+    let sf = parser.get_arena().get_source_file_at(root).unwrap();
+    let kinds: Vec<u16> = sf
+        .statements
+        .nodes
+        .iter()
+        .filter_map(|idx| parser.get_arena().get(*idx).map(|node| node.kind))
+        .collect();
+    assert!(
+        kinds.contains(&syntax_kind_ext::DO_STATEMENT)
+            && kinds.contains(&syntax_kind_ext::TRY_STATEMENT)
+            && kinds.contains(&syntax_kind_ext::RETURN_STATEMENT),
+        "reserved namespace import names should be re-parsed as statements, got statement kinds {kinds:?}"
     );
 }
 
@@ -942,5 +996,63 @@ fn parse_for_with_var_decl_init_unterminated_emits_comma_expected_at_close_paren
     assert!(
         semi_at_paren,
         "`for (a) {{}}` (expression init) should still emit `';' expected.` at `)`; got {diags:?}"
+    );
+}
+
+#[test]
+fn parse_for_typed_let_header_recovers_through_block_like_tsc() {
+    let source = "for (let x: y) {\n    z(x);\n}\n";
+    let (parser, _root) = parse_source(source);
+    let line_map = LineMap::build(source);
+
+    let fingerprints: Vec<(u32, u32, u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.clone(),
+            )
+        })
+        .collect();
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            1,
+            14,
+            "',' expected.".to_string()
+        )),
+        "expected TS1005 at the malformed header close, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            2,
+            6,
+            "',' expected.".to_string()
+        )),
+        "expected TS1005 at the statement recovered as a declaration tail, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            3,
+            1,
+            "Expression expected.".to_string()
+        )),
+        "expected TS1109 at the block close, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints.iter().any(|(code, line, col, message)| {
+            *code == diagnostic_codes::EXPRESSION_EXPECTED
+                && *line == 1
+                && *col == 14
+                && message == "Expression expected."
+        }),
+        "should not emit the old TS1109 at the header close, got {fingerprints:?}"
     );
 }

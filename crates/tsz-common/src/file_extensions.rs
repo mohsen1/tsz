@@ -79,11 +79,25 @@ pub fn strip_known_extension(path: &str) -> &str {
 pub fn is_ts_declaration_file(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| {
-            TS_DECLARATION_EXTENSIONS
-                .iter()
-                .any(|ext| name.ends_with(ext))
-        })
+        .is_some_and(is_ts_declaration_file_name)
+}
+
+/// Return true when `name` is a TypeScript declaration file name.
+#[must_use]
+pub fn is_ts_declaration_file_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    let name = name.rsplit('/').next().unwrap_or(&name);
+    let name = name.rsplit('\\').next().unwrap_or(name);
+
+    if TS_DECLARATION_EXTENSIONS
+        .iter()
+        .any(|ext| name.ends_with(ext))
+    {
+        return true;
+    }
+
+    // Arbitrary extension declaration files: .d.<ext>.ts (for example .d.css.ts).
+    name.ends_with(".ts") && name.contains(".d.")
 }
 
 /// Return true when `path` has a TypeScript source extension, excluding
@@ -256,6 +270,10 @@ mod tests {
         assert!(is_ts_source_file(Path::new("index.d.tsx")));
         assert!(!is_ts_source_file(Path::new("index.d.mts")));
         assert!(is_ts_declaration_file(Path::new("index.d.cts")));
+        assert!(is_ts_declaration_file(Path::new("style.d.css.ts")));
+        assert!(is_ts_declaration_file(Path::new("INDEX.D.MTS")));
+        assert!(!is_ts_declaration_file(Path::new("style.css.ts")));
+        assert!(!is_ts_declaration_file_name("foo.d/bar.ts"));
         assert!(!is_ts_declaration_file(Path::new("index.d.tsx")));
         assert!(is_js_file(Path::new("index.cjs")));
         assert!(is_json_file(Path::new("package.json")));

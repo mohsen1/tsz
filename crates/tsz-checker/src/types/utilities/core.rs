@@ -1036,6 +1036,14 @@ impl<'a> CheckerState<'a> {
 
             let evaluated = if should_preserve_contextual_param_type(self.ctx.types, resolved) {
                 resolved
+            } else if crate::query_boundaries::common::type_param_info(self.ctx.types, resolved)
+                .is_some()
+            {
+                // Preserve type parameters that appear inside contextual callback
+                // signatures. Collapsing them to constraints here loses outer
+                // generic identity, e.g. ProxyHandler<T> callback targets become
+                // Function when passed through a generic identity wrapper.
+                resolved
             } else {
                 self.evaluate_type_with_env(resolved)
             };

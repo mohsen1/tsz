@@ -1138,6 +1138,18 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
+            let mut rest = rest.trim();
+            if let Some((constraint, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest)
+                && let Some((name, remaining)) = Self::take_jsdoc_template_name(name_rest)
+            {
+                let constraint = Self::normalize_jsdoc_type_text(constraint, false);
+                let name_key = name.to_string();
+                if seen.insert(name_key) {
+                    params.push(format!("{name} extends {constraint}"));
+                }
+                rest = remaining;
+            }
+
             for name in rest
                 .split([',', ' ', '\t'])
                 .map(str::trim)
@@ -1151,6 +1163,20 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         params
+    }
+
+    fn take_jsdoc_template_name(text: &str) -> Option<(&str, &str)> {
+        let text = text.trim_start_matches([',', ' ', '\t']);
+        if text.is_empty() {
+            return None;
+        }
+
+        let end = text.find([',', ' ', '\t']).unwrap_or(text.len());
+        let name = text[..end].trim();
+        if name.is_empty() {
+            return None;
+        }
+        Some((name, &text[end..]))
     }
 
     pub(in crate::declaration_emitter) fn parse_jsdoc_typedef_alias(

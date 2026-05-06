@@ -42,6 +42,10 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         "es2015.collection.d.ts",
         "es2015.iterable.d.ts",
         "es2015.promise.d.ts",
+        "es2015.proxy.d.ts",
+        "es2015.reflect.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
     ];
 
     let mut lib_files = Vec::new();
@@ -171,6 +175,64 @@ f([c1, c2], (value1, value2) => {
     assert!(
         ts2345_errors.is_empty(),
         "Mapped tuple rest spread should not produce false TS2345, got: {ts2345_errors:?}"
+    );
+}
+
+#[test]
+fn proxy_handler_contextual_return_union_does_not_report_outer_ts2322() {
+    let source = r#"
+declare function deprecate<T extends Function>(
+  fn: T,
+  msg: string,
+  code?: string,
+): T;
+
+const soonFrozenObjectDeprecation = <T extends object>(
+  obj: T,
+  name: string,
+  code: string,
+  note = "",
+): T => {
+  const message = `${name} will be frozen in future, all modifications are deprecated.${
+    note && `\n${note}`
+  }`;
+  return new Proxy(obj, {
+    set: deprecate(
+      (target, property, value, receiver) =>
+        Reflect.set(target, property, value, receiver),
+      message,
+      code,
+    ),
+    defineProperty: deprecate(
+      (target, property, descriptor) =>
+        Reflect.defineProperty(target, property, descriptor),
+      message,
+      code,
+    ),
+    deleteProperty: deprecate(
+      (target, property) => Reflect.deleteProperty(target, property),
+      message,
+      code,
+    ),
+    setPrototypeOf: deprecate(
+      (target, proto) => Reflect.setPrototypeOf(target, proto),
+      message,
+      code,
+    ),
+  });
+};
+"#;
+    let diagnostics = check_with_libs(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Proxy handler contextual return fixture should not emit diagnostics, got: {diagnostics:#?}"
     );
 }
 

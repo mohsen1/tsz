@@ -1432,25 +1432,24 @@ impl<'a> CheckerState<'a> {
         // We must skip @returns tags that appear after @callback or @typedef, since
         // those tags create nested type definitions whose @returns belong to the
         // callback/typedef, not to the constructor itself.
-        let nested_scope_start = ["@callback", "@typedef"]
+        let nested_scope_start = ["callback", "typedef"]
             .iter()
-            .filter_map(|t| raw_comment.find(t))
+            .filter_map(|t| Self::jsdoc_tag_offset(raw_comment, t))
             .min();
 
-        for tag in ["@returns", "@return"] {
-            if let Some(tag_offset) = raw_comment.find(tag) {
-                // Skip if this @returns belongs to a @callback/@typedef block
+        for tag in ["returns", "return"] {
+            if let Some(tag_offset) = Self::jsdoc_tag_offset(raw_comment, tag) {
+                let tag_len = 1 + tag.len();
                 if let Some(scope_start) = nested_scope_start
                     && tag_offset > scope_start
                 {
                     continue;
                 }
-                let rest = &raw_comment[tag_offset + tag.len()..];
+                let rest = &raw_comment[tag_offset + tag_len..];
                 let trimmed = rest.trim_start();
                 if trimmed.starts_with('{') {
-                    // tsc points one past the `{` of the type annotation
                     let ws_len = rest.len() - trimmed.len();
-                    let error_offset = tag_offset + tag.len() + ws_len + 1;
+                    let error_offset = tag_offset + tag_len + ws_len + 1;
                     let abs_pos = comment_pos + error_offset as u32;
                     self.ctx.error(
                         abs_pos,
