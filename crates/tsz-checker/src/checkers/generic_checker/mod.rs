@@ -534,7 +534,6 @@ impl<'a> CheckerState<'a> {
             // None = multiple overloads match or not a callable type; skip validation.
             return CallTypeArgumentValidation::default();
         };
-
         let max_expected = type_params.len();
         let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
 
@@ -861,8 +860,20 @@ impl<'a> CheckerState<'a> {
             // like `WeakKeyTypes[keyof WeakKeyTypes]` (indexed access types) need
             // to be reduced to their concrete form (e.g., `object | symbol`) for
             // the assignability check to work correctly.
-            let evaluated_constraint = self.evaluate_type_for_assignability(constraint);
-            if self.is_assignable_to(type_arg, evaluated_constraint) {
+            let constraint_name = self.format_type_diagnostic(constraint);
+            let resolved_constraint = self
+                .is_well_known_lib_type_name(&constraint_name)
+                .then(|| self.resolve_lib_type_by_name(&constraint_name))
+                .flatten()
+                .unwrap_or(constraint);
+            let evaluated_constraint = self.evaluate_type_for_assignability(resolved_constraint);
+            let constraint_for_check =
+                if evaluated_constraint == TypeId::ANY && resolved_constraint != TypeId::ANY {
+                    resolved_constraint
+                } else {
+                    evaluated_constraint
+                };
+            if self.is_assignable_to(type_arg, constraint_for_check) {
                 continue;
             }
             let error_anchor = type_args_list

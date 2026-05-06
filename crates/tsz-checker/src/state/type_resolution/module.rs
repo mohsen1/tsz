@@ -308,6 +308,13 @@ impl<'a> CheckerState<'a> {
                 return Some(prop_type);
             }
             let mut result = self.type_reference_symbol_type(sym_id);
+            if matches!(result, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                && self.ctx.has_lib_loaded()
+                && self.is_well_known_lib_type_name(name)
+                && let Some(lib_type) = self.resolve_lib_type_by_name(name)
+            {
+                result = lib_type;
+            }
             if let Some(module_specifier) = self.resolve_named_import_module_for_local_name(name) {
                 result = self.apply_module_augmentations(&module_specifier, name, result);
                 // In type-reference position, a class name means the instance

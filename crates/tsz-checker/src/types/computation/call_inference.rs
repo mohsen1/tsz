@@ -195,6 +195,73 @@ impl<'a> CheckerState<'a> {
         widened
     }
 
+    fn fill_unresolved_contextual_substitution_from_constraints(
+        &mut self,
+        shape: &FunctionShape,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> crate::query_boundaries::common::TypeSubstitution {
+        let mut filled = substitution.clone();
+
+        for tp in &shape.type_params {
+            let current = filled.get(tp.name);
+            let unresolved = current.is_none_or(|mapped| {
+                mapped == TypeId::UNKNOWN
+                    || mapped == TypeId::ERROR
+                    || common::contains_infer_types(self.ctx.types, mapped)
+                    || common::contains_type_parameters(self.ctx.types, mapped)
+            });
+
+            let Some(fallback) = tp.default.or(tp.constraint) else {
+                continue;
+            };
+            let instantiated = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                fallback,
+                &filled,
+            );
+            let fallback_name = self.format_type_diagnostic(instantiated);
+            let fallback_is_nominal_lib_object =
+                self.is_nominal_lib_object_type_name(&fallback_name);
+            if !fallback_is_nominal_lib_object {
+                continue;
+            }
+            let resolved_fallback = self
+                .is_well_known_lib_type_name(&fallback_name)
+                .then(|| self.resolve_lib_type_by_name(&fallback_name))
+                .flatten()
+                .unwrap_or(instantiated);
+            let evaluated = self.evaluate_type_with_env(resolved_fallback);
+            let contextual_fallback =
+                if evaluated == TypeId::ANY && resolved_fallback != TypeId::ANY {
+                    resolved_fallback
+                } else {
+                    evaluated
+                };
+            let current_satisfies_fallback = current.is_none_or(|mapped| {
+                let primitive_fails_nominal_lib_object =
+                    common::is_primitive_type(self.ctx.types, mapped)
+                        && fallback_is_nominal_lib_object;
+                !primitive_fails_nominal_lib_object
+                    && self.is_assignable_to(mapped, contextual_fallback)
+            });
+            if !unresolved && current_satisfies_fallback {
+                continue;
+            }
+            if contextual_fallback == TypeId::UNKNOWN
+                || contextual_fallback == TypeId::ERROR
+                || common::contains_infer_types(self.ctx.types, contextual_fallback)
+                || (!fallback_is_nominal_lib_object
+                    && common::contains_type_parameters(self.ctx.types, contextual_fallback))
+            {
+                continue;
+            }
+
+            filled.insert(tp.name, contextual_fallback);
+        }
+
+        filled
+    }
+
     pub(crate) fn direct_round1_literal_conflict_type_params(
         &mut self,
         shape: &FunctionShape,
@@ -1947,12 +2014,20 @@ impl<'a> CheckerState<'a> {
                 round2_param
             };
             let ctx_type = if let Some((param_type, is_rest_param)) = round2_param {
+                let contextual_substitution = if is_sensitive {
+                    self.fill_unresolved_contextual_substitution_from_constraints(
+                        shape,
+                        current_substitution,
+                    )
+                } else {
+                    current_substitution.clone()
+                };
                 let fresh_instantiated_from_shape =
                     shape_round2_param.map(|(shape_param_type, _)| {
                         crate::query_boundaries::common::instantiate_type(
                             self.ctx.types,
                             shape_param_type,
-                            current_substitution,
+                            &contextual_substitution,
                         )
                     });
                 let round1_has_unknown =
@@ -1994,7 +2069,7 @@ impl<'a> CheckerState<'a> {
                         && self
                             .unresolved_contextual_substitution_target(
                                 &tp_info,
-                                current_substitution,
+                                &contextual_substitution,
                             )
                             .is_some()
                     {
@@ -2002,7 +2077,7 @@ impl<'a> CheckerState<'a> {
                             .instantiate_contextual_constraint_without_unresolved_self(
                                 orig,
                                 &tp_info,
-                                current_substitution,
+                                &contextual_substitution,
                             ) {
                             Some(instantiated_constraint) => instantiated_constraint,
                             None => param_type,
@@ -2039,34 +2114,34 @@ impl<'a> CheckerState<'a> {
                         if self
                             .unresolved_contextual_substitution_target(
                                 &tp_info,
-                                current_substitution,
+                                &contextual_substitution,
                             )
                             .is_some()
                         {
                             self.instantiate_contextual_constraint_without_unresolved_self(
                                 base_param_type,
                                 &tp_info,
-                                current_substitution,
+                                &contextual_substitution,
                             )
                             .unwrap_or_else(|| {
                                 crate::query_boundaries::common::instantiate_type(
                                     self.ctx.types,
                                     base_param_type,
-                                    current_substitution,
+                                    &contextual_substitution,
                                 )
                             })
                         } else {
                             crate::query_boundaries::common::instantiate_type(
                                 self.ctx.types,
                                 base_param_type,
-                                current_substitution,
+                                &contextual_substitution,
                             )
                         }
                     } else {
                         crate::query_boundaries::common::instantiate_type(
                             self.ctx.types,
                             base_param_type,
-                            current_substitution,
+                            &contextual_substitution,
                         )
                     };
                     if let Some(tp_info) = common::type_param_info(self.ctx.types, inst) {
@@ -2074,7 +2149,7 @@ impl<'a> CheckerState<'a> {
                             .instantiate_contextual_constraint_without_unresolved_self(
                                 inst,
                                 &tp_info,
-                                current_substitution,
+                                &contextual_substitution,
                             ) {
                             Some(instantiated_constraint) => instantiated_constraint,
                             None => inst,
@@ -2106,7 +2181,7 @@ impl<'a> CheckerState<'a> {
                     self.instantiate_remaining_contextual_type_params(
                         evaluated,
                         &shape.type_params,
-                        current_substitution,
+                        &contextual_substitution,
                     )
                 } else {
                     evaluated
