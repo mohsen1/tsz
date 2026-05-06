@@ -1437,6 +1437,7 @@ impl<'a> CheckerState<'a> {
         // Normalize `{prop: type}` to `{ prop: type; }` — tsc always adds
         // spaces inside braces and trailing semicolons for inline object types.
         // Handle both standalone `{...}` and intersection parts `& {...}`.
+        formatted = Self::normalize_annotation_literal_property_display_text(&formatted);
         formatted = Self::normalize_inline_object_braces(&formatted);
         // Prefer Array<T> shorthand conversion in annotation text, but preserve
         // generic constraint surface syntax (`<T extends Array<U>>`) where tsc

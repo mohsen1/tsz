@@ -71,10 +71,14 @@ impl<'a> CheckerState<'a> {
             source_str = self.rewrite_source_display_for_non_literal_target_assignability(
                 source, target, source_str,
             );
-            let has_declared_target_annotation = self
-                .assignment_target_expression(idx)
-                .and_then(|expr| self.declared_type_annotation_text_for_expression(expr))
-                .is_some();
+            let has_declared_target_annotation =
+                self.assignment_target_expression(idx).is_some_and(|expr| {
+                    self.declared_type_annotation_text_for_expression(expr)
+                        .is_some()
+                        || self
+                            .declared_intersection_annotation_display_for_expression(expr)
+                            .is_some()
+                });
             if !has_declared_target_annotation {
                 target_str =
                     self.rewrite_target_display_for_non_literal_assignability(target, target_str);
