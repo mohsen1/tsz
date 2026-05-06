@@ -424,7 +424,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 Ok(content) => {
                     for line in content.lines() {
                         let trimmed = line.trim();
-                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                        if !trimmed.is_empty() {
                             for part in split_response_line(trimmed) {
                                 expanded.push(OsString::from(part));
                             }
