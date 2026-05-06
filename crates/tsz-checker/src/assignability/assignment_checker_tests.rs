@@ -842,6 +842,45 @@ let tup: [number, number, number] = [1, 2, 3, "string"];
 }
 
 #[test]
+fn array_literal_tuple_assignment_ignores_later_tuple_length_alias_display() {
+    let source = r#"
+let tup: [number, string];
+tup = [1];
+type B = Pick<[number], "length">;
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+
+    assert!(
+        diag.message_text
+            .contains("Type '[number]' is not assignable to type '[number, string]'."),
+        "TS2322 should display the array literal source as a tuple, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Type 'B' is not assignable"),
+        "later tuple-length aliases must not repaint array literal source display, got: {diag:?}"
+    );
+}
+
+#[test]
+fn optional_tuple_length_assignment_accepts_minimum_length_literal() {
+    let source = r#"
+declare const tuple: [number?];
+tuple.length = 0;
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "`[number?]` length should be `0 | 1`, so assigning 0 must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn generic_default_initializer_widens_numeric_literals() {
     let source = r#"
 function foo3<T extends Number>(x: T = 1) { }

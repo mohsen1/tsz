@@ -1402,6 +1402,15 @@ impl<'a> CheckerState<'a> {
                 object_display,
             );
         }
+        if !source_from_annotation
+            && let Some(expr_idx) = self
+                .direct_diagnostic_source_expression(anchor_idx)
+                .or_else(|| self.assignment_source_expression(anchor_idx))
+            && let Some(tuple_display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+        {
+            source_str = tuple_display;
+        }
         if self
             .array_literal_element_source_widening_required_for_display(anchor_idx, source, target)
         {
