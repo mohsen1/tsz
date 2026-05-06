@@ -908,18 +908,66 @@ impl<'a> CheckerState<'a> {
         let inner = raw_name.strip_prefix('[')?.strip_suffix(']')?.trim();
         let colon_idx = Self::find_top_level_char(inner, ':')?;
         let param_name = inner[..colon_idx].trim();
-        let key_type = self.resolve_jsdoc_type_str(inner[colon_idx + 1..].trim())?;
-        if key_type != TypeId::STRING && key_type != TypeId::NUMBER && key_type != TypeId::SYMBOL {
-            return None;
-        }
+        let key_type_expr = inner[colon_idx + 1..].trim();
+        let resolved_key_type = self.resolve_jsdoc_type_str(key_type_expr);
+        let key_type = match resolved_key_type {
+            Some(key_type @ (TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL)) => key_type,
+            _ => {
+                self.emit_jsdoc_index_signature_diagnostic_once(
+                    self.ctx.jsdoc_typedef_anchor_pos.get(),
+                    raw_name.len() as u32,
+                    crate::diagnostics::diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                    crate::diagnostics::diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                );
+                if resolved_key_type.is_none() && Self::is_bare_jsdoc_identifier(key_type_expr) {
+                    let message = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::CANNOT_FIND_NAME,
+                        &[key_type_expr],
+                    );
+                    self.emit_jsdoc_index_signature_diagnostic_once(
+                        self.ctx.jsdoc_typedef_anchor_pos.get(),
+                        key_type_expr.len() as u32,
+                        &message,
+                        crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                    );
+                }
+                TypeId::STRING
+            }
+        };
 
-        let value_type = self.resolve_jsdoc_type_str(type_str)?;
+        let value_type = self.resolve_jsdoc_type_str(type_str).unwrap_or(TypeId::ANY);
         Some(IndexSignature {
             key_type,
             value_type,
             readonly,
             param_name: (!param_name.is_empty()).then(|| self.ctx.types.intern_string(param_name)),
         })
+    }
+
+    fn emit_jsdoc_index_signature_diagnostic_once(
+        &mut self,
+        start: u32,
+        length: u32,
+        message: &str,
+        code: u32,
+    ) {
+        let already_reported = self
+            .ctx
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == code && diag.start == start && diag.length == length);
+        if !already_reported {
+            self.error_at_position(start, length, message, code);
+        }
+    }
+
+    fn is_bare_jsdoc_identifier(expr: &str) -> bool {
+        let mut chars = expr.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first.is_ascii_alphabetic() || first == '_' || first == '$')
+            && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
     }
 
     fn strip_jsdoc_readonly_modifier(raw_name: &str) -> Option<&str> {

@@ -1794,9 +1794,14 @@ impl<'a> Printer<'a> {
                 // Check value-level usage: `import x = require("m")` where
                 // `x` is only used in type positions should not be included in
                 // AMD deps (tsc elides these).
-                if !is_jsx_factory
-                    && !self.import_equals_has_value_usage_after_node(stmt_node, import_decl)
-                {
+                let has_value_usage = self
+                    .import_equals_has_value_usage_after_node(stmt_node, import_decl)
+                    || self.import_equals_has_value_usage_through_namespace_alias_after_node(
+                        stmt_idx,
+                        import_decl,
+                        source,
+                    );
+                if !is_jsx_factory && !has_value_usage {
                     if let Some(spec) =
                         self.system_module_specifier_text(import_decl.module_specifier)
                     {

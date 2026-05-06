@@ -3818,6 +3818,15 @@ impl<'a> DeclarationEmitter<'a> {
                         ),
                     );
                 }
+                if Self::type_text_contains_mapped_type_literal(&type_text) {
+                    self.preserve_literal_mapped_return_type_substitutions(
+                        source_arena,
+                        callable.parameters,
+                        call,
+                        &type_param_names,
+                        &mut type_param_substitutions,
+                    );
+                }
             }
             for (name_text, fallback_text) in &type_param_fallbacks {
                 if type_param_substitutions
@@ -3952,6 +3961,86 @@ impl<'a> DeclarationEmitter<'a> {
             }
             Some(type_text)
         })
+    }
+
+    fn preserve_literal_mapped_return_type_substitutions(
+        &self,
+        source_arena: &NodeArena,
+        parameters: &NodeList,
+        call: &tsz_parser::parser::node::CallExprData,
+        type_param_names: &[String],
+        substitutions: &mut Vec<(String, String)>,
+    ) {
+        let Some(args) = call.arguments.as_ref() else {
+            return;
+        };
+
+        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_type_text) = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+            else {
+                continue;
+            };
+            let param_type_text = param_type_text.trim();
+            if !type_param_names
+                .iter()
+                .any(|name| name.as_str() == param_type_text)
+            {
+                continue;
+            }
+            let Some(substitution_text) = self
+                .enclosing_parameter_type_annotation_text_for_identifier(arg_idx)
+                .or_else(|| self.reference_declared_type_annotation_text(arg_idx))
+                .filter(|text| Self::simple_type_reference_name(text).is_some())
+                .or_else(|| self.const_literal_initializer_text(arg_idx))
+            else {
+                continue;
+            };
+            if let Some((_, existing)) = substitutions
+                .iter_mut()
+                .find(|(name, _)| name.as_str() == param_type_text)
+            {
+                *existing = substitution_text;
+            } else {
+                substitutions.push((param_type_text.to_string(), substitution_text));
+            }
+        }
+    }
+
+    fn enclosing_parameter_type_annotation_text_for_identifier(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        let arg_name = self.get_identifier_text(arg_idx)?;
+        let mut current = arg_idx;
+        for _ in 0..32 {
+            let parent_idx = self.arena.parent_of(current)?;
+            let parent_node = self.arena.get(parent_idx)?;
+            if let Some(func) = self.arena.get_function(parent_node) {
+                for &param_idx in &func.parameters.nodes {
+                    let param_node = self.arena.get(param_idx)?;
+                    let param = self.arena.get_parameter(param_node)?;
+                    if self.get_identifier_text(param.name).as_deref() == Some(arg_name.as_str()) {
+                        return self
+                            .type_annotation_text_from_arena_node(self.arena, param.type_annotation)
+                            .or_else(|| {
+                                self.source_slice_from_arena(self.arena, param.type_annotation)
+                            })
+                            .map(|text| text.trim().to_string());
+                    }
+                }
+                return None;
+            }
+            current = parent_idx;
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn imported_static_method_declared_return_type_text(
@@ -5451,8 +5540,25 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let ident = self.get_identifier_text(expr_idx)?;
         let binder = self.binder?;
-        let sym_id = self.resolve_identifier_symbol(expr_idx, &ident)?;
+        let no_libs: &[Arc<BinderState>] = &[];
+        let sym_id = binder
+            .get_node_symbol(expr_idx)
+            .filter(|&candidate| self.symbol_is_constructor_value(candidate))
+            .or_else(|| {
+                binder.resolve_name_with_filter(
+                    &ident,
+                    self.arena,
+                    expr_idx,
+                    no_libs,
+                    |candidate| self.symbol_is_constructor_value(candidate),
+                )
+            })
+            .or_else(|| self.resolve_identifier_symbol(expr_idx, &ident))?;
         let symbol = binder.symbols.get(sym_id)?;
+
+        if self.constructor_symbol_requires_global_this(sym_id, &ident, expr_idx) {
+            return Some(format!("globalThis.{ident}"));
+        }
 
         for decl_idx in symbol.declarations.iter().copied() {
             let decl_node = self.arena.get(decl_idx)?;
@@ -5474,6 +5580,43 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(ident)
+    }
+
+    fn symbol_is_constructor_value(&self, sym_id: SymbolId) -> bool {
+        self.binder
+            .and_then(|binder| binder.symbols.get(sym_id))
+            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS))
+    }
+
+    fn constructor_symbol_requires_global_this(
+        &self,
+        sym_id: SymbolId,
+        name: &str,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        if !Self::is_unquoted_property_name(name)
+            || self.resolve_symbol_module_path(sym_id).is_some()
+        {
+            return false;
+        }
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if symbol.parent != SymbolId::NONE || !symbol.has_any_flags(symbol_flags::CLASS) {
+            return false;
+        }
+        let Some(func) = self.enclosing_function_for_node(expr_idx) else {
+            return false;
+        };
+        let Some(ref type_params) = func.type_parameters else {
+            return false;
+        };
+        self.collect_type_param_names(type_params)
+            .iter()
+            .any(|type_param| type_param == name)
     }
 
     fn require_property_initializer_import_type(&self, decl_node: &Node) -> Option<String> {
@@ -6041,14 +6184,102 @@ impl<'a> DeclarationEmitter<'a> {
         self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text)
     }
 
+    pub(in crate::declaration_emitter) fn restore_mapped_return_type_param_constraints(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        type_text: &str,
+    ) -> String {
+        if !Self::type_text_contains_mapped_type_literal(type_text) {
+            return type_text.to_string();
+        }
+        let Some(type_params) = func.type_parameters.as_ref() else {
+            return type_text.to_string();
+        };
+
+        let mut restored = type_text.to_string();
+        for &type_param_idx in &type_params.nodes {
+            let Some(type_param_node) = self.arena.get(type_param_idx) else {
+                continue;
+            };
+            let Some(type_param) = self.arena.get_type_parameter(type_param_node) else {
+                continue;
+            };
+            let Some(type_param_name) = self.get_identifier_text(type_param.name) else {
+                continue;
+            };
+            if restored.contains(&type_param_name) {
+                continue;
+            }
+            let Some(constraint_text) = self
+                .type_annotation_text_from_arena_node(self.arena, type_param.constraint)
+                .or_else(|| self.source_slice_from_arena(self.arena, type_param.constraint))
+                .map(|text| text.trim().to_string())
+            else {
+                continue;
+            };
+            restored = Self::replace_first_mapped_constraint_word(
+                &restored,
+                &constraint_text,
+                &type_param_name,
+            );
+        }
+        Self::ensure_single_line_mapped_member_semicolon(&restored)
+    }
+
+    fn replace_first_mapped_constraint_word(type_text: &str, from: &str, to: &str) -> String {
+        let Some(mapped_start) = type_text.find(" in ") else {
+            return type_text.to_string();
+        };
+        let search_start = mapped_start + " in ".len();
+        let mapped_end = type_text[search_start..]
+            .find(']')
+            .map(|idx| search_start + idx)
+            .unwrap_or(type_text.len());
+        let Some(relative_idx) = type_text[search_start..mapped_end].find(from) else {
+            return type_text.to_string();
+        };
+        let start = search_start + relative_idx;
+        let end = start + from.len();
+        if !Self::whole_word_boundary(type_text, start, end) {
+            return type_text.to_string();
+        }
+
+        let mut replaced = String::with_capacity(type_text.len() + to.len());
+        replaced.push_str(&type_text[..start]);
+        replaced.push_str(to);
+        replaced.push_str(&type_text[end..]);
+        replaced
+    }
+
+    fn ensure_single_line_mapped_member_semicolon(type_text: &str) -> String {
+        if type_text.contains('\n') || type_text.contains("; }") {
+            return type_text.to_string();
+        }
+        if Self::type_text_contains_mapped_type_literal(type_text)
+            && let Some(prefix) = type_text.strip_suffix(" }")
+        {
+            return format!("{prefix}; }}");
+        }
+        type_text.to_string()
+    }
+
+    fn whole_word_boundary(type_text: &str, start: usize, end: usize) -> bool {
+        let before = type_text[..start].chars().next_back();
+        let after = type_text[end..].chars().next();
+        !before.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+            && !after.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+    }
+
     pub(in crate::declaration_emitter) fn rewrite_returned_auto_accessor_parameter_unknowns(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
         source_type_text: &str,
     ) -> String {
+        let source_type_text =
+            self.restore_mapped_return_type_param_constraints(func, source_type_text);
         let source_type_text = self
-            .simplify_uniform_object_keyof_index_access_text(source_type_text)
-            .unwrap_or_else(|| source_type_text.to_string());
+            .simplify_uniform_object_keyof_index_access_text(&source_type_text)
+            .unwrap_or(source_type_text);
         if !source_type_text.contains(": unknown;") {
             return source_type_text;
         }

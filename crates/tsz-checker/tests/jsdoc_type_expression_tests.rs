@@ -105,6 +105,33 @@ y = x;
     );
 }
 
+/// `@type {(v: unknown) => v is undefined}` must not flag the `unknown`
+/// keyword as TS2304. The unresolved-leaf walker treats
+/// `TypeId::UNKNOWN` as a "could not resolve" sentinel, so without an
+/// explicit allowlist for built-in primitive type names a JSDoc body
+/// referencing `unknown` would emit a spurious "Cannot find name
+/// 'unknown'" diagnostic at every leaf.
+#[test]
+fn jsdoc_walker_unknown_primitive_does_not_emit_ts2304() {
+    let diags = check_js(
+        r#"/** @type {(v: unknown) => v is undefined} */
+const isUndef = v => v === undefined;
+"#,
+    );
+    let unresolved_unknown: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2304 && d.message.contains("'unknown'"))
+        .collect();
+    assert!(
+        unresolved_unknown.is_empty(),
+        "Expected no TS2304 for the built-in `unknown` keyword in JSDoc, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// `@type {<T>(param?: T) => T | undefined}` declares its own type
 /// parameter `T` for the duration of the signature. The unresolved-leaf
 /// walker must thread `<T>` into the template-param scope before

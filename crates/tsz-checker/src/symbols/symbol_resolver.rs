@@ -754,9 +754,8 @@ impl<'a> CheckerState<'a> {
 
         let ignore_libs = !self.ctx.has_lib_loaded();
         // Collect lib binders for cross-arena symbol lookup
-        let empty_binders: Arc<Vec<Arc<tsz_binder::BinderState>>> = Arc::new(Vec::new());
         let lib_binders = if ignore_libs {
-            empty_binders
+            Arc::new(Vec::new())
         } else {
             self.get_lib_binders()
         };

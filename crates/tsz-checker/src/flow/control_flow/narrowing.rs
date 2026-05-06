@@ -1143,6 +1143,10 @@ impl<'a> FlowAnalyzer<'a> {
         self.arena.skip_parenthesized_and_assertions_and_comma(idx)
     }
 
+    pub(crate) fn is_global_undefined_identifier(&self, idx: NodeIndex) -> bool {
+        super::narrowing_helpers::is_global_undefined_identifier(self.arena, self.binder, idx)
+    }
+
     pub(crate) fn skip_parens_and_assertions(&self, idx: NodeIndex) -> NodeIndex {
         self.arena.skip_parenthesized_and_assertions(idx)
     }
@@ -1299,10 +1303,10 @@ impl<'a> FlowAnalyzer<'a> {
                 self.literal_type_from_template_expression(idx, node)
             }
             _ => {
-                // Handle `undefined` in value position (it's an Identifier, not UndefinedKeyword)
-                if let Some(ident) = self.arena.get_identifier(node)
-                    && ident.escaped_text == "undefined"
-                {
+                // Handle `undefined` in value position (it's an Identifier, not UndefinedKeyword).
+                // Only the global `undefined` resolves to the literal sentinel; a same-file
+                // local named `undefined` (parameter, variable, etc.) is a regular value.
+                if self.is_global_undefined_identifier(idx) {
                     return Some(TypeId::UNDEFINED);
                 }
                 // Fallback: look up the already-computed type for this expression.
@@ -1513,9 +1517,7 @@ impl<'a> FlowAnalyzer<'a> {
             if init_node.kind == SyntaxKind::NullKeyword as u16 {
                 return Some(TypeId::NULL);
             }
-            if let Some(ident) = self.arena.get_identifier(init_node)
-                && ident.escaped_text == "undefined"
-            {
+            if self.is_global_undefined_identifier(decl_data.initializer) {
                 return Some(TypeId::UNDEFINED);
             }
         }
@@ -1539,10 +1541,10 @@ impl<'a> FlowAnalyzer<'a> {
         if node.kind == SyntaxKind::UndefinedKeyword as u16 {
             return Some(TypeId::UNDEFINED);
         }
-        // In value position, `undefined` is an Identifier, not UndefinedKeyword
-        if let Some(ident) = self.arena.get_identifier(node)
-            && ident.escaped_text == "undefined"
-        {
+        // In value position, `undefined` is an Identifier, not UndefinedKeyword.
+        // Only the global identifier counts as the literal sentinel; a same-file
+        // local named `undefined` is a regular value.
+        if self.is_global_undefined_identifier(idx) {
             return Some(TypeId::UNDEFINED);
         }
 
@@ -1804,9 +1806,7 @@ impl<'a> FlowAnalyzer<'a> {
         // 1) enum members,
         // 2) const aliases with literal initializers.
         if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.arena.get_identifier(node)
-                && ident.escaped_text == "undefined"
-            {
+            if self.is_global_undefined_identifier(idx) {
                 return Some(TypeId::UNDEFINED);
             }
 

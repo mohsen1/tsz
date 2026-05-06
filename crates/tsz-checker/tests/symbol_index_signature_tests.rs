@@ -127,3 +127,59 @@ const table: Table = {
         "invalid boolean index signature should not cascade into TS2322, got {codes:?}",
     );
 }
+
+#[test]
+fn jsdoc_invalid_boolean_index_signature_reports_ts1268_without_required_property() {
+    let diagnostics = check_js_source_diagnostics(
+        r#"
+// @ts-check
+/** @type {{[k: boolean]: string}} */
+const obj = {};
+"#,
+    );
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT
+        ),
+        "expected TS1268 for boolean JSDoc index signature parameter, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        "invalid JSDoc index signature should not become a required property, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn jsdoc_unresolved_index_signature_key_reports_ts1268_and_ts2304_without_required_property() {
+    let diagnostics = check_js_source_diagnostics(
+        r#"
+// @ts-check
+/** @type {{[k: MissingKey]: string}} */
+const obj = {};
+"#,
+    );
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT
+        ),
+        "expected TS1268 for unresolved JSDoc index signature parameter, got {codes:?}",
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
+        "expected TS2304 for unresolved JSDoc index signature key, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        "unresolved JSDoc index signature should not become a required property, got {diagnostics:?}",
+    );
+}

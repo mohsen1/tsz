@@ -598,6 +598,11 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((guard, target, is_optional));
         }
 
+        if let Some((guard, target)) = self.check_has_own_property(call) {
+            let is_optional = self.is_optional_call(condition, call);
+            return Some((guard, target, is_optional));
+        }
+
         // Check for array.every(predicate) calls
         if let Some((guard, target)) = self.check_array_every_predicate(call, condition) {
             let is_optional = self.is_optional_call(condition, call);
@@ -787,6 +792,26 @@ impl<'a> FlowAnalyzer<'a> {
         let arg = call.arguments.as_ref()?.nodes.first().copied()?;
 
         Some((TypeGuard::Array, arg))
+    }
+
+    fn check_has_own_property(&self, call: &CallExprData) -> Option<(TypeGuard, NodeIndex)> {
+        let callee_node = self.arena.get(call.expression)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+        if access.question_dot_token {
+            return None;
+        }
+
+        let method = self.arena.get_identifier_at(access.name_or_argument)?;
+        if method.escaped_text != "hasOwnProperty" {
+            return None;
+        }
+
+        let args = call.arguments.as_ref()?.nodes.as_slice();
+        let &[property_arg] = args else {
+            return None;
+        };
+        let (property_name, _) = self.literal_atom_and_kind_from_node_or_type(property_arg)?;
+        Some((TypeGuard::InProperty(property_name), access.expression))
     }
 
     /// Resolve a `SymbolRef` to a proper `Lazy(DefId)` `TypeId` via the `TypeEnvironment`.
