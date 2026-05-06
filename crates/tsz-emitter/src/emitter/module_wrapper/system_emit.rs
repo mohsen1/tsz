@@ -144,7 +144,10 @@ impl<'a> Printer<'a> {
                             self.write(export_name);
                             self.write("\": ");
                             let setter_arg = format!("{dep_var}_1");
-                            self.write_module_property_access(&setter_arg, import_name);
+                            self.write(&setter_arg);
+                            self.write("[\"");
+                            self.write(import_name);
+                            self.write("\"]");
                             if export_idx + 1 != exports.len() {
                                 self.write(",");
                             }
