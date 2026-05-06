@@ -1552,13 +1552,6 @@ impl TypeInterner {
             return false;
         }
 
-        if origin
-            .iter()
-            .all(|&id| matches!(self.lookup(id), Some(TypeData::Lazy(_))))
-        {
-            return false;
-        }
-
         current.iter().all(|&id| {
             matches!(
                 self.lookup(id),
