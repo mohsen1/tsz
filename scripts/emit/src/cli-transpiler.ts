@@ -86,6 +86,7 @@ function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): v
   // dropping it would re-default to true and emit a spurious "use strict".
   if (opts.alwaysStrict !== undefined) {
     args.push('--alwaysStrict', opts.alwaysStrict ? 'true' : 'false');
+    if (!opts.alwaysStrict) args.push('--ignoreDeprecations', '6.0');
   }
   if (opts.sourceMap) args.push('--sourceMap');
   if (opts.inlineSourceMap) args.push('--inlineSourceMap');
@@ -275,7 +276,7 @@ export class CliTranspiler {
     const {
       sourceFileName,
       declaration = false,
-      alwaysStrict = false,
+      alwaysStrict,
       sourceMap = false,
       inlineSourceMap = false,
       declarationMap = false,
