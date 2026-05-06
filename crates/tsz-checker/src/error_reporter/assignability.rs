@@ -216,8 +216,18 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let read_target = self
-            .get_type_of_node_with_request(write_target_idx, &crate::context::TypingRequest::NONE);
+        let declared_read_target =
+            self.declared_property_read_type_for_write_target(write_target_idx);
+        let read_target = if let Some(declared) = declared_read_target.filter(|&declared| {
+            crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, declared)
+        }) {
+            declared
+        } else {
+            self.get_type_of_node_with_request(
+                write_target_idx,
+                &crate::context::TypingRequest::NONE,
+            )
+        };
         if !crate::query_boundaries::class_type::type_includes_undefined(
             self.ctx.types,
             read_target,
@@ -251,6 +261,44 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    fn declared_property_read_type_for_write_target(
+        &mut self,
+        write_target_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let write_target_node = self.ctx.arena.get(write_target_idx)?;
+        let access = self.ctx.arena.get_access_expr(write_target_node)?;
+        let property_name = if write_target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            self.ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .map(|ident| ident.escaped_text.to_string())
+        } else {
+            self.get_literal_string_from_node(access.name_or_argument)
+                .or_else(|| {
+                    self.get_literal_index_from_node(access.name_or_argument)
+                        .map(|index| index.to_string())
+                })
+        }?;
+
+        let object_type = self.get_type_of_node_with_request(
+            access.expression,
+            &crate::context::TypingRequest::for_write_context(),
+        );
+        let object_type = self.evaluate_application_type(object_type);
+        let object_type = self.resolve_type_for_property_access(object_type);
+        match self.resolve_property_access_with_env(object_type, &property_name) {
+            crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } => {
+                Some(type_id)
+            }
+            crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => Some(type_id),
+            _ => None,
+        }
     }
 
     /// Get the declaring type name for a property in a target type.
