@@ -19,9 +19,9 @@ pub(crate) mod runtime;
 mod spread;
 
 #[cfg(test)]
-mod optional_prop_display_tests;
-#[cfg(test)]
 mod contextual_children_tests;
+#[cfg(test)]
+mod optional_prop_display_tests;
 #[cfg(test)]
 mod ref_callback_tests;
 #[cfg(test)]
