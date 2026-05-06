@@ -2751,8 +2751,8 @@ impl<'a> CheckerState<'a> {
                         // the result should inherit the index signatures (with readonly removed).
                         // These are collected separately and only included in the final type
                         // when the literal has no explicit (non-spread) properties, matching tsc.
-                        if !(self.spread_source_is_unannotated_object_literal_binding(spread_expr)
-                            && !spread_props.is_empty())
+                        if (spread_props.is_empty()
+                            || !self.spread_source_is_unannotated_object_literal_binding(spread_expr))
                             && !crate::query_boundaries::type_computation::core::is_fresh_literal_indexed_object(
                                 self.ctx.types,
                                 resolved_spread,
