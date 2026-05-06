@@ -1705,6 +1705,7 @@ version = "0.1.9"
 dependencies = [
  "serde",
  "tsz-common",
+ "unicode-ident",
  "wasm-bindgen",
 ]
 

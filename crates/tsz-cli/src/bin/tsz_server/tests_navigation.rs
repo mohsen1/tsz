@@ -184,6 +184,30 @@ x;"
 }
 
 #[test]
+fn test_references_response_includes_symbol_metadata() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "const alpha = 1;\nalpha;\n".to_string(),
+    );
+    let req = make_request(
+        "references",
+        serde_json::json!({"file": "/index.ts", "line": 2, "offset": 1}),
+    );
+
+    let resp = server.handle_tsserver_request(req);
+
+    assert!(resp.success);
+    let body = resp.body.expect("references should return a body");
+    assert_eq!(body.get("symbolName"), Some(&serde_json::json!("alpha")));
+    assert_eq!(body.get("symbolStartOffset"), Some(&serde_json::json!(1)));
+    assert_eq!(
+        body.get("symbolDisplayString"),
+        Some(&serde_json::json!("const alpha: 1"))
+    );
+}
+
+#[test]
 fn test_alias_string_literal_navigation_uses_project_wide_resolution() {
     let mut server = make_server();
     server.open_files.insert(
