@@ -1298,6 +1298,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
         let source_fn = self.normalize_function_shape_params_for_context(&source_fn);
         let target_fn = self.normalize_function_shape_params_for_context(&target_fn);
+        if !source_fn.type_params.is_empty() && !target_fn.type_params.is_empty() {
+            return source_ty;
+        }
 
         // TypeScript does not use generic construct-signature arguments to infer
         // type parameters for the outer constructor-typed parameter. Leave the
