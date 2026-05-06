@@ -71,6 +71,7 @@ interface CompilerFlagOptions {
   preserveValueImports?: boolean;
   removeComments?: boolean;
   stripInternal?: boolean;
+  baseUrl?: string;
   outFile?: string;
   outDir?: string;
   declarationDir?: string;
@@ -122,6 +123,7 @@ function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): v
   if (opts.preserveValueImports) args.push('--preserveValueImports');
   if (opts.removeComments) args.push('--removeComments');
   if (opts.stripInternal) args.push('--stripInternal');
+  if (opts.baseUrl) args.push('--baseUrl', opts.baseUrl);
   if (opts.outFile) args.push('--outFile', opts.outFile.replace(/^[/\\]+/, ''));
   if (opts.outDir) args.push('--outDir', opts.outDir);
   if (opts.declarationDir) args.push('--declarationDir', opts.declarationDir);
@@ -263,6 +265,7 @@ export class CliTranspiler {
       preserveValueImports?: boolean;
       removeComments?: boolean;
       stripInternal?: boolean;
+      baseUrl?: string;
       outFile?: string;
       outDir?: string;
       declarationDir?: string;
@@ -306,6 +309,7 @@ export class CliTranspiler {
       preserveValueImports = false,
       removeComments = false,
       stripInternal = false,
+      baseUrl,
       outFile,
       outDir,
       declarationDir,
@@ -491,6 +495,7 @@ export class CliTranspiler {
         preserveValueImports,
         removeComments,
         stripInternal,
+        baseUrl,
         outFile,
         outDir,
         declarationDir,
@@ -585,6 +590,7 @@ export class CliTranspiler {
             preserveValueImports,
             removeComments,
             stripInternal,
+            baseUrl,
             outFile,
             outDir,
             declarationDir,
