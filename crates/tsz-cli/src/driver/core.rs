@@ -3198,20 +3198,30 @@ fn validate_cli_compiler_option_diagnostics(
             out_file.to_string_lossy().into_owned().into(),
         );
     }
-    if args.declaration {
+    let config_bool = |get: fn(&CompilerOptions) -> Option<bool>| -> bool {
+        config_options.and_then(get).unwrap_or(false)
+    };
+    if args.declaration
+        || (args.emit_declaration_only && config_bool(|options| options.declaration))
+    {
         compiler_options.insert("declaration".to_string(), true.into());
     }
-    if args.emit_declaration_only {
+    if args.composite || (args.emit_declaration_only && config_bool(|options| options.composite)) {
+        compiler_options.insert("composite".to_string(), true.into());
+    }
+    if args.no_emit
+        || (args.allow_importing_ts_extensions && config_bool(|options| options.no_emit))
+    {
+        compiler_options.insert("noEmit".to_string(), true.into());
+    }
+    if args.emit_declaration_only
+        || (args.allow_importing_ts_extensions
+            && config_bool(|options| options.emit_declaration_only))
+    {
         compiler_options.insert("emitDeclarationOnly".to_string(), true.into());
     }
     if args.declaration_map {
         compiler_options.insert("declarationMap".to_string(), true.into());
-    }
-    if args.composite {
-        compiler_options.insert("composite".to_string(), true.into());
-    }
-    if args.no_emit {
-        compiler_options.insert("noEmit".to_string(), true.into());
     }
     if args.allow_js {
         compiler_options.insert("allowJs".to_string(), true.into());
@@ -3227,6 +3237,15 @@ fn validate_cli_compiler_option_diagnostics(
     }
     if args.verbatim_module_syntax {
         compiler_options.insert("verbatimModuleSyntax".to_string(), true.into());
+    }
+    if args.allow_importing_ts_extensions {
+        compiler_options.insert("allowImportingTsExtensions".to_string(), true.into());
+    }
+    if args.rewrite_relative_import_extensions
+        || (args.allow_importing_ts_extensions
+            && config_bool(|options| options.rewrite_relative_import_extensions))
+    {
+        compiler_options.insert("rewriteRelativeImportExtensions".to_string(), true.into());
     }
     if let Some(resolve_package_json_exports) = args.resolve_package_json_exports {
         compiler_options.insert(
