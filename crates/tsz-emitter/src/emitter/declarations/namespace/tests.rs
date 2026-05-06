@@ -223,3 +223,29 @@ fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
         "Sibling namespace reference should not be emitted as a bare identifier.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn dotted_namespace_reopen_qualifies_prior_value_exports() {
+    let source = "namespace X.Y {\n  class A {\n    m(Y: any) {\n      new B();\n    }\n  }\n}\nnamespace X.Y {\n  export class B {}\n}\nnamespace my.data {\n  export function buz() {}\n}\nnamespace my.data.foo {\n  function data(my, foo) {\n    buz();\n  }\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("new Y_1.B();"),
+        "Reopened dotted namespace should qualify prior class exports through the namespace object.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("data_1.buz();"),
+        "Nested dotted namespace should qualify parent exports through the renamed IIFE parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n            buz();"),
+        "Parent namespace export should not remain a bare identifier.\nOutput:\n{output}"
+    );
+}
