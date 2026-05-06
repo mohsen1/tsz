@@ -1476,11 +1476,17 @@ impl<'a> CheckerState<'a> {
 
         if symbol.has_any_flags(symbol_flags::FUNCTION) && symbol.value_declaration.is_some() {
             let constructor_type = self.get_type_of_symbol(sym_id);
-            if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
+            if !self.ctx.class_instance_resolution_set.insert(sym_id) {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                return self.ctx.types.factory().lazy(def_id);
+            }
+            let instance_type = self.synthesize_js_constructor_instance_type(
                 symbol.value_declaration,
                 constructor_type,
                 &[],
-            ) {
+            );
+            self.ctx.class_instance_resolution_set.remove(&sym_id);
+            if let Some(instance_type) = instance_type {
                 return instance_type;
             }
         }
