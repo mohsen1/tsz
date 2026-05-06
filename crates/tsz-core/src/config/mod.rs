@@ -3495,19 +3495,11 @@ fn anchor_inherited_path_options(config: &mut TsConfig, config_path: &Path) {
     let Some(opts) = config.compiler_options.as_mut() else {
         return;
     };
-    if let Some(base_url) = opts.base_url.as_deref() {
-        let trimmed = base_url.trim();
-        if !trimmed.is_empty() {
-            let candidate = std::path::Path::new(trimmed);
-            if !candidate.is_absolute() {
-                let parent_abs =
-                    std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
-                let joined = parent_abs.join(candidate);
-                let normalized = std::fs::canonicalize(&joined).unwrap_or(joined);
-                opts.base_url = Some(normalized.to_string_lossy().into_owned());
-            }
-        }
-    }
+    anchor_relative_path_option(&mut opts.base_url, parent);
+    anchor_relative_path_option(&mut opts.root_dir, parent);
+    anchor_relative_path_option(&mut opts.out_dir, parent);
+    anchor_relative_path_option(&mut opts.declaration_dir, parent);
+    anchor_relative_path_option(&mut opts.ts_build_info_file, parent);
 
     if let Some(root_dirs) = opts.root_dirs.as_mut() {
         let parent_abs = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
@@ -3525,6 +3517,25 @@ fn anchor_inherited_path_options(config: &mut TsConfig, config_path: &Path) {
             *root_dir = normalized.to_string_lossy().into_owned();
         }
     }
+}
+
+fn anchor_relative_path_option(option: &mut Option<String>, base_dir: &Path) {
+    let Some(value) = option.as_deref() else {
+        return;
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let candidate = std::path::Path::new(trimmed);
+    if candidate.is_absolute() {
+        return;
+    }
+
+    let base_abs = std::fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+    let joined = base_abs.join(candidate);
+    let normalized = std::fs::canonicalize(&joined).unwrap_or(joined);
+    *option = Some(normalized.to_string_lossy().into_owned());
 }
 
 fn anchor_inherited_root_selectors(config: &mut TsConfig, config_path: &Path) {
@@ -5705,6 +5716,74 @@ mod tests {
             assert!(
                 !root_dir.starts_with(&unexpected_app),
                 "Inherited rootDirs must not anchor at the child's directory: {root_dir:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_inherited_scalar_path_options_anchor_at_declaring_config_dir() {
+        let temp = tempdir().expect("create temp dir");
+        let base_dir = temp.path().join("base");
+        let app_dir = temp.path().join("app");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        std::fs::create_dir_all(&app_dir).expect("create app dir");
+
+        let base_path = base_dir.join("tsconfig.base.json");
+        std::fs::write(
+            &base_path,
+            r#"{
+    "compilerOptions": {
+        "rootDir": "src",
+        "outDir": "dist",
+        "declarationDir": "types",
+        "tsBuildInfoFile": ".cache/project.tsbuildinfo"
+    }
+}"#,
+        )
+        .expect("write base");
+
+        let child_path = app_dir.join("tsconfig.json");
+        std::fs::write(
+            &child_path,
+            r#"{
+    "extends": "../base/tsconfig.base.json",
+    "files": ["src/index.ts"]
+}"#,
+        )
+        .expect("write child");
+
+        let merged = load_tsconfig(&child_path).expect("load child");
+        let opts = merged.compiler_options.expect("compiler options merged");
+        let expected_base = base_dir
+            .canonicalize()
+            .expect("canonicalize base")
+            .to_string_lossy()
+            .into_owned();
+        let unexpected_app = app_dir
+            .canonicalize()
+            .expect("canonicalize app")
+            .to_string_lossy()
+            .into_owned();
+
+        for (name, value) in [
+            ("rootDir", opts.root_dir.expect("rootDir present")),
+            ("outDir", opts.out_dir.expect("outDir present")),
+            (
+                "declarationDir",
+                opts.declaration_dir.expect("declarationDir present"),
+            ),
+            (
+                "tsBuildInfoFile",
+                opts.ts_build_info_file.expect("tsBuildInfoFile present"),
+            ),
+        ] {
+            assert!(
+                value.starts_with(&expected_base),
+                "Inherited {name} must anchor at the base config's directory, got {value:?}"
+            );
+            assert!(
+                !value.starts_with(&unexpected_app),
+                "Inherited {name} must not anchor at the child's directory: {value:?}"
             );
         }
     }
