@@ -13559,9 +13559,11 @@ const bad = Alias;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    // TODO: TS2693 is not yet emitted for type-only namespace aliases used as values.
-    // Update this assertion when that diagnostic is implemented.
-    let _ = codes;
+    let count = codes.iter().filter(|&&code| code == 2693).count();
+    assert_eq!(
+        count, 1,
+        "Expected one 2693 error for type-only namespace alias used as value, got: {codes:?}"
+    );
 }
 
 #[test]

@@ -1006,6 +1006,16 @@ impl<'a> CheckerState<'a> {
                         && self.is_module_export_equals_type_only(&module_specifier)
                     {
                         // type-only through export= chain — skip
+                    } else if let Some(&alias_sym_id) = self
+                        .ctx
+                        .binder
+                        .node_symbols
+                        .get(&import_decl.import_clause.0)
+                        .or_else(|| self.ctx.binder.node_symbols.get(&stmt_idx.0))
+                        && self.alias_resolves_to_type_only(alias_sym_id)
+                    {
+                        // `import Alias = NS.Type` is not a value import when the
+                        // qualified target resolves to an interface/type alias.
                     } else {
                         return true;
                     }
