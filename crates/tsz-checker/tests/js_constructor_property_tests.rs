@@ -1802,7 +1802,7 @@ c.p + c.q;
 }
 
 #[test]
-fn test_plain_js_function_constructor_initializers_emit_ts7008_in_check_js() {
+fn test_plain_js_function_constructor_provisional_initializers_emit_ts7008_in_check_js() {
     let source = r#"
 function A() {
     this.unknown = null;
@@ -1827,8 +1827,8 @@ function A() {
     assert!(
         ts7008_messages
             .iter()
-            .any(|msg| msg.contains("Member 'unknown' implicitly has an 'any' type.")),
-        "Expected TS7008 for JS null-initialized constructor property, got: {diagnostics:?}"
+            .all(|msg| !msg.contains("Member 'unknown' implicitly has an 'any' type.")),
+        "Did not expect TS7008 for JS null-initialized constructor property, got: {diagnostics:?}"
     );
     assert!(
         ts7008_messages
