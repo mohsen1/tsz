@@ -555,6 +555,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Shouldn't happen since we iterate up to max_param_count
                 continue;
             } else {
+                param_types_at_pos.sort_unstable_by_key(|id| id.0);
                 self.intersect_union_call_param_types(&param_types_at_pos)
             };
 
@@ -732,6 +733,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else if param_types_at_pos.is_empty() {
                 continue;
             } else {
+                param_types_at_pos.sort_unstable_by_key(|id| id.0);
                 let mut result = param_types_at_pos[0];
                 for &pt in &param_types_at_pos[1..] {
                     result = self.interner.intersection2(result, pt);
@@ -903,7 +905,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         list_id: TypeListId,
         arg_types: &[TypeId],
     ) -> CallResult {
-        let members = self.interner.type_list(list_id);
+        let origin_members = self.interner.get_union_origin(union_type);
+        let fallback_members = self.interner.type_list(list_id);
+        let members: &[TypeId] = origin_members
+            .as_deref()
+            .map_or(fallback_members.as_ref(), |v| v);
 
         // Phase 0: Check `this` parameter for the union.
         // TSC computes the intersection of all members' `this` types and checks the
