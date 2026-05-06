@@ -9,7 +9,7 @@ use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
-use tsz_solver::{IntrinsicKind, TypeData, TypeId};
+use tsz_solver::TypeId;
 
 use super::assignability::{
     is_builtin_wrapper_name, is_function_type_display, is_object_prototype_method,
@@ -18,11 +18,7 @@ use super::assignability::{
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
     fn is_object_intrinsic_for_missing_properties(&self, type_id: TypeId) -> bool {
-        type_id == TypeId::OBJECT
-            || matches!(
-                self.ctx.types.lookup(type_id),
-                Some(TypeData::Intrinsic(IntrinsicKind::Object))
-            )
+        crate::query_boundaries::common::is_object_intrinsic_type(self.ctx.types, type_id)
     }
 
     fn no_union_member_matches_switch_source_display(
