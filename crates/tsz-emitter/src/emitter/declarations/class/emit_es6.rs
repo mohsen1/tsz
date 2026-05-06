@@ -86,7 +86,7 @@ fn collect_private_auto_accessors_with_reserved(
             } else {
                 Some(prop.initializer)
             },
-            is_static: printer.arena.is_static(&prop.modifiers),
+            is_static: printer.has_effective_static_modifier_js(&prop.modifiers),
         });
     }
     accessors
@@ -1495,7 +1495,7 @@ impl<'a> Printer<'a> {
                         Vec::new()
                     };
 
-                    if self.arena.is_static(&prop.modifiers) {
+                    if self.has_effective_static_modifier_js(&prop.modifiers) {
                         // At ES2022+, static fields are emitted as `static { this.f = v; }`
                         // blocks inside the class body, not as external assignments.
                         if !needs_static_block_lowering {
@@ -1897,13 +1897,13 @@ impl<'a> Printer<'a> {
                 }) && (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32))
                 // Static fields at ES2022+ are emitted inline as `static { this.f = v; }`
                 // blocks, not deferred to external assignments.
-                && (!self.arena.is_static(&prop.modifiers)
+                && (!self.has_effective_static_modifier_js(&prop.modifiers)
                     || needs_static_block_lowering)
             {
                 // For static properties, save leading and trailing comments before
                 // skipping so they can be emitted when the initialization is moved
                 // after the class body.
-                let is_static = self.arena.is_static(&prop.modifiers);
+                let is_static = self.has_effective_static_modifier_js(&prop.modifiers);
                 if is_static {
                     let leading = self.collect_leading_comments(member_node.pos);
                     if let Some(entry) = static_field_inits
