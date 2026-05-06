@@ -707,11 +707,10 @@ impl<'a> DeclarationEmitter<'a> {
         // Try to get as function first
         let name_node = if let Some(func) = self.arena.get_function(func_node) {
             self.arena.get(func.name)?
-        // Try to get as method
-        } else if let Some(method) = self.arena.get_method_decl(func_node) {
-            self.arena.get(method.name)?
         } else {
-            return None;
+            // Try to get as method
+            let method = self.arena.get_method_decl(func_node)?;
+            self.arena.get(method.name)?
         };
 
         // Extract identifier names directly

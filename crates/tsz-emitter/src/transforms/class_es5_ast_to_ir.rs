@@ -393,7 +393,8 @@ impl<'a> AstToIr<'a> {
         // Try to get identifier text, but handle binding patterns and other cases
         let name = if let Some(name) = get_identifier_text(self.arena, var_decl.name) {
             name
-        } else if let Some(name_node) = self.arena.get(var_decl.name) {
+        } else {
+            let name_node = self.arena.get(var_decl.name)?;
             // Fallback: try to get text from source span if available
             // For binding patterns, return None and let caller handle via ASTRef
             if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
@@ -402,13 +403,7 @@ impl<'a> AstToIr<'a> {
                 return None; // Handled via ASTRef
             }
             // Try getting identifier via IdentifierData
-            if let Some(id_data) = self.arena.get_identifier(name_node) {
-                id_data.escaped_text.clone()
-            } else {
-                return None;
-            }
-        } else {
-            return None;
+            self.arena.get_identifier(name_node)?.escaped_text.clone()
         };
 
         let initializer = if var_decl.initializer.is_none() {
