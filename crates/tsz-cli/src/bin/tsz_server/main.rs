@@ -1004,7 +1004,7 @@ impl Server {
                 self.handle_compile_on_save_affected_file_list(seq, &request)
             }
             "compileOnSaveEmitFile" => self.handle_compile_on_save_emit_file(seq, &request),
-            "saveto" | "watchChange" => self.stub_response(seq, &request, None),
+            "saveto" => self.stub_response(seq, &request, None),
             "exit" => TsServerResponse {
                 seq,
                 msg_type: "response".to_string(),
