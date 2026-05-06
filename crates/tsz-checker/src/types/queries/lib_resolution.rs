@@ -1290,7 +1290,7 @@ impl<'a> CheckerState<'a> {
         let Some(type_id) = cached else {
             return true;
         };
-        if !type_id.is_intrinsic() && self.ctx.types.lookup(type_id).is_none() {
+        if !crate::query_boundaries::common::type_id_is_known_to_db(self.ctx.types, type_id) {
             return false;
         }
         let Some(global_name) = name.strip_suffix("Constructor") else {
@@ -1941,11 +1941,8 @@ mod integration_tests {
         let _codes = check_source_codes("declare function iter(): AsyncIterable<string>;");
     }
 
-    // ---- lib ref lowering: heritage chain depth ----
-
     #[test]
     fn array_method_access_no_crash() {
-        // Array extends ReadonlyArray — exercises heritage chain merging
         let _codes =
             check_source_codes("let a: Array<number> = [1, 2, 3]; let b = a.map(x => x + 1);");
     }
@@ -1957,11 +1954,8 @@ mod integration_tests {
 
     #[test]
     fn symbol_iterator_no_crash() {
-        // Symbol.iterator exercises deep lib heritage chains
         let _codes = check_source_codes("let s = Symbol.iterator;");
     }
-
-    // ---- lib ref + global augmentation patterns ----
 
     #[test]
     fn declare_global_interface_augmentation_no_crash() {
@@ -1979,11 +1973,8 @@ mod integration_tests {
         );
     }
 
-    // ---- keyword type consistency ----
-
     #[test]
     fn keyword_types_in_generic_position_no_crash() {
-        // Keyword types used as generic arguments should resolve correctly
         let codes = check_source_codes(
             "type Box<T> = { value: T }; \
              let a: Box<string>; let b: Box<number>; let c: Box<boolean>;",

@@ -349,27 +349,30 @@ impl<'a> DeclarationEmitter<'a> {
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
             match printed {
-                Some(printed)
-                    if printed != "any"
-                        && let Some(raw_type_text) =
-                            self.local_type_annotation_text(type_annotation)
-                        && Self::type_text_starts_with_string_intrinsic(&raw_type_text) =>
-                {
-                    raw_type_text
-                }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any"))
+                Some(printed) if printed != "any" => {
+                    if let Some(raw_type_text) = self.local_type_annotation_text(type_annotation) {
+                        if Self::type_text_starts_with_string_intrinsic(&raw_type_text) {
+                            raw_type_text
+                        } else if (!printed.contains("any") || type_text.contains("any"))
+                            && printed.contains("typeof ")
+                            && !type_text.contains("typeof ")
+                        {
+                            printed.replace("typeof ", "")
+                        } else if !printed.contains("any") || type_text.contains("any") {
+                            printed
+                        } else {
+                            type_text
+                        }
+                    } else if (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
-                        && !type_text.contains("typeof ") =>
-                {
-                    printed.replace("typeof ", "")
-                }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any")) =>
-                {
-                    printed
+                        && !type_text.contains("typeof ")
+                    {
+                        printed.replace("typeof ", "")
+                    } else if !printed.contains("any") || type_text.contains("any") {
+                        printed
+                    } else {
+                        type_text
+                    }
                 }
                 _ => type_text,
             }
