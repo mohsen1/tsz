@@ -71,6 +71,29 @@ fn test_interner_bigint_literal() {
 }
 
 #[test]
+fn test_evaluation_fuel_exhaustion_does_not_poison_interner_storage() {
+    let interner = TypeInterner::new();
+    let prop_name = interner.intern_string("value");
+    let object_type = interner.object(vec![PropertyInfo::new(prop_name, TypeId::STRING)]);
+
+    assert!(interner.consume_evaluation_fuel(u32::MAX));
+    assert!(interner.is_evaluation_fuel_exhausted());
+
+    assert!(
+        matches!(interner.lookup(object_type), Some(TypeData::Object(_))),
+        "fuel exhaustion should not make existing types opaque"
+    );
+
+    let later_literal = interner.literal_string("after");
+    assert_ne!(
+        later_literal,
+        TypeId::ERROR,
+        "fuel exhaustion should not disable unrelated interning"
+    );
+    assert!(interner.lookup(later_literal).is_some());
+}
+
+#[test]
 fn test_interner_union_normalization() {
     let interner = TypeInterner::new();
 

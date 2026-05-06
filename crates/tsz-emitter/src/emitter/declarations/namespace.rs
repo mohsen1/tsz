@@ -7,6 +7,9 @@ use tsz_scanner::SyntaxKind;
 
 #[path = "namespace_export_destructuring.rs"]
 mod namespace_export_destructuring;
+#[cfg(test)]
+#[path = "namespace_import_alias_tests.rs"]
+mod namespace_import_alias_tests;
 
 /// Rewrite enum IIFE IR from `E || (E = {})` to `E = NS.E || (NS.E = {})`
 /// for exported enums in namespaces.
@@ -76,6 +79,76 @@ fn find_unescaped_template_end(source: &str, template_start: usize) -> Option<us
             return Some(pos);
         }
         pos += 1;
+    }
+    None
+}
+
+fn skip_quoted_source_text(source: &str, quote_start: usize) -> usize {
+    let bytes = source.as_bytes();
+    let quote = bytes[quote_start];
+    if quote == b'`' {
+        return find_unescaped_template_end(source, quote_start)
+            .map(|end| end + 1)
+            .unwrap_or(source.len());
+    }
+
+    let mut pos = quote_start + 1;
+    while pos < bytes.len() {
+        if bytes[pos] == b'\\' {
+            pos += 2;
+            continue;
+        }
+        if bytes[pos] == quote {
+            return pos + 1;
+        }
+        pos += 1;
+    }
+    source.len()
+}
+
+fn find_next_code_module_keyword(source: &str, mut cursor: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'/' if bytes.get(cursor + 1) == Some(&b'/') => {
+                cursor += 2;
+                while cursor < bytes.len() && !matches!(bytes[cursor], b'\n' | b'\r') {
+                    cursor += 1;
+                }
+            }
+            b'/' if bytes.get(cursor + 1) == Some(&b'*') => {
+                cursor += 2;
+                while cursor + 1 < bytes.len()
+                    && !(bytes[cursor] == b'*' && bytes[cursor + 1] == b'/')
+                {
+                    cursor += 1;
+                }
+                cursor = (cursor + 2).min(bytes.len());
+            }
+            b'\'' | b'"' | b'`' => {
+                cursor = skip_quoted_source_text(source, cursor);
+            }
+            b'm' if source[cursor..].starts_with("module")
+                && cursor
+                    .checked_sub(1)
+                    .and_then(|prev| bytes.get(prev))
+                    .is_none_or(|byte| {
+                        !byte.is_ascii_alphanumeric() && *byte != b'_' && *byte != b'$'
+                    })
+                && bytes.get(cursor + "module".len()).is_none_or(|byte| {
+                    !byte.is_ascii_alphanumeric() && *byte != b'_' && *byte != b'$'
+                }) =>
+            {
+                return Some(cursor);
+            }
+            _ => {
+                cursor += source[cursor..]
+                    .chars()
+                    .next()
+                    .map(char::len_utf8)
+                    .unwrap_or(1);
+            }
+        }
     }
     None
 }
@@ -216,15 +289,16 @@ impl<'a> Printer<'a> {
 
         let mut cursor = 0;
         let mut wrote = false;
-        while let Some(relative_module_pos) = source[cursor..].find("module") {
-            let module_pos = cursor + relative_module_pos;
+        while let Some(module_pos) = find_next_code_module_keyword(source, cursor) {
             let after_module = module_pos + "module".len();
             let rest = &source[after_module..];
-            let Some(template_start_in_rest) = rest.find('`') else {
+            let rest_trimmed = rest.trim_start_matches(|ch: char| ch.is_whitespace());
+            let skipped = rest.len() - rest_trimmed.len();
+            if !rest_trimmed.starts_with('`') {
                 cursor = after_module;
                 continue;
             };
-            let template_start = after_module + template_start_in_rest;
+            let template_start = after_module + skipped;
             let Some(template_end) = find_unescaped_template_end(source, template_start) else {
                 break;
             };
@@ -897,6 +971,20 @@ impl<'a> Printer<'a> {
                 || inner_kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             {
                 let export_names = self.get_export_names_from_clause(export.export_clause);
+                for name in export_names {
+                    names.insert(name);
+                }
+            }
+        }
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if (stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+                && self.statement_has_export_modifier(stmt_node)
+            {
+                let export_names = self.get_export_names_from_clause(stmt_idx);
                 for name in export_names {
                     names.insert(name);
                 }
@@ -1666,257 +1754,5 @@ impl<'a> Printer<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::emitter::ModuleKind;
-    use crate::output::printer::{PrintOptions, Printer};
-    use tsz_parser::ParserState;
-
-    /// Regression test: type-only import-equals inside a namespace must not
-    /// leave a phantom blank line. The import `import T = M1.I;` produces no
-    /// JS output (type-only alias), but `emit_namespace_body_statements` used
-    /// to call `write_line()` unconditionally, inserting an empty line between
-    /// the IIFE opening brace and the first real statement.
-    #[test]
-    fn no_blank_line_for_type_only_import_alias_in_namespace() {
-        let source = "namespace M1 {\n    export interface I {\n        foo();\n    }\n}\n\nnamespace M2 {\n    import T = M1.I;\n    class C implements T {\n        foo() {}\n    }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        // The IIFE body should NOT have a blank line after the opening brace.
-        assert!(
-            !output.contains("(function (M2) {\n\n"),
-            "Should not have blank line after IIFE opening brace.\nOutput:\n{output}"
-        );
-
-        // The class should still be emitted correctly inside M2's IIFE
-        assert!(
-            output.contains("class C {"),
-            "Class C should be emitted inside namespace M2.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
-        let source = "namespace M {\n    export var [a, b] = [1, 2];\n}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("var _a;\n    _a = [1, 2], M.a = _a[0], M.b = _a[1];"),
-            "Exported namespace destructuring should use one temp.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("M.a = [1, 2]"),
-            "Exported namespace destructuring should not repeat the initializer.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn namespace_exported_destructuring_temp_hoists_before_class() {
-        let source =
-            "namespace m {\n    export class c {}\n    export var [x, y] = [10, new c()];\n}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        let temp_pos = output.find("var _a;").expect("expected temp hoist");
-        let class_pos = output.find("class c").expect("expected class emit");
-        assert!(
-            temp_pos < class_pos,
-            "Namespace destructuring temp should hoist before class declarations.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("_a = [10, new c()], m.x = _a[0], m.y = _a[1];"),
-            "Exported namespace destructuring should use the hoisted temp.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn top_level_import_alias_to_ambient_namespace_value_emits_runtime_alias() {
-        let source = "declare namespace foo { const await: any; }\n\n// await allowed in import=namespace when not a module\nimport await = foo.await;\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(
-            &parser.arena,
-            PrintOptions {
-                module: ModuleKind::ESNext,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("var await = foo.await;"),
-            "Ambient namespace value aliases should be preserved in JS emit.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn top_level_import_alias_to_ambient_namespace_value_is_erased_in_modules() {
-        let source = "export {};\ndeclare namespace foo { const await: any; }\n\n// await disallowed in import=namespace when in a module\nimport await = foo.await;\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(
-            &parser.arena,
-            PrintOptions {
-                module: ModuleKind::ESNext,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            !output.contains("var await = foo.await;"),
-            "Module-scoped ambient namespace aliases should still be erased when unused.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("export {};"),
-            "Module marker should be preserved when the alias is erased.\nOutput:\n{output}"
-        );
-    }
-
-    /// When a namespace body has a variable with the same name as the namespace,
-    /// the IIFE parameter must be renamed to avoid collision.
-    /// E.g., `namespace m { export var m = ''; }` should emit `(function (m_1) { m_1.m = ''; })`.
-    #[test]
-    fn namespace_iife_param_renamed_for_variable_conflict() {
-        let source = "namespace m {\n  export var m = '';\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("(function (m_1)"),
-            "Namespace IIFE parameter should be renamed to m_1 when body has 'var m'.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("m_1.m = '';"),
-            "Exported variable should use renamed parameter m_1.\nOutput:\n{output}"
-        );
-    }
-
-    /// When a namespace body has an import-equals with the same name as the namespace,
-    /// the IIFE parameter must be renamed.
-    /// E.g., `namespace A.M { import M = Z.M; ... }` should emit `(function (M_1) { ... })`.
-    #[test]
-    fn namespace_iife_param_renamed_for_import_equals_conflict() {
-        let source = "namespace Z {\n  export namespace M {\n    export function bar() { return ''; }\n  }\n}\nnamespace A {\n  export namespace M {\n    import M = Z.M;\n    export function bar() {}\n    M.bar();\n  }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        // The inner M namespace IIFE should have parameter renamed to M_1
-        assert!(
-            output.contains("(function (M_1)"),
-            "Namespace IIFE parameter should be renamed to M_1 when body has 'import M = ...'.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn namespace_import_alias_elided_when_shadowed_before_use() {
-        let source = "namespace X {\n  export class Y {}\n}\nnamespace Z {\n  import Y = X.Y;\n  var Y = 12;\n}\nnamespace r {\n  export const Q = {};\n}\nnamespace s {\n  import Q = r.Q;\n  const Q = 0;\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            !output.contains("var Y = X.Y;"),
-            "Namespace import alias should be elided when a local var shadows it before use.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("var Q = r.Q;"),
-            "Namespace import alias should be elided when a local const shadows it before use.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("var Y = 12;") && output.contains("const Q = 0;"),
-            "Shadowing declarations should still emit.\nOutput:\n{output}"
-        );
-    }
-
-    /// When a dotted namespace `Y.Y` collides at every level (outer renamed to
-    /// `Y_1`, inner to `Y_2` because the body declares `enum Y`), the inner
-    /// IIFE's argument expression must reference the outer's renamed binding,
-    /// not the original name. The original name is shadowed inside the outer's
-    /// body by the `var Y;` we emit for the inner namespace.
-    #[test]
-    fn dotted_namespace_inner_iife_uses_outer_renamed_param_in_argument() {
-        let source = "namespace Y.Y {\n  export enum Y { Red, Blue }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("})(Y = Y_1.Y || (Y_1.Y = {}));"),
-            "Inner IIFE argument should reference the outer's renamed param Y_1.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("})(Y = Y.Y || (Y.Y = {}));"),
-            "Inner IIFE argument must not reference the shadowed original Y.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
-        let source = "function foo(title: string) {}\nnamespace foo.Bar {\n  export function f() {}\n}\nnamespace foo.Baz {\n  export function g() {\n    Bar.f();\n  }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("foo.Bar.f();"),
-            "Sibling namespace reference should be qualified through the parent namespace.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("    Bar.f();"),
-            "Sibling namespace reference should not be emitted as a bare identifier.\nOutput:\n{output}"
-        );
-    }
-}
+#[path = "namespace/tests.rs"]
+mod tests;
