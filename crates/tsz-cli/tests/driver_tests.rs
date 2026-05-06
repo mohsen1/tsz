@@ -378,6 +378,48 @@ n();
 }
 
 #[test]
+fn compile_for_of_unknown_expression_reports_ts18046() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"
+declare const value: unknown;
+
+for (const item of value) {
+  item;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::IS_OF_TYPE_UNKNOWN
+                && diagnostic
+                    .message_text
+                    .contains("'value' is of type 'unknown'")
+        }),
+        "expected TS18046 for for-of over unknown, got {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn plain_js_suppresses_ts2774_without_check_js() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
