@@ -3,7 +3,7 @@
 - **Date**: 2026-05-06
 - **Branch**: `claude/nice-darwin-9GdJ3`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: conformance / checker — mutable binding widening
 
 ## Intent
@@ -32,6 +32,11 @@ The structural rule:
 
 ## Verification
 
-- New unit test asserting `let m = tag;` (where `tag = "start"` is an
-  unannotated const) accepts later assignments.
-- `cargo nextest run -p tsz-checker --lib`.
+- 7 new unit tests in
+  `crates/tsz-checker/src/tests/mutable_binding_widening_from_const_literal_tests.rs`
+  covering string/number/var widening, transitive const-chains, the
+  explicitly-typed const negative case, the `let`-source negative
+  case, and a non-looping `const a = a` self-reference smoke test.
+- `cargo test -p tsz-checker --lib` (3583 passed, 0 failed).
+- Manual repro from issue body now matches tsc:
+  `index.ts(6,7): error TS2322: Type 'string' is not assignable to type '"start"'.`
