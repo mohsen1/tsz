@@ -625,6 +625,61 @@ fn test_handle_change_updates_file() {
 }
 
 #[test]
+fn test_reload_uses_tmpfile_for_requested_open_file() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let file_path = dir.path().join("a.ts");
+    let tmpfile_path = dir.path().join("tmp.ts");
+    std::fs::write(&file_path, "const value = \"disk\";\n").expect("write disk file");
+    std::fs::write(&tmpfile_path, "const value = 42;\n").expect("write tmpfile");
+
+    let file = file_path.to_string_lossy().to_string();
+    let tmpfile = tmpfile_path.to_string_lossy().to_string();
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": file,
+                    "fileContent": "const value = \"open\";\n",
+                }),
+            ))
+            .success
+    );
+
+    let reload_response = server.handle_tsserver_request(make_request(
+        "reload",
+        serde_json::json!({
+            "file": file,
+            "tmpfile": tmpfile,
+        }),
+    ));
+
+    assert!(reload_response.success);
+    assert_eq!(
+        reload_response.body,
+        Some(serde_json::json!({ "reloadFinished": true }))
+    );
+    assert_eq!(server.open_files[&file], "const value = 42;\n");
+
+    let quickinfo_response = server.handle_tsserver_request(make_request(
+        "quickinfo",
+        serde_json::json!({
+            "file": file,
+            "line": 1,
+            "offset": 7,
+        }),
+    ));
+    assert!(quickinfo_response.success);
+    assert_eq!(
+        quickinfo_response
+            .body
+            .and_then(|body| body.get("displayString").cloned()),
+        Some(serde_json::json!("const value: 42"))
+    );
+}
+
+#[test]
 fn test_inferred_auto_imports_blocked_for_module_none_es5() {
     let options = serde_json::json!({
         "module": "none",
