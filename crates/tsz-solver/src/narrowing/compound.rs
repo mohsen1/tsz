@@ -654,6 +654,10 @@ impl<'a> NarrowingContext<'a> {
             return self.db.array(TypeId::ANY);
         }
 
+        if self.is_array_like(source_type) {
+            return source_type;
+        }
+
         // Resolve Lazy(DefId) type aliases before narrowing.
         // Type aliases like `type Expression = ['and', ...Expression[]] | 'true' | 'false'`
         // are stored as Lazy(DefId) references. Without resolving, union_list_id and
@@ -720,7 +724,7 @@ impl<'a> NarrowingContext<'a> {
                     if t == any_array {
                         return true;
                     }
-                    let Some(elem) = crate::type_queries::get_array_element_type(self.db, t) else {
+                    let Some(elem) = self.array_element_type_for_narrowing(t) else {
                         return true;
                     };
                     elem != TypeId::ANY && !self.has_any_typed_string_index(elem)
@@ -819,6 +823,10 @@ impl<'a> NarrowingContext<'a> {
             return TypeId::UNKNOWN;
         }
 
+        if self.is_array_like(source_type) {
+            return TypeId::NEVER;
+        }
+
         // Resolve Lazy(DefId) type aliases before narrowing (same as narrow_to_array).
         let resolved = self.resolve_type(source_type);
         if resolved != source_type {
@@ -881,6 +889,10 @@ impl<'a> NarrowingContext<'a> {
             return self.is_array_like(inner);
         }
 
+        if self.readonly_array_application_element(type_id).is_some() {
+            return true;
+        }
+
         // Check if type is Array, Tuple, or ReadonlyArray (wrapped)
         type_queries::is_array_type(self.db, type_id)
             || type_queries::is_tuple_type(self.db, type_id)
@@ -889,7 +901,9 @@ impl<'a> NarrowingContext<'a> {
     fn union_has_array_member_for_element(&self, members: &[TypeId], element_type: TypeId) -> bool {
         members.iter().any(|&member| {
             let resolved = self.resolve_type(member);
-            crate::type_queries::get_array_element_type(self.db, resolved) == Some(element_type)
+            self.array_element_type_for_narrowing(member)
+                .or_else(|| self.array_element_type_for_narrowing(resolved))
+                == Some(element_type)
         })
     }
 
@@ -906,8 +920,41 @@ impl<'a> NarrowingContext<'a> {
         };
         let members = self.db.type_list(members_id);
         members.contains(&original_member)
-            && members.iter().any(|&member| {
-                crate::type_queries::get_array_element_type(self.db, member) == Some(TypeId::ANY)
-            })
+            && members
+                .iter()
+                .any(|&member| self.array_element_type_for_narrowing(member) == Some(TypeId::ANY))
+    }
+
+    fn array_element_type_for_narrowing(&self, type_id: TypeId) -> Option<TypeId> {
+        self.readonly_array_application_element(type_id)
+            .or_else(|| crate::type_queries::get_array_element_type(self.db, type_id))
+    }
+
+    fn readonly_array_application_element(&self, type_id: TypeId) -> Option<TypeId> {
+        let TypeData::Application(app_id) = self.db.lookup(type_id)? else {
+            return None;
+        };
+        let app = self.db.type_application(app_id);
+        if app.args.len() == 1 && self.application_base_name_is(app.base, "ReadonlyArray") {
+            Some(app.args[0])
+        } else {
+            None
+        }
+    }
+
+    fn application_base_name_is(&self, base: TypeId, expected: &str) -> bool {
+        match self.db.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => self
+                .resolver
+                .and_then(|resolver| resolver.get_def_name(def_id))
+                .is_some_and(|name| self.db.resolve_atom_ref(name).as_ref() == expected),
+            Some(TypeData::UnresolvedTypeName(name)) => {
+                self.db.resolve_atom_ref(name).as_ref() == expected
+            }
+            _ => self
+                .db
+                .get_display_alias(base)
+                .is_some_and(|alias| self.application_base_name_is(alias, expected)),
+        }
     }
 }
