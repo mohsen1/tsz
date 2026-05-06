@@ -19,7 +19,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
-
 /// Type node checker that operates on the shared context.
 ///
 /// This is a stateless checker that borrows the context mutably.
@@ -69,7 +68,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // For now, recompute to ensure correctness
             // TODO: Add cache key based on type param hash for smarter caching
         }
-
         // Compute and cache
         let result = self.compute_type(idx);
         // Don't cache TYPE_REFERENCE results here — CheckerState's
@@ -247,7 +245,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // Recursively resolve each member type
                 member_types.push(self.check(type_idx));
             }
-
             if member_types.is_empty() {
                 return TypeId::UNKNOWN; // Empty intersection is unknown
             }
@@ -712,18 +709,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
-        if _node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-            && let Some(tn) = self.ctx.arena.get(func_data.type_annotation)
-            && tn.kind == syntax_kind_ext::TYPE_PREDICATE
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.ctx.error(
-                tn.pos,
-                tn.end - tn.pos,
-                diagnostic_messages::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO.to_string(),
-                diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
-            );
-        }
+        super::type_node_helpers::report_type_predicate_in_constructor_type(
+            self.ctx,
+            _node.kind,
+            func_data.type_annotation,
+        );
 
         // Check parameter type annotations
         for param_idx in &func_data.parameters.nodes {
@@ -1365,11 +1355,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     /// Resolve a type symbol from a node index.
-    ///
     /// Looks up the identifier in `file_locals` and `lib_contexts` for symbols with
     /// TYPE, `REGULAR_ENUM`, or `CONST_ENUM` flags. Returns the raw symbol ID (u32).
-    /// Skips compiler-managed types (Array, ReadonlyArray, etc.) that `TypeLowering`
-    /// handles specially.
+    /// Skips unshadowed compiler-managed types handled specially by `TypeLowering`.
     pub(crate) fn resolve_type_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
@@ -1378,7 +1366,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let ident = self.ctx.arena.get_identifier_at(node_idx)?;
         let name = ident.escaped_text.as_str();
 
-        if is_compiler_managed_type(name) {
+        if is_compiler_managed_type(name) && !self.ctx.file_local_type_shadow_for_lib_name(name) {
             return None;
         }
 
@@ -1889,11 +1877,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
                 return false;
             }
-
             let Some(var_decl) = arena.get_variable_declaration(node) else {
                 return false;
             };
-
             (var_decl.type_annotation.is_some()
                 && self.is_unique_symbol_type_annotation_in_arena(arena, var_decl.type_annotation))
                 || self.is_symbol_call_initializer_in_arena(arena, var_decl.initializer)
