@@ -512,6 +512,67 @@ impl<'a> Printer<'a> {
         bindings
     }
 
+    pub(in crate::emitter) fn collect_cjs_deferred_export_aliases(
+        &self,
+        statements: &tsz_parser::parser::NodeList,
+    ) -> rustc_hash::FxHashMap<String, Vec<String>> {
+        let mut aliases: rustc_hash::FxHashMap<String, Vec<String>> =
+            rustc_hash::FxHashMap::default();
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.module_specifier.is_some() || export.is_type_only {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec_node) = self.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = self.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                if spec.is_type_only {
+                    continue;
+                }
+                let Some(export_name) = self.get_specifier_name_text(spec.name) else {
+                    continue;
+                };
+                let local_name = if spec.property_name.is_some() {
+                    self.get_specifier_name_text(spec.property_name)
+                        .unwrap_or_else(|| export_name.clone())
+                } else {
+                    export_name.clone()
+                };
+                if spec.property_name.is_some()
+                    && !self.has_cjs_deferred_export_declaration(statements, &local_name)
+                {
+                    continue;
+                }
+                aliases.entry(local_name).or_default().push(export_name);
+            }
+        }
+        for (_, local_name) in &self.ctx.module_state.hoisted_func_exports {
+            aliases.remove(local_name.as_str());
+        }
+        aliases
+    }
+
     fn has_cjs_deferred_export_declaration(
         &self,
         statements: &tsz_parser::parser::NodeList,
