@@ -670,10 +670,9 @@ impl<'a> DeclarationEmitter<'a> {
         let node = arena.get(node_idx)?;
         let (left_idx, right_idx) = if let Some(access) = arena.get_access_expr(node) {
             (access.expression, access.name_or_argument)
-        } else if let Some(qn) = arena.get_qualified_name(node) {
-            (qn.left, qn.right)
         } else {
-            return None;
+            let qn = arena.get_qualified_name(node)?;
+            (qn.left, qn.right)
         };
 
         let left_name = Self::rightmost_name_text_in_arena(arena, left_idx)?;

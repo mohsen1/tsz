@@ -118,7 +118,7 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let options = PrinterOptions {
-            target: ScriptTarget::ES2017,
+            target: ScriptTarget::ES2015,
             ..Default::default()
         };
         let ctx = EmitContext::with_options(options.clone());
@@ -129,9 +129,7 @@ mod tests {
         printer.emit(root);
         let output = printer.get_output().to_string();
 
-        let function_start = output
-            .find("async function f()")
-            .expect("function should emit");
+        let function_start = output.find("function f()").expect("function should emit");
         let source_scope = &output[..function_start];
 
         assert!(
@@ -139,8 +137,8 @@ mod tests {
             "for-await temps should not be hoisted outside the function.\nOutput:\n{output}"
         );
         assert!(
-            output[function_start..].contains("var _a, e_1, _b, _c;"),
-            "for-await temps should still be declared in the function body.\nOutput:\n{output}"
+            output.contains("function* () {\n        var _a, e_1, _b, _c;"),
+            "for-await temps should be hoisted inside the generated async body.\nOutput:\n{output}"
         );
     }
 
@@ -178,6 +176,37 @@ class RegularClass {\n    accessor shouldError;\n}\n";
         assert!(
             output.contains("class RegularClass") || output.contains("var RegularClass"),
             "Class output should still be emitted for accessor-containing class in ES5 path.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn legacy_decorated_private_auto_accessors_use_unique_storage_names() {
+        let source = "declare var dec: any;\n\
+class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("_C_a_1_accessor_storage")
+                && output.contains("_C_b_1_accessor_storage"),
+            "Legacy-decorated private auto-accessor storage names should avoid the private accessor helper namespace.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_C_a_accessor_storage = new WeakMap()")
+                && !output.contains("_C_b_accessor_storage = { value: void 0 }"),
+            "Unsuffixed storage names should remain reserved, not emitted.\nOutput:\n{output}"
         );
     }
 
@@ -581,6 +610,37 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn recovered_comma_separated_overload_signatures_emit_empty_bodies() {
+        let source = "function f1(), function f1();\nfunction f2(), function f2() {}\nfunction f3() {}, function f3();\n\nclass C {\n    m1(), m1();\n    m2(), m2() {}\n    m3() {}, m3();\n}\n";
+
+        let mut parser =
+            ParserState::new("overloadConsecutiveness.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "function f1() { }\nfunction f2() { }\nfunction f2() { }\nfunction f3() { }"
+            ),
+            "Recovered comma-separated function declarations should emit empty bodies before comma separators.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    m1() { }\n    m2() { }\n    m2() { }\n    m3() { }"),
+            "Recovered comma-separated method declarations should emit empty bodies before comma separators.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn recovered_class_member_enum_emits_after_class() {
         let source = "namespace M {\n    class C {\n\n    enum E {\n    }\n}\n";
 
@@ -835,6 +895,38 @@ class RegularClass {\n    accessor shouldError;\n}\n";
         assert!(
             output.contains("(bar = __rest({}, []));"),
             "Object-rest assignment lowering should still call __rest.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn amd_es5_reexported_enum_folds_export_into_iife() {
+        let source = "enum E { A }\nexport { E };\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::AMD,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_target_es5(ctx.target_es5);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("})(E || (exports.E = E = {}));"),
+            "AMD ES5 enum re-export should fold the export into the enum IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("\n    exports.E = E;"),
+            "AMD ES5 enum re-export should not emit a separate export assignment.\nOutput:\n{output}"
         );
     }
 }

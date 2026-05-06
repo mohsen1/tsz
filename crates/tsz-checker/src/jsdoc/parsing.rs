@@ -1367,10 +1367,9 @@ impl<'a> CheckerState<'a> {
         let mut rest = line.trim();
         if let Some(after_tag) = Self::strip_jsdoc_tag_prefix(rest, "property") {
             rest = after_tag.trim();
-        } else if let Some(after_tag) = Self::strip_jsdoc_tag_prefix(rest, "prop") {
-            rest = after_tag.trim();
         } else {
-            return None;
+            let after_tag = Self::strip_jsdoc_tag_prefix(rest, "prop")?;
+            rest = after_tag.trim();
         }
 
         let (raw_name, prop_type) = if rest.starts_with('{') {

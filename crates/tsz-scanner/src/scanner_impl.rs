@@ -942,6 +942,11 @@ impl ScannerState {
                         self.scan_identifier_with_escapes();
                         return self.token;
                     }
+                    if escaped_ch.is_some() {
+                        let _ = self.scan_unicode_escape_value();
+                        self.token = SyntaxKind::Unknown;
+                        return self.token;
+                    }
                     // Not a valid unicode escape - treat as unknown
                     self.pos += 1;
                     self.token = SyntaxKind::Unknown;

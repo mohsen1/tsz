@@ -241,7 +241,6 @@ fn test_collect_export_names_with_multiple_named_exports() {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_collect_export_names_with_export_import_equals() {
     // `export import Foo = Bar;` where Bar is *instantiated* (has runtime
     // value declarations) does export the alias. Empty/non-instantiated
@@ -480,6 +479,46 @@ fn collect_export_names_categorized_skips_marked_type_only_specifiers() {
     assert!(
         result.other_exports.is_empty(),
         "type-only export specifiers should not be preinitialized"
+    );
+}
+
+#[test]
+fn collect_export_names_categorized_skips_marked_type_only_reexports() {
+    let source = "export { I, I as II } from \"./ambient\";";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let source_file = parser
+        .arena
+        .get_source_file(parser.arena.get(root).expect("root node must exist"))
+        .expect("source file must exist");
+
+    let mut type_only_nodes = rustc_hash::FxHashSet::default();
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt) = parser.arena.get(stmt_idx) else {
+            continue;
+        };
+        let Some(export_decl) = parser.arena.get_export_decl(stmt) else {
+            continue;
+        };
+        let Some(clause_node) = parser.arena.get(export_decl.export_clause) else {
+            continue;
+        };
+        let Some(named_exports) = parser.arena.get_named_imports(clause_node) else {
+            continue;
+        };
+        type_only_nodes.extend(named_exports.elements.nodes.iter().copied());
+    }
+
+    let result = collect_export_names_categorized(
+        &parser.arena,
+        &source_file.statements.nodes,
+        false,
+        &type_only_nodes,
+    );
+
+    assert!(
+        result.other_exports.is_empty(),
+        "type-only re-export specifiers should not be preinitialized"
     );
 }
 
