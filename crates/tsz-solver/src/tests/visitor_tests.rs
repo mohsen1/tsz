@@ -938,6 +938,28 @@ fn test_collect_referenced_types_transitive_and_unique() {
     assert_eq!(reachable.len(), 5);
 }
 
+#[test]
+fn test_collect_infer_bindings_skips_terminal_types() {
+    let interner = TypeInterner::new();
+    let infer_name = interner.intern_string("T");
+    let infer_type = interner.infer(TypeParamInfo {
+        name: infer_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+    let root = interner.union(vec![
+        TypeId::STRING,
+        interner.literal_string("literal"),
+        infer_type,
+        infer_type,
+    ]);
+
+    let bindings = collect_infer_bindings(&interner, root);
+
+    assert_eq!(bindings, vec![(infer_name, infer_type)]);
+}
+
 // =============================================================================
 // unwrap_readonly_or_noinfer Tests
 // =============================================================================
