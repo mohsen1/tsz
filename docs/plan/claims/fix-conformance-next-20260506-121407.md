@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/conformance-next-20260506-121407`
-- **PR**: TBD
+- **PR**: #4053
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance)
 
