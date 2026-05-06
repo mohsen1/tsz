@@ -213,7 +213,7 @@ impl<'a> Printer<'a> {
             return;
         }
         let qualified_key = if ns_prefix.is_empty() {
-            simple_name
+            simple_name.clone()
         } else {
             format!("{ns_prefix}.{simple_name}")
         };
@@ -228,21 +228,55 @@ impl<'a> Printer<'a> {
                 evaluator.register_qualified_enum_values(&qualified_key, &values);
             }
 
-            use crate::emitter::core::ScopedConstEnum;
-            // Merge into existing entry at the same scope (merged enums).
-            let entries = self.const_enum_values.entry(qualified_key).or_default();
-            if let Some(existing) = entries
-                .iter_mut()
-                .find(|e| e.scope_start == scope_start && e.scope_end == scope_end)
-            {
-                existing.values.extend(values);
-            } else {
-                entries.push(ScopedConstEnum {
+            if ns_prefix.is_empty() {
+                self.register_const_enum_values_entry(
+                    qualified_key,
                     scope_start,
                     scope_end,
                     values,
-                });
+                );
+            } else {
+                // Inside a namespace body, `const enum E` is referenced both by
+                // its simple local name (`E.A`) and by its qualified name
+                // (`N.E.A`) from outside the namespace.
+                self.register_const_enum_values_entry(
+                    simple_name,
+                    scope_start,
+                    scope_end,
+                    values.clone(),
+                );
+                self.register_const_enum_values_entry(
+                    qualified_key.clone(),
+                    scope_start,
+                    scope_end,
+                    values.clone(),
+                );
+                self.register_const_enum_values_entry(qualified_key, 0, u32::MAX, values);
             }
+        }
+    }
+
+    fn register_const_enum_values_entry(
+        &mut self,
+        key: String,
+        scope_start: u32,
+        scope_end: u32,
+        values: rustc_hash::FxHashMap<String, crate::enums::evaluator::EnumValue>,
+    ) {
+        use crate::emitter::core::ScopedConstEnum;
+
+        let entries = self.const_enum_values.entry(key).or_default();
+        if let Some(existing) = entries
+            .iter_mut()
+            .find(|e| e.scope_start == scope_start && e.scope_end == scope_end)
+        {
+            existing.values.extend(values);
+        } else {
+            entries.push(ScopedConstEnum {
+                scope_start,
+                scope_end,
+                values,
+            });
         }
     }
 
@@ -264,20 +298,22 @@ impl<'a> Printer<'a> {
         &mut self,
         evaluator: &mut EnumEvaluator,
         body_idx: NodeIndex,
-        scope_start: u32,
-        scope_end: u32,
+        _scope_start: u32,
+        _scope_end: u32,
         ns_prefix: &str,
     ) {
         let Some(body_node) = self.arena.get(body_idx) else {
             return;
         };
+        let local_scope_start = body_node.pos;
+        let local_scope_end = body_node.end;
         // Try regular Block first
         if let Some(block) = self.arena.get_block(body_node) {
             self.collect_const_enums_recursive(
                 evaluator,
                 &block.statements,
-                scope_start,
-                scope_end,
+                local_scope_start,
+                local_scope_end,
                 ns_prefix,
             );
             return;
@@ -289,8 +325,8 @@ impl<'a> Printer<'a> {
             self.collect_const_enums_recursive(
                 evaluator,
                 statements,
-                scope_start,
-                scope_end,
+                local_scope_start,
+                local_scope_end,
                 ns_prefix,
             );
         }
