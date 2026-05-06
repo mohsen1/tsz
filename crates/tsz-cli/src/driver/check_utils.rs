@@ -370,10 +370,7 @@ fn filesystem_tslib_declaration(base_dir: &Path) -> Option<std::path::PathBuf> {
         if let Some(tslib_path) = tslib_declaration_in_dir(dir) {
             return Some(tslib_path);
         }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => return None,
-        }
+        dir = dir.parent()?;
     }
 }
 

@@ -485,7 +485,7 @@ impl Server {
         };
         let generic_params: Vec<String> = signature_name
             .find('<')
-            .and_then(|start| signature_name.rfind('>').map(|end| (start, end)))
+            .zip(signature_name.rfind('>'))
             .and_then(|(start, end)| {
                 (end > start + 1).then(|| {
                     signature_name[start + 1..end]

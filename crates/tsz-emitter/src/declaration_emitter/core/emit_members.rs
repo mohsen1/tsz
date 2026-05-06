@@ -878,10 +878,12 @@ impl<'a> DeclarationEmitter<'a> {
         let parent_node = self.arena.get(parent_idx)?;
         let member_nodes = if let Some(class_decl) = self.arena.get_class(parent_node) {
             class_decl.members.nodes.clone()
-        } else if let Some(object) = self.arena.get_literal_expr(parent_node) {
-            object.elements.nodes.clone()
         } else {
-            return None;
+            self.arena
+                .get_literal_expr(parent_node)?
+                .elements
+                .nodes
+                .clone()
         };
 
         for member_idx in member_nodes {
