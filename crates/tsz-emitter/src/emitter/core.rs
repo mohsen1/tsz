@@ -418,7 +418,7 @@ pub struct Printer<'a> {
 
     /// For CommonJS class exports, emit `exports.X = X;` immediately after class
     /// declaration and before post-class lowered statements (static fields/blocks).
-    pub(crate) pending_commonjs_class_export_name: Option<String>,
+    pub(crate) pending_commonjs_class_export_name: Option<(NodeIndex, String)>,
 
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(crate) declared_namespace_names: FxHashSet<String>,
