@@ -3,7 +3,7 @@
 - **Date**: 2026-05-06
 - **Branch**: `fix/conformance-boolean-filter-any-array-20260506`
 - **PR**: #3686
-- **Status**: claim
+- **Status**: stale
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -20,4 +20,4 @@ with focused Rust coverage.
 
 ## Verification
 
-- Pending
+- `CARGO_BUILD_JOBS=2 ./scripts/conformance/conformance.sh run --filter "booleanFilterAnyArray" --verbose` (1/1 passed on current `origin/main`; saved snapshot claim is stale)
