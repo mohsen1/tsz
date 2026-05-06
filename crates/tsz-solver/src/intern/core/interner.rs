@@ -1392,6 +1392,9 @@ impl TypeInterner {
             ) || self.union_origin_overrides_canonical_application_sort(
                 current.as_ref(),
                 &origin_members,
+            ) || self.union_origin_overrides_canonical_composite_sort(
+                current.as_ref(),
+                &origin_members,
             );
             if !needs_origin {
                 return;
@@ -1533,6 +1536,54 @@ impl TypeInterner {
         same_application_base(self, origin, &mut expected_base)
             && same_application_base(self, current, &mut expected_base)
             && expected_base.is_some()
+    }
+
+    /// Preserve source/diagnostic order when a union contains only composite
+    /// members whose TypeId ordering is an implementation detail. This keeps
+    /// diagnostic displays like `Cover | Cover[]` and `U | NonNullable<T>`
+    /// aligned with tsc without changing canonical ordering for primitive or
+    /// literal/object mixed unions such as `"foo" | Refrigerator`.
+    fn union_origin_overrides_canonical_composite_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        current.iter().all(|&id| {
+            matches!(
+                self.lookup(id),
+                Some(
+                    TypeData::Object(_)
+                        | TypeData::ObjectWithIndex(_)
+                        | TypeData::Array(_)
+                        | TypeData::Tuple(_)
+                        | TypeData::Function(_)
+                        | TypeData::Callable(_)
+                        | TypeData::TypeParameter(_)
+                        | TypeData::BoundParameter(_)
+                        | TypeData::Lazy(_)
+                        | TypeData::Enum(_, _)
+                        | TypeData::Application(_)
+                        | TypeData::Conditional(_)
+                        | TypeData::Mapped(_)
+                        | TypeData::IndexAccess(_, _)
+                        | TypeData::KeyOf(_)
+                        | TypeData::ReadonlyType(_)
+                        | TypeData::NoInfer(_)
+                )
+            )
+        })
     }
 
     /// Look up the as-written origin members for a flattened Union TypeId.
