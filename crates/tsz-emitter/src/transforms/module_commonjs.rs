@@ -313,6 +313,18 @@ fn collect_export_name_from_declaration(
                 if import_decl.is_type_only {
                     return;
                 }
+                if arena
+                    .get(import_decl.module_specifier)
+                    .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+                    && !is_import_alias_referencing_value(
+                        arena,
+                        import_decl.module_specifier,
+                        _statements,
+                        preserve_const_enums,
+                    )
+                {
+                    return;
+                }
                 // `export import A = X.Y` gets a runtime export assignment even
                 // when the alias target is type-only.
                 exports.push(name);
