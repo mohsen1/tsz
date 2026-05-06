@@ -1263,6 +1263,33 @@ fn bare_var_statement_in_class_body_recovers_as_ts1068_then_ts1128() {
 }
 
 #[test]
+fn invalid_surrogate_escapes_in_class_member_names_report_ts1127() {
+    let source = r"class C { \uD800\uDEA7: string; }";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let invalid_positions: Vec<u32> = diags
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::INVALID_CHARACTER)
+        .map(|d| d.start)
+        .collect();
+    let backslash_positions: Vec<u32> = source
+        .match_indices('\\')
+        .map(|(pos, _)| pos as u32)
+        .collect();
+
+    assert_eq!(
+        invalid_positions, backslash_positions,
+        "invalid surrogate escapes should report TS1127 at each backslash, got {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code
+            == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED),
+        "invalid surrogate escapes should not fall into class-member TS1068 recovery, got {diags:?}"
+    );
+}
+
+#[test]
 fn stray_at_before_enum_prefers_ts1109_over_decorator_recovery() {
     let source =
         "// @target: es2015\nnamespace M {\n   ¬\n   class C {\n   }\n   @\n   enum E {\n   ¬\n";
