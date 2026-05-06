@@ -66,6 +66,100 @@ fn default_args() -> CliArgs {
     CliArgs::try_parse_from(["tsz"]).expect("default args should parse")
 }
 
+fn parse_args(args: &[&str]) -> CliArgs {
+    CliArgs::try_parse_from(args).expect("test args should parse")
+}
+
+fn assert_cli_option_validation_reports(args: &[&str], file_name: &str, source: &str, code: u32) {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join(file_name), source);
+
+    let args = parse_args(args);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code == code),
+        "expected TS{code} for args {args:?}, got diagnostics: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn cli_validates_direct_option_conflicts_and_dependencies() {
+    assert_cli_option_validation_reports(
+        &[
+            "tsz",
+            "--noEmit",
+            "--emitDecoratorMetadata",
+            "--pretty",
+            "false",
+            "--ignoreConfig",
+            "decorator.ts",
+        ],
+        "decorator.ts",
+        r#"
+class C {
+  @d
+  m() {}
+}
+declare const d: MethodDecorator;
+"#,
+        diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+    );
+
+    assert_cli_option_validation_reports(
+        &[
+            "tsz",
+            "--declaration",
+            "--emitDeclarationOnly",
+            "--allowJs",
+            "--isolatedDeclarations",
+            "--pretty",
+            "false",
+            "--ignoreConfig",
+            "a.js",
+        ],
+        "a.js",
+        "export const x = 1;\n",
+        diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
+    );
+
+    assert_cli_option_validation_reports(
+        &[
+            "tsz",
+            "--noEmit",
+            "--module",
+            "amd",
+            "--ignoreDeprecations",
+            "6.0",
+            "--verbatimModuleSyntax",
+            "--pretty",
+            "false",
+            "--ignoreConfig",
+            "plain.ts",
+        ],
+        "plain.ts",
+        "const x = 1;\n",
+        diagnostic_codes::OPTION_VERBATIMMODULESYNTAX_CANNOT_BE_USED_WHEN_MODULE_IS_SET_TO_UMD_AMD_OR_SYST,
+    );
+
+    assert_cli_option_validation_reports(
+        &[
+            "tsz",
+            "--noEmit",
+            "--declarationMap",
+            "--pretty",
+            "false",
+            "--ignoreConfig",
+            "a.ts",
+        ],
+        "a.ts",
+        "export const x = 1;\n",
+        diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION,
+    );
+}
+
 #[test]
 fn source_file_test_pragmas_do_not_override_project_options() {
     let temp = TempDir::new().expect("temp dir");
