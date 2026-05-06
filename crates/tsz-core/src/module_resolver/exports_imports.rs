@@ -32,7 +32,7 @@ fn package_relative_target_path(package_dir: &Path, target: &str) -> Option<Path
 }
 
 /// Returns true when a relative `exports`/`imports` target string is a valid
-/// per-package relative path per Node.js PACKAGE_TARGET_RESOLVE.
+/// per-package relative path per Node.js `PACKAGE_TARGET_RESOLVE`.
 ///
 /// A valid relative target:
 /// - Starts with `"./"`.
@@ -54,7 +54,7 @@ pub(super) fn is_valid_relative_package_target(target: &str) -> bool {
 }
 
 /// Returns true when an `imports` target is a valid bare-package specifier
-/// per Node.js PACKAGE_IMPORTS_RESOLVE.
+/// per Node.js `PACKAGE_IMPORTS_RESOLVE`.
 ///
 /// A bare specifier must not be empty, must not be absolute (Unix `/...`,
 /// Windows backslash, or `<drive>:...`), and must not look relative

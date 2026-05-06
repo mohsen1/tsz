@@ -678,19 +678,72 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let rest_args = &arg_types[rest_start..];
+        let mut aggregate_offset = 0usize;
+        let mut aggregate_expected = rest_type;
+        let expansion = self.expand_tuple_rest(rest_type);
+        let top_level_fixed_count =
+            if let Some(TypeData::Tuple(elements_id)) = self.interner.lookup(rest_type) {
+                self.interner
+                    .tuple_list(elements_id)
+                    .iter()
+                    .take_while(|element| !element.rest)
+                    .count()
+            } else {
+                0
+            };
+        for (fixed_index, fixed_element) in expansion.fixed.iter().enumerate() {
+            let Some(&arg_type) = rest_args.get(fixed_index) else {
+                break;
+            };
+            let assignable = if strict {
+                self.checker
+                    .is_assignable_to_strict(arg_type, fixed_element.type_id)
+            } else {
+                self.checker
+                    .is_assignable_to(arg_type, fixed_element.type_id)
+            };
+            if !assignable {
+                return Some(Some(CallResult::ArgumentTypeMismatch {
+                    index: rest_start + fixed_index,
+                    expected: fixed_element.type_id,
+                    actual: arg_type,
+                    fallback_return: TypeId::ERROR,
+                }));
+            }
+            aggregate_offset = fixed_index + 1;
+        }
+        if aggregate_offset > 0 {
+            aggregate_expected = if aggregate_offset <= top_level_fixed_count {
+                self.remaining_rest_type_after_offset(rest_type, aggregate_offset)
+            } else {
+                let mut elements = Vec::new();
+                if let Some(variadic) = expansion.variadic {
+                    elements.push(TupleElement {
+                        type_id: self.interner.array(variadic),
+                        name: None,
+                        optional: false,
+                        rest: true,
+                    });
+                }
+                elements.extend(expansion.tail);
+                self.interner.tuple(elements)
+            };
+        }
+        let rest_args = &rest_args[aggregate_offset..];
         let actual = self.aggregate_rest_actual_type(rest_args);
         let assignable = if strict {
-            self.checker.is_assignable_to_strict(actual, rest_type)
+            self.checker
+                .is_assignable_to_strict(actual, aggregate_expected)
         } else {
-            self.checker.is_assignable_to(actual, rest_type)
+            self.checker.is_assignable_to(actual, aggregate_expected)
         };
         if assignable {
             return Some(None);
         }
 
         Some(Some(CallResult::ArgumentTypeMismatch {
-            index: rest_start,
-            expected: rest_type,
+            index: rest_start + aggregate_offset,
+            expected: aggregate_expected,
             actual,
             fallback_return: TypeId::ERROR,
         }))
@@ -733,6 +786,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     matches!(self.interner.lookup(member), Some(TypeData::Tuple(_)))
                         || self.rest_type_needs_aggregate_argument_check(member)
                 })
+            }
+            Some(TypeData::Tuple(elements)) => {
+                let elements = self.interner.tuple_list(elements);
+                let Some(rest_index) = elements.iter().position(|element| element.rest) else {
+                    return false;
+                };
+                elements[rest_index + 1..]
+                    .iter()
+                    .any(|element| !element.rest)
             }
             Some(
                 TypeData::Application(_)

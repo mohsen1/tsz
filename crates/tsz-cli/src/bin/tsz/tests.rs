@@ -166,7 +166,7 @@ fn preprocess_duplicate_valued_flags_last_wins() {
 // ==================== Boolean true/false value handling ====================
 
 #[test]
-fn preprocess_strict_false_removes_flag() {
+fn preprocess_strict_false_forwards_explicit_disable() {
     let args = vec![
         OsString::from("tsz"),
         OsString::from("--strict"),
@@ -174,9 +174,11 @@ fn preprocess_strict_false_removes_flag() {
         OsString::from("file.ts"),
     ];
     let result = preprocess_args(args);
+    // The bare `--strict` flag is dropped (clap's `bool` arg cannot represent
+    // an explicit `false`).
     assert!(
         !result.iter().any(|a| a == "--strict"),
-        "--strict false should remove the flag"
+        "--strict false should remove the bare flag"
     );
     // "false" should NOT appear as a file path
     assert!(
@@ -185,6 +187,14 @@ fn preprocess_strict_false_removes_flag() {
     );
     // file.ts should still be there
     assert!(result.iter().any(|a| a == "file.ts"));
+    // The explicit-disable intent is forwarded through a hidden side-channel
+    // arg so the override pipeline can flip a config `strict: true` to false.
+    assert!(
+        result
+            .iter()
+            .any(|a| a == "--__explicitly-disabled-bool-flag=strict"),
+        "--strict false should record an explicit-disable side-channel arg"
+    );
 }
 
 #[test]
@@ -208,7 +218,7 @@ fn preprocess_strict_true_keeps_flag() {
 }
 
 #[test]
-fn preprocess_noemit_false_removes_flag() {
+fn preprocess_noemit_false_forwards_explicit_disable() {
     let args = vec![
         OsString::from("tsz"),
         OsString::from("--noEmit"),
@@ -218,7 +228,40 @@ fn preprocess_noemit_false_removes_flag() {
     let result = preprocess_args(args);
     assert!(
         !result.iter().any(|a| a == "--noEmit"),
-        "--noEmit false should remove the flag"
+        "--noEmit false should remove the bare flag"
+    );
+    assert!(
+        result
+            .iter()
+            .any(|a| a == "--__explicitly-disabled-bool-flag=noEmit"),
+        "--noEmit false should record an explicit-disable side-channel arg"
+    );
+}
+
+#[test]
+fn preprocess_no_unused_locals_false_forwards_explicit_disable() {
+    let result = preprocess_strs(&["tsz", "--noUnusedLocals", "false", "file.ts"]);
+    assert!(!result.iter().any(|a| a == "--noUnusedLocals"));
+    assert!(
+        result
+            .iter()
+            .any(|a| a == "--__explicitly-disabled-bool-flag=noUnusedLocals")
+    );
+}
+
+#[test]
+fn preprocess_option_bool_false_uses_equals_form_not_side_channel() {
+    // `--strictNullChecks` is an `Option<bool>` arg in `CliArgs`, not a plain
+    // `bool`. Its `--flag false` form already round-trips through clap as
+    // `Some(false)`, so it must NOT receive the explicit-disable side-channel
+    // (otherwise the flag would be applied twice).
+    let result = preprocess_strs(&["tsz", "--strictNullChecks", "false", "file.ts"]);
+    assert!(result.iter().any(|a| a == "--strictNullChecks=false"));
+    assert!(
+        !result
+            .iter()
+            .any(|a| a.starts_with("--__explicitly-disabled-bool-flag")),
+        "Option<bool> flags must not emit an explicit-disable side-channel arg"
     );
 }
 

@@ -217,9 +217,14 @@ impl<'a> CheckerState<'a> {
         let (module_specifier, member_name) = Self::parse_jsdoc_import_type(type_expr)?;
 
         if let Some(member_name) = member_name {
-            let sym_id = self.resolve_jsdoc_import_member(&module_specifier, &member_name)?;
-            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-            return (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved);
+            if let Some(sym_id) = self.resolve_jsdoc_import_member(&module_specifier, &member_name)
+            {
+                let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+                if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                    return Some(resolved);
+                }
+            }
+            return self.resolve_import_type_jsdoc_typedef(&module_specifier, &member_name, None);
         }
 
         self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx))
