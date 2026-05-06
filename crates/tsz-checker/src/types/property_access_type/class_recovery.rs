@@ -18,15 +18,13 @@ impl<'a> CheckerState<'a> {
         let Some(class_sym) = self.ctx.binder.get_node_symbol(class_idx) else {
             return false;
         };
-        let is_direct_this = self.is_this_expression(expression);
-        if !is_direct_this
-            && self.ctx.checking_computed_property_name.is_none()
+        if self.ctx.checking_computed_property_name.is_none()
             && !self.property_access_is_in_class_property_initializer(expression)
         {
             return false;
         }
 
-        self.property_access_receiver_symbol(receiver_type) == Some(class_sym) || is_direct_this
+        self.property_access_receiver_symbol(receiver_type) == Some(class_sym)
     }
 
     pub(crate) fn property_access_receiver_symbol(
