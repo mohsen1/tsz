@@ -1374,6 +1374,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // Type
                 if param.type_annotation.is_some() {
                     self.write(": ");
+                    let before_type = self.writer.len();
                     if let Some(rescued) = self.rescued_asserts_parameter_type_text(param_idx) {
                         self.write(&rescued);
                     } else if self.normalize_string_literal_type_quotes
@@ -1389,7 +1390,10 @@ impl<'a> DeclarationEmitter<'a> {
                     // parameter type. For private params, the type is hidden so skip.
                     if is_parameter_property && !is_private_param_property && param.question_token {
                         let output = self.writer.get_output();
-                        if !output.ends_with("| undefined") {
+                        let type_text = &output[before_type..];
+                        if !output.ends_with("| undefined")
+                            && !Self::type_text_has_undefined_branch(type_text)
+                        {
                             self.write(" | undefined");
                         }
                     }
