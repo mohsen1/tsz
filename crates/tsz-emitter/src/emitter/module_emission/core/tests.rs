@@ -531,6 +531,54 @@ class A {
 }
 
 #[test]
+fn static_private_initialization_precedes_lowered_static_fields() {
+    let source = r#"// https://github.com/microsoft/TypeScript/issues/44113
+class C {
+    static #qux = 42;
+    static ["bar"] = "test";
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        use_define_for_class_fields: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let var_pos = output
+        .find("var _a, _C_qux;")
+        .expect("expected private temp var declaration");
+    let comment_pos = output
+        .find("// https://github.com/microsoft/TypeScript/issues/44113")
+        .expect("expected preserved leading comment");
+    let private_init_pos = output
+        .find("_C_qux = { value: 42 };")
+        .expect("expected static private initialization");
+    let static_field_pos = output
+        .find("Object.defineProperty(C, \"bar\"")
+        .expect("expected lowered static field");
+
+    assert!(
+        var_pos < comment_pos,
+        "Private temp vars should precede attached leading comments.\nOutput:\n{output}"
+    );
+    assert!(
+        private_init_pos < static_field_pos,
+        "Static private state should initialize before lowered static fields.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_class_super_parameter_skips_user_binding() {
     let source = r#"class Base {}
 
