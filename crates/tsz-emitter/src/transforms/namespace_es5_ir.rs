@@ -188,9 +188,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         &self,
         ns_idx: NodeIndex,
     ) -> Option<(String, std::collections::HashSet<String>)> {
-        let Some((parts, innermost_body)) = self.collect_all_namespace_parts(ns_idx) else {
-            return None;
-        };
+        let (parts, innermost_body) = self.collect_all_namespace_parts(ns_idx)?;
         let ns_name = parts.last()?.clone();
         let mut names = collect_runtime_exported_var_names(self.arena, innermost_body);
         if !self.prior_exported_vars.is_empty() {
