@@ -516,11 +516,9 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         type_id != tsz_solver::types::TypeId::ANY
-            && self
-                .type_interner
-                .is_some_and(|interner| {
-                    type_queries::is_type_usable_as_property_name(interner, type_id)
-                })
+            && self.type_interner.is_some_and(|interner| {
+                type_queries::is_type_usable_as_property_name(interner, type_id)
+            })
     }
 
     pub(in crate::declaration_emitter) fn emit_constructor_declaration(
