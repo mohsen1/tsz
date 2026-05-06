@@ -2368,7 +2368,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
-        // TS6046: Validate option values for target, module, moduleResolution, jsx, lib.
+        // TS6046: Validate option values for target, module, moduleResolution, jsx,
+        // moduleDetection, newLine, and lib.
         // If a value is invalid, emit TS6046 and null it out so resolve_compiler_options
         // doesn't see it and bail.
         validate_option_value(
@@ -2409,6 +2410,26 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             VALID_JSX_VALUES,
             "--jsx",
             VALID_JSX_DISPLAY,
+            &mut diagnostics,
+        );
+        validate_option_value(
+            compiler_opts,
+            "moduleDetection",
+            &stripped,
+            file_path,
+            VALID_MODULE_DETECTION_VALUES,
+            "--moduleDetection",
+            VALID_MODULE_DETECTION_DISPLAY,
+            &mut diagnostics,
+        );
+        validate_option_value(
+            compiler_opts,
+            "newLine",
+            &stripped,
+            file_path,
+            VALID_NEW_LINE_VALUES,
+            "--newLine",
+            VALID_NEW_LINE_DISPLAY,
             &mut diagnostics,
         );
         validate_lib_values(compiler_opts, &stripped, file_path, &mut diagnostics);
@@ -2573,39 +2594,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         ts5024_keys_outer = ts5024_keys;
     }
 
-    // TS5024 for top-level tsconfig properties with wrong types.
-    // `files` must be an array — if it's a string or other non-array value,
-    // emit TS5024 and null it out so serde deserialization succeeds.
-    if let Some(obj) = raw.as_object_mut()
-        && let Some(files_val) = obj.get("files")
-        && !files_val.is_null()
-        && !files_val.is_array()
-    {
-        let search = "\"files\"";
-        let start = stripped.find(search).map_or(0, |p| p as u32);
-        let value_len = estimate_json_value_len(files_val);
-        let msg = format_message(
-            diagnostic_messages::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
-            &["files", "Array"],
-        );
-        let value_start = {
-            if let Some(colon_pos) = stripped[start as usize..].find(':') {
-                let after_colon = &stripped[(start as usize + colon_pos + 1)..];
-                let whitespace_len = after_colon.len() - after_colon.trim_start().len();
-                (start as usize + colon_pos + 1 + whitespace_len) as u32
-            } else {
-                start
-            }
-        };
-        diagnostics.push(Diagnostic::error(
-            file_path,
-            value_start,
-            value_len,
-            msg,
-            diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
-        ));
-        // Null it out so serde can deserialize the rest of the config
-        obj.insert("files".to_string(), serde_json::Value::Null);
+    // TS5024 for top-level tsconfig properties with wrong types. These
+    // represented root selectors must be arrays; null invalidates the selector
+    // without a diagnostic, matching serde's Option<T> representation.
+    if let Some(obj) = raw.as_object_mut() {
+        for key in ["include", "exclude", "files", "references"] {
+            validate_top_level_array_option(obj, &mut diagnostics, &stripped, file_path, key);
+        }
     }
 
     let mut config: TsConfig =
@@ -2717,6 +2712,55 @@ fn find_value_offset_in_source(source: &str, key: &str) -> u32 {
         }
     }
     0
+}
+
+fn find_top_level_value_offset_in_source(source: &str, key: &str) -> u32 {
+    let search = format!("\"{key}\"");
+    let Some(key_pos) = source.find(&search) else {
+        return 0;
+    };
+
+    let after_key = key_pos + search.len();
+    let rest = &source[after_key..];
+    if let Some(colon_pos) = rest.find(':') {
+        let after_colon = after_key + colon_pos + 1;
+        let value_rest = &source[after_colon..];
+        let whitespace_len = value_rest.len() - value_rest.trim_start().len();
+        (after_colon + whitespace_len) as u32
+    } else {
+        key_pos as u32
+    }
+}
+
+fn validate_top_level_array_option(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+    source: &str,
+    file_path: &str,
+    key: &str,
+) {
+    let Some(value) = obj.get(key) else {
+        return;
+    };
+    if value.is_null() || value.is_array() {
+        return;
+    }
+
+    let value_start = find_top_level_value_offset_in_source(source, key);
+    let value_len = estimate_json_value_len(value);
+    let msg = format_message(
+        diagnostic_messages::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+        &[key, "Array"],
+    );
+    diagnostics.push(Diagnostic::error(
+        file_path,
+        value_start,
+        value_len,
+        msg,
+        diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+    ));
+
+    obj.insert(key.to_string(), serde_json::Value::Null);
 }
 
 /// Estimate the display length of a JSON value for diagnostic span.
@@ -4605,6 +4649,14 @@ const VALID_JSX_VALUES: &[&str] = &[
 ];
 const VALID_JSX_DISPLAY: &str = "'preserve', 'react', 'react-native', 'react-jsx', 'react-jsxdev'";
 
+/// Valid `--moduleDetection` values (normalized).
+const VALID_MODULE_DETECTION_VALUES: &[&str] = &["auto", "legacy", "force"];
+const VALID_MODULE_DETECTION_DISPLAY: &str = "'auto', 'legacy', 'force'";
+
+/// Valid `--newLine` values (normalized).
+const VALID_NEW_LINE_VALUES: &[&str] = &["crlf", "lf"];
+const VALID_NEW_LINE_DISPLAY: &str = "'crlf', 'lf'";
+
 /// Valid `--lib` values (normalized). This list matches tsc 6.0's accepted lib names.
 const VALID_LIB_VALUES: &[&str] = &[
     "es5",
@@ -5066,6 +5118,8 @@ mod tests {
             ("target", "es2020,esnext", "--target"),
             ("module", "commonjs,esnext", "--module"),
             ("moduleResolution", "node,bundler", "--moduleResolution"),
+            ("moduleDetection", "auto,force", "--moduleDetection"),
+            ("newLine", "lf,crlf", "--newLine"),
         ] {
             let source = format!(r#"{{"compilerOptions":{{"{option}":"{value}"}}}}"#);
             let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
@@ -5089,6 +5143,50 @@ mod tests {
                 diagnostic.start,
                 source.find(&format!(r#""{value}""#)).unwrap() as u32
             );
+        }
+    }
+
+    #[test]
+    fn test_ts6046_emitted_for_invalid_module_detection_and_new_line() {
+        for (option, value, flag, expected_values) in [
+            (
+                "moduleDetection",
+                "bogus",
+                "--moduleDetection",
+                "'auto', 'legacy', 'force'",
+            ),
+            ("newLine", "bogus", "--newLine", "'crlf', 'lf'"),
+        ] {
+            let source = format!(r#"{{"compilerOptions":{{"{option}":"{value}"}}}}"#);
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let diagnostic = parsed
+                .diagnostics
+                .iter()
+                .find(|diag| diag.code == diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected TS6046 for compilerOptions.{option}, got: {:?}",
+                        parsed.diagnostics
+                    )
+                });
+
+            assert!(
+                diagnostic.message_text.contains(flag)
+                    && diagnostic.message_text.contains(expected_values),
+                "Unexpected TS6046 message for compilerOptions.{option}: {}",
+                diagnostic.message_text
+            );
+            assert_eq!(
+                diagnostic.start,
+                source.find(&format!(r#""{value}""#)).unwrap() as u32
+            );
+
+            let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref())
+                .expect("invalid enum value should be nulled before resolution");
+            if option == "moduleDetection" {
+                assert!(!resolved.printer.module_detection_force);
+                assert!(!resolved.printer.module_detection_legacy);
+            }
         }
     }
 
@@ -6862,6 +6960,49 @@ mod tests {
         let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
 
         assert!(resolved.checker.no_property_access_from_index_signature);
+    }
+
+    #[test]
+    fn test_ts5024_top_level_selector_type_mismatches_are_recovered() {
+        for (key, value) in [
+            ("include", r#""*.ts""#),
+            ("exclude", r#""dist""#),
+            ("references", r#""./lib""#),
+        ] {
+            let source = format!(
+                r#"{{
+  "{key}": {value},
+  "compilerOptions": {{ "noEmit": true }},
+  "files": ["a.ts"]
+}}"#
+            );
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let ts5024 = parsed
+                .diagnostics
+                .iter()
+                .find(|d| {
+                    d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE
+                        && d.message_text.contains(key)
+                        && d.message_text.contains("Array")
+                })
+                .unwrap_or_else(|| {
+                    panic!("Expected TS5024 for {key}, got: {:?}", parsed.diagnostics)
+                });
+
+            assert_eq!(
+                ts5024.start,
+                source.find(value).expect("test value") as u32,
+                "TS5024 for {key} should point at the invalid value"
+            );
+
+            match key {
+                "include" => assert!(parsed.config.include.is_none()),
+                "exclude" => assert!(parsed.config.exclude.is_none()),
+                "references" => assert!(parsed.config.references.is_none()),
+                _ => unreachable!(),
+            }
+            assert_eq!(parsed.config.files, Some(vec!["a.ts".to_string()]));
+        }
     }
 
     #[test]

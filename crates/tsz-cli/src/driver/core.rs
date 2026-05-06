@@ -2866,6 +2866,9 @@ fn apply_cli_overrides_with_config_options(
     if args.no_unchecked_indexed_access {
         options.checker.no_unchecked_indexed_access = true;
     }
+    if args.no_unchecked_side_effect_imports {
+        options.checker.no_unchecked_side_effect_imports = true;
+    }
     if args.exact_optional_property_types {
         options.checker.exact_optional_property_types = true;
     }

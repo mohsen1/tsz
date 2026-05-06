@@ -45,6 +45,43 @@ fn write_file(path: &Path, contents: &str) {
 }
 
 #[test]
+fn list_files_only_accepts_bare_relative_project_config_path() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("listfiles_bare_relative_project").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"include":["src/**/*"],"compilerOptions":{"noEmit":true,"noLib":true}}"#,
+    );
+    write_file(&temp.path.join("src/a.ts"), "const a = 1;\n");
+
+    let output = Command::new(tsz_bin)
+        .args([
+            "-p",
+            "tsconfig.json",
+            "--pretty",
+            "false",
+            "--listFilesOnly",
+        ])
+        .current_dir(&temp.path)
+        .output()
+        .expect("run tsz --listFilesOnly");
+
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "tsz --listFilesOnly should accept a bare relative project config path.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("src/a.ts"),
+        "expected discovered source file in stdout, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn declaration_emit_expands_foreign_import_mapped_keys_from_nested_package() {
     let temp = TempDir::new("foreign_mapped_keys").expect("temp dir");
 
@@ -1302,6 +1339,39 @@ fn unknown_flag_exit_code_is_1_not_2() {
 }
 
 #[test]
+fn bare_optional_boolean_flags_apply_to_following_input_file() {
+    let temp = TempDir::new("bare_optional_boolean_flags").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "function f(value) { return value; }\nconst text: string = null;\n",
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--ignoreConfig",
+            "--noEmit",
+            "--pretty",
+            "false",
+            "--noImplicitAny",
+            "--strictNullChecks",
+            "test.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+
+    assert_ne!(code, 0, "Expected diagnostics exit code, got {code}");
+    assert!(
+        !output.contains("TS6044"),
+        "Bare optional boolean flags should not require explicit values:\n{output}"
+    );
+    assert!(
+        output.contains("TS7006") && output.contains("TS2322"),
+        "Expected both bare boolean flags to affect test.ts, got:\n{output}"
+    );
+}
+
+#[test]
 fn build_mode_v_means_verbose() {
     let temp = TempDir::new("build_v_verbose").expect("temp dir");
     // With -b -v, -v should map to --build-verbose, NOT --version.
@@ -1713,6 +1783,49 @@ fn show_config_rejects_tsconfig_only_cli_options() {
         assert!(
             output.contains("error TS6064:"),
             "expected TS6064 for {flag}, got: {output}"
+        );
+    }
+}
+
+#[test]
+fn invalid_top_level_config_array_types_emit_ts5024() {
+    let temp = TempDir::new("top_level_config_array_types").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "export {};\n");
+
+    for (key, value) in [
+        ("include", r#""*.ts""#),
+        ("exclude", r#""dist""#),
+        ("references", r#""./lib""#),
+    ] {
+        write_file(
+            &temp.path.join("tsconfig.json"),
+            &format!(
+                r#"{{
+  "{key}": {value},
+  "compilerOptions": {{ "noEmit": true }},
+  "files": ["a.ts"]
+}}
+"#
+            ),
+        );
+
+        let (code, output) =
+            run_tsz_with_exit_code(&temp.path, &["-p", "tsconfig.json", "--pretty", "false"])
+                .expect("tsz should run");
+
+        assert_ne!(
+            code, 0,
+            "expected config diagnostic for {key}, got: {output}"
+        );
+        assert!(
+            !output.contains("failed to parse tsconfig"),
+            "invalid {key} should recover through TS5024, got:\n{output}"
+        );
+        assert!(
+            output.contains(&format!(
+                "error TS5024: Compiler option '{key}' requires a value of type Array."
+            )),
+            "expected TS5024 for {key}, got:\n{output}"
         );
     }
 }
