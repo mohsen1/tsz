@@ -366,6 +366,8 @@ mod ts2403_false_positive_tests {
         let source = r#"
 var c: typeof c;
 var c: any;
+var f: Array<typeof f>;
+var f: any;
 "#;
         let ts2403 = check_source_diagnostics(source)
             .into_iter()
