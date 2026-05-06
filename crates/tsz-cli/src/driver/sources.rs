@@ -291,9 +291,22 @@ pub(super) struct SourceReadResult {
     pub(super) resolution_mode_errors: Vec<(PathBuf, usize, usize)>,
 }
 
-pub(crate) fn find_tsconfig(cwd: &Path) -> Option<PathBuf> {
-    let candidate = cwd.join("tsconfig.json");
-    candidate.is_file().then(|| normalize_path(&candidate))
+/// Locate the nearest `tsconfig.json`, starting at `cwd` and walking up parent
+/// directories until one is found or the filesystem root is reached.
+///
+/// Matches TypeScript's no-argument project discovery (`findConfigFile`), where
+/// running `tsc` with no file arguments from a project subdirectory still finds
+/// the parent project's config.
+pub fn find_tsconfig(cwd: &Path) -> Option<PathBuf> {
+    let mut current = Some(cwd);
+    while let Some(dir) = current {
+        let candidate = dir.join("tsconfig.json");
+        if candidate.is_file() {
+            return Some(normalize_path(&candidate));
+        }
+        current = dir.parent();
+    }
+    None
 }
 
 pub(crate) fn resolve_tsconfig_path(cwd: &Path, project: Option<&Path>) -> Result<Option<PathBuf>> {

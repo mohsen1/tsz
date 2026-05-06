@@ -4,7 +4,12 @@
 //! assignments are recognized as class instance property declarations,
 //! preventing false TS2339 errors.
 
+use std::path::Path;
+use std::sync::Arc;
+
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::context::LibContext;
 
 fn check_js(source: &str) -> Vec<(u32, String)> {
     let options = CheckerOptions {
@@ -100,6 +105,112 @@ fn check_ts(source: &str) -> Vec<(u32, String)> {
 
 fn count_code(diags: &[(u32, String)], code: u32) -> usize {
     diags.iter().filter(|(c, _)| *c == code).count()
+}
+
+fn load_es5_lib_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_roots = [
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
+        manifest_dir.join("../../TypeScript/src/lib"),
+    ];
+
+    for root in &lib_roots {
+        let lib_path = root.join("es5.d.ts");
+        if lib_path.exists()
+            && let Ok(content) = std::fs::read_to_string(&lib_path)
+        {
+            return vec![Arc::new(LibFile::from_source(
+                "es5.d.ts".to_string(),
+                content,
+            ))];
+        }
+    }
+
+    Vec::new()
+}
+
+fn check_js_with_es5_lib(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let lib_files = load_es5_lib_for_test();
+
+    let mut binder = tsz_binder::BinderState::new();
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = tsz_checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        options,
+    );
+
+    if lib_files.is_empty() {
+        checker.ctx.set_lib_contexts(Vec::new());
+    } else {
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+#[test]
+fn checked_js_constructor_nullable_array_property_reports_possibly_null_on_method_read() {
+    let source = r#"
+function Installer () {
+    this.twices = []
+    this.twices = null
+}
+Installer.prototype.second = function () {
+    this.twices.push(1)
+    if (this.twices != null) {
+        this.twices.push('hi')
+    }
+}
+"#;
+    let diagnostics = check_js_with_es5_lib(
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2531 && message == "Object is possibly 'null'." }),
+        "expected TS2531 on unchecked this.twices.push(), got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 2531),
+        1,
+        "expected the null check to narrow the second this.twices.push(), got: {diagnostics:#?}"
+    );
 }
 
 /// Basic constructor this.prop assignment → no TS2339 on instance access
