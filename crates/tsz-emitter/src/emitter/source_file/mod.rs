@@ -505,6 +505,36 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn named_tc39_decorated_class_expression_skips_set_function_name() {
+        let source = "declare var dec: any;\nexport const C = @dec class C {};\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2022,
+            import_helpers: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("__esDecorate"),
+            "Class decorator transform should still run.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("__setFunctionName"),
+            "Named class expressions should not emit named-evaluation helper calls.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn ambient_class_parenthesized_tail_emits_recovered_expression() {
         let source = "declare class foo();\nfunction foo() {}\n";
 

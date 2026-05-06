@@ -370,16 +370,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // ES2022: with class decorators, emit _classThis capture block first
             if has_class_decorators {
                 out.push_str(&format!("{i2}static {{ _classThis = this; }}\n"));
-                // For class expressions, emit __setFunctionName with the class name
-                // or the externally-provided function name (from assignment context)
                 if self.expression_mode {
-                    // Use ONLY the externally-provided function name for __setFunctionName.
-                    // The class's own name (e.g., `class C {}`) is NOT used — it's a
-                    // self-reference, not the named evaluation target.
-                    let function_name = self
-                        .function_name
-                        .clone()
-                        .or_else(|| class_name_was_empty.then(String::new));
+                    // Named evaluation only applies to anonymous class expressions.
+                    // An explicit class name is already the runtime function name.
+                    let function_name = class_name_was_empty
+                        .then(|| self.function_name.clone().unwrap_or_else(String::new));
                     if let Some(fn_name) = function_name {
                         let set_fn = self.helper("__setFunctionName");
                         out.push_str(&format!(
